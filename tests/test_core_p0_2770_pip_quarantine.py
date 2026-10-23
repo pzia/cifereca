@@ -295,3 +295,24 @@ def test_rollback_uninstall_failure_does_not_echo_pip_stderr(monkeypatch):
         manager._restore({}, ())
     assert secret not in str(error.value)
     assert error.value.__cause__ is None
+
+
+def test_rollback_quarantine_failure_preserves_added_installed_distributions(monkeypatch):
+    """No purge before deciding whether changed versions can be recovered."""
+    manager = PythonDependencyManager(allow_index=False)
+    before = {"old-pkg": ("old-pkg", "1.0")}
+    monkeypatch.setattr(manager_module, "_installed_versions", lambda: {
+        "old-pkg": ("old-pkg", "2.0"),
+        "new-addon": ("new-addon", "3.0"),
+    })
+    calls = []
+    def reject(requirements, wheel_dirs):
+        calls.append(("preflight", tuple(requirements)))
+        raise PythonDependencyError("dependency_provenance_unavailable")
+    monkeypatch.setattr(manager, "_pip_install", reject)
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail(
+        "rollback purged a distribution despite rejected wheel provenance",
+    ))
+    with pytest.raises(PythonDependencyError, match="^dependency_provenance_unavailable$"):
+        manager._restore(before, ())
+    assert calls == [("preflight", ("old-pkg==1.0",))]
