@@ -6,7 +6,7 @@ labels/proofs are produced only for the local UI while the active scope holds.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import unicodedata
 
@@ -111,8 +111,8 @@ _PAIR_STRUCTURE_BUDGET_STATES = frozenset({
 })
 
 
-def _pair_evidence_complete(audit):
-    """Strict read-only permission to attempt fresh per-pair validation.
+def _pair_evidence_gaps(audit):
+    """Closed reasons for the existing fail-closed pair coverage gate.
 
     NOT a write authority: Numilog/Kobo engines independently revalidate the
     entire right/receipt/backup, identity, conflict set and local bytes under
@@ -129,23 +129,45 @@ def _pair_evidence_complete(audit):
                 or type(reconciliation.reasons) is not set
                 or type(audit.reasons) is not set
                 or type(audit.stored_paths.reasons) is not set):
-            return False
-        if (audit.reasons or snapshot.reasons or audit.stored_paths.reasons
-                or not inventory.reasons <= _PAIR_LOCAL_FILE_REASONS
-                or reconciliation.reasons - inventory.reasons):
-            return False
+            return ('coverage_unavailable',)
+        gaps = set()
+        if audit.reasons:
+            gaps.add('audit_scope_incomplete')
+        if snapshot.reasons:
+            gaps.add('snapshot_incomplete')
+        if audit.stored_paths.reasons:
+            gaps.add('path_coverage_incomplete')
+        if inventory.reasons - _PAIR_LOCAL_FILE_REASONS:
+            gaps.add('inventory_incomplete')
+        if reconciliation.reasons - inventory.reasons:
+            gaps.add('comparison_incomplete')
         if (type(inventory.files_started) is not int
-                or inventory.files_started != len(inventory.files)
-                or any(file.structure_validation in _PAIR_STRUCTURE_BUDGET_STATES
-                       for file in inventory.files)):
-            return False
+                or inventory.files_started != len(inventory.files)):
+            gaps.add('inventory_incomplete')
+        if any(file.structure_validation in _PAIR_STRUCTURE_BUDGET_STATES
+               for file in inventory.files):
+            gaps.add('structure_global_budget')
         required = (
             'entitlements', 'acquisition_ledger', 'artifacts',
             'placements', 'backup_items', 'catalog_entries',
         )
-        return all(type(snapshot.tables.get(table)) is list for table in required)
+        if not all(type(snapshot.tables.get(table)) is list for table in required):
+            gaps.add('snapshot_incomplete')
+        return tuple(sorted(gaps))
     except (AttributeError, TypeError, ValueError):
-        return False
+        return ('coverage_unavailable',)
+
+
+def _pair_evidence_complete(audit):
+    return not _pair_evidence_gaps(audit)
+
+
+def _explain_pair_coverage(report, gaps):
+    # No new authority or status. These codes are private explanations for an
+    # already-refused attested preflight, never a public diagnostic payload.
+    if 'audit_incomplete' not in report.codes:
+        return report
+    return replace(report, codes=tuple(sorted(set(report.codes) | set(gaps))))
 
 
 def _right_bibliography(right, matches):
@@ -381,6 +403,7 @@ class LocalInspection:
         self._declared_last = None
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
         self._manual_pair_evidence_complete = _pair_evidence_complete(audit)
+        self._manual_pair_coverage_gaps = _pair_evidence_gaps(audit)
         # Private, same-identity facets for the direct-selection file browser.
         # No file metadata or query is ever exported through summary()/logs.
         self._file_facets = {}
@@ -910,6 +933,7 @@ class LocalInspection:
         self._manual_identity = None
         self._manual_audit_complete = False
         self._manual_pair_evidence_complete = False
+        self._manual_pair_coverage_gaps = ()
         self._summary = {}
         self._path_missing_by_sqlite_state.clear()
         self._scanned_formats.clear()
@@ -1090,12 +1114,13 @@ class LocalInspection:
         if right.provider == 'kobo':
             proof = self._kobo_right_proofs.get(right_key)
             if not proof or proof.get('attested') is not True:
-                return review_source_read_only(
+                return _explain_pair_coverage(review_source_read_only(
                     'kobo', audit_complete=self._manual_audit_complete,
                     bibliographic_hint=(
                         file_key in self._candidate_file_keys.get(right_key, ())
                     ),
-                )
+                ), self._manual_pair_coverage_gaps)
+
             observation = self._manual_file_observations.get(file_key)
             verified = (
                 observation is not None
@@ -1104,7 +1129,7 @@ class LocalInspection:
                 and (observation.media_format == 'pdf'
                      or observation.structure_validation == 'epub_structure_crc_ok')
             )
-            return review_kobo_candidate(
+            return _explain_pair_coverage(review_kobo_candidate(
                 proof,
                 {'verified': verified,
                  'signature': (observation.sha256, observation.size)
@@ -1114,7 +1139,8 @@ class LocalInspection:
                 bibliographic_hint=(
                     file_key in self._candidate_file_keys.get(right_key, ())
                 ),
-            )
+            ), self._manual_pair_coverage_gaps)
+
         if right.provider != 'numilog':
             return review_source_read_only(
                 right.provider,
@@ -1133,7 +1159,7 @@ class LocalInspection:
             bibliographic_hint=(
                 file_key in self._candidate_file_keys.get(right_key, ())
             ),
-        )
+        ), self._manual_pair_coverage_gaps)
 
     def revoke_manual_attachment_preview(self):
         """A changed selection invalidates pending and in-flight previews."""
