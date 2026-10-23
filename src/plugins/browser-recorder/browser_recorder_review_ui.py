@@ -2369,6 +2369,8 @@ class PrivateReviewPanel:
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
         self._wipe_vault_password()
+        self._private_labels.clear()
+        self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         self._discard_private()
         self._stop = None
         self._handle = None
