@@ -58,6 +58,30 @@ def _file(observation):
             'size': observation.size, 'fingerprint': list(observation.fingerprint)}
 
 
+def _account_current(accounts, scope):
+    """Exact live borrower, including Paris's empty-UID primary sentinel.
+
+    Multiple paired borrowers on the same credential are legitimate. Only an
+    ambiguity for the *selected* borrower coordinate fails closed. Reused by
+    both write previews and read-only history; never infer a right from a name.
+    """
+    def borrower(account):
+        uid = account.unique_id
+        if (scope['provider_id'] == 'paris'
+                and uid == '' and account.is_primary is True):
+            return 'primary'
+        return uid
+
+    matches = [
+        account for account in accounts
+        if account.provider_id == scope['provider_id']
+        and account.credential_id == scope['credential_id']
+        and borrower(account) == scope['account_id']
+    ]
+    return (len(matches) == 1
+            and matches[0].identity_id == scope['identity_id'])
+
+
 def _scope(service, scope):
     _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
              and scope['provider_id'] in _PROVIDERS, 'invalid_scope')
@@ -70,11 +94,7 @@ def _scope(service, scope):
     roots = configured_identity_roots(config, scope['identity_id'])[scope['identity_id']]
 
     def account_matches():
-        matches = [row for row in service.accounts
-                   if row.provider_id == scope['provider_id']
-                   and row.credential_id == scope['credential_id']]
-        return (len(matches) == 1 and matches[0].identity_id == scope['identity_id']
-                and matches[0].unique_id == scope['account_id'])
+        return _account_current(service.accounts, scope)
 
     _require(account_matches(), 'account_scope_changed')
 
@@ -192,10 +212,15 @@ def _context(db, scope):
              'source_scope_changed')
     # No authenticated-library receipt requirement: this only binds an
     # EXISTING selected row to its actual account. It never creates a right.
+    # A second borrower may hold the same edition under one connection.
+    # A *declaration* is bound to a selected exact right, not proof that no
+    # other borrower owns the edition. Attested placement collision checks
+    # remain stricter in _collisions() and never inherit this relaxation.
     rights = _rows(db, 'SELECT entitlement_id,identity_id,provider_id,credential_id,account_id,'
                    'item_id,entitlement_type,state,loan_id,expires_at FROM entitlements WHERE provider_id=? '
-                   'AND credential_id=? AND item_id=? LIMIT 3',
-                   (scope['provider_id'], scope['credential_id'], scope['item_id']))
+                   'AND credential_id=? AND identity_id=? AND account_id=? AND item_id=? LIMIT 3',
+                   (scope['provider_id'], scope['credential_id'],
+                    scope['identity_id'], scope['account_id'], scope['item_id']))
     _require(len(rights) == 1 and all(rights[0].get(k) == v for k, v in scope.items()),
              'right_scope_changed')
     context = {'connection': connections[0], 'right': rights[0]}
@@ -501,16 +526,10 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
                     # remains visible, but its source needs explicit review.
                     # A provider+credential alone is insufficient; account
                     # and identity must match exactly, without guessing.
-                    live_accounts = [
-                        account for account in accounts
-                        if (account.provider_id == scope['provider_id']
-                            and account.credential_id == scope['credential_id'])
-                    ]
-                    account_current = (
-                        len(live_accounts) == 1
-                        and live_accounts[0].identity_id == scope['identity_id']
-                        and live_accounts[0].unique_id == scope['account_id']
-                    )
+                    # History must use the SAME strict borrower mapping as
+                    # preview/confirmation. A different paired account is
+                    # neither a collision nor evidence of a changed login.
+                    account_current = _account_current(accounts, scope)
                     if not account_current:
                         review = 'source_or_right_changed'
                     else:
