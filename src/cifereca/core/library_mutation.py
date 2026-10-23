@@ -129,8 +129,9 @@ def catalog_index_path(self, path: Path, *, title: str | None=None, item_id: str
     )
 
 
-def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool=True) -> dict[str, int]:
-    """Persist current digital loans and realize rights no longer reported."""
+def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool=False,
+                          complete_scopes: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]] | None = None) -> dict[str, int]:
+    """Persist positive loan rows; no missing-loan inference without scoped proof."""
     active_ids: set[str] = set()
     persisted = 0
     for loan in loans:
@@ -161,6 +162,8 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
         active_ids.add(entitlement.entitlement_id)
         self.storage.entitlement_put(entitlement)
         persisted += 1
-    returned = self.storage.entitlement_realize_missing_loans(active_ids, identity_id=identity_id) if reconcile_missing else 0
+    returned = (self.storage.entitlement_realize_missing_loans(
+        active_ids, identity_id=identity_id, complete_scopes=complete_scopes,
+    ) if reconcile_missing and complete_scopes else 0)
     expired = self.storage.entitlement_realize_expired()
     return {"persisted": persisted, "returned_realized": returned, "expired_realized": expired}
