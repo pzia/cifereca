@@ -226,6 +226,18 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
             ("local_inspection_manual_does_not_change_candidate_set", "manual_restored"),
             ("local_inspection_state_pagination_and_private_proof", "inspection_paginated"),
             ("local_inspection_epoch_revokes_window_and_sources_unchanged", "inspection_complete"),
+            ("native_declaration_started", "declaration_started"),
+            ("native_declaration_audit_done", "declaration_audit"),
+            ("native_declaration_dialog_open", "declaration_dialog"),
+            ("native_declaration_right_row_found", "declaration_right_row"),
+            ("native_declaration_right_row_clicked", "declaration_right_clicked"),
+            ("native_declaration_right_is_selected", "declaration_right_selected"),
+            ("native_declaration_manual_files_visible", "declaration_manual_files"),
+            ("native_declaration_right_selected", "declaration_right"),
+            ("native_declaration_expander_open", "declaration_expander"),
+            ("native_declaration_preview_dialog", "declaration_preview"),
+            ("native_declaration_committed", "declaration_committed"),
+            ("native_declaration_revoked", "declaration_revoked"),
         )
         reached = "before_maintenance_route"
         for field, label in milestones:
