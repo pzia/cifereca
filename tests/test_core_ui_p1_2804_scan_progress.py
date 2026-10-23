@@ -128,3 +128,69 @@ def test_live_previews_in_real_tools_callback_harness_are_non_modal():
     flush(m)
     assert m.feedback.state.phase == "confirmation"
     assert not bar.visible
+
+
+@pytest.mark.parametrize("amount,total", [(0, 18), (9, 18), (600, 600)])
+def test_future_maintenance_tool_gets_a_real_private_safe_preview_line(amount, total):
+    """No CoreUI ID registration required for an installed future tool."""
+    m = mounted("future.library.custom.audit")
+
+    def plan(_context, control):
+        control.report(current=amount, total=total,
+                       message="PRIVATE_SECRET_ACCOUNT/path/to/book.epub")
+        return m.tool.plan(_context)
+
+    m.tool.plan_with_progress = plan
+    m.preview.click()
+    args, kwargs = m.jobs[-1]
+    result = args[1]()  # real production callback inside worker harness
+    flush(m)
+    label, bars = m.status.children
+    spinner, progress = bars.children
+    assert m.feedback.state.phase == "analysis"
+    assert label.text.startswith("Traitement en cours")
+    assert "PRIVATE_" not in label.text and "book.epub" not in label.text
+    assert progress.visible and not spinner.visible
+    assert progress.fraction == min(99, (amount * 100) // total) / 100
+    args[2](result)
+    flush(m)
+    assert m.feedback.state.phase == "confirmation"
+    assert not progress.visible
+    # Selection/confirmation remains required; progress is not authorization.
+    assert not any(k.get("kind") == "maintenance-run" for _, k in m.jobs)
+
+
+def test_legacy_future_maintenance_tool_has_honest_indeterminate_progress():
+    m = mounted("future.library.legacy.audit")
+    m.preview.click()
+    flush(m)
+    label, bars = m.status.children
+    spinner, progress = bars.children
+    assert label.text == "Analyse…"
+    assert spinner.visible and not progress.visible
+    args, _ = m.jobs[-1]
+    plan = args[1]()
+    args[2](plan)
+    flush(m)
+    assert m.feedback.state.phase == "confirmation"
+    assert not progress.visible
+    assert not spinner.visible
+
+
+def test_future_tool_ignores_late_private_updates_after_row_refresh():
+    m = mounted("future.library.bibliography.audit")
+    def plan(_context, control):
+        control.report(current=1, total=18, message="PRIVATE_SECRET")
+        return m.tool.plan(_context)
+    m.tool.plan_with_progress = plan
+    m.preview.click()
+    args, _ = m.jobs[-1]
+    result = args[1]()
+    original_control = m.host._maintenance_line_rows[0][1]["control"]
+    m.refresh()
+    assert original_control.cancelled()
+    args[2](result)
+    flush(m)
+    assert m.feedback.state.phase == "analysis"
+    assert m.feedback.valid(1) is False
+    assert m.activity == []
