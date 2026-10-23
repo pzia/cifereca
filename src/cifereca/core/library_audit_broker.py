@@ -51,7 +51,7 @@ class LibraryReconciliationReadBrokerImpl:
         """
         generation, stamp = begin_inspection_cache(self.service)
 
-        def finish(result, scope_valid):
+        def finish(result, scope_valid, _source_stamp):
             # The plugin sees redacted counters only. A private, bounded
             # inspection can be picked up once by CoreUI without a second scan.
             public = result.redacted()
@@ -219,7 +219,20 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         # cache a private inspection offering old rights as current.
         if sqlite_source_stamp(database) != snapshot_source:
             return aggregate_snapshot_timing(_unavailable({'snapshot_changed'}))
-        outcome = finish(result, same_scope)
+        # A new CoreUI inspection gets the precise source stamp that
+        # accompanied its original rights snapshot, for later invalidation.
+        outcome = finish(result, same_scope, snapshot_source)
+        # Session projection is not instantaneous. A commit during case
+        # construction must never result in a seemingly current graph.
+        if not same_scope() or sqlite_source_stamp(database) != snapshot_source:
+            if type(outcome) is not dict:
+                try:
+                    outcome.close()
+                except Exception:
+                    pass
+            return aggregate_snapshot_timing(_unavailable({
+                'reconciliation_scope_changed' if changed else 'snapshot_changed'
+            }))
         comparison = finish_audit_stability(
             service, identity_id, scope_key, stability_generation,
             stability_previous, result, same_scope,
