@@ -112,3 +112,45 @@ def test_read_only_audits_never_modify_source_sqlite_when_unchanged(scoped):
     assert start == finish
     assert result["status"] == "complete"
     assert result["inventory"]["files"] == 1
+
+
+def test_commit_between_snapshot_read_and_return_is_refused_before_inventory(scoped):
+    """Close the post-snapshot/pre-stamp race without inventing fresh rights."""
+    service, database, root = scoped
+    read = broker.read_library_snapshot
+    calls = []
+
+    def read_then_concurrent_commit(*args, **kwargs):
+        old_image = read(*args, **kwargs)
+        calls.append("snapshot")
+        # Happens after the source reader returned coherent *old* bytes,
+        # before the calling broker gets control to start the inventory.
+        with sqlite3.connect(database) as db:
+            db.execute(
+                "INSERT INTO entitlements (entitlement_id,identity_id,state,provider_id)"
+                " VALUES (?,?,?,?)",
+                ("PRIVATE-race-right", "alice", "active", "numilog"),
+            )
+        return old_image
+
+    with patch.object(broker, "read_library_snapshot",
+                      side_effect=read_then_concurrent_commit), patch.object(
+        broker, "audit_library",
+        side_effect=AssertionError("stale source image must not start scan"),
+    ) as scanned:
+        refused = broker.LibraryReconciliationReadBrokerImpl(service).audit(
+            identity_id="alice",
+        )
+    scanned.assert_not_called()
+    assert calls == ["snapshot"]
+    assert refused["status"] == "incomplete_scan"
+    assert refused["reasons"] == ["snapshot_changed"]
+    assert "reconciliation" not in refused
+    assert "PRIVATE" not in json.dumps(refused)
+    # A subsequent clean attempt must read the new rights, never reusing
+    # the snapshot captured before the synthetic concurrent source commit.
+    accepted = broker.LibraryReconciliationReadBrokerImpl(service).audit(
+        identity_id="alice",
+    )
+    assert accepted["status"] == "complete"
+    assert accepted["reconciliation"]["counts"]["rights_without_verified_file"] == 1
