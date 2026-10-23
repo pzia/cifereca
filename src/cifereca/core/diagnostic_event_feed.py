@@ -42,6 +42,7 @@ from .diagnostic_adept import (
 from ..diagnostics import Diagnostics
 from .diagnostic_reconciliation import (
     known_reason_code, public_fields as public_reconciliation_fields,
+    public_reconciliation_log_fields,
 )
 
 _LOG_LINE = re.compile(
@@ -238,7 +239,24 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_connection_success_log_fields(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            if connection_success_detail:
+            audit_detail = (
+                public_reconciliation_log_fields(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            audit_level = {
+                "complete": "INFO", "partial": "WARNING",
+                "cancelled": "WARNING", "failed": "ERROR",
+            }
+            if audit_detail and match["level"] != audit_level[audit_detail["status"]]:
+                audit_detail = {}
+            if audit_detail:
+                message = {
+                    "complete": "réconciliation locale terminée",
+                    "partial": "réconciliation locale incomplète",
+                    "failed": "réconciliation locale indisponible",
+                    "cancelled": "réconciliation locale interrompue",
+                }[audit_detail["status"]]
+            elif connection_success_detail:
                 message = "connexion fournisseur réussie"
             elif connection_detail:
                 message = "connexion fournisseur échouée"
@@ -293,7 +311,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "NUMILOG" if numilog_detail or numilog_session_detail else
                 "SYNC" if source_sync_detail else
                 "ADEPT" if adept_detail else
-                "PLUGIN" if connection_detail or connection_success_detail else None
+                "PLUGIN" if connection_detail or connection_success_detail else
+                "LIBRARY" if audit_detail else None
             )
             # A provider identity comes only from a closed Core log schema,
             # never from a logger suffix, URL, TRACE free text or account label.
@@ -318,6 +337,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": connection_success_detail, "status": "ok"}
                    if connection_success_detail else {}),
+                **({"detail": audit_detail, "status": audit_detail["status"]}
+                   if audit_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
