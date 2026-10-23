@@ -30,6 +30,10 @@ from .public_provider_diagnostics import (
     public_connection_success_fields,
     public_connection_success_log_fields,
 )
+from .diagnostic_loan_download import (
+    public_fields as public_loan_download_fields,
+    public_log_fields as public_loan_download_log,
+)
 from .diagnostic_source_sync import (
     public_fields as public_source_sync_fields,
     public_log_fields as public_source_sync_log,
@@ -86,7 +90,7 @@ _STRUCTURED_TERMS = frozenset({
 })
 _CATEGORIES = frozenset({
     "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
-    "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "NUMILOG",
+    "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "NUMILOG", "LOAN",
 })
 
 
@@ -227,6 +231,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_source_sync_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
+            loan_download_detail = (
+                public_loan_download_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
             adept_detail = (
                 public_adept_log(match["body"]) if match["logger"] == "cifereca" else {}
             )
@@ -238,7 +246,9 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_connection_success_log_fields(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            if connection_success_detail:
+            if loan_download_detail:
+                message = "Téléchargement du prêt · " + loan_download_detail["status"] + " · " + loan_download_detail["code"]
+            elif connection_success_detail:
                 message = "connexion fournisseur réussie"
             elif connection_detail:
                 message = "connexion fournisseur échouée"
@@ -292,6 +302,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "KOBO" if kobo_detail else
                 "NUMILOG" if numilog_detail or numilog_session_detail else
                 "SYNC" if source_sync_detail else
+                "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
+                "LOAN" if loan_download_detail else
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail or connection_success_detail else None
             )
@@ -303,6 +315,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 connection_detail.get("provider_id")
                 or connection_success_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
+                or loan_download_detail.get("provider_id")
                 or ("kobo" if kobo_detail else None)
                 or ("numilog" if numilog_detail else None)
             )
@@ -313,7 +326,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": ".".join(safe_parts)[:90],
                 **({"business_module": business_module} if business_module else {}),
                 "severity": match["level"].lower(),
-                "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
+                "message": message[:500] if numilog_detail or source_sync_detail or loan_download_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": connection_success_detail, "status": "ok"}
@@ -322,6 +335,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
                    if source_sync_detail else {}),
+                **({"detail": loan_download_detail, "status": loan_download_detail["status"]}
+                   if loan_download_detail else {}),
                 **({"detail": adept_detail, "status": adept_detail["status"]} if adept_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
@@ -465,6 +480,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                             else "error" if inspected["status"] == "failed"
                             else "warning")
         source_sync_detail = {}
+        loan_download_detail = {}
         adept_detail = {}
         if (category == "ADEPT" and operation == "kobo adept"
                 and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
@@ -482,6 +498,21 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = public_source_sync_message(public_detail)
                 severity = ("error" if public_detail["status"] == "failed" else
                             "warning" if public_detail["status"] == "cancelled" else "info")
+        if (category in {"PNB", "LOAN"} and operation == "download_loan"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_loan_download") is True):
+            candidate = public_loan_download_fields(row.get("detail"))
+            if (candidate and category == (
+                "PNB" if candidate["provider_id"] == "paris" else "LOAN"
+            ) and status == (
+                "ok" if candidate["status"] == "success" else candidate["status"]
+            )):
+                loan_download_detail = candidate
+                public_detail = candidate
+                message = "Téléchargement du prêt · " + candidate["status"] + " · " + candidate["code"]
+                severity = ("info" if candidate["status"] == "success"
+                            else "error" if candidate["status"] == "failed"
+                            else "warning")
         if category == "NUMILOG":
             # Startup facts must originate from the dedicated Core emitter.
             # A generic plugin/diagnostics.add with a correctly shaped
@@ -507,7 +538,9 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         # Only typed observations with Core provenance attest this identity.
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.
         attested_provider_id = None
-        if source_sync_detail:
+        if loan_download_detail:
+            attested_provider_id = loan_download_detail["provider_id"]
+        elif source_sync_detail:
             attested_provider_id = source_sync_detail["provider_id"]
         elif (category == "PLUGIN"
               and operation in {"provider connect", "public provider connect"}
@@ -549,7 +582,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            "status": reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
+            "status": loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
                 else "unknown"),
