@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
 import re
+import unicodedata
 
 from diagnostics_reconciliation import (
     reconciliation_event_summary,
@@ -39,6 +40,39 @@ SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
+# Closed, attested Core domains. These labels are not inferred from PLUGIN
+# categories, log text, provider names or filenames.
+DOMAINS = ("", "browser_recorder", "reconciliation")
+DOMAIN_LABELS = ("Tous domaines", "Browser Recorder", "Réconciliation")
+
+
+def canonical_domain_alias(value: str) -> str | None:
+    """Only documented human aliases, never a fuzzy or message-text search."""
+    if type(value) is not str or len(value) > 90:
+        return None
+    normalized = "".join(char for char in unicodedata.normalize(
+        "NFKD", value.strip().casefold()
+    ) if not unicodedata.combining(char))
+    normalized = re.sub(r"[ _-]+", " ", normalized).strip()
+    return {
+        "browser": "browser_recorder",
+        "recorder": "browser_recorder",
+        "browser recorder": "browser_recorder",
+        "reconciliation": "reconciliation",
+        "reconcilitation": "reconciliation",
+    }.get(normalized)
+
+
+def resolve_domain_filter(module: str, domain: str) -> tuple[str, str]:
+    """Map only full-prefix field aliases; keep all other module filters."""
+    if type(module) is not str or len(module) > 90 or type(domain) is not str or domain not in DOMAINS:
+        raise ValueError("invalid diagnostic domain filter")
+    alias = canonical_domain_alias(module)
+    if alias and domain and domain != alias:
+        raise ValueError("conflicting diagnostic domain filters")
+    return domain or alias or "", "" if alias else module.strip()
+
+
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
     r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
@@ -122,7 +156,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -140,14 +174,19 @@ def fetch_explorer_page(
         raise ValueError("invalid reconciliation reason code")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
         raise ValueError("invalid diagnostics offset")
+    scoped_domain, scoped_module = resolve_domain_filter(module, domain)
     query = {
-        "source": source, "module": module.strip()[:90],
+        "source": source, "module": scoped_module,
         "severity": severity, "since": explorer_since(period, now=reference_time),
         "until": None, "limit": PAGE_SIZE, "offset": offset,
     }
     # Older Core versions can still serve the unfiltered page. Require the
     # optional new broker keyword ONLY for an explicitly selected code;
     # never silently downgrade a global filter to local 50-item search.
+    if scoped_domain:
+        # Old Core brokers must fail explicitly rather than silently return
+        # an unrelated first page as though it were a domain-filtered one.
+        query["domain"] = scoped_domain
     if reason_code:
         query["reason_code"] = reason_code
     if provider_id:
@@ -180,6 +219,10 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             key: redacted_detail(raw[key])[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
+        if (raw.get("source") == "core_events"
+                and ((raw.get("domain") == "browser_recorder" and raw.get("module") == "PLUGIN")
+                     or (raw.get("domain") == "reconciliation" and raw.get("module") == "LIBRARY"))):
+            safe["domain"] = raw["domain"]
         provider = public_provider_id(raw.get("provider_id"))
         if provider is not None:
             safe["provider_id"] = provider
