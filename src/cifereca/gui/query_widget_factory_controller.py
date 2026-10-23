@@ -33,7 +33,7 @@ def _paris_search_notice(window):
             and getattr(item, "identity_scope", None) == "authenticated"
             and getattr(item, "catalog_search_supported", None) is True
         ]
-        if not matching or getattr(matching[0], "catalog_search_available", None) is True:
+        if matching and getattr(matching[0], "catalog_search_available", None) is True:
             return ""
         # service.accounts_for_identity contains *connected* accounts only.
         # A failed login removes those rows: it cannot prove the absence of
@@ -52,6 +52,20 @@ def _paris_search_notice(window):
     except Exception:
         # Never leak provider error text, credentials or another identity's state.
         return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+    if not matching:
+        # The catalogue inventory is deliberately limited to enabled/ready
+        # plugins. Only report absence/disablement when this identity owns a
+        # configured Paris account, not from another user's configuration.
+        if not own:
+            return ""
+        registry = getattr(service, "registry", None)
+        find_plugin = getattr(registry, "maybe_get", None)
+        if callable(find_plugin) and find_plugin("paris") is None:
+            return "Bibliothèques de Paris : plugin absent ; recherche en ligne indisponible."
+        is_enabled = getattr(service, "_provider_enabled_for_identity", None)
+        if callable(is_enabled) and is_enabled("paris", identity) is False:
+            return "Bibliothèques de Paris : plugin désactivé ; recherche en ligne indisponible."
+        return "Bibliothèques de Paris : catalogue non disponible dans ce profil."
     if any(row.get("enabled", True) is True for row in own):
         return "Bibliothèques de Paris : compte configuré mais source non connectée ; recherche en ligne indisponible."
     if own:
