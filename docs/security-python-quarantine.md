@@ -98,3 +98,32 @@ et atteste `offline-wheels/` avant le test de l'updater. Son préflight pip
 peut encore télécharger des métadonnées ou wheels avant admission : ce point
 reste ouvert et ne doit pas être présenté comme une admission avant récupération. La réparation/installation de packages plugins
 hors ligne et la dérogation CVE nominative restent à traiter.
+
+## Publication de l'archive Core hors ligne (Linux x86_64 / Python 3.11)
+
+Le pipeline officiel `.github/workflows/release.yml` construit un **quatrième
+artefact** `cifereca-offline-<VERSION>-linux-x86_64-py311.zip`, avec les
+sources exactes du commit publiable et `offline-wheels/` (incluant le
+manifeste de provenance). Le producteur `scripts/prepare-admitted-wheelhouse.py
+--include-plugin-deps` résout *ensemble* les dépendances du Core et les
+`python-package` de tous les plugins embarqués, ainsi que leurs transitives.
+Les conflits ou wheels insuffisamment âgées font **échouer la publication**,
+pas l'installation chez l'utilisateur. Le packaging exclut fichiers non
+versionnés, liens symboliques et répertoires privés, et reprend les contrôles
+d'inventaire, de SHA et d'âge.
+
+Avant même de créer un brouillon GitHub Release, `scripts/ci-offline-release-gate.py`
+installe l'archive officielle dans des répertoires XDG **vierges**, avec
+`PIP_NO_INDEX=1` et `CIFERECA_PLUGIN_DEPS_OFFLINE=1`, puis contrôle le Core,
+les plugins et les trois entrypoints. La CI de pull request rejoue cette
+recette sans publication. Le ZIP reçoit un SHA dans `SHA256SUMS` et une
+signature Sigstore Cosign vérifiée avant promotion du brouillon.
+
+**Périmètre attesté par ce premier gate : Linux x86_64, Python 3.11, avec les
+prérequis système GTK/libadwaita documentés.** Les architectures et versions
+Python supplémentaires ne sont pas validées par cette seule matrice. Les
+dépendances Python d'outillage de build installées au préalable dans les
+runners CI, l'authenticité à la réception chez l'utilisateur et le statut
+« plugin optionnel différé » restent ouverts dans #2770. Une release portant
+un environnement non validé ne doit pas être présentée comme universellement
+installable.
