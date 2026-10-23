@@ -417,6 +417,9 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        # A domain is a Core-attested classification, never a match on
+        # untrusted operation/message text or a generic PLUGIN category.
+        attested_domain = None
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -428,6 +431,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if attested:
                 public_detail = attested
                 message = operation
+                attested_domain = "browser_recorder"
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
         # even if an arbitrary plugin supplies a well-formed provider_id.
@@ -470,6 +474,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     "ok" if inspected["status"] == "complete" else inspected["status"]):
                 reconciliation_detail = inspected
                 public_detail = inspected
+                attested_domain = "reconciliation"
                 message = {
                     "complete": "réconciliation locale terminée",
                     "partial": "réconciliation locale incomplète",
@@ -578,6 +583,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"domain": attested_domain} if attested_domain else {}),
             **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
@@ -606,6 +612,7 @@ def query_diagnostic_events(
     provider_id: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
+    domain: str = "",
 ) -> dict[str, Any]:
     """A bounded/paginated snapshot with explicit source states.
 
@@ -626,6 +633,10 @@ def query_diagnostic_events(
         reason_code and not known_reason_code(reason_code)
     ):
         raise ValueError("unknown reconciliation reason code")
+    # Canonical codes only at the broker boundary. UI translates its
+    # explicitly supported accents/aliases; arbitrary free text is rejected.
+    if type(domain) is not str or domain not in {"", "browser_recorder", "reconciliation"}:
+        raise ValueError("unknown diagnostic domain")
     if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
         raise ValueError("unknown diagnostic severity")
     if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
@@ -659,6 +670,13 @@ def query_diagnostic_events(
             if row["module"].casefold().startswith(prefix)
             or (type(row.get("business_module")) is str
                 and row["business_module"].casefold().startswith(prefix))
+        ]
+    if domain:
+        # Apply before pagination, without trusting generic PLUGIN/LIBRARY
+        # or app_log text. A source can be partial even when total == 0.
+        events = [
+            row for row in events
+            if row["source"] == "core_events" and row.get("domain") == domain
         ]
     if provider_id:
         events = [row for row in events if row.get("provider_id") == provider_id]
