@@ -832,3 +832,20 @@ son propre ID. Déverrouiller les métadonnées reste un geste distinct.
 Une erreur de clé pour une ancienne session n'est jamais réparée par la
 capture d'une autre session sous une nouvelle clé ; ne pas conclure à une
 corruption cryptographique à partir du seul sélecteur.
+
+
+## Finalisation des réponses en attente (#2528)
+
+Une capture **terminée** ne doit plus exporter de réponse en état `pending`.
+Au moment de fermer l'enregistrement, le collecteur marque `unfinished`
+toute réponse textuelle dont l'événement Chromium de fin était absent, même
+lorsqu'un autre callback a déjà retiré la requête des échanges en cours.
+La chronologie, le statut HTTP et les en-têtes techniques déjà observés sont
+conservés ; aucun corps absent n'est inventé ni relu, aucune requête n'est
+rejouée. Le compteur `omitted.unfinished` reflète ces réponses manquantes,
+et la raison fermée `response_body_reason=unfinished` traverse le coffre,
+le ZIP privé et les rapports de revue.
+
+`completed` signifie seulement **fin de la session de navigation** et
+**ne garantit pas la disponibilité de tous les corps**. Ce correctif ne
+récupère pas les corps devenus indisponibles et ne change pas le consentement.
