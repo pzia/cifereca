@@ -549,6 +549,9 @@ class LocalInspectionController:
         provider = Gtk.DropDown.new_from_strings(list(PROVIDERS.values()))
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
         state = Gtk.DropDown.new_from_strings(list(STATES.values()))
+        # Default to the action-oriented right list before GTK callbacks are
+        # connected; changing the filter later remains entirely user-driven.
+        state.set_selected(list(STATES).index('rights_without_verified_file'))
         state.set_tooltip_text('Filtrer par état de preuve')
         search = Gtk.SearchEntry()
         search.set_placeholder_text('Filtrer par titre, auteur, nom ou identifiant…')
@@ -1570,9 +1573,6 @@ class LocalInspectionController:
         following.connect('clicked', lambda *_: move(50))
         close.connect('clicked', lambda *_: self.clear())
         window.connect('close-request', lambda *_: (self.clear(), False)[1])
-        # Focus on actionable unverified rights by default; all-state and
-        # file-only views remain reachable through the existing controls.
-        state.set_selected(list(STATES).index('rights_without_verified_file'))
         render()
         if self.dialog is window:
             self._watch = self.GLib.timeout_add_seconds(1, valid)
