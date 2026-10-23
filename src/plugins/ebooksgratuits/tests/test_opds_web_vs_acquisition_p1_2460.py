@@ -88,6 +88,11 @@ def test_atom_only_alternate_is_not_web_page_and_download_is_separate():
 
 @pytest.mark.parametrize("bad_mime,bad_url", [
     ("text/html", "/index.php/feed/item/42"),
+    ("text/html", "/feed/item/42"),
+    ("text/html", "/fetch/42.epub"),
+    ("text/html", "/index.php/%2566eed/item/42"),
+    ("text/html", "/index.php/%252566eed/item/42"),
+    ("text/html", "/index.php/%2566etch/42.epub"),
     ("application/atom+xml", "/index.php/page/book/42"),
     ("text/html", "/index.php/fetch/42.epub"),
     ("text/html", "/index.php/account/private"),
