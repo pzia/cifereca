@@ -133,8 +133,9 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
                           complete_scopes: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]] | None = None,
                           realize_expired: bool = True) -> dict[str, int]:
     """Persist positive loan rows; no missing-loan inference without scoped proof."""
-    active_ids: set[str] = set()
-    persisted = 0
+    # Build and validate the complete positive batch before touching SQLite.
+    # A conflict in a later loan must not commit earlier positive rows.
+    pending: list[Entitlement] = []
     for loan in loans:
         if loan.medium != "digital":
             continue
@@ -160,13 +161,11 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
                 "document_type": loan.document_type,
             },
         )
-        # An upstream loan identity deliberately does not include the local
-        # profile in its stable PK. The ordinary Storage upsert can reassign a
-        # conflicting old right to another Cifereca identity; this guarded
-        # atomic writer fails closed on a source/owner collision.
-        self.storage.entitlement_put_positive_loan(entitlement)
-        active_ids.add(entitlement.entitlement_id)
-        persisted += 1
+        pending.append(entitlement)
+    # This is a single SQLite transaction, even when several accounts and
+    # providers contributed positive rows to the opening sync.
+    active_ids = set(self.storage.entitlement_put_positive_loans(tuple(pending)))
+    persisted = len(pending)
     returned = (self.storage.entitlement_realize_missing_loans(
         active_ids, identity_id=identity_id, complete_scopes=complete_scopes,
     ) if reconcile_missing and complete_scopes else 0)
