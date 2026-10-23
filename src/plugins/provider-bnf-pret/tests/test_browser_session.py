@@ -565,7 +565,9 @@ class BrowserSessionTests(unittest.TestCase):
         self.assertNotIn(private, output.getvalue())
         self.assertIn("non exhaustif", output.getvalue())
         self.assertIn("Recherche Web indisponible", output.getvalue())
-        self.assertTrue(calls[0] == ("login", True))
+        self.assertEqual(calls[0], ("login", True))
+        self.assertTrue(all(row[2] == FakeSession.scope
+                            for row in calls if row[0] == "search"))
 
     def test_cli_wait_keeps_browser_events_on_owner_thread(self):
         self.ready()
