@@ -60,8 +60,8 @@ def test_key_a_new_capture_does_not_unlock_key_b_or_relabel_it(tmp_path):
         tasks.handles[-1].finish()
         assert panel.session_list.get_active_id() in {first, foreign}
         panel.session_list.set_active_id(foreign)
-        assert "verrouillée/illisible" in panel.session_list.get_active_text()
-        assert ORIGIN not in panel.session_list.get_active_text()
+        assert "verrouillée/illisible" in panel.session_list.options[panel.session_list.get_active_id()]
+        assert ORIGIN not in panel.session_list.options[panel.session_list.get_active_id()]
         panel.open_session()
         assert "Ouverture refusée" in panel.status.label
         assert panel._trace is None
@@ -77,7 +77,7 @@ def test_key_a_new_capture_does_not_unlock_key_b_or_relabel_it(tmp_path):
         assert panel.session_list.get_active_id() == foreign
         for sid in (first, third):
             panel.session_list.set_active_id(sid)
-            assert ORIGIN in panel.session_list.get_active_text()
+            assert ORIGIN in panel.session_list.options[panel.session_list.get_active_id()]
             restored = vault.open(sid, KEY_A)
             assert restored.trace.exchanges[0].response_body == '{"BookId":214}'
             restored.trace.destroy()
