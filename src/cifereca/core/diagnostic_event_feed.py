@@ -27,6 +27,8 @@ from .public_provider_diagnostics import (
     canonical_public_provider_id,
     public_connection_fields,
     public_connection_log_fields,
+    public_connection_success_fields,
+    public_connection_success_log_fields,
 )
 from .diagnostic_source_sync import (
     public_fields as public_source_sync_fields,
@@ -232,7 +234,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_connection_log_fields(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            if connection_detail:
+            connection_success_detail = (
+                public_connection_success_log_fields(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            if connection_success_detail:
+                message = "connexion fournisseur réussie"
+            elif connection_detail:
                 message = "connexion fournisseur échouée"
             elif adept_detail:
                 message = public_adept_message(adept_detail)
@@ -285,7 +293,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "NUMILOG" if numilog_detail or numilog_session_detail else
                 "SYNC" if source_sync_detail else
                 "ADEPT" if adept_detail else
-                "PLUGIN" if connection_detail else None
+                "PLUGIN" if connection_detail or connection_success_detail else None
             )
             # A provider identity comes only from a closed Core log schema,
             # never from a logger suffix, URL, TRACE free text or account label.
@@ -293,6 +301,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # has no Core registry attestation. Neither proves a provider.
             attested_provider_id = (
                 connection_detail.get("provider_id")
+                or connection_success_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
                 or ("kobo" if kobo_detail else None)
                 or ("numilog" if numilog_detail else None)
@@ -307,6 +316,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
+                **({"detail": connection_success_detail, "status": "ok"}
+                   if connection_success_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
@@ -414,6 +425,20 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     == validated["provider_id"]):
                 public_detail = validated
                 message = "connexion fournisseur échouée"
+        # Success is independently attested and schema-checked. A generic
+        # plugin claiming "provider connected" cannot become Core evidence.
+        if (category == "PLUGIN"
+                and operation in {"provider connected", "public provider connected"}
+                and status == "ok"
+                and row.get("verified_public_provider_success") is True
+                and type(diagnostics) is Diagnostics):
+            validated = public_connection_success_fields(row.get("detail"))
+            if (validated and validated["source_kind"] == (
+                "singleton_public" if operation == "public provider connected"
+                else "configured"
+            )):
+                public_detail = validated
+                message = "connexion fournisseur réussie"
         if (category == "KOBO"
                 and operation == "automatic backup decision"
                 and type(diagnostics) is Diagnostics
@@ -488,6 +513,11 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
               and operation in {"provider connect", "public provider connect"}
               and row.get("verified_public_provider_id") == public_detail.get("provider_id")
               and public_detail.get("code")):
+            attested_provider_id = public_detail["provider_id"]
+        elif (category == "PLUGIN"
+              and operation in {"provider connected", "public provider connected"}
+              and row.get("verified_public_provider_success") is True
+              and public_detail.get("code") == "provider_connected"):
             attested_provider_id = public_detail["provider_id"]
         elif (category == "KOBO"
                              and operation == "automatic backup decision"
