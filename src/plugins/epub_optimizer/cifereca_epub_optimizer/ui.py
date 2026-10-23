@@ -77,17 +77,20 @@ class OptimizerPage:
         intro.set_xalign(0)
         box.append(intro)
 
+        # Prebuilt Shell pages must update this label after a contextual
+        # action, not only when GTK first constructs the optimizer.
+        current = Gtk.Label(label="", xalign=0)
+        current.set_wrap(True)
+        current.add_css_class("accent")
+        self._artifact_info_label = current
+        current.set_visible(artifact is not None)
         if artifact is not None:
-            current = Gtk.Label(
-                label=(
-                    "Livre courant : " + str(getattr(artifact, "filename", "") or getattr(artifact, "artifact_id", "artefact local"))
-                    + ". Cifereca gère automatiquement la variante dans la bibliothèque."
-                ),
-                xalign=0,
+            current.set_label(
+                "EPUB/PDF sélectionné depuis Bibliothèque : "
+                + self._artifact_filename(artifact)
+                + ". Fichier et variante résolus par Cifereca."
             )
-            current.set_wrap(True)
-            current.add_css_class("accent")
-            box.append(current)
+        box.append(current)
 
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
         grid.set_hexpand(True)
@@ -127,7 +130,7 @@ class OptimizerPage:
         self.source_button = source_button
         self.output_button = output_button
         if self.artifact is not None:
-            self.source_entry.set_text(str(getattr(self.artifact, "filename", "") or getattr(self.artifact, "artifact_id", "Document courant")))
+            self.source_entry.set_text(self._artifact_filename(self.artifact))
             self.source_entry.set_sensitive(False)
             self.source_button.set_sensitive(False)
             self.output_entry.set_text("Variante gérée par Cifereca")
@@ -228,6 +231,54 @@ class OptimizerPage:
 
         self._refresh_profile_help()
         self._unsubscribe_profiles = context.subscribe_services("device.profile", self._services_changed)
+
+    @staticmethod
+    def _artifact_filename(artifact) -> str:
+        """UI-only basename; never treat it as a broker-resolved disk path."""
+        raw = getattr(artifact, "filename", "")
+        filename = str(raw or "") if type(raw) is str else ""
+        return Path(filename).name if filename else "Document local géré par Cifereca"
+
+    def open_artifact(self, artifact, *, action_host=None) -> bool:
+        """Apply a book.detail selection to this already-mounted page.
+
+        A mutable path is never handed across the plugin boundary. On Start,
+        Core's artifact.execution broker revalidates the original ArtifactRef,
+        identity/placement, DRM, and the document input lease.
+        """
+        from cifereca.plugin_api import ArtifactRef
+
+        if self._closed or (self._task_handle is not None
+                            and not self._task_handle.done()):
+            return False
+        if not isinstance(artifact, ArtifactRef):
+            return False
+        fmt = str(getattr(artifact.format, "format", "")).casefold()
+        drm = str(getattr(artifact.format, "drm", "none") or "none").casefold()
+        if fmt not in {"epub", "pdf"} or drm not in {"", "none"}:
+            return False
+        self._invalidate_semantic_preview()
+        self.artifact = artifact
+        self.action_host = action_host
+        label = self._artifact_filename(artifact)
+        self._artifact_info_label.set_label(
+            "EPUB/PDF sélectionné depuis Bibliothèque : " + label
+            + ". Fichier et variante résolus par Cifereca."
+        )
+        self._artifact_info_label.set_visible(True)
+        self.source_entry.set_text(label)
+        self.source_entry.set_sensitive(False)
+        self.source_button.set_sensitive(False)
+        self.output_entry.set_text("Variante gérée par Cifereca")
+        self.output_entry.set_sensitive(False)
+        self.output_button.set_sensitive(False)
+        self.optimize_button.set_label("Obtenir la variante optimisée")
+        self._output_auto = True
+        self._set_default_output()
+        self.status.set_text("")
+        self.progress.set_fraction(0.0)
+        self.progress.set_text("Prêt")
+        return True
 
     @staticmethod
     def _label(Gtk, text):

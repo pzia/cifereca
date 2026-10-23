@@ -10,6 +10,7 @@ class EpubOptimizerPlugin:
     def __init__(self) -> None:
         self.context = None
         self._controllers: weakref.WeakSet = weakref.WeakSet()
+        self._active_controller = None
         self._pending_artifact = None
         self._pending_action_host = None
 
@@ -34,13 +35,25 @@ class EpubOptimizerPlugin:
     def _open_from_detail(self, host):
         ctx = host.action_context()
         artifact = getattr(ctx, "artifact", None)
-        if artifact is None:
-            host.toast("Aucun EPUB/PDF local disponible pour cette action")
+        if not self._visible_for_document(ctx):
+            host.toast("Aucun EPUB/PDF non protégé disponible pour cette action")
             return None
-        self._pending_artifact = artifact
-        self._pending_action_host = host
-        # Core041 exposes artifact.execution; the page keeps profile selection
-        # but delegates all leases, persistence and placement changes to Core.
+        # The Shell prebuilds pages: pending state alone cannot update an
+        # already-mounted controller. Deliver the exact Core ArtifactRef at
+        # the click boundary, before navigating to its existing page.
+        controller = self._active_controller
+        if controller is not None and not getattr(controller, "_closed", False):
+            if not controller.open_artifact(artifact, action_host=host):
+                host.toast("Terminez ou annulez l'optimisation en cours.")
+                return None
+            self._pending_artifact = None
+            self._pending_action_host = None
+        else:
+            # Narrow factory-time fallback for initial construction only.
+            self._pending_artifact = artifact
+            self._pending_action_host = host
+        # Core's artifact.execution broker still validates the real local
+        # placement, identity, DRM and lease when the user explicitly starts.
         host.navigate("epub-optimize")
         return artifact
 
@@ -83,6 +96,7 @@ class EpubOptimizerPlugin:
         self._pending_artifact = None
         self._pending_action_host = None
         self._controllers.add(controller)
+        self._active_controller = controller
         return controller.widget
 
     def deactivate(self):
@@ -94,6 +108,7 @@ class EpubOptimizerPlugin:
         if self.context is not None:
             self.context.logger.info("EPUB/PDF optimizer plugin deactivated")
         self._controllers.clear()
+        self._active_controller = None
         self._pending_artifact = None
         self._pending_action_host = None
         self.context = None
