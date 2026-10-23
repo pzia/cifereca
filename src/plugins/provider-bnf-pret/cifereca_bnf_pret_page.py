@@ -28,6 +28,7 @@ _MESSAGES = {
     "scope_mismatch": "Identité changée : session interrompue.",
     "reader_busy": "Lecture déjà en cours.",
     "invalid_search": "Recherche invalide (2 à 128 caractères, sans caractère de contrôle).",
+    "next_page_unavailable": "Aucun lien « page suivante » sûr et visible sur la page de résultats.",
     "html_limit": "Page trop volumineuse : lecture partielle non publiée.",
     "dom_limit": "Page trop complexe : lecture refusée.",
 }
@@ -252,6 +253,8 @@ class BnfReaderPage:
         search_bar.append(search_field)
         search_action = Gtk.Button(label="Rechercher sur BnF")
         search_bar.append(search_action)
+        next_button = Gtk.Button(label="Page suivante (si lien visible)")
+        search_bar.append(next_button)
         root.append(search_bar)
         status = Gtk.Label(label="Aucune connexion ni lecture lancée.", xalign=0, wrap=True)
         status.set_selectable(True)
@@ -290,6 +293,7 @@ class BnfReaderPage:
         current_profile = current()
         active_identity = current_profile[0] if current_profile else None
         busy = False
+        results_read = False
 
         def valid():
             return self._ui is root and self.context is not None
@@ -311,6 +315,8 @@ class BnfReaderPage:
             search_button.set_sensitive(same and mode == "readonly" and not busy)
             search_field.set_sensitive(same and mode == "readonly" and not busy)
             search_action.set_sensitive(same and mode == "readonly" and not busy)
+            next_button.set_sensitive(same and mode == "readonly"
+                                      and not busy and results_read)
             detail_button.set_sensitive(same and mode == "readonly" and not busy)
             actions_button.set_sensitive(same and mode == "readonly" and not busy)
             probe_button.set_sensitive(same and mode in {"login", "readonly"} and not busy)
@@ -335,7 +341,7 @@ class BnfReaderPage:
                     and now[0] == scope.identity_id == active_identity)
 
         def sync_profile():
-            nonlocal current_profile, active_identity, busy
+            nonlocal current_profile, active_identity, busy, results_read
             if not valid():
                 return False
             updated = current()
@@ -343,6 +349,7 @@ class BnfReaderPage:
             if new_id != active_identity:
                 self._stop()
                 busy = False
+                results_read = False
                 active_identity = new_id
                 account_ack.set_active(False)
                 preview.set_label("")
@@ -355,7 +362,7 @@ class BnfReaderPage:
             return False
 
         def command(name):
-            nonlocal busy
+            nonlocal busy, results_read
             worker = self.worker
             scope = worker.scope if worker is not None else None
             generation = self._generation
@@ -367,6 +374,9 @@ class BnfReaderPage:
                 status.set_label(
                     "Confirmez d'abord que le compte BnF utilisé correspond au profil actif."
                 )
+                return
+            if name == "next_results" and not results_read:
+                status.set_label("Relisez d'abord les résultats de la page actuelle.")
                 return
             search_query = None
             if name == "search":
@@ -399,6 +409,7 @@ class BnfReaderPage:
                 selection.close()
             if loans is not None:
                 loans.close()
+            results_read = False
             busy = True
             reset_buttons()
             status.set_label("Lecture BnF en cours…")
@@ -416,7 +427,7 @@ class BnfReaderPage:
 
             def completed(fut):
                 def show():
-                    nonlocal busy
+                    nonlocal busy, results_read
                     if not scope_ok(worker, scope, generation):
                         return False
                     busy = False
@@ -496,6 +507,7 @@ class BnfReaderPage:
                                 status.set_label(_DEFAULT_ERROR)
                             else:
                                 self.selection = selection
+                                results_read = True
                                 preview.set_label("\n".join(rows))
                                 notice_index.set_range(1, max(1, len(rows)))
                                 notice_index.set_value(1)
@@ -510,7 +522,7 @@ class BnfReaderPage:
             future.add_done_callback(completed)
 
         def start(_button):
-            nonlocal busy
+            nonlocal busy, results_read
             if self.worker is not None or busy:
                 return
             profile_now = current()
@@ -523,6 +535,7 @@ class BnfReaderPage:
             consent.set_active(False)
             account_ack.set_active(False)
             preview.set_label("")
+            results_read = False
             generation = self._generation + 1
             self._generation = generation
             try:
@@ -561,9 +574,10 @@ class BnfReaderPage:
             handle.add_done_callback(closed)
 
         def stop(_button=None):
-            nonlocal busy
+            nonlocal busy, results_read
             self._stop()
             busy = False
+            results_read = False
             account_ack.set_active(False)
             preview.set_label("")
             search_field.set_text("")
@@ -588,6 +602,7 @@ class BnfReaderPage:
         loans_button.connect("clicked", lambda _b: command("loans"))
         search_button.connect("clicked", lambda _b: command("suggestions"))
         search_action.connect("clicked", lambda _b: command("search"))
+        next_button.connect("clicked", lambda _b: command("next_results"))
         detail_button.connect("clicked", lambda _b: command("visible_detail"))
         actions_button.connect("clicked", lambda _b: command("book_actions"))
         probe_button.connect("clicked", lambda _b: command("dom_probe"))

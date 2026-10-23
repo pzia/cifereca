@@ -200,6 +200,12 @@ class BnfReaderPageTests(unittest.TestCase):
             BookActionSignals(ProfileScope('i', 'a', 'e'), 102, 0, 0)),
             page._DEFAULT_ERROR)
 
+    def test_next_page_error_is_safe_and_does_not_claim_completeness(self):
+        message = page.safe_error(page.BrowserSessionError("next_page_unavailable"))
+        self.assertIn("Aucun lien", message)
+        self.assertNotIn("exhaustif", message)
+        self.assertNotIn("cookie", message)
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))
