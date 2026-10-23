@@ -46,8 +46,23 @@ class ParisSearchUnavailable(ParisError):
     retryable = True
 
 
+PARIS_LOGIN_REASON_CODES = frozenset({
+    "paris_login_http_forbidden",
+    "paris_login_http_unauthorized",
+    "paris_login_rate_limited",
+    "paris_login_upstream_unavailable",
+    "paris_login_rejected",
+})
+
+
 class AuthenticationError(ParisError):
-    pass
+    """Private human message and separately trusted, closed diagnostic code."""
+
+    def __init__(self, message: str, *, code: str = "paris_login_rejected") -> None:
+        if code not in PARIS_LOGIN_REASON_CODES:
+            raise ValueError("invalid_paris_login_reason")
+        super().__init__(message)
+        self.code = code
 
 class ParisClient:
     def __init__(self, base_url: str = BASE_URL, timeout: float = 25.0, diagnostics: Any | None = None,
@@ -197,6 +212,8 @@ class ParisClient:
                     or operation.startswith("history cover search ")
                 ))
             )
+            if category == "AUTH" and isinstance(exc, AuthenticationError):
+                detail["code"] = exc.code
             if not private_operation:
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
@@ -219,7 +236,25 @@ class ParisClient:
                 data={"username": username, "password": password, "rememberMe": "false"},
             )
             if r.status_code == 403:
-                raise AuthenticationError("Paris refuse le login HTTP direct depuis cette machine (403)")
+                raise AuthenticationError(
+                    "Paris refuse le login HTTP direct depuis cette machine (403)",
+                    code="paris_login_http_forbidden",
+                )
+            if r.status_code == 401:
+                raise AuthenticationError(
+                    "Paris refuse l'authentification (401)",
+                    code="paris_login_http_unauthorized",
+                )
+            if r.status_code == 429:
+                raise AuthenticationError(
+                    "Paris limite temporairement les connexions (429)",
+                    code="paris_login_rate_limited",
+                )
+            if 500 <= r.status_code <= 599:
+                raise AuthenticationError(
+                    "Service d'authentification Paris indisponible",
+                    code="paris_login_upstream_unavailable",
+                )
             data = self._json(r, "login", require_success=False)
             if not r.is_success or data.get("success") is not True:
                 raise AuthenticationError(str(data.get("message") or "Identifiant ou mot de passe incorrect"))
