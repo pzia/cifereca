@@ -305,3 +305,68 @@ def test_timing_excludes_cancelled_pending_and_includes_worker_failure():
     finally:
         release.set()
         pool.shutdown(wait=True)
+
+
+def test_none_callable_never_stops_a_worker_or_leaks_a_shared_admission_slot():
+    """A None payload is the internal stop sentinel, not runnable work."""
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=1, reserve_user_slots=0)
+    pool = PriorityExecutor(
+        max_workers=1, max_pending=1, shared_admission=admission,
+        admission_scope="PRIVATE_PROFILE",
+    )
+    try:
+        initial = pool.admission_snapshot()
+        for task in (None, False, "PRIVATE_SIGNED_URL", object()):
+            with pytest.raises(TypeError, match="callable"):
+                pool.submit(TaskPriority.USER_ACTION, task)
+            assert pool.admission_snapshot() == initial
+            assert admission.snapshot()["inflight"] == 0
+            assert admission.snapshot()["rejected"] == 0
+        result = pool.submit(TaskPriority.USER_ACTION, lambda: "worker-survived")
+        assert result.result(timeout=3) == "worker-survived"
+        assert pool.admission_snapshot()["admitted"] == 1
+    finally:
+        pool.shutdown(wait=True)
+    assert admission.snapshot()["inflight"] == 0
+    assert all(not worker.is_alive() for worker in pool._threads)
+    assert "PRIVATE_PROFILE" not in repr(admission.snapshot())
+
+
+@pytest.mark.parametrize("bad_priority", (
+    True, False, 1.5, "0", None, object(),
+))
+def test_priority_is_integral_and_checked_before_any_admission(bad_priority):
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=1, reserve_user_slots=0)
+    pool = PriorityExecutor(
+        max_workers=1, shared_admission=admission,
+        admission_scope="PRIVATE_SCOPE",
+    )
+    try:
+        with pytest.raises(ValueError, match="invalid task priority"):
+            pool.submit(bad_priority, lambda: pytest.fail("malformed task ran"))
+        assert pool.admission_snapshot()["admitted"] == 0
+        assert pool.admission_snapshot()["pending"] == 0
+        assert admission.snapshot()["inflight"] == 0
+        assert pool.submit(0, lambda: "ok").result(timeout=3) == "ok"
+    finally:
+        pool.shutdown(wait=True)
+    assert admission.snapshot()["inflight"] == 0
+
+
+def test_plugin_supplied_priority_int_hook_is_never_called_under_pool_lock():
+    """Calling arbitrary __int__ under the lock would enable a deadlock."""
+    class HostilePriority:
+        def __int__(self):
+            raise AssertionError("PRIVATE_INT_HOOK_INVOKED")
+
+    pool = PriorityExecutor(max_workers=1)
+    try:
+        with pytest.raises(ValueError, match="invalid task priority"):
+            pool.submit(HostilePriority(), lambda: None)
+        assert pool.submit(TaskPriority.USER_ACTION, lambda: 42).result(timeout=3) == 42
+    finally:
+        pool.shutdown(wait=True)
