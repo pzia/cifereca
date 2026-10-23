@@ -115,7 +115,11 @@ def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any
     try:
         with InterProcessLock(acquisition_lock_file()):
             control.check_cancelled()
-            updated = tool.plan(context)
+            # The exact same lock protects both measured revalidation and
+            # the eventual mutation. Never issue an additional inventory
+            # request merely to animate the bar; legacy plan(context) keeps
+            # working and the confirmed preview is still compared fieldwise.
+            updated = _compute_preview_plan(tool, context, control)
             # Match the user-reviewed action, not only an opaque plugin ID.
             if (
                 updated.tool_id != preview.tool_id
