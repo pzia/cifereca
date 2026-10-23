@@ -159,6 +159,11 @@ class TaskBrokerImpl:
     ) -> TaskHandle:
         if not callable(operation):
             raise TypeError("operation must be callable")
+        # A plugin may control its advertised priority. Do not coerce bool,
+        # float, numeric strings, or arbitrary __int__ objects into a trusted
+        # user-action lane. Reject before allocating controls/executor work.
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            raise ValueError("invalid task priority")
         task_id = next(self._ids)
         control = _TaskControl(on_progress)
         queued_at = time.monotonic()
@@ -213,7 +218,7 @@ class TaskBrokerImpl:
             executor = self._executor
             self._controls[task_id] = control
             try:
-                future = executor.submit(int(priority), invoke)
+                future = executor.submit(priority, invoke)
             except Exception:
                 self._controls.pop(task_id, None)
                 raise

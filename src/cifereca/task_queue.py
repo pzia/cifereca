@@ -81,6 +81,16 @@ class PriorityExecutor:
             self._threads.append(thread)
 
     def submit(self, priority: int | TaskPriority, fn: Callable[[], Any]) -> Future[Any]:
+        # A None task has the same sentinel shape as shutdown. Never place
+        # untrusted/malformed work into that queue: the worker would exit,
+        # leaving its Future pending and any shared admission lease stranded.
+        # Validate priority before holding the pool lock; do not invoke a
+        # plugin-defined __int__ hook under that lock.
+        if not callable(fn):
+            raise TypeError("executor task must be callable")
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            raise ValueError("invalid task priority")
+        queued_priority = int(priority)
         with self._lock:
             if self._closed:
                 raise RuntimeError("executor already closed")
@@ -90,7 +100,7 @@ class PriorityExecutor:
             future: Future[Any] = Future()
             if self._shared_admission is not None:
                 lease = self._shared_admission.acquire(
-                    priority=int(priority), scope=self._admission_scope,
+                    priority=queued_priority, scope=self._admission_scope,
                 )
                 if lease is None:
                     self._rejected += 1
@@ -98,7 +108,7 @@ class PriorityExecutor:
                 self._leases[future] = lease
                 future.add_done_callback(self._release_cancelled_lease)
             self._queued_at[future] = monotonic_ns()
-            self._queue.put((int(priority), next(self._sequence), future, fn))
+            self._queue.put((queued_priority, next(self._sequence), future, fn))
             self._pending += 1
             self._admitted += 1
             return future
