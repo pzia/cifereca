@@ -57,7 +57,7 @@ def canonical_diagnostic_domain(value: str) -> str:
         character for character in unicodedata.normalize("NFKD", value.casefold())
         if not unicodedata.combining(character)
     )
-    key = re.sub(r"[\\s_-]+", " ", folded).strip()
+    key = re.sub(r"[\s_-]+", " ", folded).strip()
     aliases = {
         "": "", "browser": "browser_recorder",
         "recorder": "browser_recorder",
