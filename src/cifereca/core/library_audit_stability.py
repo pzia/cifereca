@@ -17,9 +17,17 @@ from time import monotonic
 _KEY = os.urandom(32)
 _LOCK = Lock()
 _GENERATION = 0
-_SLOT = None
+# One bounded private baseline per service/identity. A subsequent audit of
+# another profile must not revoke this profile's 600-file comparison.
+_SLOTS = []
+_ACTIVE = {}
 _TTL = 600
 _MAX_FILES = 4096
+_MAX_SLOTS = 8
+_MAX_ACTIVE = 16
+# Counters retain keyed digests only. Bound the *combined* private footprint
+# across identities; retaining too much sacrifices a diagnostic, not safety.
+_MAX_RETAINED_ENTRIES = 100_000
 _TABLES = (
     'entitlements', 'acquisition_ledger', 'placements',
     'artifacts', 'backup_items',
@@ -115,18 +123,43 @@ def _project(audit) -> _Projection | None:
         return None
 
 
+def _same(slot: _Slot, service, identity_id: str) -> bool:
+    # The strong owner reference also defeats id(service) reuse.
+    return slot.owner is service and slot.identity_id == identity_id
+
+
+def _retained_entries(value: _Projection) -> int:
+    return len(value.files) + sum(
+        sum(counter.values()) for counter in value.rows.values()
+    )
+
+
 def begin_audit_stability(service, identity_id: str, scope: tuple):
-    """Consume the previous comparable run; revoke older concurrent writers."""
-    global _GENERATION, _SLOT
+    """Consume only this profile's previous run; revoke its older generation.
+
+    A foreign service/identity can neither steal the baseline nor invalidate
+    a concurrent valid comparison for the selected profile. A changed scope
+    consumes the old slot but never treats it as comparable evidence.
+    """
+    global _GENERATION
     with _LOCK:
         _GENERATION += 1
         generation = _GENERATION
-        prior, _SLOT = _SLOT, None
-    if (prior is not None and prior.owner is service
-            and prior.identity_id == identity_id and prior.scope == scope
-            and monotonic() < prior.expires):
-        return generation, prior.value
-    return generation, None
+        now = monotonic()
+        candidate = next(
+            (slot for slot in _SLOTS
+             if _same(slot, service, identity_id)
+             and slot.scope == scope and slot.expires > now), None,
+        )
+        _SLOTS[:] = [
+            slot for slot in _SLOTS
+            if slot.expires > now and not _same(slot, service, identity_id)
+        ]
+        key = (id(service), identity_id)
+        _ACTIVE[key] = (service, generation)
+        while len(_ACTIVE) > _MAX_ACTIVE:
+            del _ACTIVE[next(iter(_ACTIVE))]
+        return generation, candidate.value if candidate is not None else None
 
 
 def finish_audit_stability(service, identity_id: str, scope: tuple,
@@ -138,17 +171,30 @@ def finish_audit_stability(service, identity_id: str, scope: tuple,
     source/proof comparisons. Changing an input is not proof of a particular
     cause for link loss. A cancelled/revoked run stores no projection.
     """
-    global _SLOT
     if not scope_valid():
         return None
     current = _project(audit)
     if current is None:
         return None
     with _LOCK:
-        if generation != _GENERATION or not scope_valid():
+        key = (id(service), identity_id)
+        active = _ACTIVE.get(key)
+        if (active is None or active[0] is not service
+                or active[1] != generation or not scope_valid()):
             return None
-        _SLOT = _Slot(service, identity_id, scope, generation,
-                      monotonic() + _TTL, current)
+        del _ACTIVE[key]
+        now = monotonic()
+        _SLOTS[:] = [
+            slot for slot in _SLOTS
+            if slot.expires > now and not _same(slot, service, identity_id)
+        ]
+        _SLOTS.append(_Slot(
+            service, identity_id, scope, generation, now + _TTL, current,
+        ))
+        while (len(_SLOTS) > _MAX_SLOTS
+               or sum(_retained_entries(slot.value) for slot in _SLOTS)
+               > _MAX_RETAINED_ENTRIES):
+            _SLOTS.pop(0)
     if previous is None:
         return None
 
