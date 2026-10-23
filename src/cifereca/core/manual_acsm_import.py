@@ -60,6 +60,13 @@ def import_acsm(
         shutil.copy2(source, staged)
     if sha256_file(staged) != source_sha:
         raise ProviderConfigurationError("Le fichier ACSM a changé pendant l’import")
+    if is_bin and inspect_saved_bnf_token(staged).code != "candidate_acsm":
+        # Revalidate the *copied* bytes, not only the external source read
+        # before hash/copy. A concurrent replacement may never cross the
+        # trusted staging -> ADEPT boundary.
+        raise ProviderConfigurationError(
+            "Jeton ADEPT .bin invalide, expiré ou non vérifiable"
+        )
     self.storage.acquisition_put({
         "acquisition_id": acquisition_id, "provider_id": provider_id, "credential_id": "manual",
         "identity_id": identity.identity_id, "item_id": source_sha, "title": title or source.stem,
