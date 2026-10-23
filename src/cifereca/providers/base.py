@@ -111,6 +111,9 @@ class ProviderDescriptor:
     homepage: str | None = None
     notes: tuple[str, ...] = ()
     search_capabilities: ProviderSearchCapabilities = field(default_factory=ProviderSearchCapabilities)
+    # Interactive SSO requires a deliberate UI action; never start it from
+    # the generic startup connection sweep or mark it connected by presence.
+    interactive_authentication: bool = False
 
 
 class ProviderSession(ABC):

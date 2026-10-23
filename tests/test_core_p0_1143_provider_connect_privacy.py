@@ -40,6 +40,11 @@ def _rig(*, singleton=False, succeeds=False):
     )
     if not succeeds:
         session.connect.side_effect = HostileFailure(SIGNED)
+    else:
+        def completed_connect():
+            session.connected = True
+            return [account]
+        session.connect.side_effect = completed_connect
     descriptor = NS(
         id="provider.test", state="ready",
         credential_fields=() if singleton else ("password",),
