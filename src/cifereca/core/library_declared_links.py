@@ -398,7 +398,13 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
             fresh = revalidate_observed_file(observation, roots, identity_id=identity_id,
                                              cancelled=lambda: cancelled() or not valid())
             _require(valid() and not cancelled(), 'source_scope_changed')
-            matches = record['file'] == _file(observation) and fresh.verified
+            # A disabled source connection remains historically recorded,
+            # never a currently reviewable supplier context. Even if file
+            # bytes and the stored loan state are unchanged, the statement
+            # must be shown as needing review rather than "current".
+            matches = (record['file'] == _file(observation)
+                       and fresh.verified
+                       and context['connection']['enabled'] == 1)
             try:
                 _collisions(db, scope, observation, _records(db))
             except DeclarationRejected:
