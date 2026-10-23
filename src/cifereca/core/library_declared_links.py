@@ -413,3 +413,109 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
         raise DeclarationRejected('local_storage_unavailable') from None
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError, UnicodeError):
         raise DeclarationRejected('invalid_local_context') from None
+
+
+@dataclass(frozen=True, repr=False)
+class DeclaredLinkView:
+    """Private descriptive record, never evidence that a supplier link exists."""
+
+    relation_id: str
+    provider_id: str
+    identity_id: str
+    account_id: str
+    item_id: str
+    file_path: str
+    created_at: int
+    state: str
+    review: str
+
+    def __repr__(self):
+        return '<DeclaredLinkView private>'
+
+
+@dataclass(frozen=True, repr=False)
+class DeclaredLinksPage:
+    """Identity-scoped, bounded and explicitly non-attested consultation."""
+
+    rows: tuple[DeclaredLinkView, ...]
+    total: int
+    offset: int
+    limited: bool
+
+    def __repr__(self):
+        return '<DeclaredLinksPage private>'
+
+
+def list_declared_links(service, *, identity_id, offset=0, limit=50,
+                        include_revoked=False):
+    """Read persisted declarations after sync without granting any authority.
+
+    A fresh file check is *not* performed here. Even an unchanged right can
+    only be presented as recorded; a paired file must be revalidated via the
+    explicit inspection workflow before any consequential action.
+
+    A disappeared connection/right remains visible as needing review so
+    subsequent sync cannot silently erase the history of a user statement.
+    """
+    try:
+        _require(_text(identity_id), 'invalid_identity')
+        _require(type(offset) is int and 0 <= offset <= _MAX_RECORDS
+                 and type(limit) is int and 1 <= limit <= 100
+                 and type(include_revoked) is bool, 'invalid_page')
+        current = service.current_identity
+        _require(current is not None and
+                 current.identity_id == identity_id, 'identity_not_active')
+        storage, config = service.storage, service.config
+        accounts, identities = service.accounts, service.identities
+        epoch, data = service._account_context_epoch, config.data
+
+        def valid():
+            return (service.current_identity is current
+                    and current.identity_id == identity_id
+                    and service.storage is storage and service.config is config
+                    and service.accounts is accounts and service.identities is identities
+                    and service._account_context_epoch == epoch and config.data is data)
+
+        with _transaction(storage, False) as db:
+            _require(valid(), 'identity_not_active')
+            result = []
+            for record in _records(db):
+                scope = record['scope']
+                if scope['identity_id'] != identity_id:
+                    continue
+                if record['state'] == 'revoked':
+                    if not include_revoked:
+                        continue
+                    review = 'revoked'
+                else:
+                    # Checking the SQLite account/right here makes no claim
+                    # about a current source login, licence or file SHA.
+                    try:
+                        context = _context(db, scope)
+                        review = ('recorded_unverified_file'
+                                  if record['right_state'] == _right_state(context)
+                                  else 'source_or_right_changed')
+                    except DeclarationRejected:
+                        review = 'source_or_right_changed'
+                result.append(DeclaredLinkView(
+                    relation_id=record['relation_id'],
+                    provider_id=scope['provider_id'],
+                    identity_id=scope['identity_id'],
+                    account_id=scope['account_id'],
+                    item_id=scope['item_id'],
+                    file_path=record['file']['path'],
+                    created_at=record['created_at'],
+                    state=record['state'],
+                    review=review,
+                ))
+            _require(valid(), 'identity_not_active')
+        result.sort(key=lambda row: (row.created_at, row.relation_id), reverse=True)
+        return DeclaredLinksPage(tuple(result[offset:offset + limit]),
+                                 len(result), offset, len(result) > offset + limit)
+    except DeclarationRejected:
+        raise
+    except (sqlite3.Error, OSError):
+        raise DeclarationRejected('local_storage_unavailable') from None
+    except (ValueError, TypeError, AttributeError, KeyError, RecursionError,
+            UnicodeError):
+        raise DeclarationRejected('invalid_local_context') from None
