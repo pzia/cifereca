@@ -61,7 +61,7 @@ def test_client_download_trace_has_site_and_book_but_no_private_loan_or_uid(capl
     def handler(request):
         seen.append(request)
         return httpx.Response(
-            200, json={"d": "https://acs4.cantook.net/private?token=SUPERPRIVATE"},
+            200, json={"success": True, "d": "https://acs4.cantook.net/private?token=SUPERPRIVATE"},
             headers={"content-type": "application/json; SECRET=SUPERPRIVATE"},
         )
     client = ParisClient(
