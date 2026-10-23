@@ -1676,6 +1676,7 @@ class DiagnosticsPagePlugin:
                 selected_source = SOURCES[int(source_selector.get_selected())]
                 selected_period = PERIODS[int(period_selector.get_selected())]
                 selected_module = module_filter.get_text().strip()
+                selected_domain = DOMAINS[int(domain_selector.get_selected())]
                 selected_provider = provider_filter.get_text().strip()
                 selected_severity = SEVERITIES[int(severity_selector.get_selected())]
                 selected_snapshot = ai_snapshot.get_active()
@@ -1708,7 +1709,7 @@ class DiagnosticsPagePlugin:
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
                     module=selected_module, severity=selected_severity,
-                    provider_id=selected_provider,
+                    provider_id=selected_provider, domain=selected_domain,
                     since=explorer_since(selected_period),
                     include_snapshot=selected_snapshot,
                     include_support_report=selected_support_report,
