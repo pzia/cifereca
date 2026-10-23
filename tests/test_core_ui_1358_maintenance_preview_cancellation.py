@@ -158,6 +158,7 @@ def _method():
             ),
         ),
         "clear_box": lambda box: box.children.clear(),
+        "GLib": NS(idle_add=lambda callback: callback()),
         "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
                   ScrolledWindow=Container,
                   PolicyType=NS(NEVER=0, AUTOMATIC=1)),
