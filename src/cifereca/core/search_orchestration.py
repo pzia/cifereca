@@ -616,8 +616,8 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
                 detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
                         "error": failure_code, "message": "search_provider_failure"},
             )
-            from ..search_failures import is_technical_search_error
-            if is_technical_search_error(exc):
+            from ..search_failures import should_stop_search_variants
+            if should_stop_search_variants(exc):
                 break
     if field in {"title", "author"}:
         provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
