@@ -14,7 +14,7 @@ from diagnostics_explorer import (
     sanitized_rows, module_groups, linked_operation_groups, source_summaries, explorer_header,
     diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
-    empty_observation, local_timestamp_label,
+    empty_observation, local_timestamp_label, public_domain_id,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -663,6 +663,25 @@ class DiagnosticsPagePlugin:
         provider_row.append(provider_filter)
         journals_tab.append(provider_row)
 
+        # Core-attested business families are independent of the physical
+        # PLUGIN/LIBRARY module and the local 50-row text search.  Invalid
+        # aliases must fail closed rather than matching a plausible message.
+        domain_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        domain_row.append(Gtk.Label(label="Domaine métier :", xalign=0))
+        domain_filter = Gtk.Entry()
+        domain_filter.set_placeholder_text(
+            "Browser / recorder / Réconciliation · Entrée"
+        )
+        domain_filter.set_tooltip_text(
+            "Filtre Core exact AVANT pagination. Browser/recorder et "
+            "Réconciliation/Reconciliation/Réconcilitation sont des alias. "
+            "Les événements non attestés restent exclus."
+        )
+        domain_filter.set_hexpand(True)
+        domain_filter.set_max_width_chars(40)
+        domain_row.append(domain_filter)
+        journals_tab.append(domain_row)
+
         # This is a SERVER-side exact Core reason-code filter, unlike the
         # search field above which only scans the 50 loaded observations.
         # A separate row keeps controls usable on 760/1024px desktops.
@@ -1211,9 +1230,20 @@ class DiagnosticsPagePlugin:
             if selection_json is None:
                 selected_event_ids.intersection_update(valid_ids)
             journals_sources.set_text(diagnostic_channel_caption(current_page))
-            journals_summary.set_text(explorer_header(
-                current_page, rows, search=search_filter.get_text().strip()
-            ))
+            try:
+                active_domain = public_domain_id(domain_filter.get_text().strip())
+            except ValueError:
+                domain_caption = "non reconnu · corriger puis Entrée"
+            else:
+                domain_caption = {
+                    "": "tous",
+                    "browser_recorder": "Browser Recorder (Core attesté)",
+                    "reconciliation": "Réconciliation (Core attesté)",
+                }[active_domain]
+            journals_summary.set_text(
+                explorer_header(current_page, rows, search=search_filter.get_text().strip())
+                + " · Domaine : " + domain_caption
+            )
             groups = (linked_operation_groups(rows) if operation_grouping.get_active()
                       else module_groups(rows))
             for group in groups:
@@ -1346,6 +1376,7 @@ class DiagnosticsPagePlugin:
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
                 "provider_id": provider_filter.get_text().strip(),
+                "domain": domain_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "offset": page_offset,
@@ -1481,6 +1512,7 @@ class DiagnosticsPagePlugin:
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
                 "provider_id": provider_filter.get_text().strip(),
+                "domain": domain_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "search": search_filter.get_text().strip(),
@@ -1575,6 +1607,8 @@ class DiagnosticsPagePlugin:
         module_filter.connect("activate", reset_events)
         provider_filter.connect("activate", reset_events)
         provider_filter.connect("changed", lambda *_: invalidate_selection())
+        domain_filter.connect("activate", reset_events)
+        domain_filter.connect("changed", lambda *_: invalidate_selection())
         reason_code_filter.connect("activate", reset_events)
         reason_code_filter.connect("changed", lambda *_: invalidate_selection())
         search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
@@ -1644,6 +1678,16 @@ class DiagnosticsPagePlugin:
 
         def prepare_ai(_button):
             nonlocal ai_generation, ai_preview, ai_result, ai_json
+            if domain_filter.get_text().strip():
+                # This independent AI preview API does not yet carry a
+                # domain-scoped consent token. Do not silently send wider
+                # events than those visible in the filtered journal.
+                invalidate_ai()
+                ai_status.set_text(
+                    "Aperçu IA indisponible avec filtre Domaine actif : "
+                    "retirez ce filtre pour demander un aperçu plus large."
+                )
+                return
             if self.llm is None:
                 ai_status.set_text("Service IA désactivé : aucun envoi.")
                 return
@@ -1892,6 +1936,7 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
+        domain_filter.connect("changed", invalidate_ai)
         provider_filter.connect("changed", invalidate_ai)
         ai_snapshot.connect("toggled", invalidate_ai)
         ai_support_report.connect("toggled", invalidate_ai)
