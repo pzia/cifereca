@@ -43,7 +43,11 @@ def test_one_budget_is_shared_between_sqlite_wal_and_subsequent_audit(
     assert audit_spy.call_count == 1
     kwargs = audit_spy.call_args.kwargs
     assert kwargs["seconds"] == pytest.approx(expected_remaining)
-    assert kwargs["limits"].seconds == pytest.approx(expected_remaining)
+    expected_reserve = min(90, expected_remaining / 2)
+    assert kwargs["limits"].seconds == pytest.approx(
+        expected_remaining - expected_reserve
+    )
+    assert 0 < kwargs["limits"].seconds < kwargs["seconds"] <= 600
     assert kwargs["comparison_seconds"] == 30
     assert kwargs["candidate_seconds"] == 60
     assert kwargs["candidate_index_seconds"] == 30
