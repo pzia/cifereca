@@ -766,7 +766,11 @@ class MainWindow(Adw.ApplicationWindow):
                 "library.naming.repair": "Renormalisation des noms",
                 "library.duplicates.cleanup": "Nettoyage des doublons",
             }
-            activity_label = activity_labels.get(getattr(info, "id", None))
+            # Every discovered maintenance.tool gets its own guarded progress
+            # line, including future/legacy plugins that do not implement
+            # plan_with_progress. Never use a plugin-provided title, ID or
+            # phase as a Core-trusted status label.
+            activity_label = activity_labels.get(getattr(info, "id", None), "Traitement")
             if activity_label is not None:
                 def line_alive(button=run, scope=line_scope):
                     if self._closed or button.get_root() is None:
