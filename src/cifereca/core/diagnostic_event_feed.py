@@ -616,17 +616,56 @@ def query_diagnostic_events(
         events.extend(rows)
         states.append(state)
     if module:
-        # "module" is the logger on app_log, but the Core producer category on
-        # core_events. A KOBO/NUMILOG business filter must not discard a
-        # canonical app_log observation solely because its logger is cifereca.
-        # Only the exact closed schema parser above may set business_module.
-        prefix = module.casefold()[:90]
-        events = [
-            row for row in events
-            if row["module"].casefold().startswith(prefix)
-            or (type(row.get("business_module")) is str
-                and row["business_module"].casefold().startswith(prefix))
-        ]
+        # Closed business-domain aliases are applied *before pagination*.
+        # Only Core-projected, schema-validated detail can qualify: a generic
+        # PLUGIN or LIBRARY event must not impersonate an attested operation.
+        # Other module prefixes keep their existing backwards-compatible
+        # logger/category semantics.
+        import unicodedata
+
+        normalized = "".join(
+            char for char in unicodedata.normalize("NFKD", module.casefold())
+            if not unicodedata.combining(char)
+        ).strip()
+        domain = (
+            "browser" if normalized in {"browser", "recorder", "browser recorder"}
+            else "reconciliation" if normalized in {
+                "reconciliation", "reconcilitation"
+            } else None
+        )
+        if domain == "browser":
+            events = [
+                row for row in events
+                if row.get("source") == "core_events"
+                and row.get("module") == "PLUGIN"
+                and type(row.get("detail")) is dict
+                and row["detail"].get("operation") in {
+                    "browser_recorder_provision", "browser_recorder_session",
+                    "browser_recorder_export",
+                }
+            ]
+        elif domain == "reconciliation":
+            events = [
+                row for row in events
+                if row.get("source") == "core_events"
+                and row.get("module") == "LIBRARY"
+                and type(row.get("detail")) is dict
+                and row["detail"].get("operation") == "library_reconciliation_audit"
+                and row["detail"].get("status") in {
+                    "complete", "partial", "failed", "cancelled"
+                }
+            ]
+        else:
+            # "module" is the logger on app_log, but the Core producer
+            # category on core_events. Only the closed schema parser above
+            # may set business_module.
+            prefix = module.casefold()[:90]
+            events = [
+                row for row in events
+                if row["module"].casefold().startswith(prefix)
+                or (type(row.get("business_module")) is str
+                    and row["business_module"].casefold().startswith(prefix))
+            ]
     if provider_id:
         events = [row for row in events if row.get("provider_id") == provider_id]
     if severity:
