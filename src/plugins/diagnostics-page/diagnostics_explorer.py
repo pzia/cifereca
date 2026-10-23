@@ -57,6 +57,27 @@ def public_provider_id(value: object) -> str | None:
         return None
     return value
 
+def public_domain_id(value: object) -> str:
+    """Fixed Core-attested domain alias only; no full-text provenance."""
+    if type(value) is not str or len(value) > 40:
+        raise ValueError("unknown diagnostic domain")
+    from unicodedata import normalize, combining
+    alias = "".join(
+        char for char in normalize("NFKD", value.strip().casefold())
+        if not combining(char)
+    ).replace("-", " ").replace("_", " ")
+    names = {
+        "": "", "browser": "browser_recorder",
+        "recorder": "browser_recorder",
+        "browser recorder": "browser_recorder",
+        "reconciliation": "reconciliation",
+        "reconcilitation": "reconciliation",
+    }
+    if alias not in names:
+        raise ValueError("unknown diagnostic domain")
+    return names[alias]
+
+
 SOURCE_STATES = {
     "available": "Alimentée",
     "empty": "Pas d’événement enregistré",
@@ -122,7 +143,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -135,6 +156,7 @@ def fetch_explorer_page(
         raise ValueError("invalid diagnostics module")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("invalid diagnostics provider")
+    domain_id = public_domain_id(domain)
     if (type(reason_code) is not str
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)):
         raise ValueError("invalid reconciliation reason code")
@@ -152,6 +174,8 @@ def fetch_explorer_page(
         query["reason_code"] = reason_code
     if provider_id:
         query["provider_id"] = provider_id
+    if domain_id:
+        query["domain"] = domain_id
     return broker.events(**query)
 
 
@@ -183,6 +207,11 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         provider = public_provider_id(raw.get("provider_id"))
         if provider is not None:
             safe["provider_id"] = provider
+        domain = raw.get("domain")
+        if (raw.get("source") == "core_events"
+                and ((domain == "browser_recorder" and raw.get("module") == "PLUGIN")
+                     or (domain == "reconciliation" and raw.get("module") == "LIBRARY"))):
+            safe["domain"] = domain
         # The Core attests the terminal reconciliation event; present only
         # finite, local aggregate labels. The code is searchable on this page
         # without changing the broker's server-side query or exporting books.
