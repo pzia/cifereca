@@ -387,11 +387,20 @@ class KoboAdeptRuntime:
         # no CLI argv, profile, account, token, response or subject text.
         # This does NOT prove that calls share the same scope/freshness and
         # must never be used to coalesce inventory or suppress an explicit refresh.
+        # Loan inventory is actually invoked with --profile <private name>
+        # before --json. Match its structure without retaining or exposing
+        # the profile value; do not equate two such calls by their family.
         normal_read = (
-            (type(args) is list and args in (
-                ['contract', '--json'], ['capabilities', '--json'],
-                ['profile', 'list', '--json'], ['loans', 'list', '--json'],
-            ))
+            payload is None and type(args) is list and (
+                args in (
+                    ['contract', '--json'], ['capabilities', '--json'],
+                    ['profile', 'list', '--json'], ['loans', 'list', '--json'],
+                )
+                or (
+                    len(args) == 5 and args[:3] == ['loans', 'list', '--profile']
+                    and type(args[3]) is str and args[4] == '--json'
+                )
+            )
         )
         self._report(
             f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}",
