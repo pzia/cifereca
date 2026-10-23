@@ -120,13 +120,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                     reconcile_missing=False, realize_expired=False,
                 )
         result["loans"] = len(loans)
-        if account.provider_id == "paris":
-            # This source has independent DILICOM/SYRACUSE reads. A partial
-            # DILICOM failure must not claim a complete successful sync,
-            # even when the physical branch returned rows or no rows.
-            errors = getattr(session, "last_loan_errors", None)
-            if type(errors) not in (list, tuple) or errors:
-                result["status"] = "partial"
+        # Use the same provider partial-inventory signal as opening sync.
+        # BnF HTML observations are deliberately non-exhaustive even when
+        # every request succeeded. Preserve Paris' legacy fail-closed default
+        # when its independent upstream error inventory is missing.
+        errors = getattr(session, "last_loan_errors",
+                         None if account.provider_id == "paris" else ())
+        if type(errors) not in (list, tuple) or errors:
+            result["status"] = "partial"
     if session.capabilities.personal_library:
         # A provider can implement a one-shot iterable: both the entitlement
         # mirror and remote catalog must see the exact same authenticated rows.
