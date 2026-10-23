@@ -128,3 +128,70 @@ def test_live_previews_in_real_tools_callback_harness_are_non_modal():
     flush(m)
     assert m.feedback.state.phase == "confirmation"
     assert not bar.visible
+
+
+def test_unregistered_future_tool_gets_private_safe_measured_progress_row():
+    """No hard-coded tool ID is needed to render a real progressive preview."""
+    m = mounted("plugin.future.collection.scan")
+    assert len(m.host._maintenance_line_rows) == 1
+
+    def scan_with_progress(context, control):
+        control.report(current=0, total=18, message="PRIVATE/path and SECRET_ACCOUNT")
+        control.report(current=9, total=18, message="PRIVATE title")
+        return m.tool.plan(context)
+
+    m.tool.plan_with_progress = scan_with_progress
+    m.preview.click()
+    args, _kwargs = m.jobs[-1]
+    assert m.feedback.state.phase == "analysis"
+    args[1]()
+    flush(m)
+    label, bars = m.status.children
+    spinner, bar = bars.children
+    assert label.text == "Traitement en cours · 50 %"
+    assert bar.visible and bar.fraction == .5
+    assert not spinner.visible
+    assert "PRIVATE" not in label.text and "SECRET" not in label.text
+    assert len(m.jobs) == 1
+
+
+def test_unregistered_legacy_tool_keeps_indeterminate_row_without_fake_counts():
+    """Legacy plan(context) is valid; lack of counters is not a false 0/1."""
+    m = mounted("plugin.old.audit")
+    m.preview.click()
+    flush(m)
+    label, bars = m.status.children
+    spinner, bar = bars.children
+    assert label.text == "Analyse…"
+    assert spinner.visible and spinner.running and not bar.visible
+    args, _kwargs = m.jobs[-1]
+    args[1]()
+    flush(m)
+    assert m.feedback.state.phase == "analysis"
+    assert m.feedback.state.fraction is None
+
+
+def test_two_unknown_plugin_rows_are_isolated_and_drop_late_refresh_reports():
+    a = mounted("plugin.future.A")
+    b = mounted("plugin.future.B")
+    a.preview.click()
+    b.preview.click()
+    ta, tb = a.feedback.state, b.feedback.state
+    assert ta.phase == tb.phase == "analysis"
+    ca = a.host._maintenance_line_rows[0][1]["control"]
+    cb = b.host._maintenance_line_rows[0][1]["control"]
+    assert ca is not cb
+    ca.report(current=3, total=6, message="/PRIVATE/A")
+    cb.report(current=1, total=4, message="/PRIVATE/B")
+    flush(a)
+    flush(b)
+    assert a.feedback.state.fraction == .5
+    assert b.feedback.state.fraction == .25
+    a.refresh()
+    assert ca.cancelled()
+    cb.report(current=2, total=4, message="PRIVATE_B")
+    flush(b)
+    assert b.feedback.state.fraction == .5
+    assert a.feedback.state.phase == "analysis" or not a.feedback.valid(
+        a.host._maintenance_line_rows[0][1]["ticket"] or -1
+    )
