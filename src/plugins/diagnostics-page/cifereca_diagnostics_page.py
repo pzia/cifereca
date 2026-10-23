@@ -10,7 +10,7 @@ from cifereca.plugin_api import UiPageContribution
 from cifereca.plugin_api.version_inventory import version_inventory
 from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
 from diagnostics_explorer import (
-    SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
+    SOURCES, SEVERITIES, PERIODS, DOMAINS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, linked_operation_groups, source_summaries, explorer_header,
     diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
@@ -631,6 +631,22 @@ class DiagnosticsPagePlugin:
         filters_top.append(period_selector)
         journals_tab.append(filters_top)
 
+        # Core-attested business family, filtered globally BEFORE paging.
+        # Separate row remains usable on compact (760px) desktops.
+        domain_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        domain_caption = Gtk.Label(label="Domaine métier (toutes les pages) :", xalign=0)
+        domain_selector = Gtk.DropDown.new_from_strings(
+            ["Tous les domaines", "Browser Recorder", "Réconciliation"]
+        )
+        domain_selector.set_tooltip_text(
+            "Filtre global Core attesté, indépendant du préfixe de module. "
+            "Browser/recorder et Réconciliation/Reconciliation désignent "
+            "la même famille ; un ancien Core peut ne pas le prendre en charge."
+        )
+        domain_row.append(domain_caption)
+        domain_row.append(domain_selector)
+        journals_tab.append(domain_row)
+
         filters_bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         module_filter = Gtk.Entry()
         module_filter.set_placeholder_text("Préfixe module (Entrée pour appliquer)")
@@ -1211,9 +1227,14 @@ class DiagnosticsPagePlugin:
             if selection_json is None:
                 selected_event_ids.intersection_update(valid_ids)
             journals_sources.set_text(diagnostic_channel_caption(current_page))
-            journals_summary.set_text(explorer_header(
-                current_page, rows, search=search_filter.get_text().strip()
-            ))
+            domain_label = ("Tous les domaines", "Browser Recorder", "Réconciliation")[
+                int(domain_selector.get_selected())
+            ]
+            journals_summary.set_text(
+                explorer_header(current_page, rows,
+                                search=search_filter.get_text().strip())
+                + " · domaine : " + domain_label
+            )
             groups = (linked_operation_groups(rows) if operation_grouping.get_active()
                       else module_groups(rows))
             for group in groups:
@@ -1345,6 +1366,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": DOMAINS[int(domain_selector.get_selected())],
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1480,6 +1502,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": DOMAINS[int(domain_selector.get_selected())],
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1570,6 +1593,7 @@ class DiagnosticsPagePlugin:
         journals_invert.connect("clicked", lambda *_: select_on_page("invert"))
         journals_clear.connect("clicked", lambda *_: (invalidate_selection("Sélection effacée"), display_events()))
         source_selector.connect("notify::selected", reset_events)
+        domain_selector.connect("notify::selected", reset_events)
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
@@ -1889,6 +1913,7 @@ class DiagnosticsPagePlugin:
         ai_export.connect("clicked", copy_ai)
         ai_export_json.connect("clicked", copy_ai_json)
         source_selector.connect("notify::selected", invalidate_ai)
+        domain_selector.connect("notify::selected", invalidate_ai)
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
