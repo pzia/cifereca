@@ -646,9 +646,9 @@ class DiagnosticsPagePlugin:
 
         filters_bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         module_filter = Gtk.Entry()
-        module_filter.set_placeholder_text(
-            "Module ou Browser / recorder / Réconciliation (Entrée)"
-        )
+        # Retain the original GTK entry identity used by keyboard probes.
+        # The domain selector and tooltip explain the additional exact aliases.
+        module_filter.set_placeholder_text("Préfixe module (Entrée pour appliquer)")
         module_filter.set_hexpand(True)
         module_filter.set_tooltip_text(
             "Préfixe serveur ; Browser, recorder, Réconciliation et Réconcilitation "
