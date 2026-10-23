@@ -261,6 +261,48 @@ class BrowserSessionTests(unittest.TestCase):
                 self.session.search(query, expected=self.session.scope)
             self.assertEqual(len([row for row in self.runtime.page.calls if row[0] == 'goto']), before)
 
+    def test_probe_visible_dom_counts_without_navigation(self):
+        self.ready()
+        self.runtime.page.evaluate_hook = lambda _: {
+            "code": "ok", "loan_sections": 1, "loan_cards": 2,
+            "search_sections": 0, "search_cards": 0, "book_scopes": 0,
+            "resource_links": 2, "loan_links": 2,
+        }
+        before = sum(c[0] == "goto" for c in self.runtime.page.calls)
+        report = self.session.probe_visible_dom(expected=self.session.scope)
+        self.assertEqual((report.kind, report.loan_cards, report.loan_links),
+                         ("activity", 2, 2))
+        self.assertNotIn("identity-a", repr(report))
+        self.assertEqual(before, sum(c[0] == "goto" for c in self.runtime.page.calls))
+        self.runtime.page.url = browser.ORIGIN + "/results?q=fiction"
+        self.assertEqual(self.session.probe_visible_dom(expected=self.session.scope).kind,
+                         "results")
+
+    def test_probe_refuses_foreign_scope_and_malformed_response(self):
+        self.ready()
+        other = browser.ProfileScope("other", "account", "epoch")
+        before = len(self.runtime.page.calls)
+        with self.assertRaisesRegex(browser.BrowserSessionError, "^scope_mismatch$"):
+            self.session.probe_visible_dom(expected=other)
+        self.assertEqual(before, len(self.runtime.page.calls))
+        self.runtime.page.evaluate_hook = lambda _: {"code": "ok", "loan_cards": "SECRET"}
+        with self.assertRaisesRegex(browser.WebParseError, "^unrecognized_dom$"):
+            self.session.probe_visible_dom(expected=self.session.scope)
+        self.runtime.page.url = browser.ORIGIN + "/loans/private"
+        before = len(self.runtime.page.calls)
+        with self.assertRaisesRegex(browser.BrowserSessionError, "^unexpected_page$"):
+            self.session.probe_visible_dom(expected=self.session.scope)
+        self.assertEqual(before, len(self.runtime.page.calls))
+
+    def test_probe_drops_inflight_result_after_navigation(self):
+        self.ready()
+        def change(_):
+            self.session._navigated(self.runtime.page.main_frame)
+            return {"code": "ok"}
+        self.runtime.page.evaluate_hook = change
+        with self.assertRaisesRegex(browser.BrowserSessionError, "^page_changed$"):
+            self.session.probe_visible_dom(expected=self.session.scope)
+
     def test_navigation_during_extraction_discards_result(self):
         self.ready()
         def change(result):
