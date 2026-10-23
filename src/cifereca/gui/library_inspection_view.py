@@ -6,6 +6,7 @@ from time import monotonic
 from ..core.library_local_inspection import LocalInspection, PROVIDERS, STATES, open_local_inspection
 from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
+from .library_declaration_actions import DeclarationActions
 
 
 # Core-only closed failure causes: never expose private source text in GTK.
@@ -755,6 +756,12 @@ class LocalInspectionController:
         selected_provider = [None]
         pair_version = [0]
         placement_committed = [False]
+        declarations = DeclarationActions(
+            Gtk=Gtk, Adw=Adw, window=window, runner=self.parent.runner,
+            session=session, selection=lambda: (selected_right[0], selected_file[0]),
+            alive=lambda: self.session is session and self.alive(),
+        )
+        candidate_box.insert_child_after(declarations.expander, pair_report)
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
@@ -769,6 +776,7 @@ class LocalInspectionController:
             pair_undo.set_visible(False)
             pair_undo.set_sensitive(False)
             selected_file[0] = file_key
+            declarations.reset()
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
             )
