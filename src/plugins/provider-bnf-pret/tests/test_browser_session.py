@@ -241,6 +241,26 @@ class BrowserSessionTests(unittest.TestCase):
         self.assertEqual(len(result.records), 1)
         self.assertEqual(before, sum(c[0] == 'goto' for c in self.runtime.page.calls))
 
+    def test_search_only_explicit_public_get_and_no_private_query_in_repr(self):
+        self.ready()
+        self.runtime.page.html = ('<ul class="search-results__list">'
+                                  '<li class="search-resource-result">'
+                                  '<a href="/resources/synthetic">Fiction</a></li></ul>')
+        before = len([row for row in self.runtime.page.calls if row[0] == 'goto'])
+        result = self.session.search('  Fiction  française ', expected=self.session.scope)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(len([row for row in self.runtime.page.calls if row[0] == 'goto']), before + 1)
+        self.assertEqual(self.runtime.page.url, browser.ORIGIN + '/results?q=Fiction%20fran%C3%A7aise')
+        self.assertNotIn("Fiction", repr(self.session))
+
+    def test_search_rejects_control_and_empty_input_without_navigation(self):
+        self.ready()
+        for query in ('', 'a', '   ', 'private\\nsecret', 'a' * 129, None, 1):
+            before = len([row for row in self.runtime.page.calls if row[0] == 'goto'])
+            with self.assertRaisesRegex(browser.BrowserSessionError, '^invalid_search$'):
+                self.session.search(query, expected=self.session.scope)
+            self.assertEqual(len([row for row in self.runtime.page.calls if row[0] == 'goto']), before)
+
     def test_navigation_during_extraction_discards_result(self):
         self.ready()
         def change(result):
