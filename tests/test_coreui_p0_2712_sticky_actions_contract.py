@@ -47,15 +47,16 @@ def test_declared_link_actions_share_pinned_footer_without_second_writer():
     ast.parse(code)
     ast.parse(actions)
     for control in ("declare", "revoke"):
-        assert f"pair_actions.append(declarations.{control})" in code
         assert f"body.append(self.{control})" not in actions
         assert actions.count(f"self.{control} = Gtk.Button(") == 1
+    assert "pair_actions.prepend(declarations.declare)" in code
+    assert "pair_actions.insert_child_after(declarations.revoke, declarations.declare)" in code
     assert "candidate_box.insert_child_after(declarations.expander, pair_report)" in code
     assert "body.append(self.status)" in actions
     assert "self.declare.connect('clicked', lambda *_: self.preview(False))" in actions
     assert "self.revoke.connect('clicked', lambda *_: self.preview(True))" in actions
     # No UI duplication that would bypass the revocable Core selection.
-    assert code.count("pair_actions.append(declarations.declare)") == 1
-    assert code.count("pair_actions.append(declarations.revoke)") == 1
+    assert code.count("pair_actions.prepend(declarations.declare)") == 1
+    assert code.count("pair_actions.insert_child_after(declarations.revoke, declarations.declare)") == 1
     assert "session.confirm_declared_link(" in actions
     assert "user_confirmed=True" in actions
