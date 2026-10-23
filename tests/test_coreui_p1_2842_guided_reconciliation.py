@@ -84,3 +84,5 @@ def test_stage_four_never_claims_consent_before_human_apply():
     assert consent.index("guide('writing')") < consent.index(
         "def commit():"
     )
+    assert consent.count("guide('blocked')") == 2
+    assert consent.index("reset_pair(chosen_file)\n                    if valid():\n                        guide('blocked')") > consent.index("def completed(outcome):")
