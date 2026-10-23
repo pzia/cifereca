@@ -276,3 +276,43 @@ def test_offline_rollback_does_not_use_unattested_wheelhouse(monkeypatch):
         manager._restore(
             {"sample-pkg": ("sample-pkg", "1.0")}, (Path("/unverified-wheelhouse"),),
         )
+
+
+def test_rollback_uninstall_failure_does_not_echo_pip_stderr(monkeypatch):
+    """Private index credentials must never appear in rollback diagnostics."""
+    secret = "https://user:password@private.example.org/simple?token=SECRET"
+    manager = PythonDependencyManager(allow_index=True)
+    monkeypatch.setattr(manager_module, "_installed_versions", lambda: {
+        "new-addon": ("new-addon", "3.4"),
+    })
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stderr=secret, stdout=secret,
+        ),
+    )
+    with pytest.raises(PythonDependencyError, match="^dependency_not_eligible$") as error:
+        manager._restore({}, ())
+    assert secret not in str(error.value)
+    assert error.value.__cause__ is None
+
+
+def test_rollback_quarantine_failure_preserves_added_installed_distributions(monkeypatch):
+    """No purge before deciding whether changed versions can be recovered."""
+    manager = PythonDependencyManager(allow_index=False)
+    before = {"old-pkg": ("old-pkg", "1.0")}
+    monkeypatch.setattr(manager_module, "_installed_versions", lambda: {
+        "old-pkg": ("old-pkg", "2.0"),
+        "new-addon": ("new-addon", "3.0"),
+    })
+    calls = []
+    def reject(requirements, wheel_dirs):
+        calls.append(("preflight", tuple(requirements)))
+        raise PythonDependencyError("dependency_provenance_unavailable")
+    monkeypatch.setattr(manager, "_pip_install", reject)
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail(
+        "rollback purged a distribution despite rejected wheel provenance",
+    ))
+    with pytest.raises(PythonDependencyError, match="^dependency_provenance_unavailable$"):
+        manager._restore(before, ())
+    assert calls == [("preflight", ("old-pkg==1.0",))]
