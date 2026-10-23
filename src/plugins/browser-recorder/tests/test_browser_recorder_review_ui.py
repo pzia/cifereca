@@ -908,3 +908,35 @@ def test_domain_inventory_requires_fresh_opt_in_and_clears_with_private_data(mon
         assert trace.origin_diagnostics() == ({}, 0)
     finally:
         panel.destroy()
+
+
+def test_private_coverage_reports_body_eviction_and_no_false_success(monkeypatch):
+    panel, _tasks, raw = make_panel(monkeypatch)
+    try:
+        metrics = raw.coverage()
+        metrics.update({
+            "response_read_failed": 2, "request_read_failed": 1,
+            "response_unfinished": 3, "request_unfinished": 1,
+            "json_responses_observed": 4, "json_responses_captured": 0,
+            "html_responses_observed": 2, "html_responses_captured": 0,
+            "write_requests_observed": 2, "write_requests_captured": 0,
+            "text_responses": 0,
+        })
+        panel._show_coverage(metrics)
+        view = panel.coverage_status.label
+        assert "JSON 0/4" in view and "HTML 0/2" in view
+        assert "POST/PUT/PATCH 0/2" in view
+        assert "2 réponse(s)" in view and "1 requête(s)" in view
+        assert "3 réponse(s)" in view and "1 requête(s) inachevées" in view
+        assert "Capture partielle" in view
+        assert "Aucune réponse conservée" in view
+        assert "rejeu automatique" in view
+        assert "https://" not in view and "PRIVATE" not in view
+        baseline = view
+        # An untrusted producer cannot place an exception or text payload
+        # where a count belongs.
+        metrics["response_read_failed"] = "PRIVATE_CREDENTIAL"
+        panel._show_coverage(metrics)
+        assert panel.coverage_status.label == baseline
+    finally:
+        panel.destroy()
