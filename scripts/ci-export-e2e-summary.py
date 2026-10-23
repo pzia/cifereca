@@ -172,6 +172,7 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
     remain in the private CI workspace and are never published.
     """
     if scenario not in {
+        "maintenance-tools-920", "maintenance-tools-1024",
         "maintenance-tools-1280", "maintenance-tools-1366",
         "maintenance-tools-1600",
     }:
