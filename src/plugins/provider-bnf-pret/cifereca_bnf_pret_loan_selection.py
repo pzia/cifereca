@@ -73,6 +73,13 @@ class VisibleLoanBookSelection:
         self._resources = tuple(found)
         return len(found)
 
+    def visible_book_lines(self) -> tuple[str, ...]:
+        """Local UI labels in the same order as choose; never show loan IDs."""
+        if self._closed:
+            return ()
+        return tuple(f"{index}. Livre BnF [{rid}]"
+                     for index, rid in enumerate(self._resources, 1))
+
     def choose(self, index: int, *, expected: ProfileScope, revision: int) -> str:
         """Only expose a public book route id from the last validated page."""
         if self._closed:
