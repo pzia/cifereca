@@ -1971,7 +1971,7 @@ class Storage:
                     source.provider_id, source.credential_id,
                     source.identity_id, entitlement.item_id, entitlement.loan_id,
                 ))
-                or any(len(value) > 1024 or any(c in value for c in "\\0\\r\\n")
+                or any(len(value) > 1024 or any(c in value for c in "\0\r\n")
                        for value in fields)
                 or entitlement.state != "active"):
             raise ValueError("invalid_positive_loan")
