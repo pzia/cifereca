@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from cifereca.plugin_api import ProviderConfigurationError
 from cifereca_paris import ParisProviderSession
@@ -307,5 +308,68 @@ def test_both_summary_failures_emit_closed_phase_without_secret(monkeypatch):
         ) in diagnostics.rows
         assert secret not in repr(diagnostics.rows)
         assert session.connected is False
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(("status", "json_payload", "expected"), [
+    (403, None, "paris_login_http_forbidden"),
+    (401, None, "paris_login_http_unauthorized"),
+    (429, None, "paris_login_rate_limited"),
+    (503, None, "paris_login_upstream_unavailable"),
+    (200, {"success": False, "message": "PRIVATE_UPSTREAM_TOKEN"},
+     "paris_login_rejected"),
+])
+def test_paris_connect_exposes_closed_http_reason_not_private_body(
+    monkeypatch, status, json_payload, expected,
+):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    secret = "PRIVATE_UPSTREAM_TOKEN"
+    def post(*args, **kwargs):
+        assert kwargs["data"]["username"] == "u"
+        return httpx.Response(
+            status, json=json_payload if json_payload is not None
+            else {"message": secret},
+            request=httpx.Request("POST", "https://bibliotheques.paris.fr/login"),
+        )
+    monkeypatch.setattr(session.client.client, "post", post)
+    monkeypatch.setattr(session.client, "summary", lambda *_:
+                        pytest.fail("no summary after failed login"))
+    try:
+        with pytest.raises(Exception):
+            session.connect()
+        assert session.connected is False
+        assert any(
+            args[:3] == ("AUTH", "Paris connection", "error")
+            and kwargs.get("detail") == {"provider": "paris", "code": expected}
+            for args, kwargs in diagnostics.rows
+        )
+        assert secret not in repr(diagnostics.rows)
+        assert "username" not in repr(diagnostics.rows)
+        assert "password" not in repr(diagnostics.rows)
+        assert not any(
+            args[:2] == ("API", "summary SYRACUSE")
+            for args, kwargs in diagnostics.rows
+        )
+    finally:
+        session.close()
+
+
+def test_untyped_paris_login_failure_stays_generic(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    monkeypatch.setattr(
+        session.client, "login",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("SECRET_URL")),
+    )
+    try:
+        with pytest.raises(RuntimeError):
+            session.connect()
+        assert (
+            ("AUTH", "Paris connection", "error"),
+            {"detail": {"provider": "paris", "code": "paris_login_failed"}},
+        ) in diagnostics.rows
+        assert "SECRET_URL" not in repr(diagnostics.rows)
     finally:
         session.close()
