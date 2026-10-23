@@ -116,7 +116,6 @@ def test_removed_changed_or_ambiguous_live_account_requires_review(rig):
     # A genuine reappearance after a provider sync can restore the
     # conservative recorded-only state, never supplier attestation.
     service.accounts = original_accounts
-    service.storage.entitlement_put(right)
     assert view().review == 'recorded_unverified_file'
     assert {table: rows(service, table) for table in baseline} == baseline
     assert book.read_bytes() == original_bytes
