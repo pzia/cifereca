@@ -360,6 +360,6 @@ def test_failed_foreign_plugin_description_never_exposes_exception_or_plugin_id(
     method(host)
     assert len(host._tools_box.children) == 1
     label = host._tools_box.children[0].label
-    assert label == "Outil de maintenance indisponible : description non vérifiable."
+    assert label == "Outil de maintenance : description indisponible."
     assert "PRIVATE_" not in label
     assert "/home/" not in label
