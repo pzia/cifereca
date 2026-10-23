@@ -38,16 +38,83 @@ jetés. Les données métier sont exclues des `repr` et des messages d'erreur.
 Ces objets restent des données privées de l'application, **pas des payloads de
 diagnostic** : ne pas sérialiser leurs champs vers les logs ou un LLM.
 
+## Session navigateur lecteur
+
+`cifereca_bnf_pret_browser.py` raccorde maintenant la projection à une session
+Playwright/Chromium visible, créée sur action explicite. Elle possède un contexte
+neuf et une époque aléatoire pour l'identité/compte locaux sélectionnés, sans
+profil persistant, HAR, état exporté ni dépendance au Browser Recorder.
+
+Le SSO est **manuel**. L'adaptateur ne lit ni formulaire, ni cookie, ni assertion.
+Après confirmation humaine du compte utilisé, `finish_login` installe les règles
+de lecture seule sur tout le contexte, puis charge l'activité. Cette confirmation
+est une déclaration humaine, **pas une vérification automatique de l'identité BnF**.
+Une page de prêts reconnue ne suffit pas à publier des droits dans le Core.
+
+En lecture seule : POST/PUT/DELETE, WebSockets, navigation hors portail ou vers
+SSO/déconnexion, routes de prêt/téléchargement et API historique sont bloqués.
+Les sous-requêtes GET ne sont permises que pour les pages de lecture autorisées
+et les types/extensions statiques connus. Une nouvelle dépendance du site peut
+donc être refusée ; sa qualification doit précéder un élargissement. Aucun clic
+automatique, retry, téléchargement ou retour n'est implémenté.
+
+L'extraction JavaScript sélectionne une seule section utile et contrôle son
+volume **dans le navigateur avant transfert vers Python**. Elle reconstruit un
+HTML minimal : classes/propriétés permises, liens canoniques sans queries,
+aucun champ de formulaire ni attribut actif. Pour les prêts, elle écarte tous les
+textes et ne conserve que les liens structurants. Les gardes Python s'appliquent
+à nouveau. Une navigation pendant l'extraction invalide le résultat.
+
+### Essai local volontaire
+
+Dans un environnement disposant déjà de **Playwright Python >=1.50,<2 et de son
+Chromium**, lancer :
+
+```bash
+python src/plugins/provider-bnf-pret/cifereca_bnf_pret_browser.py
+```
+
+Le programme demande l'accord avant ouverture, laisse l'utilisateur se connecter,
+puis demande confirmation du compte. Il affiche uniquement des compteurs et
+états fermés ; aucune donnée privée ni snapshot n'est enregistré. Les commandes
+`s` et `l` lisent les suggestions visibles ou rechargent l'activité ; `q` ferme
+et détruit la session. La boucle traite les événements Playwright pendant la
+saisie clavier, afin de laisser la navigation et ses gardes fonctionner.
+
+API Python : `open_login(consent=True)` → SSO manuel →
+`finish_login(account_confirmed=True)` → `suggestions`, `detail`, `loans`
+avec `expected=session.scope` → `close()` dans un `finally`. Tous les appels,
+y compris `pump()` depuis une future boucle UI/worker, restent sur le **même
+thread propriétaire**. Une nouvelle connexion exige une nouvelle instance.
+
+**Preuves actuelles :** tests de cycle de vie avec double Playwright minimal et
+exécution réelle du JavaScript sur DOM synthétique sous Node ; **pas de recette
+Chromium ni SSO fournisseur réelle dans l'environnement agent**. Aucun manifeste
+n'active encore un provider. Le raccordement Recherche/Emprunts/Sync reste à faire.
+
+Deux tests d'acceptation **Chromium réel sur pages synthétiques** sont fournis,
+à exécuter dans un environnement déjà provisionné avant fusion de cette tranche :
+
+```bash
+CIFERECA_BNF_CHROMIUM_TEST=1 python -m unittest discover \
+  -s src/plugins/provider-bnf-pret/tests -p test_browser_chromium.py -v
+```
+
+Ils interceptent toutes les requêtes et fournissent uniquement du HTML synthétique
+(aucun accès BnF/IdP réel). Le navigateur headless de test vérifie l'extraction
+effective et les refus réseau POST/prêt/API. Sans opt-in, ces tests sont **ignorés,
+pas réussis** ; avec opt-in, une dépendance ou un binaire manquant fait échouer
+le gate. Cette preuve ne remplacera pas la qualification fournisseur du SSO.
+
 ## Prochaine tranche Plugins
 
-1. Raccorder un contexte Chromium **possédé et isolé par profil**, SSO accompli
-   par l'utilisateur. `ProfileScope.observed` doit provenir du propriétaire du
-   navigateur, jamais d'une valeur lue dans le HTML. La projection ne vérifie pas
-   elle-même l'identité authentifiée. Reconnexion = nouvelle époque et nouveau
-   snapshot, aucune réutilisation aveugle des observations précédentes.
-2. Extraire le DOM autorisé de façon bornée, constater l'URL finale, les erreurs
-   HTTP/session et les sélecteurs réels ; introduire le manifeste read-only
-   seulement avec un transport effectif, activation explicite et tests adaptés.
+1. Qualifier dans Chromium réel le contexte éphémère et les sélecteurs, notamment
+   le garde Book exact, les états vides et la recherche du portail. L'identité
+   amont reste à vérifier au bon niveau ; ne pas transformer le scope local ou
+   une déclaration humaine en preuve automatique d'un droit BnF.
+2. Raccorder le cycle de vie à un worker/UI et à l'identité Core via l'API publique,
+   avec annulation et changement de profil. Introduire ensuite le manifeste
+   read-only avec activation explicite et tests d'installation adaptés.
 3. Projeter recherche/prêts via `cifereca.plugin_api` ; qualifier les échéances et
    snapshots avant toute évolution du ledger. Ne pas importer de module Core
    privé ; une primitive publique manquante relève du propriétaire Core.
@@ -62,9 +129,11 @@ diagnostic** : ne pas sérialiser leurs champs vers les logs ou un LLM.
 ```bash
 python -m unittest discover -s src/plugins/provider-bnf-pret/tests -v
 python -m unittest discover -s tests -p test_bnf_pret_web_dom.py -v
+python -m unittest discover -s tests -p test_bnf_pret_browser_session.py -v
 ```
 
-Le pont de collecte `tests/test_bnf_pret_web_dom.py` exerce les mêmes assertions
+Les ponts de collecte `tests/test_bnf_pret_web_dom.py` et
+`tests/test_bnf_pret_browser_session.py` exercent les mêmes assertions
 dans le gate Core existant malgré l'absence volontaire de manifeste. Il ne
 modifie aucun runner. Tests synthétiques de contrat uniquement : aucune preuve
 GTK, Chromium, fournisseur réel, emprunt ou fulfillment n'est revendiquée.
