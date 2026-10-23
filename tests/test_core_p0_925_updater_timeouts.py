@@ -44,7 +44,18 @@ def test_safe_process_boundary_suppresses_oserror_details(monkeypatch):
     assert error.value.__cause__ is None
 
 
+def _attested_test_core_wheelhouse(monkeypatch, release):
+    """Keep timeout tests past the now-mandatory no-network preflight."""
+    from cifereca.wheelhouse_quarantine import attest_wheelhouse
+    monkeypatch.setattr(updater, "_metadata", lambda _release: ("cifereca", "0.9.44"))
+    wheels = release / "offline-wheels"
+    wheels.mkdir()
+    (wheels / "cifereca-0.9.44-py3-none-any.whl").write_bytes(b"synthetic-local-core")
+    attest_wheelhouse(wheels, core_version="0.9.44")
+
+
 def test_venv_creation_is_bounded_and_captures_child_output(monkeypatch, tmp_path):
+    _attested_test_core_wheelhouse(monkeypatch, tmp_path)
     calls = []
     def timed_out(command, **kwargs):
         calls.append((command, kwargs))
@@ -58,6 +69,7 @@ def test_venv_creation_is_bounded_and_captures_child_output(monkeypatch, tmp_pat
 
 
 def test_pip_install_is_bounded_without_network_or_real_venv(monkeypatch, tmp_path):
+    _attested_test_core_wheelhouse(monkeypatch, tmp_path)
     calls = []
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
@@ -68,7 +80,6 @@ def test_pip_install_is_bounded_without_network_or_real_venv(monkeypatch, tmp_pa
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return _timeout(command, timeout=kwargs["timeout"])
     monkeypatch.setattr(updater.subprocess, "run", fake_run)
-    monkeypatch.setattr(updater, "_metadata", lambda _release: ("cifereca", "0.9.44"))
     with pytest.raises(TimeoutError) as error:
         updater._create_venv(tmp_path, "/usr/bin/python3")
     assert len(calls) == 2

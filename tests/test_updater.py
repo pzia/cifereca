@@ -99,6 +99,19 @@ def test_create_venv_prefers_offline_core_wheelhouse(tmp_path, monkeypatch):
     assert str(release) not in pip
 
 
+def test_create_venv_refuses_missing_wheelhouse_before_any_mutation(tmp_path, monkeypatch):
+    """No managed source install may bypass the 168h third-party wheel gate."""
+    release = _mini_project(tmp_path / "release")
+
+    def unexpected_run(*args, **kwargs):
+        pytest.fail("missing wheelhouse reached venv creation or pip")
+
+    monkeypatch.setattr(updater.subprocess, "run", unexpected_run)
+    with pytest.raises(updater.UpdateError, match="dependency_provenance_unavailable"):
+        updater._create_venv(release, os.sys.executable)
+    assert not (release / ".venv").exists()
+
+
 def test_create_venv_refuses_unattested_wheelhouse_before_venv_mutation(tmp_path, monkeypatch):
     release = _mini_project(tmp_path / "release")
     wheelhouse = release / "offline-wheels"
@@ -572,3 +585,100 @@ def test_status_and_cli_expose_transactional_plugin_restoration(tmp_path, monkey
     assert result["plugin_state"]["org.test"]["active"] is None
     assert (packages / "org.test" / "1.0.0" / "payload.bin").read_bytes() == b"A bytes"
 
+
+
+def test_github_wheelhouse_preparation_runs_before_managed_install(tmp_path, monkeypatch):
+    """A Git checkout without wheels remains installable via 168h admission."""
+    events = []
+    def checkout(repository, ref, dest):
+        _mini_project(dest)
+        (dest / "scripts").mkdir()
+        (dest / "scripts" / "prepare-admitted-wheelhouse.py").write_text(
+            "print('admitted_wheelhouse_ready')\\n", encoding="utf-8",
+        )
+        events.append("checkout")
+        return "a" * 40
+
+    def staged(source, python):
+        events.append("admit")
+        assert (source / "scripts" / "prepare-admitted-wheelhouse.py").is_file()
+
+    def installed(source, **kwargs):
+        events.append("install")
+        assert kwargs["backup_persistent"] is True
+        assert kwargs["provenance"]["commit"] == "a" * 40
+        return {"ok": True, "version": "9.9.9"}
+
+    monkeypatch.setattr(updater, "_github_checkout", checkout)
+    monkeypatch.setattr(updater, "_prepare_github_wheelhouse", staged)
+    monkeypatch.setattr(updater, "install_source", installed)
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
+    result = updater.install_github("main")
+    assert result["ok"] is True
+    assert events == ["checkout", "admit", "install"]
+
+
+def test_github_dry_run_never_prepares_or_downloads_wheels(tmp_path, monkeypatch):
+    def checkout(repository, ref, dest):
+        _mini_project(dest)
+        return "b" * 40
+    monkeypatch.setattr(updater, "_github_checkout", checkout)
+    monkeypatch.setattr(updater, "_prepare_github_wheelhouse", lambda *_: pytest.fail(
+        "dry-run reached wheel download",
+    ))
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
+    monkeypatch.setattr(
+        updater, "install_source",
+        lambda source, **kwargs: {"ok": True, "dry_run": kwargs["dry_run"]},
+    )
+    assert updater.install_github("main", dry_run=True)["dry_run"] is True
+
+
+def test_github_wheelhouse_missing_producer_fails_before_subprocess(tmp_path, monkeypatch):
+    source = _mini_project(tmp_path / "source")
+    monkeypatch.setattr(
+        updater, "_run_bounded_process",
+        lambda *args, **kwargs: pytest.fail("unverified source executed"),
+    )
+    with pytest.raises(updater.UpdateError, match="dependency_provenance_unavailable"):
+        updater._prepare_github_wheelhouse(source, os.sys.executable)
+    assert not (source / "offline-wheels").exists()
+
+
+def test_github_wheelhouse_producer_failure_is_redacted(tmp_path, monkeypatch):
+    source = _mini_project(tmp_path / "source")
+    (source / "scripts").mkdir()
+    (source / "scripts" / "prepare-admitted-wheelhouse.py").write_text(
+        "raise RuntimeError('sensitive')\\n", encoding="utf-8",
+    )
+    private = "SECRET https://private.invalid/auth?token=SECRET"
+    def failing(command, **kwargs):
+        assert command[0] == os.sys.executable
+        assert kwargs["timeout"] == 900
+        assert kwargs["capture_output"] is True
+        return SimpleNamespace(returncode=1, stdout=private, stderr=private)
+    monkeypatch.setattr(updater, "_run_bounded_process", failing)
+    with pytest.raises(updater.UpdateError, match="^dependency_not_eligible$") as error:
+        updater._prepare_github_wheelhouse(source, os.sys.executable)
+    assert private not in str(error.value)
+    assert not (source / "offline-wheels").exists()
+
+
+def test_github_wheelhouse_success_rechecks_manifest(tmp_path, monkeypatch):
+    source = _mini_project(tmp_path / "source")
+    (source / "scripts").mkdir()
+    (source / "scripts" / "prepare-admitted-wheelhouse.py").write_text(
+        "pass\\n", encoding="utf-8",
+    )
+    from cifereca import wheelhouse_quarantine
+    called = []
+    def fake_run(command, **kwargs):
+        (source / "offline-wheels").mkdir()
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    def check(directory, *, core_version):
+        called.append((directory, core_version))
+        return ()
+    monkeypatch.setattr(updater, "_run_bounded_process", fake_run)
+    monkeypatch.setattr(wheelhouse_quarantine, "verify_wheelhouse", check)
+    updater._prepare_github_wheelhouse(source, os.sys.executable)
+    assert called == [(source / "offline-wheels", "9.9.9")]

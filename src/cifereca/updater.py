@@ -224,7 +224,10 @@ def _create_venv(release: Path, python: str) -> Path:
         if not core_wheels or any(wheel not in verified for wheel in core_wheels):
             raise UpdateError("dependency_not_eligible")
     else:
-        core_wheels = []
+        # Installing from source allows pip to resolve unverified third-party
+        # build/runtime dependencies. A managed update must fail closed before
+        # creating a venv when the attested wheelhouse is absent (#2770).
+        raise UpdateError("dependency_provenance_unavailable")
 
     venv = release / ".venv"
     # PyGObject/GTK stays a system dependency, therefore the release venv may
@@ -239,15 +242,10 @@ def _create_venv(release: Path, python: str) -> Path:
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not py.is_file():
         raise UpdateError("Python du venv absent")
-    if core_wheels:
-        command = [
-            str(py), "-m", "pip", "install", "--disable-pip-version-check",
-            "--no-index", "--find-links", str(wheelhouse), "--ignore-installed", f"cifereca=={version}",
-        ]
-    else:
-        # Developer/source checkout fallback. Release archives must carry the
-        # wheelhouse and are tested with the branch above.
-        command = [str(py), "-m", "pip", "install", "--disable-pip-version-check", str(release)]
+    command = [
+        str(py), "-m", "pip", "install", "--disable-pip-version-check",
+        "--no-index", "--find-links", str(wheelhouse), "--ignore-installed", f"cifereca=={version}",
+    ]
     proc = _run_bounded_process(command, timeout=900, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         raise UpdateError("Installation du package dans le venv impossible")
@@ -1113,6 +1111,43 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
     return sha
 
 
+
+def _prepare_github_wheelhouse(source: Path, python: str) -> None:
+    """Prepare eligible runtime wheels before a managed GitHub installation.
+
+    A git checkout normally has no bundled wheelhouse.  Admission is run in
+    the verified checkout's temporary directory, without writing to the
+    active runtime.  If PyPI/packaging is unavailable, keep the old release.
+    """
+    wheelhouse = source / "offline-wheels"
+    if wheelhouse.exists():
+        # Do not accept a mutable pre-existing repository wheelhouse in place
+        # of an independently produced, attested one.
+        raise UpdateError("dependency_provenance_unavailable")
+    script = source / "scripts" / "prepare-admitted-wheelhouse.py"
+    if not script.is_file() or script.is_symlink():
+        raise UpdateError("dependency_provenance_unavailable")
+    result = _run_bounded_process(
+        [python, str(script)], timeout=900, cwd=source,
+        text=True, capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        # Child output is untrusted: it can contain private URLs or tokens.
+        raise UpdateError("dependency_not_eligible")
+    # A producer-side JSON is not a signature; this verifier is a local
+    # integrity and 168h proof check. Trust in the checkout comes from the
+    # already-selected GitHub commit, not from the JSON alone.
+    from .wheelhouse_quarantine import verify_wheelhouse
+    from .plugins.python_quarantine import QuarantineRejected
+    try:
+        version = _metadata(source)[1]
+        verify_wheelhouse(wheelhouse, core_version=version)
+    except (QuarantineRejected, OSError, ValueError) as exc:
+        reason = str(exc) if isinstance(exc, QuarantineRejected) else "dependency_provenance_unavailable"
+        raise UpdateError(reason) from None
+
+
+
 def install_github(
     ref: str = "main",
     *,
@@ -1125,6 +1160,10 @@ def install_github(
         source = Path(tmp) / "source"
         sha = _github_checkout(repository, ref, source)
         provenance = {"type": "github", "repository": repository, "ref": ref, "commit": sha}
+        if not dry_run:
+            # Keep --github installable despite the fail-closed source fallback.
+            # Admission precedes managed venv creation or release switching.
+            step("manifest_validation", _prepare_github_wheelhouse, source, select_python(python))
         result = install_source(
             source,
             python=python,

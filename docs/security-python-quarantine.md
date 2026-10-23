@@ -80,7 +80,21 @@ vérifiée en amont (signature de release avant import).
 
 **Toujours ouvert dans #2770** : le script d'attestation inspecte des
 wheels déjà téléchargées ; l'admission **avant téléchargement** dans tous
-les workflows CI/release n'est pas encore prouvée. L'installation depuis
-un checkout source **sans** wheelhouse utilise encore pip et doit recevoir
-son propre garde-fou. La réparation/installation de packages plugins
+les workflows CI/release n'est pas encore prouvée. L'installation gérée depuis un checkout source **sans** wheelhouse est
+maintenant **refusée avant la création du venv** : le repli pip non attesté a
+été supprimé. Pour `cifereca-update --github`, le commit GitHub sélectionné
+est d'abord extrait dans un espace temporaire ; son producteur
+`scripts/prepare-admitted-wheelhouse.py` fabrique une wheelhouse attestée
+à partir des dépendances PyPI éligibles, contrôlée localement avant
+`install_source`. Si la preuve ne peut pas être obtenue (PyPI indisponible,
+aucun candidat admissible, outil de build manquant), l'update échoue **sans
+remplacer le Core déjà installé**. `--github --dry-run` n'effectue aucun
+téléchargement de wheels. Les ZIP/checkout locaux dépourvus d'une wheelhouse
+attestée échouent fermés ; un pipeline de publication doit la préparer. Pour le gate d'intégration `core-full-install.yml`, le script
+`scripts/prepare-admitted-wheelhouse.py` résout les dépendances runtime
+(transitives comprises), refuse les wheels récentes, réessaie via les contraintes
+pip uniquement lorsqu'une version plus ancienne est admissible, puis assemble
+et atteste `offline-wheels/` avant le test de l'updater. Son préflight pip
+peut encore télécharger des métadonnées ou wheels avant admission : ce point
+reste ouvert et ne doit pas être présenté comme une admission avant récupération. La réparation/installation de packages plugins
 hors ligne et la dérogation CVE nominative restent à traiter.
