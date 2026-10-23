@@ -38,3 +38,25 @@ def test_four_pair_actions_are_pinned_to_the_bottom_bar_not_the_long_page():
     assert "session.preview_manual_attachment(" in code
     assert "session.confirm_manual_attachment(" in code
     assert "user_confirmed=True" in code
+
+
+def test_declared_link_actions_share_pinned_footer_without_second_writer():
+    """An existing local book can be declared without opening a tall pane."""
+    code = UI.read_text(encoding="utf-8")
+    actions = (UI.parent / "library_declaration_actions.py").read_text(encoding="utf-8")
+    ast.parse(code)
+    ast.parse(actions)
+    for control in ("declare", "revoke"):
+        assert f"body.append(self.{control})" not in actions
+        assert actions.count(f"self.{control} = Gtk.Button(") == 1
+    assert "pair_actions.prepend(declarations.declare)" in code
+    assert "pair_actions.insert_child_after(declarations.revoke, declarations.declare)" in code
+    assert "candidate_box.insert_child_after(declarations.expander, pair_report)" in code
+    assert "body.append(self.status)" in actions
+    assert "self.declare.connect('clicked', lambda *_: self.preview(False))" in actions
+    assert "self.revoke.connect('clicked', lambda *_: self.preview(True))" in actions
+    # No UI duplication that would bypass the revocable Core selection.
+    assert code.count("pair_actions.prepend(declarations.declare)") == 1
+    assert code.count("pair_actions.insert_child_after(declarations.revoke, declarations.declare)") == 1
+    assert "session.confirm_declared_link(" in actions
+    assert "user_confirmed=True" in actions

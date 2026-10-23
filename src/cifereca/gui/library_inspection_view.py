@@ -6,6 +6,7 @@ from time import monotonic
 from ..core.library_local_inspection import LocalInspection, PROVIDERS, STATES, open_local_inspection
 from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
+from .library_declaration_actions import DeclarationActions
 
 
 # Core-only closed failure causes: never expose private source text in GTK.
@@ -755,6 +756,19 @@ class LocalInspectionController:
         selected_provider = [None]
         pair_version = [0]
         placement_committed = [False]
+        declarations = DeclarationActions(
+            Gtk=Gtk, Adw=Adw, window=window, runner=self.parent.runner,
+            session=session, selection=lambda: (selected_right[0], selected_file[0]),
+            alive=lambda: self.session is session and self.alive(),
+        )
+        candidate_box.insert_child_after(declarations.expander, pair_report)
+        # Same Core-bound widgets as before: visible actions stay outside
+        # the tall comparison pane, in the horizontal pinned action bar.
+        # Details/status remain available in the expandable private view.
+        # The declared-link mode is the first visible choice at 920 px.
+        # A horizontal scroll still exposes the stricter attested steps.
+        pair_actions.prepend(declarations.declare)
+        pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
@@ -769,6 +783,7 @@ class LocalInspectionController:
             pair_undo.set_visible(False)
             pair_undo.set_sensitive(False)
             selected_file[0] = file_key
+            declarations.reset()
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
             )
@@ -1143,7 +1158,7 @@ class LocalInspectionController:
                             candidate_prev, candidate_next, manual_toggle,
                             manual_search, manual_list, format_filter, sha_filter,
                             crc_filter, file_sort, pair_prepare, fresh_preview,
-                            pair_confirm,
+                            pair_confirm, declarations.declare, declarations.revoke,
                         ):
                             control.set_sensitive(False)
                         pair_confirm.set_visible(False)

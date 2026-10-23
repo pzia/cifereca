@@ -1253,6 +1253,24 @@ class LocalInspection:
                     'trust': 'user_declaration', 'revoke_available': True}
         return {'status': 'unavailable', 'read_only': True}
 
+    def declaration_context(self, right_key, file_key):
+        """Exact private selection for the human diff, never a write token.
+
+        Do not send this view to Diagnostics, plugins, exports or a model.
+        Account and provider describe the user's statement, not its proof.
+        """
+        options = self._declaration_inputs(right_key, file_key)
+        if options is None:
+            return None
+        return {
+            'right': self._cases[right_key].label,
+            'identity': options['identity_id'],
+            'provider': options['provider_id'],
+            'account': options['account_id'],
+            'edition': options['item_id'],
+            'path': options['observation'].path,
+        }
+
     def confirm_declared_link(self, right_key, file_key, *, user_confirmed=False,
                               cancelled=lambda: False):
         """Consume one private declaration plan after a separate human action."""

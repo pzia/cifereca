@@ -77,6 +77,11 @@ GTK_PHASES_2027 = (
     "maint_inspection_opened", "maint_inspection_right_selected",
     "maint_inspection_candidate_navigated", "maint_inspection_file_selected",
     "maint_inspection_preflight", "maint_inspection_finished",
+    # Fixed vocabulary for native declaration steps; no private book details.
+    "maint_declaration_start", "maint_declaration_audit_done",
+    "maint_declaration_dialog_open", "maint_declaration_right_selected",
+    "maint_declaration_expander_open", "maint_declaration_preview_dialog",
+    "maint_declaration_committed", "maint_declaration_revoked",
 )
 _PHASE_MARKER = re.compile(
     r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z0-9_]+)$"
