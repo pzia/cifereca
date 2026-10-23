@@ -11,6 +11,10 @@ import re
 ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 EXPECTED = {
+    # #2055: fixed official plugin ZIP, never browser/user evidence.
+    "bnf-pret-test-package.yml": (
+        ("dist/cifereca-plugin-provider-bnf-pret-0.1.0.zip",),
+    ),
     "e2e-smoke.yml": (
         ("${{ runner.temp }}/cifereca-e2e-public/summary.json",),
     ),
