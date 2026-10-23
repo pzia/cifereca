@@ -169,3 +169,49 @@ def test_gtk_selector_propagates_to_broker_selection_and_ai_preview():
     assert '"domain": DOMAINS[int(domain_selector.get_selected())]' in source
     assert 'domain=selected_domain' in source
     assert 'domaine filtré :' in source
+
+
+class LocalModel:
+    """Only preview metadata: no network, model request or private source."""
+    def available(self):
+        return True
+
+    def destination(self):
+        return {
+            "available": True, "remote": False, "host": "localhost",
+            "model": "synthetic-model", "provider": "openai-compatible",
+        }
+
+
+def test_ai_preview_applies_same_domain_and_refuses_broker_scope_mismatch(tmp_path):
+    from diagnostics_ai import prepare_analysis
+
+    diagnostics = Diagnostics()
+    for _ in range(65):
+        diagnostics.add("PLUGIN", "ordinary plugin noise", "error")
+    diagnostics.add_core_browser_recorder_result("chromium_install", "download_failed")
+    broker = CoreBroker(diagnostics, tmp_path)
+    preview = prepare_analysis(LocalModel(), broker, source="core_events",
+                               module="Recorder")
+    assert preview["scope"]["attested_domain"] == "browser_recorder"
+    assert preview["scope"]["module"] == ""
+    assert preview["count"] == 1
+    assert broker.calls[-1]["domain"] == "browser_recorder"
+    assert "MISSING_PRIVATE_LOG" not in preview["prompt"]
+
+    class MismatchingBroker:
+        def events(self, **_query):
+            return {
+                "events": [{
+                    "timestamp": "2026-10-23T12:00:00+00:00",
+                    "source": "core_events", "module": "PLUGIN",
+                    "event_id": "bad-1", "message": "unattested", "severity": "error",
+                    "status": "failed",
+                }],
+                "total": 1,
+                "sources": [{"source": "core_events", "status": "available"}],
+            }
+
+    with pytest.raises(ValueError, match="diagnostics_domain_scope_mismatch"):
+        prepare_analysis(LocalModel(), MismatchingBroker(),
+                         source="core_events", domain="browser_recorder")
