@@ -258,7 +258,8 @@ class PrivateReviewPanel:
             label="Option pour une nouvelle capture : modifie la négociation HTTP "
                   "de tout ce navigateur, sans ajouter de requête. Les limites "
                   "de capture et les origines restent identiques. Si le serveur "
-                  "impose gzip/Brotli, les corps restent exclus ; les anciennes "
+                  "impose gzip/Brotli, un consentement distinct permet une "
+                  "tentative de lecture avec risque mémoire. Les anciennes "
                   "captures ne sont pas réparées.", xalign=0, wrap=True,
         ))
         self.accept_compressed = Gtk.CheckButton(
@@ -729,6 +730,27 @@ class PrivateReviewPanel:
             f"{metrics['static_metadata_budget']} ressources statiques hors budget · "
             f"{metrics['out_of_scope']} hors périmètre."
         )
+        evidence_fields = (
+            "json_responses_observed", "json_responses_captured",
+            "html_responses_observed", "html_responses_captured",
+            "write_requests_observed", "write_requests_captured",
+            "response_size_unavailable", "response_over_budget",
+        )
+        if all(field in metrics for field in evidence_fields):
+            if any(type(metrics[field]) is not int or
+                   not 0 <= metrics[field] <= 1_000_000 for field in evidence_fields):
+                return
+            label += (
+                "\nExploitabilité privée (avant revue ZIP) : "
+                f"JSON {metrics['json_responses_captured']}/"
+                f"{metrics['json_responses_observed']} · "
+                f"HTML {metrics['html_responses_captured']}/"
+                f"{metrics['html_responses_observed']} · "
+                f"POST/PUT/PATCH {metrics['write_requests_captured']}/"
+                f"{metrics['write_requests_observed']} · "
+                f"{metrics['response_size_unavailable']} réponse(s) sans taille "
+                f"fiable · {metrics['response_over_budget']} hors plafond."
+            )
         if metrics["text_responses"] == 0:
             label += " Aucune réponse conservée : analyse des réponses impossible."
         if metrics["limit"] and metrics["exchanges"] * 5 >= metrics["limit"] * 4:

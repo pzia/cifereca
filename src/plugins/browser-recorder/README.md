@@ -696,9 +696,10 @@ Le choix est indiqué dans la source privée et `coverage-report.json` par
 d'une garantie sur la réponse du serveur.
 
 Les réponses effectivement non compressées passent les mêmes limites de
-MIME, taille mesurée par Chromium et budget cumulé. Un serveur qui impose
-encore gzip/Brotli reste refusé (`capture_reason=compressed`), sans lecture
-ni décompression du corps. Les captures antérieures ne peuvent pas être
+MIME, taille mesurée par Chromium et budget cumulé. Sans l'option séparée « accepter les réponses compressées », un serveur qui
+impose gzip/Brotli reste refusé (`capture_reason=compressed`). En cas
+d'acceptation volontaire, Chromium fournit le texte déjà décodé et peut
+subir un pic mémoire AVANT contrôle des plafonds de rétention. Les captures antérieures ne peuvent pas être
 réparées et aucune méthode de décompression bornée n'est revendiquée.
 
 
@@ -790,3 +791,24 @@ Cette amélioration réduit potentiellement les exclusions `over_budget`
 observées sur le terrain, **sans garantir** la capture d'un corps de taille
 >128 Kio, ni résoudre `size_unavailable`. Aucune ancienne archive n'est
 réécrite ni complétée.
+
+
+## Indices numériques d'exploitabilité de la capture privée (#2528)
+
+L'onglet **Capture** distingue désormais les échanges HTTP observés des
+**preuves textuelles conservées** : `JSON conservés / JSON observés`,
+`HTML conservés / HTML observés`, `POST/PUT/PATCH avec corps de requête
+conservé / observés`, et réponses textuelles écartées pour
+`size_unavailable` ou `over_budget`. Les MIME comptés proviennent de la
+liste fermée du collecteur ; ces ratios n'infèrent ni la nécessité des
+réponses absentes ni une complétude de protocole. Les compteurs ne contiennent
+aucune URL, domaine, nom d'utilisateur, cookie, identifiant ou corps.
+
+Le même objet numérique `capture_evidence` est présent dans
+`coverage-report.json` et `manifest.json` du **ZIP revu** : il décrit
+uniquement la capture privée source, **avant** les décisions de revue et les
+réductions de projection. Il doit être lu avec `body_coverage` (nombre de
+corps réellement publiés) et avec les états/motifs par échange. Une source
+avec 1/11 JSON capturé n'en devient pas 11/11 après export. `size_unavailable`
+reste refusé faute de taille réseau mesurée fiable ; aucun `response.body()`
+aveugle ni rejeu réseau n'est introduit.

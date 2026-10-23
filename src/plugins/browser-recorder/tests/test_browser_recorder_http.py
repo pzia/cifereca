@@ -1067,3 +1067,65 @@ def test_record_http_forwards_selected_body_limit_to_memory_trace():
         assert trace.max_body == 131072
     finally:
         trace.destroy()
+
+
+def test_evidence_counts_capture_usefulness_without_exposing_private_values():
+    trace = PrivateHttpTrace((ORIGIN,))
+    ok = Request(ORIGIN + "/json-ok?private=NEVER_ECHO")
+    emit(trace, ok, Response(ok, data=b'{"ok":true}'))
+    large = Request(ORIGIN + "/json-large")
+    big = Response(large, data=b"A" * 40000)
+    emit(trace, large, big)
+    assert big.body_reads == 0
+    unknown = Request(ORIGIN + "/json-unknown")
+    unknown.sizes = lambda: {"requestBodySize": 0, "responseBodySize": 0}
+    bad = Response(unknown, data=b'{"private":"SECRET"}')
+    emit(trace, unknown, bad)
+    assert bad.body_reads == 0
+    html = Request(ORIGIN + "/page")
+    emit(trace, html, Response(html, mime="text/html", data=b"<html></html>"))
+    post = Request(
+        ORIGIN + "/save", method="POST",
+        headers={"content-type": "application/json"},
+        data=b'{"id":214}',
+    )
+    emit(trace, post, Response(post, mime="text/plain", data=b"ok"))
+    evidence = trace.coverage()
+    assert {key: evidence[key] for key in (
+        "json_responses_observed", "json_responses_captured",
+        "html_responses_observed", "html_responses_captured",
+        "write_requests_observed", "write_requests_captured",
+        "response_size_unavailable", "response_over_budget",
+    )} == {
+        "json_responses_observed": 3,
+        "json_responses_captured": 1,
+        "html_responses_observed": 1,
+        "html_responses_captured": 1,
+        "write_requests_observed": 1,
+        "write_requests_captured": 1,
+        "response_size_unavailable": 1,
+        "response_over_budget": 1,
+    }
+    assert all(type(value) is int for value in evidence.values())
+    assert "NEVER_ECHO" not in repr(evidence)
+    assert "SECRET" not in repr(evidence)
+    from browser_recorder_review import IdentifierReview
+    from browser_recorder_zip import prepare_reviewed_zip
+    import json
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        members = {row["name"]: row["text"] for row in plan.preview()["members"]}
+        for path in ("coverage-report.json", "manifest.json"):
+            emitted = json.loads(members[path])["capture_evidence"]
+            assert emitted["json_responses_captured"] == 1
+            assert emitted["response_size_unavailable"] == 1
+            assert emitted["response_over_budget"] == 1
+            assert all(type(value) is int for value in emitted.values())
+        assert "NEVER_ECHO" not in repr(members["coverage-report.json"])
+        assert "SECRET" not in repr(members["coverage-report.json"])
+    finally:
+        review.destroy()
+        trace.destroy()

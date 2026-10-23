@@ -269,11 +269,28 @@ class PrivateHttpTrace:
         return dict(self._excluded_origins), self._excluded_origin_overflow
 
     def coverage(self):
-        """Closed numeric summary; never a URL, MIME or provider payload."""
+        """Closed numeric evidence, never host/path/query/header/body values."""
+        json_rows = [e for e in self.exchanges
+                     if e.mime in {"application/json", "text/json"}
+                     or e.mime.endswith("+json")]
+        html_rows = [e for e in self.exchanges if e.mime == "text/html"]
+        writes = [e for e in self.exchanges if e.method in {"POST", "PUT", "PATCH"}]
         return {
             "exchanges": len(self.exchanges), "limit": self.limit,
             "max_body": self.max_body,
             "text_responses": sum(type(e.response_body) is str for e in self.exchanges),
+            "json_responses_observed": len(json_rows),
+            "json_responses_captured": sum(type(e.response_body) is str for e in json_rows),
+            "html_responses_observed": len(html_rows),
+            "html_responses_captured": sum(type(e.response_body) is str for e in html_rows),
+            "write_requests_observed": len(writes),
+            "write_requests_captured": sum(type(e.request_body) is str for e in writes),
+            "response_size_unavailable": sum(
+                e.response_body_reason == "size_unavailable" for e in self.exchanges
+            ),
+            "response_over_budget": sum(
+                e.response_body_reason == "over_budget" for e in self.exchanges
+            ),
             "binary_skipped": self.omitted["binary_skipped"],
             "compressed": self.omitted["compressed"],
             "out_of_scope": self.omitted["out_of_scope"],

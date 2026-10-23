@@ -828,6 +828,15 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             reason = getattr(item, direction + "_body_reason", "unknown")
             capture_reasons[reason if type(reason) is str and reason in
                             _BODY_REASONS else "unknown"] += 1
+    evidence_keys = (
+        "json_responses_observed", "json_responses_captured",
+        "html_responses_observed", "html_responses_captured",
+        "write_requests_observed", "write_requests_captured",
+        "response_size_unavailable", "response_over_budget",
+    )
+    source_coverage = review.trace.coverage()
+    # Closed, numeric-only provenance: no names, URLs, MIME strings or bodies.
+    capture_evidence = {key: source_coverage[key] for key in evidence_keys}
     body_coverage = {
         "captured_text_bodies": captured,
         "exported_structural_bodies": exported,
@@ -845,6 +854,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "schema": "cifereca.browser-recorder.coverage/1",
         "exchange_count": len(projection_audit),
         "body_coverage": body_coverage,
+        "capture_evidence": capture_evidence,
         "capture_omissions": capture_omissions,
         "compressed_responses_accepted": review.trace.allow_compressed_responses,
         "max_capture_body_bytes": review.trace.max_body,
@@ -868,6 +878,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "capture_omissions": capture_omissions,
         "body_coverage": body_coverage,
         "body_capture_reasons": capture_reasons,
+        "capture_evidence": capture_evidence,
         "compressed_responses_accepted": review.trace.allow_compressed_responses,
         "max_capture_body_bytes": review.trace.max_body,
         "secret_values_suppressed": preview["secrets_replaced"],
