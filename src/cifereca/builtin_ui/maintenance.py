@@ -18,24 +18,54 @@ class CacheMaintenance:
         )
 
     def plan(self, context):
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context, control):
+        """Optional measured preview on the Core-maintained cache list."""
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context, control):
         from cifereca.plugin_api import MaintenancePlan
 
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="Inventaire des caches en cours")
+        # A single backend call: there is no honest counter while it blocks.
+        # Once returned, count only namespaces already observed, without
+        # a second scan or maintenance operation.
         rows = tuple(self.cache.namespaces()) if self.cache is not None else ()
-        entries = sum(row.entries for row in rows if row.purgeable)
-        size = sum(row.size_bytes for row in rows if row.purgeable)
-        changes = tuple(
-            f"{row.namespace_id} · {row.entries} entrée(s) · {row.size_bytes} octets"
-            for row in rows
-            if row.purgeable and row.entries
-        )
+        entries = 0
+        size = 0
+        changes = []
+        namespaces = []
+        total = len(rows)
+        for index, row in enumerate(rows, start=1):
+            if control is not None:
+                control.check_cancelled()
+                if index == 1 or index % 16 == 0 or index == total:
+                    control.report(
+                        current=index - 1, total=total,
+                        message="Vérification des espaces de cache",
+                    )
+            if not row.purgeable:
+                continue
+            entries += row.entries
+            size += row.size_bytes
+            namespaces.append(row.namespace_id)
+            if row.entries:
+                changes.append(
+                    f"{row.namespace_id} · {row.entries} entrée(s) · {row.size_bytes} octets"
+                )
+        if control is not None:
+            control.check_cancelled()
         return MaintenancePlan(
             tool_id="core.cache.cleanup",
             summary=f"{entries} entrée(s) de cache peuvent être supprimées ({size} octets).",
-            changes=changes,
+            changes=tuple(changes),
             facts={
                 "entries": entries,
                 "size_bytes": size,
-                "namespaces": tuple(row.namespace_id for row in rows if row.purgeable),
+                "namespaces": tuple(namespaces),
             },
         )
 
