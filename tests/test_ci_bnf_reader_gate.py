@@ -57,5 +57,11 @@ class BnfReaderGateTests(unittest.TestCase):
         self.assertNotIn('pip install', step)
         self.assertNotIn('CIFERECA_BNF_CHROMIUM_TEST', workflow)
 
+    def test_plugin_only_http_acceptance_installs_core_sqlite_dependencies(self):
+        workflow = (ROOT / '.github/workflows/pr-ci.yml').read_text()
+        step = workflow.split('- name: Install plugin-only test dependencies', 1)[1].split('      - name:', 1)[0]
+        self.assertIn('steps.scope.outputs.bnf_reader', step)
+        self.assertIn('pip install --disable-pip-version-check -e .', step)
+
 if __name__ == '__main__':
     unittest.main()
