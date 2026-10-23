@@ -189,9 +189,13 @@ jobs:
         env:
           CIFERECA_BNF_CHROMIUM_TEST: '1'
         run: |
-          python -m pip install --disable-pip-version-check "playwright>=1.50,<2"
-          python -m playwright install --with-deps chromium
-          python scripts/ci_bnf_reader_gate.py run
+          # Keep optional Playwright unavailable to the generic plugin suite.
+          # Otherwise its headed Recorder tests activate without Xvfb here.
+          python -m venv "$RUNNER_TEMP/bnf-reader-venv"
+          bnf_python="$RUNNER_TEMP/bnf-reader-venv/bin/python"
+          "$bnf_python" -m pip install --disable-pip-version-check "playwright>=1.50,<2"
+          "$bnf_python" -m playwright install --with-deps chromium
+          "$bnf_python" scripts/ci_bnf_reader_gate.py run
 
       - name: Run plugin tests
         if: steps.scope.outputs.plugins == 'true'
