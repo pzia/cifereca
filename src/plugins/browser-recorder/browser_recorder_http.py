@@ -551,7 +551,17 @@ class PrivateHttpTrace:
             # on peak decoded memory: users explicitly accept that residual
             # risk. Never retain more than the normal decoded budgets.
             # No retries, replay, other origins, or binary/license reads.
-            raw = resp.body()
+            try:
+                raw = resp.body()
+            except Exception:
+                # Chromium may evict a response during navigation and
+                # Playwright raises its own Error (not ValueError). This
+                # observation is optional; never let an EventEmitter callback
+                # abort the user's capture or print a private exception.
+                # No retry, no replay and no exception text persisted.
+                entry.response_body_state = "body_omitted"
+                entry.response_body_reason = "read_failed"
+                return
             if type(raw) is not bytes:
                 entry.response_body_state = "body_omitted"
                 entry.response_body_reason = "measured_mismatch"
