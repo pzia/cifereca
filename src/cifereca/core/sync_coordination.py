@@ -83,9 +83,50 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     if control is not None and callable(getattr(control, "check_cancelled", None)):
         control.check_cancelled()
     if session.capabilities.loans:
+        # Snapshot the live source before provider I/O. A stale/disabled
+        # account must never publish rights belonging to a former identity.
+        source_scope = (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+            self._account_context_epoch,
+        )
         with measure("loan_refresh_ms"):
             loans = self._loans_for_account(account, force=True)
+        if not _opening_loans_scoped(account, source_scope[0], loans):
+            raise ProviderConfigurationError("loan_source_scope_mismatch")
+        matching = [
+            row for row in self.accounts
+            if type(row) is Account
+            and (row.identity_id, row.provider_id,
+                 row.credential_id, row.unique_id) == source_scope[:4]
+        ]
+        if (len(matching) != 1 or matching[0] is not account
+                or self._account_context_epoch != source_scope[4]
+                or self.identity_by_id(account.identity_id) is None
+                or self._sessions.get(self._session_key(
+                    account.provider_id, account.credential_id,
+                )) is not session
+                or session.connected is not True
+                or not self.sync_source_enabled(account)):
+            raise ProviderConfigurationError("loan_source_scope_changed")
+        # An explicit source refresh has the SAME positive-loan semantics as
+        # opening sync. Never infer absence, close loans missing from an
+        # empty/partial list, expire another account's loans or acquire EPUBs.
+        if loans:
+            from . import library_mutation
+            with measure("rights_mirror_ms"):
+                library_mutation._persist_active_loans(
+                    self, account.identity_id, loans,
+                    reconcile_missing=False, realize_expired=False,
+                )
         result["loans"] = len(loans)
+        if account.provider_id == "paris":
+            # This source has independent DILICOM/SYRACUSE reads. A partial
+            # DILICOM failure must not claim a complete successful sync,
+            # even when the physical branch returned rows or no rows.
+            errors = getattr(session, "last_loan_errors", None)
+            if type(errors) not in (list, tuple) or errors:
+                result["status"] = "partial"
     if session.capabilities.personal_library:
         # A provider can implement a one-shot iterable: both the entitlement
         # mirror and remote catalog must see the exact same authenticated rows.
@@ -167,7 +208,11 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 locks.enter_context(InterProcessLock(acquisition_lock_file()))
             with measure("locked_work_ms"):
                 result = self._synchronize_account_source_impl(account, deep=deep, control=control)
-        outcome = "skipped" if result.get("status") == "skipped" else "success"
+        outcome = (
+            "skipped" if result.get("status") == "skipped"
+            else "partial" if result.get("status") == "partial"
+            else "success"
+        )
         raw_reason = result.get("reason")
         reason = (raw_reason if type(raw_reason) is str
                   and raw_reason in {"source_disabled"} else "")
@@ -177,8 +222,11 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 "deep": bool(deep), "reason": reason,
             },
         )
-        observe("completed", outcome,
-                "source_disabled" if outcome == "skipped" else "source_sync_complete", result)
+        observe("completed", outcome, {
+            "skipped": "source_disabled",
+            "partial": "source_sync_partial",
+            "success": "source_sync_complete",
+        }[outcome], result)
         return result
     except LockBusyError as exc:
         observe("completed", "failed", "operation_busy")
