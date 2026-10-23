@@ -531,7 +531,7 @@ def prepare_analysis(
         raise ValueError("unsupported_module")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("unsupported_provider")
-        if type(domain) is not str:
+    if type(domain) is not str:
         raise ValueError("unsupported_domain")
     chosen_domain = canonical_diagnostic_domain(domain) if domain else ""
     if type(severity) is not str or severity not in (
