@@ -71,3 +71,44 @@ def test_moved_subtree_refunds_metadata_budget_for_following_root(
     assert "PRIVATE_" not in published
     assert str(child) not in published
     assert actual.files[0].sha256 not in published
+
+
+def test_file_disappearing_after_opf_does_not_charge_uncommitted_metadata(
+        tmp_path, monkeypatch):
+    """A successful OPF read is not a durable observation until inode recheck."""
+    from cifereca.core import library_inventory as engine
+
+    first = tmp_path / "PRIVATE_FIRST"
+    second = tmp_path / "PRIVATE_SECOND"
+    first.mkdir()
+    second.mkdir()
+    fleeting = first / "PRIVATE_FLEETING.epub"
+    epub(fleeting, title="PRIVATE_SYNTHETIC_TITLE")
+    epub(second / "PRIVATE_RETAINED.epub", title="PRIVATE_SYNTHETIC_TITLE")
+    expected = scan_identity_roots({"alice": (second,)})
+    assert expected.reasons == set()
+    assert expected.metadata_bytes > 2
+
+    original = engine.inspect_stream_structure
+    moved = [False]
+
+    def relocate_before_final_inode_check(stream, media_format, **options):
+        if not moved[0]:
+            moved[0] = True
+            fleeting.rename(tmp_path / "PRIVATE_RELOCATED.epub")
+        return original(stream, media_format, **options)
+
+    monkeypatch.setattr(engine, "inspect_stream_structure",
+                        relocate_before_final_inode_check)
+    actual = scan_identity_roots(
+        {"alice": (first, second)},
+        limits=InventoryLimits(seconds=600, metadata_bytes=expected.metadata_bytes),
+    )
+    assert moved == [True]
+    assert "entry_unavailable" in actual.reasons
+    assert "metadata_byte_budget" not in actual.reasons
+    assert len(actual.files) == 1
+    assert actual.files[0].path == str(second / "PRIVATE_RETAINED.epub")
+    assert actual.metadata_bytes == expected.metadata_bytes
+    assert actual.files[0].metadata == expected.files[0].metadata
+    assert "PRIVATE_" not in json.dumps(actual.redacted())
