@@ -198,3 +198,41 @@ def public_fields(value: object) -> dict:
         if type(raw_calls) is dict and (metric := _number(raw_calls.get(key))) is not None
     }
     return output
+
+# A second, durable channel for *completed* offline audits only. The
+# serializer accepts exclusively the already validated Core projection.
+# Its exact byte-for-byte JSON representation is verified on read: user
+# supplied messages, filenames and arbitrary plugin dictionaries cannot
+# claim an attested audit or leak through this parser.
+_RECONCILIATION_LOG_PREFIX = "EVENT reconciliation audit "
+_MAX_RECONCILIATION_LOG = 3072
+
+
+def public_reconciliation_log_message(value: object) -> str | None:
+    import json
+
+    if type(value) is not dict:
+        return None
+    fields = public_fields(value)
+    if not fields or set(fields) != set(value) or fields != value:
+        return None
+    payload = _RECONCILIATION_LOG_PREFIX + json.dumps(
+        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    )
+    return payload if len(payload) <= _MAX_RECONCILIATION_LOG else None
+
+
+def public_reconciliation_log_fields(body: object) -> dict:
+    import json
+
+    if (type(body) is not str
+            or len(body) > _MAX_RECONCILIATION_LOG
+            or not body.startswith(_RECONCILIATION_LOG_PREFIX)):
+        return {}
+    try:
+        fields = json.loads(body[len(_RECONCILIATION_LOG_PREFIX):])
+        canonical = public_reconciliation_log_message(fields)
+    except (ValueError, TypeError, RecursionError, OverflowError):
+        return {}
+    return fields if canonical == body else {}
+
