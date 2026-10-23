@@ -6,6 +6,8 @@ No upload, hidden export, automatic GET replay or raw HAR persistence.
 """
 from __future__ import annotations
 
+from cifereca.plugin_api import prefer_downloads_for_save
+
 import json
 from pathlib import Path
 from threading import Event
@@ -1030,6 +1032,7 @@ class PrivateReviewPanel:
             chooser.set_current_name(
                 f"cifereca-telechargement-{number:02d}.bin",
             )
+            prefer_downloads_for_save(chooser)
             self._download_dialog = chooser
             self._download_choice_done = ready
             self.status.set_label(
@@ -1811,6 +1814,7 @@ class PrivateReviewPanel:
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
         chooser.set_current_name("cifereca-session-privee.zip")
+        prefer_downloads_for_save(chooser)
         self._private_destination_dialog = chooser
         self._refresh()
 
@@ -2210,6 +2214,7 @@ class PrivateReviewPanel:
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
         chooser.set_current_name("cifereca-revue.zip")
+        prefer_downloads_for_save(chooser)
         self._export_dialog = chooser
 
         def responded(dialog, response):
