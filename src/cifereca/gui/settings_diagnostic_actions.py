@@ -104,8 +104,8 @@ def build_settings_diagnostic_callbacks(
             "Exporter",
             "Annuler",
         )
-        chooser.set_current_name("cifereca-diagnostic.txt")
         prefer_downloads_for_save(chooser)
+        chooser.set_current_name("cifereca-diagnostic.txt")
 
         def chosen(dialog, response) -> None:
             try:
