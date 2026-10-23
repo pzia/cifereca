@@ -170,6 +170,7 @@ def _method():
             ResponseAppearance=NS(DESTRUCTIVE=1, SUGGESTED=2),
         ),
         "MaintenanceContext": lambda **kw: NS(**kw),
+        "GLib": NS(idle_add=lambda callback: callback()),
         "MaintenanceCancelControl": guard.MaintenanceCancelControl,
         "MaintenanceCancelledError": guard.MaintenanceCancelledError,
         "MaintenanceBusyError": guard.MaintenanceBusyError,
