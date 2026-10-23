@@ -39,6 +39,24 @@ SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
+# Only Core canonical public provider labels, never account names or URLs.
+_PUBLIC_PROVIDER_RE = re.compile(
+    r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
+)
+_PRIVATE_PROVIDER_PARTS = frozenset({
+    "secret", "token", "password", "cookie", "credential", "credentials",
+    "account", "identity", "barcode", "session", "authorization", "bearer",
+})
+
+
+def public_provider_id(value: object) -> str | None:
+    if (type(value) is not str or len(value) > 64
+            or _PUBLIC_PROVIDER_RE.fullmatch(value) is None
+            or any(segment in _PRIVATE_PROVIDER_PARTS
+                   for segment in re.split(r"[._-]", value))):
+        return None
+    return value
+
 SOURCE_STATES = {
     "available": "Alimentée",
     "empty": "Pas d’événement enregistré",
@@ -104,6 +122,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
+    provider_id: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -114,6 +133,8 @@ def fetch_explorer_page(
         raise ValueError("unsupported diagnostics filter")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("invalid diagnostics module")
+    if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
+        raise ValueError("invalid diagnostics provider")
     if (type(reason_code) is not str
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)):
         raise ValueError("invalid reconciliation reason code")
@@ -129,6 +150,8 @@ def fetch_explorer_page(
     # never silently downgrade a global filter to local 50-item search.
     if reason_code:
         query["reason_code"] = reason_code
+    if provider_id:
+        query["provider_id"] = provider_id
     return broker.events(**query)
 
 
@@ -157,6 +180,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             key: redacted_detail(raw[key])[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
+        provider = public_provider_id(raw.get("provider_id"))
+        if provider is not None:
+            safe["provider_id"] = provider
         # The Core attests the terminal reconciliation event; present only
         # finite, local aggregate labels. The code is searchable on this page
         # without changing the broker's server-side query or exporting books.
@@ -178,6 +204,8 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         )
         if reconciliation is not None:
             searchable += " " + " ".join(reconciliation.values())
+        if provider is not None:
+            searchable += " " + provider
         if search and search.casefold() not in searchable.casefold():
             continue
         # Detailed GTK inspection is opt-in. AI previews keep the minimal
@@ -503,6 +531,9 @@ def export_selected_events(
             for field in fields
             for value in (row.get(field),)
         }
+        provider = public_provider_id(row.get("provider_id"))
+        if provider is not None:
+            item["provider_id"] = provider
         reference = published_task_reference({
             "source": row.get("source"), "task_ref": row.get("task_ref"),
         })

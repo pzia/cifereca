@@ -1,3 +1,18 @@
+## 0.1.20 — Fournisseur attesté et filtre exact (#2900)
+
+Le champ « Fournisseur » filtre les événements avant pagination, séparément
+du module et du canal : utiliser l'identifiant canonique, par exemple
+`paris`, `kobo` ou `numilog`. Une valeur vide
+conserve tous les événements. Ce filtre demande le contrat Core de #2902 ;
+un Core antérieur ne reçoit pas de repli silencieux sur une recherche locale.
+
+Le fournisseur publié par le Core est visible, recherchable sur la page et
+conservé dans les copies, sélections multi-pages et preuves de l'aperçu IA.
+Un aperçu IA ou une sélection multi-page hors fournisseur demandé est refusé.
+Les données privées malformées sont omises ; aucun provider n'est déduit du
+module, du message ou du runtime ADEPT. Les sites et identifiants publics de
+livres restent une tranche ultérieure ; aucune nouvelle collecte réseau.
+
 ## 0.1.19 — Durée du contrôle des chemins enregistrés (#2730)
 
 Lorsque le Core #2759 émet la mesure fermée `phase_ms.stored_paths`, les
