@@ -1683,8 +1683,8 @@ class DiagnosticsPagePlugin:
                 )
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
-                    module=selected_module, provider_id=selected_provider,
-                    severity=selected_severity,
+                    module=selected_module, severity=selected_severity,
+                    provider_id=selected_provider,
                     since=explorer_since(selected_period),
                     include_snapshot=selected_snapshot,
                     include_support_report=selected_support_report,
