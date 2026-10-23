@@ -164,3 +164,30 @@ Les ponts de collecte `tests/test_bnf_pret_web_dom.py` et
 dans le gate Core existant malgré l'absence volontaire de manifeste. Il ne
 modifie aucun runner. Les tests du worker sont synthétiques : aucune preuve GTK, SSO réel,
 emprunt ou fulfillment n'est revendiquée.
+
+
+## Page CoreUI locale expérimentale — opt-in
+
+Le manifeste \`org.cifereca.provider.bnf-pret\` expose **uniquement**
+\`ui.page.bnf-pret\`, désactivé par défaut. Aucune contribution
+\`provider.library\` ni \`catalog.search\`/\`sync.loans\` n'est annoncée.
+Après activation explicite et installation de Playwright/Chromium, la page
+« BnF Prêt (lecture expérimentale) » associe sa session à **l'unique identité
+Core active attestée**. En l'absence de profil unique, aucun démarrage n'est
+possible. Changement de profil ou fermeture de page invalident immédiatement
+les futures en vol, révoquent la session et ferment Chromium sur son thread.
+
+Le consentement est recueilli avant l'ouverture. L'utilisateur effectue
+son SSO lui-même dans le navigateur. Cliquer « J'ai terminé la connexion »
+est une confirmation humaine, **pas** une validation automatique de compte
+ou de droit BnF. Les commandes lisent les prêts et suggestions visibles,
+avec seulement des compteurs/statuts fermés dans cette première interface.
+Ces comptes sont toujours non exhaustifs et ne sont **jamais publiés**
+dans Core ou Diagnostics. Aucune mutation, téléchargement, réservation ou
+synchronisation silencieuse. Identifiant de compte du worker : simple
+marqueur local, non assimilé à un identifiant BnF authentifié.
+
+Tests de contrôle sans GTK/Playwright :
+\`python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_reader_page.py -v\`.
+La CI Core collecte également \`tests/test_bnf_pret_reader_page.py\`.
+La recette GTK/SSO réelle et la qualification des sélecteurs restent ouvertes.
