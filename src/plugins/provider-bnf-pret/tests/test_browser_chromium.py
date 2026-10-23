@@ -108,6 +108,8 @@ class ChromiumReaderTests(unittest.TestCase):
         self.assertEqual(detail.records[0].isbn, '9780000000002')
         self.assertEqual(detail.records[0].authors, ('Auteur fictif',))
         self.assertEqual(detail.records[0].availability, 'unavailable')
+        visible = self.session.current_detail(expected=self.session.scope)
+        self.assertEqual(visible.records[0].title, 'Titre fictif')
 
     def test_real_request_guard_blocks_post_and_loan_get(self):
         results = self.session._page.evaluate("""async () => {

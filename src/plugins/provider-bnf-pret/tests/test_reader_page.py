@@ -62,6 +62,11 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertIsNone(instance.worker)
         self.assertIsNone(instance.handle)
 
+    def test_local_detail_text_is_bounded_and_not_interpreted_as_markup(self):
+        self.assertEqual(page.readable("  Book  <safe>   ", 24), "Book <safe>")
+        self.assertEqual(page.readable("a" * 300), "a" * 180)
+        self.assertEqual(page.readable({"secret": "x"}), "")
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))

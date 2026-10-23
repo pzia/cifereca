@@ -282,6 +282,13 @@ class ReaderBrowserSession:
         self._goto(ORIGIN + "/resources/" + resource_id, expected)
         return self._read("detail", expected)
 
+    def current_detail(self, *, expected):
+        """Read only the actual browser-visible book page, without navigation."""
+        self._check("readonly")
+        if _id(self._page.url, "resources") is None:
+            raise BrowserSessionError("unexpected_page")
+        return self._read("detail", expected)
+
     def suggestions(self, *, expected):
         # Search via the visible website, no guessed autocomplete endpoint.
         return self._read("suggestions", expected)
