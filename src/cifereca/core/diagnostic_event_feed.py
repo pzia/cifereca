@@ -581,21 +581,17 @@ def canonical_diagnostic_domain(value: str) -> str:
         char for char in unicodedata.normalize("NFKD", value.strip().casefold())
         if not unicodedata.combining(char)
     ).replace("-", " ").replace("_", " ")
-    return {
+    options = {
         "": "",
         "browser": "browser_recorder",
         "recorder": "browser_recorder",
         "browser recorder": "browser_recorder",
         "reconciliation": "reconciliation",
         "reconcilitation": "reconciliation",
-    }.get(alias) if alias in {
-        "", "browser", "recorder", "browser recorder",
-        "reconciliation", "reconcilitation",
-    } else _unknown_diagnostic_domain()
-
-
-def _unknown_diagnostic_domain():
-    raise ValueError("unknown diagnostic domain")
+    }
+    if alias not in options:
+        raise ValueError("unknown diagnostic domain")
+    return options[alias]
 
 
 def query_diagnostic_events(
