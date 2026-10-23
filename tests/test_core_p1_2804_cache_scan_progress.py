@@ -94,3 +94,45 @@ def test_slow_single_inventory_has_indeterminate_phase_only():
     )
     tool.plan_with_progress(NS(), control)
     assert len(calls) == 2 and calls[-1][:2] == (0, 1)
+
+
+@pytest.mark.parametrize("mode", ("success", "failure", "unavailable"))
+def test_cache_purge_progress_does_not_claim_completion_before_backend_success(mode):
+    from cifereca.plugin_api.models import CachePurgeResult, MaintenancePlan
+
+    class Backend:
+        calls = 0
+
+        def purge(self):
+            self.calls += 1
+            return CachePurgeResult(
+                ok=mode == "success",
+                entries_removed=1 if mode == "success" else 0,
+                bytes_freed=7 if mode == "success" else 0,
+                warnings=() if mode == "success" else ("cache_partial",),
+            )
+
+    tool = CacheMaintenance()
+    backend = Backend()
+    tool.cache = backend if mode != "unavailable" else None
+    events = []
+    control = MaintenanceCancelControl(
+        on_progress=lambda current, total, message: events.append(
+            (current, total, message),
+        ),
+    )
+    plan = MaintenancePlan(tool_id="core.cache.cleanup", summary="Fixture")
+    result = tool.run(plan, control)
+    assert result.ok is (mode == "success")
+    assert events[0][:2] == (0, 1)
+    assert len(events) == 2
+    if mode == "success":
+        assert events[-1] == (1, 1, "Purge des caches effectuée")
+        assert result.changed == 1
+        assert backend.calls == 1
+    else:
+        assert events[-1][:2] == (None, None)
+        assert not any("nettoyés" in msg.casefold() for _, _, msg in events)
+        assert not any(c == 1 and t == 1 for c, t, _ in events)
+        assert result.changed == 0
+    assert "PRIVATE_" not in json.dumps(events)
