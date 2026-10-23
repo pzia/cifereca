@@ -1087,6 +1087,11 @@ class LocalInspectionController:
             fresh_preview.set_sensitive(False)
             pair_confirm.set_visible(False)
             pair_confirm.set_sensitive(False)
+            # A former successful preview is not authority for a NEW run.
+            # Return to evidence review while the fresh check is pending.
+            guidance.set_text(_guided_pair_instruction(
+                right_selected=True, file_selected=True,
+            ))
             pair_explanation.set_text(
                 'Vérification locale des preuves actuelles… '
                 'Aucun rattachement ne sera effectué.'
@@ -1149,6 +1154,9 @@ class LocalInspectionController:
                     pair_explanation.set_text(
                         'Vérification indisponible. Aucun rattachement.'
                     )
+                    guidance.set_text(_guided_pair_instruction(
+                        right_selected=True, file_selected=True,
+                    ))
                     fresh_preview.set_sensitive(True)
 
             self.parent.runner.submit(
