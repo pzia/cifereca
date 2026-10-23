@@ -25,6 +25,7 @@ def _paris_search_notice(window):
     reader = getattr(service, "catalogue_source_capabilities", None)
     if type(identity) is not str or not identity or not callable(reader):
         return ""
+    matching = []
     try:
         inventory = reader(identity_id=identity)
         matching = [
@@ -54,7 +55,7 @@ def _paris_search_notice(window):
     except Exception:
         # Never leak provider error text, credentials or another identity's state.
         return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
-                if 'matching' in locals() and matching else "")
+                if matching else "")
     if not matching:
         # The catalogue inventory is deliberately limited to enabled/ready
         # plugins. Only report absence/disablement when this identity owns a
