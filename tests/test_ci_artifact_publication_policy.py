@@ -106,8 +106,18 @@ def test_official_core_release_rejects_unreviewed_assets_before_upload():
     assert "find dist -mindepth 1 -maxdepth 1" in workflow
     assert "git rev-parse --short=12 HEAD" in workflow
     assert 'test ! -L "dist/$file"' in workflow
-    for name in ("RELEASE_WHEEL", "RELEASE_DEV", "RELEASE_BUNDLE"):
+    for name in ("RELEASE_WHEEL", "RELEASE_DEV", "RELEASE_BUNDLE", "RELEASE_OFFLINE"):
         assert f'dist/${name}' in workflow
-    assert 'sha256sum "$wheel" "$dev" "$bundle" > SHA256SUMS' in workflow
+    assert 'sha256sum "$wheel" "$dev" "$bundle" "$offline" > SHA256SUMS' in workflow
     assert 'gh release upload "$RELEASE_TAG" dist/*' not in workflow
     assert "Verify downloaded Core release draft assets" in workflow
+
+
+def test_official_core_release_refuses_publication_without_cold_offline_install():
+    workflow = (ROOT / "release.yml").read_text(encoding="utf-8")
+    assert "prepare-admitted-wheelhouse.py --include-plugin-deps" in workflow
+    assert "package-offline-release.py --out" in workflow
+    assert "ci-offline-release-gate.py" in workflow
+    assert workflow.index("Cold offline ZIP install") < workflow.index("Create or update draft release")
+    assert workflow.index("Cold offline ZIP install") < workflow.index("Publish completed release")
+    assert '"dist/$RELEASE_OFFLINE.sigstore.json"' in workflow
