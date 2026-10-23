@@ -6,7 +6,7 @@ approval token and a stable, disclosed destination.
 """
 from __future__ import annotations
 
-from cifereca.core.diagnostic_domains import DIAGNOSTIC_DOMAINS, canonical_diagnostic_domain
+from cifereca.plugin_api.diagnostic_domains import DIAGNOSTIC_DOMAINS, canonical_diagnostic_domain
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
