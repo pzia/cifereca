@@ -1,3 +1,13 @@
+# État actuel — décision produit du 23 octobre 2026
+
+**Le parcours Web lecteur remplace la piste API/OPDS pour #2055.** Les conditions
+d'habilitation API et la qualification ci-dessous sont historiques ; elles ne
+bloquent plus le développement Web. Voir [WEB.md](WEB.md) pour la projection DOM
+read-only, ses tests synthétiques et les limites restant à livrer. Les modules
+API/OPDS historiques ne sont pas consommés par l'adaptateur Web.
+
+---
+
 # BnF — Prêt numérique : qualification préalable
 
 **19 octobre 2026 — accès lecteur API non qualifié.** Rôle pilote : Plugins, #2054 ; intégration dépendante #2055.
@@ -157,4 +167,4 @@ ou une acquisition numérique effectivement fonctionnels.**
 - FAQ : https://www.bnf.fr/fr/centre-d-aide/bnf-pret-numerique
 - Mode d'emploi : https://www.bnf.fr/fr/centre-d-aide/bnf-pret-numerique-mode-demploi
 - Exploration GitHub : https://github.com/xlcnd/isbnlib-bnf (Catalogue général) et https://github.com/Kryzo/mcp-bibliotheque_nationale_de_France (Gallica). Aucun de ces clients ne démontre les permissions de prêt via API v1.
-- Références projet : src/plugins/provider-bnf-catalogue (SRU public), src/plugins/provider-paris (PNB) ; #976, #982, #984, #1063. 
+- Références projet : src/plugins/provider-bnf-catalogue (SRU public), src/plugins/provider-paris (PNB) ; #976, #982, #984, #1063.
