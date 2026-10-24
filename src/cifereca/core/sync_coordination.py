@@ -345,8 +345,17 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
     provider, credential = account.provider_id, account.credential_id
     if type(provider) is not str or not provider or type(credential) is not str or not credential:
         return False
+    # "primary" is a Core alias for the Paris principal account's empty
+    # upstream UID, NOT a default for any malformed/unpaired Account. A
+    # secondary account with no UID (or the reserved alias as its UID)
+    # must never publish or certify the principal borrower's loans.
+    if type(account.unique_id) is not str:
+        return False
+    if (provider == "paris" and account.is_primary is not True
+            and account.unique_id in ("", "primary")):
+        return False
     expected_account = account.unique_id or ("primary" if provider == "paris" else "")
-    if type(expected_account) is not str:
+    if type(identity_id) is not str or not identity_id:
         return False
     # Do not silently keep whichever conflicting upstream row happens to
     # arrive first. Opening sync deduplicates later by loan ID; without this
