@@ -9,6 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = 'src/plugins/provider-bnf-pret/'
 TEST = PACKAGE + 'tests/test_http_provider.py'
+EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
+                  PACKAGE + 'tests/test_explicit_token_failures.py')
 
 
 def selected(paths, root=ROOT, *, full=False):
@@ -38,7 +40,7 @@ def main():
         return 0
     # pytest discovers the Core/SQLite and official-package integration functions,
     # as well as the unittest HTTPX contracts. A missing/empty suite fails pytest.
-    return subprocess.call([sys.executable, '-m', 'pytest', '-q', TEST], cwd=ROOT)
+    return subprocess.call([sys.executable, '-m', 'pytest', '-q', TEST, *EXPLICIT_TESTS], cwd=ROOT)
 
 
 if __name__ == '__main__':

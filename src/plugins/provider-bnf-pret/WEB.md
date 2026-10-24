@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.0.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.1.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -67,6 +67,37 @@ Aucun fichier, placement ou historique n'est supprimé par ce fournisseur.
 
 La version **0.3.0** ajoute `catalog.search` et `catalog.detail` à `sync.loans`.
 Emprunt, réservation, retour et téléchargement ADEPT ne sont pas annoncés.
+
+## Préparation du téléchargement explicite — 0.3.1
+
+Le fournisseur expose uniquement pour intégration future son adaptateur
+`download_digital(loan, account, target_dir, explicit_user_action=True)`, **sans déclarer**
+`digital_download` ou `acquisition.download` dans ses capacités publiques.
+L'interface et la synchronisation ne l'appellent pas. Toute invocation générique sans\n`explicit_user_action=True` est refusée avant une requête Web. Le garde Core
+`bnf_web_explicit_only` reste actif : aucun ACSM n'est obtenu à l'ouverture.
+
+Ce chemin exige une connexion active, l'objet de compte **exact** et un prêt
+numérique avec la même identité / connexion / ressource que la dernière page
+d'activité observée. Il relit la page d'activité du même compte avant
+**un seul GET** de `/loans/{id}`, construit à partir de l'identifiant déjà
+observé et non d'une URL arbitraire. Les redirections sont toutes refusées,
+sans retry ni POST. Une page vide, un prêt disparu, un autre compte ou une
+session fermée bloquent le téléchargement même si le ledger conserve le droit.
+
+Le corps reçu est plafonné à 2 Mio, n'est reconnu comme *candidat ACSM* que
+si sa structure XML bornée a la racine Adobe ADEPT `fulfillmentToken` de
+type `loan`; les DTD et entités sont refusées. Un `.bin`/MIME ne suffit pas.
+Le token validé est sauvegardé dans le dossier de staging Core demandé,
+avec un nouveau nom neutre `.acsm` et permissions 0600, sans écraser un
+fichier existant. L'URL privée, le corps XML et la référence de prêt ne sont
+pas envoyés dans les diagnostics ni retournés comme URL de catalogue.
+
+**Ce n'est pas un fulfillment ADEPT ni une preuve transactionnelle serveur.**
+Étapes encore bloquantes : raccordement Core/UI à une action explicite et
+consentie avec le profil ADEPT du prêt, vérification de provenance/expiration
+du jeton, recette réelle et publication de l'EPUB/PDF seulement après preuve.
+Les tests 0.3.1 sont purement synthétiques et ne justifient pas l'annonce
+du téléchargement aux utilisateurs.
 
 ## Catalogue et fiches en lecture seule
 
