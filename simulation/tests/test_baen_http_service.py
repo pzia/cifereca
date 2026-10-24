@@ -25,7 +25,7 @@ import httpx
 import datasetctl
 from plugin_coverage import build_report
 from baen.pseudo_baen_service import BaenFakeApp, Handler
-from cifereca_baen import BaenSession, ProviderError
+from cifereca_baen import BaenSession, ProviderError, UNVERIFIED_SEARCH_WARNING
 
 
 class LocalBaenServer:
@@ -136,8 +136,9 @@ class BaenContractTests(unittest.TestCase):
                 self.assertEqual(session.search("", page=2), [])
                 self.assertEqual([i.title for i in session.search("Garden")], ["The Garden of Words"])
                 self.assertEqual(session.search("nothing"), [])
-                self.assertEqual(session.last_search_warnings, [],
-                                 "attested 200 zero is not partial")
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ], "zero markup cannot attest the upstream q/page semantics")
                 self.assertIn("page=2", server.calls[1])
                 self.assertIn("pageSize=2", server.calls[1])
 
@@ -216,7 +217,9 @@ class BaenContractTests(unittest.TestCase):
                 self.assertEqual([r.title for r in session.search("Garden")],
                                  ["The Garden of Words"])
                 self.assertEqual(len(server.calls), 2)
-                self.assertEqual(session.last_search_warnings, [])
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ])
             finally:
                 session.close()
 
@@ -231,7 +234,9 @@ class BaenContractTests(unittest.TestCase):
                 ))
                 self.assertEqual(len(server.calls), 1)
                 self.assertEqual(session.search("nothing"), [])
-                self.assertFalse(session.last_search_warnings)
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ])
                 self.assertEqual(len(server.calls), 2)
             finally:
                 session.close()
