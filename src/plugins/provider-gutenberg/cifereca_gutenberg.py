@@ -115,6 +115,20 @@ def _unavailable_opds_xml():
     return failure
 
 
+def _unverified_html_opds():
+    """HTML 200 may be SSO/login, not proof of public catalogue downtime."""
+    return ProviderError("Project Gutenberg OPDS : XML invalide (invalid_opds_feed)")
+
+
+def _html_response_prefix(content: bytes) -> bool:
+    prefix = content.lstrip(b" \t\r\n\xef\xbb\xbf").lower()[:80]
+    return prefix.startswith((b"<html", b"<!doctype html"))
+
+
+def _is_html_root(root: ET.Element) -> bool:
+    return type(root.tag) is str and root.tag.rsplit("}", 1)[-1].casefold() == "html"
+
+
 DESCRIPTOR = ProviderDescriptor(
     id="gutenberg",
     display_name="Project Gutenberg",
@@ -288,12 +302,14 @@ class GutenbergSession(ProviderSession):
                 detail={"bytes": len(content), "reason": "invalid_opds_feed"},
                 level="detailed",
             )
-            raise _unavailable_opds_xml() from None
+            raise (_unverified_html_opds() if _html_response_prefix(content)
+                   else _unavailable_opds_xml()) from None
 
         # HTML/login pages and unrelated valid XML are not empty Atom feeds.
-        # A 200 transport success never proves a catalogue zero on wrong XML.
+        # HTML 200 does not authorize an outage-based stale catalogue.
         if root.tag != f"{{{ATOM}}}feed":
-            raise _unavailable_opds_xml() from None
+            raise (_unverified_html_opds() if _is_html_root(root)
+                   else _unavailable_opds_xml()) from None
 
         entries = root.findall(f"{{{ATOM}}}entry")
         stats = {
@@ -521,10 +537,13 @@ class GutenbergSession(ProviderSession):
         try:
             root = ET.fromstring(content)
         except ET.ParseError:
-            # Malformed Atom is an XML failure, not a forged/missing next URL.
-            raise _unavailable_opds_xml() from None
+            # A login gateway may emit invalid HTML with HTTP 200. That
+            # cannot attest a public catalogue outage or an empty page.
+            raise (_unverified_html_opds() if _html_response_prefix(content)
+                   else _unavailable_opds_xml()) from None
         if root.tag != f"{{{ATOM}}}feed":
-            raise _unavailable_opds_xml() from None
+            raise (_unverified_html_opds() if _is_html_root(root)
+                   else _unavailable_opds_xml()) from None
         try:
             base = urlsplit(base_url)
             base_port = base.port or (443 if base.scheme == "https" else 80)
