@@ -348,16 +348,27 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
     expected_account = account.unique_id or ("primary" if provider == "paris" else "")
     if type(expected_account) is not str:
         return False
-    return all(
-        type(loan) is Loan
-        and type(loan.id) is str and bool(loan.id)
-        and type(loan.source_provider) is str and loan.source_provider == provider
-        and type(loan.source_credential) is str and loan.source_credential == credential
-        and type(loan.source_account_id) is str and loan.source_account_id == expected_account
-        and type(loan.identity_id) is str and loan.identity_id == identity_id
-        and type(loan.medium) is str and loan.medium in ("digital", "physical", "unknown")
-        for loan in rows
-    )
+    # Do not silently keep whichever conflicting upstream row happens to
+    # arrive first. Opening sync deduplicates later by loan ID; without this
+    # test an item/branch/expiry contradiction disappears before SQLite sees it.
+    from .library_mutation import _positive_loan_identity
+    seen: dict[tuple, tuple] = {}
+    for loan in rows:
+        if not (
+            type(loan) is Loan
+            and type(loan.id) is str and bool(loan.id)
+            and type(loan.source_provider) is str and loan.source_provider == provider
+            and type(loan.source_credential) is str and loan.source_credential == credential
+            and type(loan.source_account_id) is str and loan.source_account_id == expected_account
+            and type(loan.identity_id) is str and loan.identity_id == identity_id
+            and type(loan.medium) is str and loan.medium in ("digital", "physical", "unknown")
+        ):
+            return False
+        key, signature = _positive_loan_identity(loan)
+        if key in seen and seen[key] != signature:
+            return False
+        seen[key] = signature
+    return True
 
 
 def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, logger) -> dict[str, Any]:
