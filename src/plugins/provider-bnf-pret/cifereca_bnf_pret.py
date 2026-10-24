@@ -45,7 +45,7 @@ _PUBLIC_CODES = frozenset({
     'unrecognized_detail', 'ambiguous_detail', 'next_page_unavailable',
     'search_redirect_mismatch', 'detail_redirect_mismatch', 'ambiguous_search',
     'search_page_limit', 'inventory_not_exhaustive',
-    'loan_not_observed', 'invalid_loan_token', 'token_limit',
+    'loan_not_observed', 'invalid_loan_token', 'token_limit', 'session_closed',
     'download_redirect_refused', 'download_storage_failed',
 })
 
