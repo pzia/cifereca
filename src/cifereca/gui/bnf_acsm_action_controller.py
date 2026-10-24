@@ -5,6 +5,7 @@ identity and loan during the GET; this controller never sees cookies or XML.
 """
 from __future__ import annotations
 from pathlib import Path
+from copy import copy
 
 
 def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
@@ -14,6 +15,10 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
     if identity is None or identity.identity_id != loan.identity_id:
         window.show_error("Choisissez l'identité du prêt avant le téléchargement", "Prêt BnF")
         return
+    # Loan is a mutable Core model. Consent must stay attached to the exact
+    # selection visible when the confirmation opened, even if the surrounding
+    # GTK list refreshes/reuses its original Loan object meanwhile.
+    loan = copy(loan)
     identity_id = identity.identity_id
     identity_generation = getattr(window, "_identity_context_generation", None)
     account_generation = getattr(window, "_account_context_generation", None)
@@ -46,10 +51,13 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
         )
         dialog.add_response("cancel", "Plus tard")
         dialog.add_response("import", "Importer via ADEPT")
+        submitted = False
 
         def chosen(_dialog, response):
-            if response != "import" or not current():
+            nonlocal submitted
+            if response != "import" or submitted or not current():
                 return
+            submitted = True
 
             def import_work():
                 if not current():
@@ -95,9 +103,13 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
         dialog.connect("response", chosen)
         dialog.present()
 
+    submitted = False
+
     def chosen(_dialog, response):
-        if response != "get" or not current():
+        nonlocal submitted
+        if response != "get" or submitted or not current():
             return
+        submitted = True
 
         def work():
             if not current():
