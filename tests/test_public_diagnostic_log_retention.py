@@ -298,9 +298,15 @@ def test_extended_closed_event_never_bypasses_redaction_or_normalizes_payload(
             "status": "incomplete_scan", "reasons": ["entry_budget"],
         }))
     assert body
+    embedded = (
+        body.replace('"provider_id":', '"password":"PRIVATE_PASSWORD","provider_id":')
+        if kind == "connect"
+        else body.replace('"schema_version":1',
+                          '"schema_version":1,"password":"PRIVATE_PASSWORD"')
+    )
     for attack in (
         body + ' "password":"PRIVATE_PASSWORD"',
-        body.replace('"schema_version":1', '"schema_version":1,"password":"PRIVATE_PASSWORD"'),
+        embedded,
     ):
         assert not is_public_core_observation("cifereca", attack)
         item = record(attack)
