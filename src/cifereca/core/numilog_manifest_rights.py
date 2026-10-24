@@ -239,7 +239,7 @@ def mirror_numilog_manifest_rights(
         # order/auth/rights query strings or download references.
         # A discovery-time reservation is not an atomic owner proof.
         # Only the guarded SQLite UPSERT may refresh an existing purchase.
-        if not service.storage.entitlement_put_attested_owned({
+        owned_row = {
             "entitlement_id": entitlement_id,
             "provider_id": "numilog",
             "credential_id": credential_id, "account_id": account_id,
@@ -259,8 +259,18 @@ def mirror_numilog_manifest_rights(
                     row.thumbnail_url, cover=True,
                 ),
             },
-        }):
-            continue
+        }
+        # A different process may claim the canonical ID after our
+        # reservations snapshot. Recover with the same identity-scoped
+        # fallback as discovery-time collisions, without ever reassigning
+        # that process's right. A collision on the fallback fails closed.
+        if not service.storage.entitlement_put_attested_owned(owned_row):
+            if previous is not None or entitlement_id != canonical:
+                continue
+            owned_row["entitlement_id"] = fallback
+            if not service.storage.entitlement_put_attested_owned(owned_row):
+                continue
+            entitlement_id = fallback
         reserved[entitlement_id] = key
         by_scope[key] = {"entitlement_id": entitlement_id}
         count += 1
