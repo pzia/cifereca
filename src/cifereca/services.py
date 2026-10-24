@@ -698,11 +698,15 @@ class LibraryService:
         """
         return provider_sessions.connect_kobo_preview(self, credential_id)
 
-    def connect_configured(self, *, caller_category: str = "other") -> dict[str, Any]:
-        """Connect configured sources and attest a caller only when supplied.
+    def connect_configured(self) -> dict[str, Any]:
+        """Public facade with its stable, no-argument compatibility contract."""
+        return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
 
-        CLI/programmatic callers default to "other"; the GUI passes the
-        actually known start/reconnect category at its submission boundary.
+    def connect_configured_with_caller(self, *, caller_category: str) -> dict[str, Any]:
+        """Core-owned GUI entrypoint carrying an attested, closed caller kind.
+
+        A separate name avoids silently changing the public API used by
+        CLI, legacy plugins and service facade reflection contracts.
         """
         return provider_sessions.connect_configured(
             self, logger=_TRACE_LOG, caller_category=caller_category,
