@@ -1946,6 +1946,78 @@ class Storage:
             )
         return str(row["entitlement_id"])
 
+    def entitlement_put_attested_owned(self, row: dict[str, Any]) -> bool:
+        """Upsert a personal-manifest PURCHASE only for its exact owner.
+
+        The canonical entitlement PK excludes the Cifereca identity, and
+        mirror preflight reservations are only snapshots. A competing writer
+        may claim that PK after discovery. The WHERE clause is therefore the
+        *atomic* authority for preserving identity/account/provider/edition,
+        including a legacy NULL owner, even across different processes.
+
+        False means conflict: zero changes. This intentionally does not
+        implement loan renewal, provenance repair, receipts or acquisitions.
+        """
+        expected = {
+            "kobo": "kobo.personal_manifest",
+            "numilog": "numilog.authenticated_library",
+        }
+        if type(row) is not dict or row.get("provider_id") not in expected:
+            raise ValueError("invalid_attested_owned_right")
+        provider = row["provider_id"]
+        fields = (
+            "entitlement_id", "provider_id", "credential_id",
+            "identity_id", "item_id",
+        )
+        if (any(type(row.get(k)) is not str or not row[k]
+                or len(row[k]) > 1024 or any(c in row[k] for c in "\0\r\n")
+                for k in fields)
+                or (row.get("account_id") is not None
+                    and (type(row["account_id"]) is not str
+                         or len(row["account_id"]) > 1024
+                         or any(c in row["account_id"] for c in "\0\r\n")))
+                or row.get("entitlement_type") != "owned"
+                or row.get("state") not in (
+                    {"active", "archived"} if provider == "kobo" else {"active"}
+                )
+                or row.get("loan_id") is not None
+                or row.get("expires_at") is not None
+                or type(row.get("metadata")) is not dict
+                or row["metadata"].get("source") != expected[provider]):
+            raise ValueError("invalid_attested_owned_right")
+        encoded = self._json_dump(row["metadata"])
+        if len(encoded) > 65536:
+            raise ValueError("invalid_attested_owned_right")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            cursor = db.execute(
+                "INSERT INTO entitlements("
+                "entitlement_id,provider_id,credential_id,account_id,item_id,"
+                "revision_id,entitlement_type,state,loan_id,expires_at,"
+                "metadata_json,discovered_at,updated_at,identity_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(entitlement_id) DO UPDATE SET "
+                "revision_id=excluded.revision_id,"
+                "state=excluded.state,"
+                "metadata_json=excluded.metadata_json,"
+                "updated_at=excluded.updated_at "
+                "WHERE entitlements.identity_id IS excluded.identity_id "
+                "AND entitlements.provider_id=excluded.provider_id "
+                "AND entitlements.credential_id=excluded.credential_id "
+                "AND entitlements.account_id IS excluded.account_id "
+                "AND entitlements.item_id=excluded.item_id "
+                "AND entitlements.entitlement_type='owned' "
+                "AND entitlements.loan_id IS NULL "
+                "AND entitlements.expires_at IS NULL",
+                (
+                    row["entitlement_id"], provider, row["credential_id"],
+                    row.get("account_id"), row["item_id"], row.get("revision_id"),
+                    "owned", row["state"], None, None, encoded, now, now,
+                    row["identity_id"],
+                ),
+            )
+            return cursor.rowcount == 1
+
     def entitlement_put_positive_loans(self, entitlements: tuple[Any, ...]) -> tuple[str, ...]:
         """Persist one complete positive-loan batch, or leave it unchanged.
 
