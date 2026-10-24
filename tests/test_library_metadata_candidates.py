@@ -43,6 +43,56 @@ class MetadataCandidateTests(unittest.TestCase):
         self.assertEqual(len(result.candidates), 2)
         self.assertEqual(result.ambiguous_files, [0])
 
+    def test_two_distinct_epubs_sharing_one_identifier_are_both_ambiguous(self):
+        # An identifier on a catalogue notice can match several separate
+        # files. Its direction is NOT a unique file/edition association.
+        epub(self.root/'PRIVATE_SECOND.epub', identifier='urn:isbn:9780306406157')
+        self.inventory = scan_identity_roots({'alice': (self.root,)})
+        result = metadata_candidates(self.inventory, self.snapshot)
+        self.assertEqual(len(result.candidates), 2)
+        self.assertEqual(result.ambiguous_files, [0, 1])
+        self.assertEqual(result.redacted()['ambiguous_files'], 2)
+        self.assertFalse(result.redacted()['acquisition_authorized'])
+        for index in (0, 1):
+            self.assertNotIn('confirmed_link',
+                             reconcile(self.inventory, self.snapshot).files[index])
+        summary = json.dumps(result.redacted())
+        self.assertNotIn('PRIVATE', summary)
+        self.assertNotIn('9780306406157', summary)
+
+    def test_cross_profile_duplicate_is_not_local_ambiguity(self):
+        elsewhere = self.root.parent/'PRIVATE_FOREIGN_EPUB'
+        elsewhere.mkdir()
+        epub(elsewhere/'PRIVATE_OTHER.epub', identifier='urn:isbn:9780306406157')
+        inventory = scan_identity_roots({
+            'alice': (self.root,), 'bob': (elsewhere,),
+        })
+        result = metadata_candidates(inventory, self.snapshot)
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(result.ambiguous_files, [])
+
+    def test_two_catalogue_notices_and_two_files_deduplicate_ambiguities(self):
+        epub(self.root/'PRIVATE_SECOND.epub', identifier='urn:isbn:9780306406157')
+        self.inventory = scan_identity_roots({'alice': (self.root,)})
+        self.snapshot.tables['catalog_entries'].append(
+            dict(self.snapshot.tables['catalog_entries'][0])
+        )
+        result = metadata_candidates(self.inventory, self.snapshot)
+        self.assertEqual(len(result.candidates), 4)
+        self.assertEqual(result.ambiguous_files, [0, 1])
+        self.assertEqual(result.redacted()['ambiguous_files'], 2)
+
+    def test_candidate_budget_cannot_falsely_certify_uniqueness(self):
+        epub(self.root/'PRIVATE_SECOND.epub', identifier='urn:isbn:9780306406157')
+        self.inventory = scan_identity_roots({'alice': (self.root,)})
+        result = metadata_candidates(
+            self.inventory, self.snapshot, max_candidates=1,
+        )
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(result.ambiguous_files, [])
+        self.assertIn('metadata_candidate_count_budget', result.reasons)
+        self.assertEqual(result.redacted()['status'], 'incomplete_scan')
+
     def test_checksum_validation_and_no_inferred_scheme(self):
         self.assertEqual(identifiers({'identifiers':[{'value':'9780306406158','scheme':'ISBN'}]}), ())
         self.assertEqual(identifiers({'identifiers':[{'value':'9780306406157'}]}), ())
