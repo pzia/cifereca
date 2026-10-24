@@ -124,7 +124,7 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                         or metadata.get("source") != "numilog.authenticated_library"):
                     return stop("right_not_attested")
                 acquisitions = _rows(db,
-                    "SELECT entitlement_id, identity_id, provider_id, credential_id, "
+                    "SELECT acquisition_id, entitlement_id, identity_id, provider_id, credential_id, "
                     "account_id, item_id, status, artifact_id "
                     "FROM acquisition_ledger "
                     "WHERE entitlement_id=? OR (provider_id=? AND credential_id=? AND item_id=?) "
