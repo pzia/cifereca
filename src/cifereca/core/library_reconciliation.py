@@ -476,13 +476,14 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                 observation.identity_id, placement['provider_id'],
                 placement['source_item_id'],
             ), [])
-            # A Numilog placement has no account/credential column: an
-            # exact ledger for ONE borrower cannot make the placement owned
-            # by that borrower when the same local identity has a competing
-            # right for the edition, even one without a usable receipt.
-            # Match the Numilog transaction's cross-credential uniqueness
-            # check. A second unrelated identity/edition remains isolated.
-            if placement['provider_id'] == 'numilog' and len(edition_rights) > 1:
+            # Neither Kobo nor Numilog placements contain an account or
+            # credential column. One apparently complete purchase/backup
+            # cannot prove WHICH of two same-identity buyer accounts owns
+            # this placement, even if the other right is expired or lacks a
+            # receipt. Preserve byte evidence, but withhold right attestation.
+            # Foreign identities and *different* editions do not interfere.
+            if (placement['provider_id'] in {'numilog', 'kobo'}
+                    and len(edition_rights) > 1):
                 categories.add('ambiguous')
                 continue
             for ri, right in edition_rights:
