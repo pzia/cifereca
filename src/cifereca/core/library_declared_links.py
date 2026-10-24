@@ -227,6 +227,17 @@ def _records(db):
                  and type(record['right_state']) is dict
                  and set(record['right_state']) == {
                      'entitlement_id', 'entitlement_type', 'state', 'loan_id', 'expires_at'}
+                 # Historical declarations are not provider attestations, but
+                 # their recorded right state must still be a well-formed
+                 # bounded snapshot. Otherwise malformed metadata can appear
+                 # as an ordinary current right in private review/history.
+                 and _text(record['right_state']['entitlement_id'])
+                 and _text(record['right_state']['entitlement_type'])
+                 and _text(record['right_state']['state'])
+                 and (record['right_state']['loan_id'] is None
+                      or _text(record['right_state']['loan_id']))
+                 and (record['right_state']['expires_at'] is None
+                      or _text(record['right_state']['expires_at']))
                  and type(record['created_at']) is int
                  and (record['revoked_at'] is None if record['state'] == 'active'
                       else type(record['revoked_at']) is int), 'declaration_store_invalid')
