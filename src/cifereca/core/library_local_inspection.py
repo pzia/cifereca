@@ -432,6 +432,9 @@ class LocalInspection:
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
         self._candidate_file_keys = {}
+        # Lower-trust title+author leads are isolated from exact identifiers.
+        # Neither type may authorize a placement or an acquisition.
+        self._descriptive_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
         self._kobo_right_proofs = {}
@@ -677,6 +680,11 @@ class LocalInspection:
                 # This FileObservation is a private, scanned capability; a
                 # later preview still performs its own fresh nofollow SHA.
                 self._manual_file_observations[f'file:{index}'] = observation
+        from .library_descriptive_hints import index_file_descriptions
+        descriptive_index = index_file_descriptions(
+            audit.inventory.files, audit.reconciliation.files,
+            identity_id=identity_id,
+        )
         placements = audit.snapshot.tables.get('placements', [])
         artifacts = audit.snapshot.tables.get('artifacts', [])
         own_files = [f for f in audit.inventory.files if f.identity_id == identity_id]
@@ -849,6 +857,20 @@ class LocalInspection:
             )
             file_keys = tuple(f'file:{fi}' for fi in candidate_indices[:20])
             self._candidate_file_keys[f'right:{index}'] = file_keys
+            # Separate human-only hypotheses when a catalogue ISBN/identifier
+            # is absent: concordant OPF title+author NEVER imply this EPUB is
+            # owned by the source, account or edition of the selected right.
+            from .library_descriptive_hints import descriptive_file_indices
+            descriptive_indices = descriptive_file_indices(
+                descriptive_index, title=title, authors=authors,
+                media_format=right.get('display_media_format'),
+                exclude=candidate_indices,
+            )
+            descriptive_keys = tuple(
+                f'file:{fi}' for fi in descriptive_indices
+                if f'file:{fi}' in self._cases
+            )
+            self._descriptive_file_keys[f'right:{index}'] = descriptive_keys
             suggestions = [
                 'Fichiers à comparer (même identifiant bibliographique explicite '
                 'qu’une notice de cette édition ; candidat non probant, sans '
@@ -873,6 +895,19 @@ class LocalInspection:
                     suggestions.append(
                         'Candidats multiples ou notices ambiguës : aucun '
                         'appariement individuel ne peut être conclu.'
+                    )
+            if descriptive_keys:
+                suggestions.append(
+                    'Pistes descriptives distinctes (titre ET auteur OPF concordants, '
+                    'sans identifiant d’édition commun attesté, ni droit ou fournisseur prouvé) :'
+                )
+                suggestions.extend(
+                    '• ' + self._cases[key].label for key in descriptive_keys
+                )
+                if len(descriptive_keys) > 1:
+                    suggestions.append(
+                        'Titres/auteurs partagés par plusieurs fichiers : '
+                        'aucune attribution individuelle possible.'
                     )
             case_heading = (
                 'Prêt Paris non actif (lecture seule)'
@@ -957,6 +992,7 @@ class LocalInspection:
         self._case_search.clear()
         self._from_audit_cache = False
         self._candidate_file_keys.clear()
+        self._descriptive_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
         self._kobo_right_proofs.clear()
@@ -1828,6 +1864,29 @@ class LocalInspection:
         return tuple(self._cases[key]
                      for key in self._candidate_file_keys.get(right_key, ())
                      if key in self._cases)
+
+    def descriptive_files(self, right_key):
+        """Private title+author-only leads; NEVER exact edition or right links.
+
+        Explicitly distinct from candidate_files() (ISBN/identifier). A
+        descriptive match cannot grant any capability; fresh per-provider
+        preview and user declarations retain their original independent
+        owner/identity/byte validation.
+        """
+        if not self.valid() or type(right_key) is not str:
+            return ()
+        if right_key not in self._cases or not right_key.startswith('right:'):
+            return ()
+        return tuple(replace(
+            self._cases[key],
+            details=(
+                'Piste descriptive seulement : titre et auteur OPF concordent '
+                'avec une description locale, sans preuve d’édition, de compte, '
+                'de droit, de provenance ou de placement.\\n\\n'
+                + self._cases[key].details
+            ),
+        ) for key in self._descriptive_file_keys.get(right_key, ())
+            if key in self._cases)
 
     def detail(self, key):
         if not self.valid() or type(key) is not str:
