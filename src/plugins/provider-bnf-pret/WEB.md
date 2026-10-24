@@ -71,9 +71,9 @@ Emprunt, réservation, retour et téléchargement ADEPT ne sont pas annoncés.
 ## Préparation du téléchargement explicite — 0.3.1
 
 Le fournisseur expose uniquement pour intégration future son adaptateur
-`download_digital(loan, account, target_dir)`, **sans déclarer**
+`download_digital(loan, account, target_dir, explicit_user_action=True)`, **sans déclarer**
 `digital_download` ou `acquisition.download` dans ses capacités publiques.
-L'interface et la synchronisation ne l'appellent pas. Le garde Core
+L'interface et la synchronisation ne l'appellent pas. Toute invocation générique sans\n`explicit_user_action=True` est refusée avant une requête Web. Le garde Core
 `bnf_web_explicit_only` reste actif : aucun ACSM n'est obtenu à l'ouverture.
 
 Ce chemin exige une connexion active, l'objet de compte **exact** et un prêt
