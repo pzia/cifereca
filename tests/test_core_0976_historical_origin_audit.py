@@ -244,3 +244,31 @@ def test_legacy_identical_entitlement_id_cannot_cross_attest_a_third_account():
     }
     assert result["status"] == "recorded"
     assert result["profile_disagreement"]
+
+
+def test_origin_resolution_does_not_erase_disagreement_with_one_attested_profile():
+    rights = [_right("alice", "paris-a"), _right("bob", "paris-b")]
+    origins = [_acq("alice", "paris-a", "hb", state="attested"),
+               _acq("bob", "paris-b", "magali", state="recorded")]
+    before = deepcopy((rights, origins))
+    result = _audit(rights, origins)
+    assert result["status"] == "inventory_attested"  # legacy strongest evidence
+    assert result["origin_resolution"] == "conflicting_records"
+    assert result["profile_disagreement"] is True
+    assert [r["evidence"] for r in result["origins"]].count("inventory_attested") == 1
+    assert (rights, origins) == before
+
+
+def test_origin_resolution_distinguishes_recorded_from_attested_and_unknown():
+    rights = [_right("alice", "paris-a")]
+    assert _audit(rights, [])["origin_resolution"] == "unknown"
+    assert _audit(rights, [_acq("alice", "paris-a", "hb")])[
+        "origin_resolution"] == "single_recorded"
+    assert _audit(rights, [_acq("alice", "paris-a", "hb", state="attested")])[
+        "origin_resolution"] == "single_inventory_attested"
+    unknown = _acq("alice", "paris-a", None)
+    assert _audit(rights, [unknown])["origin_resolution"] == "unknown"
+    mixed = [_acq("alice", "paris-a", "hb", state="attested"),
+             _acq("bob", "paris-b", "hb", state="recorded")]
+    assert _audit(rights, mixed)["origin_resolution"] == "single_recorded"
+    assert _audit([], [], loan="", item="book")["origin_resolution"] == "unknown"
