@@ -126,7 +126,10 @@ def test_two_actual_identity_loan_syncs_cannot_rewrite_existing_owner_or_history
         rights_before = _rights(service.storage)
         ledger_before = service.storage.acquisitions()
         foreign = replace(loan, identity_id="alex", title=PRIVATE)
-        with pytest.raises(ValueError, match="^entitlement_source_scope_conflict$"):
+        # Positive-loan writes already use a dedicated atomic ownership guard
+        # and its own closed code. This PR protects the separate, generic
+        # entitlement_put() path; both must reject identity reassignment.
+        with pytest.raises(ValueError, match="^loan_entitlement_scope_conflict$"):
             service._persist_active_loans("alex", [foreign])
         assert _rights(service.storage) == rights_before
         assert service.storage.acquisitions() == ledger_before
