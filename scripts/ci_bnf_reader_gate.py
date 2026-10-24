@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = 'src/plugins/provider-bnf-pret/'
 TEST = PACKAGE + 'tests/test_http_provider.py'
 EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
-                  PACKAGE + 'tests/test_explicit_token_failures.py')
+                  PACKAGE + 'tests/test_explicit_token_failures.py',
+                  PACKAGE + 'tests/test_observed_loan_metadata.py')
 
 
 def selected(paths, root=ROOT, *, full=False):
