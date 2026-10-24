@@ -302,8 +302,14 @@ class GutenbergSession(ProviderSession):
                 detail={"bytes": len(content), "reason": "invalid_opds_feed"},
                 level="detailed",
             )
-            raise (_unverified_html_opds() if _html_response_prefix(content)
-                   else _unavailable_opds_xml()) from None
+            failed = (_unverified_html_opds() if _html_response_prefix(content)
+                      else _unavailable_opds_xml())
+        else:
+            failed = None
+        # Do not raise *inside* ParseError: Core examines even suppressed
+        # __context__, which would falsely authorize stale HTML login data.
+        if failed is not None:
+            raise failed
 
         # HTML/login pages and unrelated valid XML are not empty Atom feeds.
         # HTML 200 does not authorize an outage-based stale catalogue.
@@ -539,8 +545,12 @@ class GutenbergSession(ProviderSession):
         except ET.ParseError:
             # A login gateway may emit invalid HTML with HTTP 200. That
             # cannot attest a public catalogue outage or an empty page.
-            raise (_unverified_html_opds() if _html_response_prefix(content)
-                   else _unavailable_opds_xml()) from None
+            failed = (_unverified_html_opds() if _html_response_prefix(content)
+                      else _unavailable_opds_xml())
+        else:
+            failed = None
+        if failed is not None:
+            raise failed
         if root.tag != f"{{{ATOM}}}feed":
             raise (_unverified_html_opds() if _is_html_root(root)
                    else _unavailable_opds_xml()) from None
