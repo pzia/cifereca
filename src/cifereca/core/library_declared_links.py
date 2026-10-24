@@ -284,7 +284,21 @@ def _collisions(db, scope, observation, records):
             continue
         same_file = row['file']['path'] == observation.path
         same_right = row['scope'] == scope
-        _require(not (same_file or same_right)
+        # One inode may have several paths (hardlinks, renamed folders).
+        # Paths are not sufficient to decide that two borrowers selected
+        # different *physical* files. SHA equality alone, conversely, only
+        # proves identical bytes: two independent copies remain declarable.
+        # Compare the stable dev/inode pair, not ctime/mtime (which can
+        # change merely because another hardlink was created).
+        old_fp = row['file']['fingerprint']
+        new_fp = observation.fingerprint
+        same_inode = (
+            type(new_fp) is tuple and len(new_fp) == 5
+            and type(new_fp[0]) is int and type(new_fp[1]) is int
+            and new_fp[1] > 0
+            and old_fp[:2] == list(new_fp[:2])
+        )
+        _require(not (same_file or same_inode or same_right)
                  or (same_file and same_right and row['file'] == _file(observation)),
                  'declaration_conflict')
     placements = _rows(db, 'SELECT placement_id,path,artifact_id,identity_id,provider_id,'
