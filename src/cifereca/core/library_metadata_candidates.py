@@ -176,7 +176,7 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
             matches = set()
             for key in identifiers(observation.metadata):
                 matches.update(index.get((observation.identity_id, key), ()))
-                if len(matches) > max_candidates-len(result.candidates):
+                if len(matches) > max_candidates - len(result.candidates):
                     result.reasons.add('metadata_candidate_count_budget')
                     return result
             for ci in sorted(matches):

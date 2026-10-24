@@ -173,7 +173,35 @@ def _records(db):
                  'declaration_store_invalid')
         total += len(raw)
         _require(total <= _MAX_STORE_BYTES, 'declaration_budget')
-        record = json.loads(raw)
+        # A damaged private declaration must fail with a closed diagnostic,
+        # not bubble a JSON parser exception (which may include source text).
+        # Duplicate keys are ambiguous evidence: never let the last key win
+        # when deciding whether a file/right already has a declaration.
+        def unique_object(pairs):
+            value = {}
+            for key, item in pairs:
+                _require(key not in value, 'declaration_store_invalid')
+                value[key] = item
+            return value
+
+        def reject_nonfinite(_value):
+            # Python's decoder accepts NaN/Infinity by default, although
+            # these are not JSON and cannot describe durable proof state.
+            raise DeclarationRejected('declaration_store_invalid')
+
+        try:
+            record = json.loads(
+                raw, object_pairs_hook=unique_object,
+                parse_constant=reject_nonfinite,
+            )
+        except DeclarationRejected:
+            # Duplicate keys / non-JSON constants are a distinct structural
+            # corruption. Do not accidentally catch our ValueError subclass.
+            raise
+        except (ValueError, TypeError, RecursionError):
+            # Preserve the historical closed diagnostic for broken JSON text;
+            # existing history/listing clients rely on this status.
+            raise DeclarationRejected('invalid_local_context') from None
         _require(type(record) is dict and set(record) == {
             'version', 'relation_id', 'scope', 'file', 'right_state', 'state',
             'origin', 'created_at', 'revoked_at',
