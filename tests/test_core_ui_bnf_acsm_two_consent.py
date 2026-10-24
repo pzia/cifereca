@@ -53,7 +53,7 @@ def window():
 
 def start(w):
     Dialog.shown.clear()
-    loan = NS(source_provider="bnf-pret", identity_id="default", title="Fiction")
+    loan = NS(source_provider="bnf-pret", identity_id="default", title="Fiction", id="loan-a", record_id="book-a")
     prepare_bnf_acsm(w, loan, None, Adw=NS(MessageDialog=Dialog),
                      TaskPriority=NS(USER_ACTION=1))
     return loan
@@ -120,3 +120,36 @@ def test_refuse_wrong_active_identity_before_presenting_action():
     assert not Dialog.shown
     w.show_error.assert_called_once()
     assert not actions
+
+
+def test_confirmation_is_bound_to_original_loan_even_after_mutable_list_refresh():
+    w, actions = window()
+    selection = start(w)
+    selection.id = "loan-other"
+    selection.record_id = "book-other"
+    selection.title = "Un autre titre"
+    Dialog.shown[0].respond("get")
+    submitted = w.service.stage_bnf_loan_acsm.call_args
+    assert submitted.kwargs == {
+        "confirmed": True, "expected_identity_id": "default",
+    }
+    assert submitted.args[0].id == "loan-a"
+    assert submitted.args[0].record_id == "book-a"
+    Dialog.shown[1].respond("import")
+    assert w.service.import_acsm.call_args.kwargs["title"] == "Fiction"
+
+
+def test_both_dialogs_reject_replayed_positive_responses():
+    w, actions = window()
+    start(w)
+    Dialog.shown[0].respond("get")
+    Dialog.shown[0].respond("get")
+    assert w.service.stage_bnf_loan_acsm.call_count == 1
+    assert len(Dialog.shown) == 2
+    Dialog.shown[1].respond("import")
+    Dialog.shown[1].respond("import")
+    assert w.service.import_acsm.call_count == 1
+    assert actions == [
+        ("Récupération du jeton BnF…", "loan-acquisition"),
+        ("Import ADEPT du prêt BnF…", "acsm-import"),
+    ]

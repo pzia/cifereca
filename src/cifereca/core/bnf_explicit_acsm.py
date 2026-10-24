@@ -6,6 +6,7 @@ positively observed in the exact connected provider session can be fetched.
 """
 from __future__ import annotations
 from pathlib import Path
+from xml.etree import ElementTree
 
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
@@ -15,6 +16,34 @@ _MAX_BYTES = 2 * 1024 * 1024
 
 def _refuse(code: str):
     raise ProviderConfigurationError(code)
+
+
+def _valid_loan_token(path: Path, inspect_artifact) -> bool:
+    """Independent Core admission: a valid XML file alone is not a loan ACSM.
+
+    The provider already checks its HTTP response. Recheck the persisted
+    candidate here so another plugin implementation or damaged staging cannot
+    pass a purchase, an entity-bearing XML, or a false file suffix to ADEPT.
+    No token body or attributes leave this local function.
+    """
+    inspection = inspect_artifact(path)
+    if inspection.valid is not True or inspection.media_format != "acsm":
+        return False
+    with path.open("rb") as handle:
+        content = handle.read(_MAX_BYTES + 1)
+    if not 0 < len(content) <= _MAX_BYTES:
+        return False
+    upper = content.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        return False
+    try:
+        root = ElementTree.fromstring(content)
+    except (ElementTree.ParseError, ValueError, TypeError):
+        return False
+    return (
+        root.tag == "{http://ns.adobe.com/adept}fulfillmentToken"
+        and root.attrib.get("fulfillmentType") == "loan"
+    )
 
 
 def stage_bnf_loan_acsm(
@@ -58,6 +87,7 @@ def stage_bnf_loan_acsm(
                         or account.unique_id != loan.source_account_id
                         or session.connected is not True
                         or session.provider_id != "bnf-pret"
+                        or session.credential_id != loan.source_credential
                         or not any(a is account for a in session.accounts)):
                     _refuse("bnf_loan_scope_unproven")
             except Exception:
@@ -83,7 +113,7 @@ def stage_bnf_loan_acsm(
                         or artifact.suffix.casefold() != ".acsm"
                         or not artifact.is_file()
                         or not 0 < artifact.stat().st_size <= _MAX_BYTES
-                        or not inspect_artifact(artifact).valid):
+                        or not _valid_loan_token(artifact, inspect_artifact)):
                     _refuse("bnf_loan_token_invalid")
                 if not active_identity() or session.connected is not True:
                     try:
