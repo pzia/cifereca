@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import itertools
 import queue
 import threading
@@ -120,13 +121,26 @@ class PriorityExecutor:
     def _release_cancelled_lease(self, future: Future[Any]) -> None:
         if not future.cancelled():
             return
-        # A worker and a caller cancelling a Future may race. The timestamp
-        # is the single owner marker for pending accounting: whichever removes
-        # it first decrements _pending exactly once. Shutdown drains this same
-        # marker before cancelling removed futures outside the pool lock.
+        # A bounded queue must remain physically bounded under repeated
+        # cancellations. Do not merely decrement _pending while retaining
+        # cancelled low-priority items in the heap: that grows memory without
+        # bound as new high-priority tasks are admitted.
         with self._lock:
-            if self._queued_at.pop(future, None) is not None:
-                self._pending -= 1
+            if self._max_pending is not None:
+                with self._queue.mutex:
+                    for index, (_, _, queued, _) in enumerate(self._queue.queue):
+                        if queued is future:
+                            self._queue.queue.pop(index)
+                            heapq.heapify(self._queue.queue)
+                            # Mirror PriorityQueue.task_done() for an entry
+                            # removed under the queue's own condition lock.
+                            self._queue.unfinished_tasks -= 1
+                            if not self._queue.unfinished_tasks:
+                                self._queue.all_tasks_done.notify_all()
+                            self._queue.not_full.notify()
+                            if self._queued_at.pop(future, None) is not None:
+                                self._pending -= 1
+                            break
         self._release_lease(future)
 
     def _release_lease(self, future: Future[Any]) -> None:
