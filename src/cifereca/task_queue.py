@@ -106,7 +106,11 @@ class PriorityExecutor:
                     self._rejected += 1
                     raise RuntimeError("shared task admission full")
                 self._leases[future] = lease
-                future.add_done_callback(self._release_cancelled_lease)
+            # Register for all futures, not only shared-admission tasks.
+            # Cancellation removes a queued task from local pending capacity
+            # immediately; a cancelled low-priority entry may otherwise
+            # block a new user action while waiting behind other work.
+            future.add_done_callback(self._release_cancelled_lease)
             self._queued_at[future] = monotonic_ns()
             self._queue.put((queued_priority, next(self._sequence), future, fn))
             self._pending += 1
@@ -114,8 +118,16 @@ class PriorityExecutor:
             return future
 
     def _release_cancelled_lease(self, future: Future[Any]) -> None:
-        if future.cancelled():
-            self._release_lease(future)
+        if not future.cancelled():
+            return
+        # A worker and a caller cancelling a Future may race. The timestamp
+        # is the single owner marker for pending accounting: whichever removes
+        # it first decrements _pending exactly once. Shutdown drains this same
+        # marker before cancelling removed futures outside the pool lock.
+        with self._lock:
+            if self._queued_at.pop(future, None) is not None:
+                self._pending -= 1
+        self._release_lease(future)
 
     def _release_lease(self, future: Future[Any]) -> None:
         with self._lock:
@@ -163,8 +175,9 @@ class PriorityExecutor:
                 if future is None or fn is None:
                     return
                 with self._lock:
-                    self._pending -= 1
                     queued_at = self._queued_at.pop(future, None)
+                    if queued_at is not None:
+                        self._pending -= 1
                 if not future.set_running_or_notify_cancel():
                     self._release_lease(future)
                     continue
