@@ -659,6 +659,20 @@ def _malformed_opds_protocol():
     return failure
 
 
+def _unverified_html_opds_response():
+    """HTML 200 may be SSO/login, not evidence of a public OPDS outage.
+
+    Do not permit stale public search fallback or silently return zero. The
+    fixed provider error must not disclose the HTML body or redirect URL.
+    """
+    return ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+
+
+def _is_html_document(root):
+    return (type(root.tag) is str
+            and root.tag.rsplit('}', 1)[-1].casefold() == 'html')
+
+
 def _xml_root(content):
     if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
@@ -667,7 +681,13 @@ def _xml_root(content):
         # A prior byte-pattern scan alone cannot qualify non-UTF8 XML.
         return ET.fromstring(content,parser=ET.XMLParser(target=_BoundedOPDSTree()))
     except ET.ParseError:
-        # Broken supplier XML is not a zero; never echo the parser message.
+        # A common reverse proxy or login gateway returns HTTP 200 HTML.
+        # Even invalid HTML syntax is NOT evidence that the public Atom
+        # service itself is unavailable; don't authorize a stale fallback.
+        prefix = content.lstrip(b' \t\r\n\xef\xbb\xbf').lower()[:80]
+        if prefix.startswith((b'<html', b'<!doctype html')):
+            raise _unverified_html_opds_response() from None
+        # Broken supplier XML is not a zero; never echo parser messages.
         raise _malformed_opds_protocol() from None
     except (RecursionError, OverflowError, ValueError):
         # Parser/budget refusals remain non-fallback security failures.
@@ -1043,7 +1063,8 @@ def _opds_load_acquisition(session,initial,field,needle):
         seen.add(url)
         feed,actual=_opds_fetch(session,url)
         if feed.tag!=ATOM+'feed':
-            raise _malformed_opds_protocol() from None
+            raise (_unverified_html_opds_response() if _is_html_document(feed)
+                   else _malformed_opds_protocol()) from None
         entries=feed.findall(ATOM+'entry')
         # The item projector supports an EPUB with rel=alternate as well
         # as OPDS acquisition links. The navigation detector must agree:
@@ -1135,7 +1156,8 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
         return []
     root,root_url=_opds_fetch(session,session.opds_feed_url)
     if root.tag!=ATOM+'feed':
-        raise _malformed_opds_protocol() from None
+        raise (_unverified_html_opds_response() if _is_html_document(root)
+               else _malformed_opds_protocol()) from None
     if needle:
         url=_opds_search_url(session,root,root_url,needle)
     else:
