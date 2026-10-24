@@ -52,16 +52,24 @@ def test_cancelled_pending_task_never_runs_and_does_not_strand_shutdown():
         assert entered.wait(2)
         cancelled = pool.submit(40, lambda: fired.append("unexpected"))
         assert cancelled.cancel()
-        # A cancelled item still occupies a physical queue slot until dequeued.
-        # This bounds memory even under repeated cancellation/resubmission.
-        with pytest.raises(RuntimeError, match="queue full"):
-            pool.submit(40, lambda: fired.append("unexpected"))
+        # Physically prune cancelled entries, not only their pending count:
+        # repeated cancellation and resubmission must remain memory bounded.
+        assert pool.admission_snapshot()["pending"] == 0
+        assert pool._queue.qsize() == 0
+        for _ in range(16):
+            queued = pool.submit(40, lambda: fired.append("unexpected"))
+            assert pool._queue.qsize() == 1
+            assert queued.cancel()
+            assert pool._queue.qsize() == 0
+        manual = pool.submit(0, lambda: fired.append("user"))
+        assert pool._queue.qsize() == 1
         release.set()
         first.result(timeout=3)
+        manual.result(timeout=3)
         pool.shutdown(wait=True)
         assert cancelled.cancelled()
         assert pool.admission_snapshot()["pending"] == 0
-        assert fired == []
+        assert fired == ["user"]
     finally:
         release.set()
         pool.shutdown(wait=True)
