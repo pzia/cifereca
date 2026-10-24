@@ -143,6 +143,21 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                         or receipt["status"] != "complete"
                         or type(receipt["artifact_id"]) is not str):
                     return stop("acquisition_conflict")
+                # The exact writer checks every same-identity, same-edition
+                # receipt, including orphaned receipts under another buyer's
+                # credential and legacy receipts with no known local owner.
+                # A placement does NOT store the upstream account. Never
+                # advertise a reviewable pair that the writer must reject.
+                edition_receipts = _rows(
+                    db,
+                    "SELECT acquisition_id FROM acquisition_ledger "
+                    "WHERE provider_id=? AND item_id=? AND "
+                    "(identity_id=? OR identity_id IS NULL OR identity_id='') LIMIT 3",
+                    ("numilog", item_id, identity_id),
+                )
+                if (len(edition_receipts) != 1
+                        or edition_receipts[0]["acquisition_id"] != receipt["acquisition_id"]):
+                    return stop("acquisition_ambiguous_or_missing")
                 artifact, n = _single(
                     db, "artifacts", "artifact_id=?", (receipt["artifact_id"],),
                 )
