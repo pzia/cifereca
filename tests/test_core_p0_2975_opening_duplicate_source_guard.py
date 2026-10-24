@@ -23,19 +23,6 @@ def _account(credential, borrower):
     )
 
 
-def _run(tmp_path, monkeypatch, input_rows):
-    service = _service(tmp_path)
-    accounts = list(input_rows)
-    service.accounts = accounts
-    monkeypatch.setattr(service, "_loans_for_account",
-                        lambda account, *, force=False: list(input_rows[account]))
-    monkeypatch.setattr(
-        service, "_acquire_active_loan_automatically",
-        lambda loan: {"status": "unchanged"},
-    )
-    return service
-
-
 @pytest.mark.parametrize("change", ["edition", "due", "medium", "provider"])
 def test_conflicting_loan_on_second_page_rejects_entire_account_but_not_sibling(
     tmp_path, monkeypatch, change,
@@ -50,12 +37,12 @@ def test_conflicting_loan_on_second_page_rejects_entire_account_but_not_sibling(
         "provider": replace(first, provider="SYRACUSE"),
     }[change]
     valid = _loan("healthy", credential="cred-good", account="reader-good")
-    rows = {wrong: [first, collision], healthy: [valid]}
+    rows = {"cred-wrong": [first, collision], "cred-good": [valid]}
     service = _service(tmp_path)
     try:
         service.accounts = [wrong, healthy]
         monkeypatch.setattr(service, "_loans_for_account",
-                            lambda a, *, force=False: list(rows[a]))
+                            lambda a, *, force=False: list(rows[a.credential_id]))
         monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                             lambda loan: {"status": "unchanged"})
         report = service.opening_sync()
