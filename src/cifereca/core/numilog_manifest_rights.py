@@ -237,7 +237,9 @@ def mirror_numilog_manifest_rights(
             continue
         # Do not persist provider HTML, metadata, delivery URLs, signed
         # order/auth/rights query strings or download references.
-        service.storage.entitlement_put({
+        # A discovery-time reservation is not an atomic owner proof.
+        # Only the guarded SQLite UPSERT may refresh an existing purchase.
+        if not service.storage.entitlement_put_attested_owned({
             "entitlement_id": entitlement_id,
             "provider_id": "numilog",
             "credential_id": credential_id, "account_id": account_id,
@@ -257,7 +259,8 @@ def mirror_numilog_manifest_rights(
                     row.thumbnail_url, cover=True,
                 ),
             },
-        })
+        }):
+            continue
         reserved[entitlement_id] = key
         by_scope[key] = {"entitlement_id": entitlement_id}
         count += 1
