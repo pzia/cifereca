@@ -101,19 +101,32 @@ def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clo
         max_age_seconds = retention_days * 24 * 3600
     now = clock()
     deleted = kept = 0
-    if not root.is_dir():
+    # An old installation may have a replaced staging root. Never use
+    # rglob/is_dir alone: following such a symlink could delete foreign ACSMs.
+    if root.is_symlink() or not root.is_dir():
         return {'deleted': 0, 'kept': 0}
-    for path in root.rglob('*.acsm'):
-        try:
-            age = now - path.stat().st_mtime
-            if age >= max_age_seconds:
-                path.unlink()
-                forget(path)
-                deleted += 1
-            else:
+    for current, dirs, filenames in os.walk(root, topdown=True, followlinks=False):
+        directory = Path(current)
+        # Old trees may contain links. Do not descend into them even if the
+        # runtime's recursive glob behavior changes between Python versions.
+        dirs[:] = [name for name in dirs if not (directory / name).is_symlink()]
+        for name in filenames:
+            if not name.endswith('.acsm'):
+                continue
+            path = directory / name
+            try:
+                if path.is_symlink():
+                    kept += 1
+                    continue
+                age = now - path.stat().st_mtime
+                if age >= max_age_seconds:
+                    path.unlink()
+                    forget(path)
+                    deleted += 1
+                else:
+                    kept += 1
+            except OSError:
                 kept += 1
-        except OSError:
-            kept += 1
     if deleted:
         logger.info('TRACE download acsm cleanup-old deleted=%s kept=%s max_age_seconds=%s', deleted, kept, max_age_seconds)
     return {'deleted': deleted, 'kept': kept}
