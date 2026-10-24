@@ -118,7 +118,8 @@ def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
         ids = [p["id"] for p in plugins]
         roles = sorted({p["type"] for p in plugins})
         capabilities = sorted({cap for p in plugins
-                               for cap in p.get("capabilities", [])})
+                               for cap in (p.get("capabilities") or [])
+                               if isinstance(cap, str)})
         config = declared.get(name, {})
         data = config.get("data", [])
         if (not isinstance(data, list) or len(data) != len(set(data))
