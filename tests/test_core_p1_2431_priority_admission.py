@@ -447,3 +447,44 @@ def test_fatal_completion_callback_cannot_kill_worker_or_strand_shared_slots(
     assert pool.admission_snapshot()["pending"] == 0
     assert all(not thread.is_alive() for thread in pool._threads)
     assert "PRIVATE_ACCOUNT" not in repr(admission.snapshot())
+
+
+@pytest.mark.parametrize("callback_error", (SystemExit, KeyboardInterrupt))
+def test_fatal_cancel_callback_cannot_strand_other_shutdown_futures(callback_error):
+    """Drain all removed queued tasks, even if one callback raises BaseException."""
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=3, reserve_user_slots=0)
+    pool = PriorityExecutor(max_workers=1, shared_admission=admission)
+    entered, release, cancelled_seen = (
+        threading.Event(), threading.Event(), threading.Event()
+    )
+
+    def blocking():
+        entered.set()
+        assert release.wait(3)
+        return "finished"
+
+    def fatal_cancel_callback(_future):
+        cancelled_seen.set()
+        raise callback_error("PRIVATE_CANCEL_TOKEN")
+
+    try:
+        running = pool.submit(TaskPriority.USER_ACTION, blocking)
+        assert entered.wait(2)
+        first = pool.submit(TaskPriority.MAINTENANCE, lambda: "never-first")
+        second = pool.submit(TaskPriority.MAINTENANCE, lambda: "never-second")
+        first.add_done_callback(fatal_cancel_callback)
+        pool.shutdown(wait=False, cancel_futures=True)
+        assert cancelled_seen.is_set()
+        assert first.cancelled() and second.cancelled()
+        assert pool.admission_snapshot()["pending"] == 0
+        release.set()
+        assert running.result(timeout=3) == "finished"
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+
+    assert admission.snapshot()["inflight"] == 0
+    assert admission.snapshot()["running"] == 0
+    assert all(not thread.is_alive() for thread in pool._threads)
