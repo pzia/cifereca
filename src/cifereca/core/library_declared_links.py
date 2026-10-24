@@ -82,7 +82,7 @@ def _account_current(accounts, scope):
             and matches[0].identity_id == scope['identity_id'])
 
 
-def _scope(service, scope):
+def _scope(service, scope, *, require_live_account=True):
     _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
              and scope['provider_id'] in _PROVIDERS, 'invalid_scope')
     current = service.current_identity
@@ -96,7 +96,11 @@ def _scope(service, scope):
     def account_matches():
         return _account_current(service.accounts, scope)
 
-    _require(account_matches(), 'account_scope_changed')
+    # Creation/confirmation still requires the exact live borrower. A
+    # read-only historical inspection needs only its owning *local identity*:
+    # an account may have been removed after a declaration was recorded.
+    if require_live_account:
+        _require(account_matches(), 'account_scope_changed')
 
     def valid():
         try:
@@ -106,7 +110,7 @@ def _scope(service, scope):
                     and service.storage is storage
                     and service.accounts is accounts and service.identities is identities
                     and service._account_context_epoch == epoch
-                    and account_matches()
+                    and (not require_live_account or account_matches())
                     and configured_identity_roots(config, scope['identity_id'])[
                         scope['identity_id']] == roots)
         except Exception:
@@ -407,17 +411,26 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
                           cancelled=lambda: False):
     """Private read-only review after sync; never promote or silently erase.
 
-    The original declaration is returned only to its exact active context.
-    No receipt or relationship here can be consumed by the attested writers.
+    The original declaration is returned only to its original local owner.
+    A removed supplier account/right cannot make that private history vanish;
+    it is shown as needing review, never as a current link. No receipt or
+    relationship here can be consumed by the attested writers.
     """
     try:
         _require(relation_id is None or (type(relation_id) is str
                  and re.fullmatch('[0-9a-f]{32}', relation_id) is not None), 'invalid_relation')
-        _require(type(observation) is FileObservation, 'invalid_observation')
+        # History survives process restart and file removal. A relation ID
+        # can be inspected without reviving an old FileObservation; it is
+        # then ALWAYS unverified, even if the right still exists.
+        _require((type(observation) is FileObservation
+                  or (observation is None and relation_id is not None)),
+                 'invalid_observation')
         _require(callable(cancelled), 'invalid_cancellation')
         scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                         account_id, item_id)))
-        roots, valid, _epoch = _scope(service, scope)
+        roots, valid, _epoch = _scope(service, scope, require_live_account=False)
+        if observation is not None:
+            _require(observation.identity_id == identity_id, 'file_scope_changed')
         with _transaction(service.storage, False) as db:
             records = [r for r in _records(db) if (
                 r['relation_id'] == relation_id if relation_id is not None else
@@ -427,24 +440,41 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
                      'relation_scope_changed')
             record = records[0]
             relation_id = record['relation_id']
-            context = _context(db, scope)
-            fresh = revalidate_observed_file(observation, roots, identity_id=identity_id,
-                                             cancelled=lambda: cancelled() or not valid())
             _require(valid() and not cancelled(), 'source_scope_changed')
-            # The supplier connection may have been disabled after the
-            # declaration. No file/SHA equality can restore live account
-            # context or promote a historical user statement to current.
-            matches = (
-                record['file'] == _file(observation)
-                and fresh.verified
-                and context['connection']['enabled'] == 1
-            )
-            try:
-                _collisions(db, scope, observation, _records(db))
-            except DeclarationRejected:
-                matches = False
-            status = ('revoked' if record['state'] == 'revoked' else
-                      'declared_current' if matches and record['right_state'] == _right_state(context)
+            # Revocation is historical: never require an account, a right or
+            # physical file to exist merely to inspect its recorded origin.
+            if record['state'] == 'revoked':
+                return DeclarationResult('revoked', relation_id=relation_id, before=record)
+
+            # An old provider connection, removed borrower or deleted right
+            # must downgrade the statement, not make the user lose access to
+            # its history. Only the *exact current* supplier account can
+            # support a current-status inspection.
+            context = None
+            if _account_current(service.accounts, scope):
+                try:
+                    context = _context(db, scope)
+                except DeclarationRejected as exc:
+                    if str(exc) not in ('source_scope_changed', 'right_scope_changed'):
+                        raise
+            matches = False
+            if (context is not None and observation is not None
+                    and record['file'] == _file(observation)
+                    and context['connection']['enabled'] == 1):
+                fresh = revalidate_observed_file(
+                    observation, roots, identity_id=identity_id,
+                    cancelled=lambda: cancelled() or not valid(),
+                )
+                matches = fresh.verified and valid() and not cancelled()
+                if matches:
+                    try:
+                        _collisions(db, scope, observation, _records(db))
+                    except DeclarationRejected:
+                        matches = False
+            _require(valid() and not cancelled(), 'source_scope_changed')
+            matches = matches and _account_current(service.accounts, scope)
+            status = ('declared_current'
+                      if matches and record['right_state'] == _right_state(context)
                       else 'needs_review')
             return DeclarationResult(status, relation_id=relation_id, before=record)
     except DeclarationRejected:
