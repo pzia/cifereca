@@ -180,6 +180,13 @@ def _refresh_sync_page(self) -> None:
         source for source in rows
         if getattr(source, "identity_id", None) == scope.identity_id
     ]
+    # #3105: a configured Paris credential with a failed/absent session is
+    # NOT a SyncSourceRef. Only a separate, inert configuration row may show it.
+    # The helper reads local config only, scoped to this identity.
+    from cifereca.core.sync_connection_visibility import unavailable_paris_connections
+    unavailable_paris = unavailable_paris_connections(self.service, scope.identity_id)
+    if not sync_action_scope_current(self, scope):
+        return
     presentations = [sync_source_presentation(source) for source in rows]
     # Keep a user's open account tools across passive refreshes, but never
     # carry that disclosure state into another identity or retain stale rows.
@@ -200,6 +207,8 @@ def _refresh_sync_page(self) -> None:
         summary.set_label(
             f"{len(rows)} source(s) · "
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
+            + (f" · {len(unavailable_paris)} connexion(s) Paris configurée(s) non disponibles"
+               if unavailable_paris else "")
         )
     if alert_row is not None:
         # Never use provider diagnostics or source labels in the global
@@ -297,10 +306,60 @@ def _refresh_sync_page(self) -> None:
         disclosure.set_child(group)
         box.append(disclosure)
 
+    def append_unavailable_paris():
+        # Disabled cards cannot be routed through broker.synchronize_source,
+        # toggled as SyncSourceRef, or used as proof of an active loan.
+        descriptions = {
+            "not_connected": "Compte configuré · connexion non établie dans cette session.",
+            "account_disabled": "Compte désactivé dans la configuration de ce profil.",
+            "plugin_missing": "Plugin Paris absent ou non chargé.",
+            "plugin_unavailable": "Plugin Paris non prêt.",
+            "plugin_disabled": "Plugin Paris désactivé pour ce profil.",
+            "invalid_configuration": "Configuration du compte à vérifier.",
+        }
+        for index, notice in enumerate(unavailable_paris, start=1):
+            if not sync_action_scope_current(self, scope):
+                return
+            group = Adw.PreferencesGroup()
+            group.set_hexpand(True)
+            add_css(group, "sync-source-panel")
+            row = Adw.ActionRow()
+            row.set_title(
+                "Bibliothèques de Paris · Connexion configurée"
+                + (f" ({index})" if len(unavailable_paris) > 1 else "")
+            )
+            row.set_subtitle(
+                descriptions[notice.state]
+                + "\nPrêts : synchronisation impossible sans compte connecté et vérifié."
+            )
+            row.set_subtitle_lines(0)
+            icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+            icon.set_valign(Gtk.Align.CENTER)
+            row.add_prefix(icon)
+            if notice.can_reconnect and callable(getattr(self, "connect_configured_sources", None)):
+                reconnect = self.action_button(
+                    "Reconnecter toutes les sources", "view-refresh-symbolic",
+                )
+                reconnect.set_tooltip_text(
+                    "Action volontaire : relance les connexions et leur synchronisation d’ouverture"
+                )
+                def retry(button):
+                    if not sync_action_scope_current(self, scope):
+                        return
+                    button.set_sensitive(False)
+                    self.connect_configured_sources()
+                reconnect.connect("clicked", retry)
+                row.add_suffix(reconnect)
+            group.add(row)
+            box.append(group)
+
     if not rows:
-        box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0))
+        if not unavailable_paris:
+            box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0))
+        append_unavailable_paris()
         append_catalogue_searches()
         return
+    append_unavailable_paris()
     # Prioritize actual sync-capable accounts. Public-only catalogues remain
     # reachable and activatable, but must not push Kobo/Numilog below the fold.
     ordered_sources = sorted(
