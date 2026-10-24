@@ -72,8 +72,10 @@ def test_active_identity_filtered_inside_sqlite_but_conflict_ledger_preserved(
         assert not limited.reasons
         assert [r['catalog_entry_id'] for r in limited.tables['catalog_entries']] == ['OWN']
         assert [r['entitlement_id'] for r in limited.tables['entitlements']] == ['right-1']
+        # Foreign receipts are restricted inside the SQLite image before
+        # spending the global row budget, not only in scope_evidence().
         assert {r['acquisition_id'] for r in limited.tables['acquisition_ledger']} == {
-            'A', 'FOREIGN_CONFLICT', 'FOREIGN_UNRELATED',
+            'A', 'FOREIGN_CONFLICT',
         }
         scoped_snapshot = scope_evidence(limited, ('alice',))
         assert {r['acquisition_id'] for r in scoped_snapshot.tables['acquisition_ledger']} == {
