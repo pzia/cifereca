@@ -25,12 +25,14 @@ def _inspection_host_size(parent):
     return min(920, parent.get_width()), min(620, parent.get_height())
 
 
-def _inspection_geometry_ready(controller):
+def _allocated(widget):
     """Mapped precedes allocation: zero dimensions cannot prove a fit."""
-    window = controller.dialog
-    return (controller.session is not None and window is not None
-            and window.get_mapped()
-            and window.get_width() > 0 and window.get_height() > 0)
+    return (widget is not None and widget.get_mapped()
+            and widget.get_width() > 0 and widget.get_height() > 0)
+
+
+def _inspection_geometry_ready(controller):
+    return controller.session is not None and _allocated(controller.dialog)
 
 
 def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
@@ -134,12 +136,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
             True, summary='Lecture seule ; détails privés accessibles localement.',
             details=('600 fichiers observés', '256 liens confirmés'),
         ))
-        until(lambda:result_view.button.get_mapped(),open_result)
+        until(lambda: _allocated(result_view.button), open_result)
 
     def open_result():
         report['checks']['inspection_result_button_ready']=True
         device.click_widget(result_view.button)
-        until(lambda:result_view.dialog is not None and result_view.dialog.get_mapped(),inspect_action)
+        until(lambda: _allocated(result_view.dialog), inspect_action)
 
     def inspect_action():
         report['checks']['inspection_result_dialog_mapped']=True
@@ -166,7 +168,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         report['checks']['P0_2712_results_statistics_collapsed'] = True
         response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
         def allocated():
-            if not response.get_mapped():return False
+            if not _allocated(response):return False
             try:
                 x,y=device.widget_point(response)
                 return x>=0 and y>=0
@@ -755,4 +757,4 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         done()
 
     host.present()
-    until(lambda:host.get_mapped(),result_ready)
+    until(lambda: _allocated(host), result_ready)
