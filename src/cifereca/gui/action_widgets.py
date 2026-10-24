@@ -53,6 +53,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         self.preserve_primary_label = bool(preserve_primary_label)
         self._buttons = []; self._widths = {}; self._compact = None; self._budget = None
         self._overflow_visible_count = None
+        self._overflow_width = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.box.add_css_class('toolbar')
         self.box.set_halign(Gtk.Align.END)
@@ -128,15 +129,39 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         target.append(button)
 
     def _layout_overflow(self, budget):
+        # append() runs before rooting/CSS resolution. Refresh widths in the
+        # toolbar context, retaining those measurements for popover children.
+        for button in self._buttons:
+            if button.get_parent() is self.box:
+                self._widths[button] = max(button.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32)
+        budget = max(0, budget - self.box.get_margin_start() - self.box.get_margin_end())
+        # Measure the real menu button (including its theme), not a fixed icon
+        # width. It must be visible and parented for GTK to measure it.
+        if self.overflow_button.get_visible():
+            self._overflow_width = self.overflow_button.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+        elif self._overflow_width is None:
+            self.box.append(self.overflow_button)
+            self.overflow_button.set_visible(True)
+            self._overflow_width = self.overflow_button.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+            self.box.remove(self.overflow_button)
+            self.overflow_button.set_visible(False)
         widths = [self._widths[button] for button in self._buttons]
-        visible_count = visible_action_count(widths, budget, minimum_visible=1)
+        visible_count = visible_action_count(
+            widths, budget, spacing=self.box.get_spacing(),
+            overflow_width=self._overflow_width, minimum_visible=1,
+        )
         if visible_count == self._overflow_visible_count:
             return
+        if self.overflow_button.get_parent() is self.box:
+            self.box.remove(self.overflow_button)
         hidden = self._buttons[visible_count:]
         for button in self._buttons[:visible_count]:
             self._move_button(button, self.box)
+        previous = None
         for button in hidden:
             self._move_button(button, self.overflow_box)
+            self.overflow_box.reorder_child_after(button, previous)
+            previous = button
         parent = self.overflow_button.get_parent()
         if parent is not None and parent is not self.box:
             remover = getattr(parent, 'remove', None)
@@ -170,7 +195,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
             self.set_size_request(budget, -1); self._budget = budget
         if self.overflow:
             self._layout_overflow(budget)
-            if self.preserve_primary_label and self._buttons:
+            if self.preserve_primary_label and self._buttons and self._compact is not False:
                 primary = self._buttons[0]
                 label = getattr(primary, '_cifereca_action_label', None)
                 icon = getattr(primary, '_cifereca_action_icon', None)
@@ -182,6 +207,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
                     except (AttributeError, TypeError):
                         primary.set_label(label)
                     primary.update_property([Gtk.AccessibleProperty.LABEL], [label])
+                self._compact = False
             return True
         compact = compact_actions(self._widths.values(), budget)
         if compact != self._compact:

@@ -49,6 +49,6 @@ def test_overflow_is_named_and_accessible():
 
 def test_primary_label_is_restored_in_overflow_mode():
     source = _method(ACTIONS, "AdaptiveActionBar", "_resize")
-    assert "if self.preserve_primary_label and self._buttons:" in source
+    assert "self.preserve_primary_label and self._buttons" in source
     assert "primary = self._buttons[0]" in source
     assert "content.set_label(label)" in source
