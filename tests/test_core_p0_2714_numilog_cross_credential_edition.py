@@ -159,3 +159,62 @@ def test_shared_inspection_preflight_explains_cross_credential_ambiguity(rig):
         assert "PRIVATE" not in json.dumps(review.codes)
     finally:
         inspection.close()
+
+
+@pytest.mark.parametrize("other_state", ["active", "expired"])
+def test_offline_graph_does_not_attest_one_receipted_right_when_another_borrower_exists(
+    other_state,
+):
+    from copy import deepcopy
+    from cifereca.core.library_reconciliation import EvidenceSnapshot, reconcile
+    from cifereca.core.library_evidence_scope import group_evidence
+    from tests.test_core_p0_2796_reconciliation_repeatability import _fixture
+
+    inventory, tables = _fixture(1)
+    other = {
+        **tables["entitlements"][0],
+        "entitlement_id": "PRIVATE-second-right",
+        "credential_id": "PRIVATE-other-credential",
+        "account_id": "PRIVATE-other-borrower",
+        "state": other_state,
+    }
+    tables["entitlements"].append(other)
+    # Only the original borrower has the complete receipt. Previously its
+    # evidence won over the unreceipted competing right and got 'attested'.
+    before = deepcopy(tables)
+    report = reconcile(inventory, EvidenceSnapshot(tables))
+    assert "confirmed_link" not in report.files[0]
+    assert "ambiguous" in report.files[0]
+    assert all(edge.certainty != "attested" for edge in report.edges)
+    assert 0 in report.unverified_rights
+    public = report.redacted()
+    assert public["counts"].get("confirmed_link", 0) == 0
+    assert public["edge_counts"].get("explicit_right_ledger_placement_sha_size", 0) == 0
+    assert "PRIVATE" not in json.dumps(public)
+    groups = group_evidence(
+        inventory, EvidenceSnapshot(tables), report, ("alice",),
+    ).redacted()["groups"]
+    assert sum(row["counts"].get("confirmed_link", 0) for row in groups) == 0
+    assert tables == before
+
+
+@pytest.mark.parametrize("identity,item", [
+    ("bob", "edition-0000"),
+    ("alice", "unrelated-edition"),
+])
+def test_offline_graph_still_attests_right_of_uncontested_local_edition(identity, item):
+    from cifereca.core.library_reconciliation import EvidenceSnapshot, reconcile
+    from tests.test_core_p0_2796_reconciliation_repeatability import _fixture
+
+    inventory, tables = _fixture(1)
+    tables["entitlements"].append({
+        **tables["entitlements"][0],
+        "entitlement_id": "PRIVATE-second-right",
+        "credential_id": "PRIVATE-other-credential",
+        "account_id": "PRIVATE-other-borrower",
+        "identity_id": identity,
+        "item_id": item,
+    })
+    report = reconcile(inventory, EvidenceSnapshot(tables))
+    assert report.files[0] == {"confirmed_link"}
+    assert len([edge for edge in report.edges if edge.certainty == "attested"]) == 1
