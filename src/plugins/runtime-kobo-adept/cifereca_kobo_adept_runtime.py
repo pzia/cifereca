@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import hashlib
+import hmac
+import secrets
 import uuid
 from pathlib import Path
 from datetime import date
@@ -35,6 +37,22 @@ def _adept_caller(category):
         yield
     finally:
         _ADEPT_CALLER.reset(marker)
+
+
+def _readonly_scope(args, payload):
+    """Private scope coordinates for the measured reads, never for mutation."""
+    if (payload is not None or type(args) is not list
+            or any(type(value) is not str for value in args)):
+        return None
+    if args in (['contract', '--json'], ['capabilities', '--json'],
+                ['profile', 'list', '--json']):
+        return ('runtime', '')
+    if args == ['loans', 'list', '--json']:
+        return ('default_profile', '')
+    if (len(args) == 5 and args[:3] == ['loans', 'list', '--profile']
+            and args[4] == '--json'):
+        return ('explicit_profile', args[3])
+    return None
 
 
 class KoboAdeptError(UserFacingError):
@@ -147,6 +165,23 @@ class KoboAdeptRuntime:
         self.config = dict(context.config)
         self.last_run_diagnostic = {}
         self.contract_version = None
+        # Unlinkable across runtime instances/restarts; never persisted/exported.
+        try:
+            self._read_scope_salt = secrets.token_bytes(32)
+        except Exception:
+            self._read_scope_salt = None
+
+    def _read_scope_reference(self, command, args, payload):
+        try:
+            scope = _readonly_scope(args, payload)
+            if scope is None or any(type(value) is not str for value in command):
+                return None
+            coordinates = json.dumps([command, scope], ensure_ascii=True).encode('ascii')
+            return 'rs_' + hmac.new(
+                self._read_scope_salt, coordinates, hashlib.sha256,
+            ).hexdigest()[:24]
+        except Exception:
+            return None  # Optional measurement must not affect CLI behavior.
 
     def _report(self, message, status="ok", *, level="detailed"):
         # Diagnostics crossing the Core boundary contain only bounded technical facts.
@@ -155,9 +190,14 @@ class KoboAdeptRuntime:
             "stdout_mode", "stdout_summary", "stderr_summary", "json_line", "json_column",
             "launch_error", "loan_count", "inventory_valid",
             "error_code", "retryable", "validation_reason",
-            "caller_category",
+            "caller_category", "read_scope_ref",
         }
         detail = {key: value for key, value in self.last_run_diagnostic.items() if key in allowed}
+        reference = detail.get('read_scope_ref')
+        if (type(reference) is not str or len(reference) != 27
+                or not reference.startswith('rs_')
+                or any(char not in '0123456789abcdef' for char in reference[3:])):
+            detail.pop('read_scope_ref', None)
         if (detail.get("error_code") != "kobo_adept_invalid_response"
                 or type(detail.get("validation_reason")) is not str
                 or detail["validation_reason"] not in {
@@ -244,7 +284,11 @@ class KoboAdeptRuntime:
         try:
             # Byte transport is independent of the parent locale. Only the
             # request is encoded; raw process streams never become diagnostics.
-            proc = subprocess.run([*self.command, *args],
+            command = self.command
+            reference = self._read_scope_reference(command, args, payload)
+            if reference is not None:
+                self.last_run_diagnostic['read_scope_ref'] = reference
+            proc = subprocess.run([*command, *args],
                 input=json.dumps(payload, ensure_ascii=False).encode('utf-8') if payload is not None else None,
                 capture_output=True, timeout=timeout, check=False)
         except FileNotFoundError:
@@ -412,18 +456,7 @@ class KoboAdeptRuntime:
         # Loan inventory is actually invoked with --profile <private name>
         # before --json. Match its structure without retaining or exposing
         # the profile value; do not equate two such calls by their family.
-        normal_read = (
-            payload is None and type(args) is list and (
-                args in (
-                    ['contract', '--json'], ['capabilities', '--json'],
-                    ['profile', 'list', '--json'], ['loans', 'list', '--json'],
-                )
-                or (
-                    len(args) == 5 and args[:3] == ['loans', 'list', '--profile']
-                    and type(args[3]) is str and args[4] == '--json'
-                )
-            )
-        )
+        normal_read = _readonly_scope(args, payload) is not None
         self._report(
             f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}",
             "ok", level="normal" if normal_read else "detailed",
