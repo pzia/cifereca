@@ -7,6 +7,9 @@ import httpx
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
 MAX_REQUESTED_PAGES = 101  # Pages 0..100, never a silently clamped page.
+UNVERIFIED_SEARCH_WARNING = (
+    'partial_results : Baen : recherche et pagination amont non qualifiées'
+)
 
 
 def _trusted_baen_url(value):
@@ -31,10 +34,10 @@ def _reject_redirect(response):
     if 300 <= getattr(response, 'status_code', 200) < 400:
         raise ProviderError('Baen : public_redirect_unverified')
 
-DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Le formulaire Baen Free Library interroge la recherche générale uniquement ; ni auteur ni ISBN ne sont filtrés séparément.','Pagination par numéro de page ; couverture du catalogue non exhaustive sans parcourir les pages.',)),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
+DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Seul le champ général est exposé ; le filtrage serveur de la requête reste non qualifié. Aucun champ spécialisé attesté.','Numéros de page transmis sans preuve de pagination effective ; réponses partielles, y compris une page vide.',)),homepage=BASE,notes=('Couverture de recherche publique non qualifiée ; achats et bibliothèque privée hors périmètre.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.11','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.12','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -133,10 +136,12 @@ class BaenSession(ProviderSession):
             if detail in seen: continue
             seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
             out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
+        # Neither cards nor zero markers establish that this legacy route
+        # applied q/page/pageSize. Keep every successful response partial
+        # until the server search and pagination contract is qualified.
+        self.last_search_warnings.append(UNVERIFIED_SEARCH_WARNING)
         if not out:
-            # The live public page presents an explicit "Showing 0-0 of 0"
-            # with "No results". Unknown 200 markup (including login and
-            # product-layout drift) is NOT evidence of a successful zero.
+            # Unknown markup additionally cannot attest even an empty page.
             if not (
                 re.search(r'\bShowing\s+0\s*-\s*0\s+of\s+0\b', r.text, re.I)
                 and re.search(r'\bNo\s+results\b', r.text, re.I)
