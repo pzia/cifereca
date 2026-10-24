@@ -78,6 +78,22 @@ def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
     )
 
 
+
+def _paris_loan_presence(rows: list[Loan], loan: Loan) -> bool | None:
+    """Only an exact branch can establish presence; never guess absence.
+
+    Provider-native loan IDs may be reused between physical SYRACUSE and
+    digital DILICOM branches or change labels across a provider refresh.
+    A same-ID row under a different branch is not proof that the requested
+    digital loan has ended. None means its origin is ambiguous, not returned.
+    Caller must first verify the exact borrower and digital completeness.
+    """
+    same_id = [row for row in rows if row.id == loan.id]
+    if not same_id:
+        return False
+    return True if any(row.provider == loan.provider for row in same_id) else None
+
+
 def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     """Re-read the exact borrower with NO cache and NO second POST."""
     from .loan_return_guard import public_return_state, provider_absence_attested, return_ref
@@ -122,10 +138,9 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
         # or unrecognized provider error is ambiguous and fails closed.
         if loan.source_provider == "paris" and not _paris_digital_inventory_complete(session):
             raise ValueError("Paris digital-loan inventory incomplete")
-        match = any(
-            candidate.id == loan.id and candidate.provider == loan.provider
-            for candidate in loans
-        )
+        match = _paris_loan_presence(loans, loan)
+        if match is None:
+            raise ValueError("provider_loan_id_conflict")
         verification = "still_present" if match else "provider_absent"
         status = "still_active" if match else "provider_return_confirmed"
     except Exception:
@@ -158,9 +173,9 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
             raise ValueError("Paris inventory incomplete or foreign borrower")
         if not _paris_digital_inventory_complete(session):
             raise ValueError("Paris digital inventory unverified")
-        present = any(
-            row.id == loan.id and row.provider == loan.provider for row in rows
-        )
+        present = _paris_loan_presence(rows, loan)
+        if present is None:
+            raise ValueError("provider_loan_id_conflict")
         verification = "still_present" if present else "provider_absent"
     except Exception:
         verification = "unavailable"
