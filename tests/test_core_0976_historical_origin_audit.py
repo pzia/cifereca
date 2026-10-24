@@ -407,7 +407,7 @@ def test_single_recorded_profile_without_adobe_loan_is_not_a_return_origin():
 
 
 def test_whitespace_or_nonstring_adobe_loan_reference_is_unknown():
-    for bad_reference in (" ", "  \\t  ", 0, None):
+    for bad_reference in (" ", "  \t  ", 0, None):
         origin = _acq("alice", "paris-a", "hb")
         origin["metadata"]["adept_binding"]["adept_loan_id"] = bad_reference
         report = _audit([], [origin])
