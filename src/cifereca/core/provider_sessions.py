@@ -155,13 +155,14 @@ def _connect_changed_virtual_provider(self, provider_id: str) -> None:
     Never publish a successful session from a non-affirmative connect().
     """
     from .diagnostic_provider_connection_attempt import new_attempt
-    plugin = self.registry.maybe_get(provider_id)
-    if plugin is None:
-        return
     attempt = new_attempt(
         self.registry, provider_id, diagnostics=self.diagnostics,
         source_kind="virtual", caller_category="plugin_activation",
     )
+    plugin = self.registry.maybe_get(provider_id)
+    if plugin is None:
+        attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_missing")
+        return
     key = self._session_key(provider_id, "__public__")
     existing = self._sessions.get(key)
     if (existing is not None
