@@ -1,84 +1,130 @@
 # Revue UX sur main, 2026-10-08. "data" indique un support existant,
 # pas une validation E2E. Ajouter chaque nouveau package : audit --strict doit échouer sinon.
+# Les fichiers ci-dessous sont des scénarios SOURCE, non des résultats CI.
+# Un script GTK répertorié n'est PAS une recette E2E exécutée/attestée.
 version = 1
 
 [package.baen]
+contract_tests = ["simulation/tests/test_baen_http_service.py"]
+failure_tests = ["src/plugins/baen/tests/test_search_failures_p1.py"]
 data = []
 gap = "Baen : faux catalogue/fiches/EPUB HTTP, sans GUI E2E ni vrais comptes"
 
 [package.cifericaopds]
+contract_tests = ["src/plugins/cifericaopds/tests/test_cifericaopds.py"]
 data = []
 gap = "Collection de providers virtuels en pilote fixture ; aucune preuve de service HTTP ni E2E GTK certifiée"
 
 [package.dev-updater]
+contract_tests = ["src/plugins/dev-updater/tests/test_release_discovery.py"]
 data = []
 gap = "Consultation explicite des releases GitHub en lecture seule ; aucun serveur simulé ni parcours GTK validé"
 
 [package.constellations]
+contract_tests = ["src/plugins/constellations/tests/test_constellations.py"]
+failure_tests = ["src/plugins/constellations/tests/test_constellations_malformed_rows_p1.py"]
+gtk_scenarios = ["e2e/constellations_detail_probe.py"]
 data = ["local-library", "specialized-seed"]
 gap = "JSON exposé en HTTP local ; promenades et graphe à vérifier sur vraie UI"
 
 [package.diagnostics-page]
+contract_tests = ["src/plugins/diagnostics-page/tests/test_contract_039.py"]
+failure_tests = ["src/plugins/diagnostics-page/tests/test_diagnostics_explorer_p0.py"]
+gtk_scenarios = ["e2e/diagnostics_page_probe.py"]
 data = ["local-library"]
 gap = "États diagnostics combinés manquants"
 
 [package.ebooksgratuits]
+contract_tests = ["src/plugins/ebooksgratuits/tests/test_dataset_integration.py"]
+failure_tests = ["simulation/tests/test_ebooksgratuits_negative_protocol_p0.py"]
 data = ["ebooksgratuits"]
 gap = "ux-all n'active pas le service ; erreurs et pagination à enrichir"
 
 [package.epub_optimizer]
+contract_tests = ["src/plugins/epub_optimizer/tests/test_engine.py"]
+failure_tests = ["src/plugins/epub_optimizer/tests/test_pdf_engine.py"]
+gtk_scenarios = ["e2e/optimizer_handoff_probe.py"]
 data = ["local-library", "specialized-seed"]
 gap = "PDF e-ink, profils matériels, transformations en erreur non couverts"
 
 [package.home-page]
+contract_tests = ["src/plugins/home-page/tests/test_contract_038.py"]
+failure_tests = ["src/plugins/home-page/tests/test_attention_coverage.py"]
+gtk_scenarios = ["e2e/home_summary_acceptance.py"]
 data = ["local-library"]
 gap = "États vide/partiel/erreur identités à recetter"
 
 [package.literary-criticism]
+contract_tests = ["simulation/tests/test_editorial_http_service.py"]
+failure_tests = ["src/plugins/literary-criticism/tests/test_secure_feed_transport.py"]
 data = ["specialized-seed"]
 gap = "Flux RSS/JSON Feed servis en HTTP local ; abonnements, page GTK et autres sources non recettés"
 
 [package.maintenance-library-audit]
+contract_tests = ["src/plugins/maintenance-library-audit/tests/test_contract_039.py"]
+failure_tests = ["src/plugins/maintenance-library-audit/tests/test_cover_audit_poisoned_rows_p1.py"]
+gtk_scenarios = ["e2e/maintenance_tools_probe.py"]
 data = ["local-library"]
 gap = "Fichiers manquants, couvertures, langues, doublons, chemins et actions négatives"
 
 [package.provider-bnf-pret]
+contract_tests = ["src/plugins/provider-bnf-pret/tests/test_http_provider.py"]
+failure_tests = ["src/plugins/provider-bnf-pret/tests/test_explicit_token_failures.py"]
 data = []
 gap = "BnF Prêt en migration HTTPX : contrats synthétiques seulement ; aucun SSO réel ni E2E GTK attesté"
 
 [package.provider-bnf-catalogue]
+contract_tests = ["src/plugins/provider-bnf-catalogue/tests/test_dataset_integration.py"]
+failure_tests = ["src/plugins/provider-bnf-catalogue/tests/test_diagnostics_resilience.py"]
 data = ["bnf"]
 gap = "Zéro résultat, indisponibilité et formats atypiques"
 
 [package.provider-gallica]
+contract_tests = ["src/plugins/provider-gallica/tests/test_contract_038.py"]
+failure_tests = ["simulation/tests/test_opds_negative_contracts.py"]
 data = ["opds"]
 gap = "OPDS : 429/503, XML tronqué, page suivante interrompue, EPUB invalide ; audio et GTK non recettés"
 
 [package.provider-gutenberg]
+contract_tests = ["src/plugins/provider-gutenberg/tests/test_contract_038.py"]
+failure_tests = ["simulation/tests/test_opds_negative_contracts.py"]
 data = ["opds"]
 gap = "OPDS : 429/503, XML tronqué, page suivante interrompue, EPUB invalide ; cache et GTK non recettés"
 
 [package.provider-kobo]
+contract_tests = ["src/plugins/provider-kobo/tests/test_dataset_integration.py"]
+failure_tests = ["simulation/tests/test_kobo_negative_protocol_p0.py"]
 data = ["kobo"]
 gap = "Profiles ADEPT et erreurs d'identité/DRM avec des valeurs fictives"
 
 [package.provider-numilog]
+contract_tests = ["src/plugins/provider-numilog/tests/test_local_dataset_041.py"]
+failure_tests = ["simulation/tests/test_numilog_negative_protocol_p0.py"]
 data = ["numilog"]
 gap = "ACSM, pagination extrême, expiration et documents invalides"
 
 [package.provider-paris]
+contract_tests = ["src/plugins/provider-paris/tests/test_contract_038.py"]
+failure_tests = ["simulation/tests/test_paris_pnb_negative_protocol_p0.py"]
 data = ["paris"]
 gap = "PNB, disponibilité, comptes multiples et erreurs partielles"
 
 [package.recommendations]
+contract_tests = ["src/plugins/recommendations/tests/test_plugin_surface.py"]
+failure_tests = ["src/plugins/recommendations/tests/test_recommendation_error_privacy_p1.py"]
+gtk_scenarios = ["e2e/recommendations_detail_probe.py"]
 data = ["local-library"]
 gap = "Affinité, aucune recommandation, données partielles, performance"
 
 [package.runtime-kobo-adept]
+contract_tests = ["simulation/tests/test_adept_profile_simulation.py"]
+failure_tests = ["src/plugins/runtime-kobo-adept/tests/test_adept_closed_diagnostic_codes_p0.py"]
 data = ["specialized-seed"]
 gap = "États ADEPT factices et CLI subprocess v8 couverts ; pas de vrai provisioning/DRM ni E2E GTK"
 
 [package.transport-http]
+contract_tests = ["src/plugins/transport-http/tests/test_http_transport.py"]
+failure_tests = ["simulation/tests/test_http_negative_contracts.py"]
 data = []
 gap = "Faux serveur HTTP 429/503, timeout, redirections, types MIME et tailles avec vrai transport ; pas de GTK ni annulation"
 
@@ -89,5 +135,8 @@ gap = "Faux serveur HTTP 429/503, timeout, redirections, types MIME et tailles a
 
 
 [package.browser-recorder]
+contract_tests = ["src/plugins/browser-recorder/tests/test_browser_recorder_private_zip.py"]
+failure_tests = ["src/plugins/browser-recorder/tests/test_browser_recorder_http.py"]
+gtk_scenarios = ["src/plugins/browser-recorder/tests/test_browser_recorder_gtk_e2e.py"]
 data = []
 gap = "Playwright/Chromium opt-in ; tests hors ligne sans navigateur réel ni validation de parcours authentifié live"
