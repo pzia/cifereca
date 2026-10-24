@@ -173,7 +173,21 @@ def _records(db):
                  'declaration_store_invalid')
         total += len(raw)
         _require(total <= _MAX_STORE_BYTES, 'declaration_budget')
-        record = json.loads(raw)
+        # A damaged private declaration must fail with a closed diagnostic,
+        # not bubble a JSON parser exception (which may include source text).
+        # Duplicate keys are ambiguous evidence: never let the last key win
+        # when deciding whether a file/right already has a declaration.
+        def unique_object(pairs):
+            value = {}
+            for key, item in pairs:
+                _require(key not in value, 'declaration_store_invalid')
+                value[key] = item
+            return value
+
+        try:
+            record = json.loads(raw, object_pairs_hook=unique_object)
+        except (ValueError, TypeError, RecursionError):
+            raise DeclarationRejected('declaration_store_invalid') from None
         _require(type(record) is dict and set(record) == {
             'version', 'relation_id', 'scope', 'file', 'right_state', 'state',
             'origin', 'created_at', 'revoked_at',
