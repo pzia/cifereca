@@ -313,3 +313,26 @@ def test_missing_adept_profile_does_not_inherit_attestation_from_other_record():
     assert report["adept_loan_reference_disagreement"] is False
     assert _audit([], [], loan="", item="book")[
         "adept_loan_reference_disagreement"] is False
+
+def test_non_paris_origin_audit_preserves_closed_report_schema(tmp_path):
+    from dataclasses import replace
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        # An unrelated provider cannot be evidence for a Paris transaction,
+        # and its refusal report must have the same safe keys as a Paris audit.
+        foreign_loan = replace(loan, source_provider="kobo")
+        service.storage.entitlements = lambda **_: (_ for _ in ()).throw(
+            AssertionError("must not inspect rights for an unsupported provider")
+        )
+        service.storage.acquisitions = lambda **_: (_ for _ in ()).throw(
+            AssertionError("must not inspect acquisitions for an unsupported provider")
+        )
+        report = service.audit_paris_adept_loan_origins(foreign_loan)
+        assert report == {
+            "status": "unsupported_source", "shared_visibility": False,
+            "profile_disagreement": False,
+            "adept_loan_reference_disagreement": False,
+            "origin_resolution": "unknown", "sources": [], "origins": [],
+        }
+    finally:
+        service.close()
