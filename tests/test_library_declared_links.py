@@ -325,3 +325,50 @@ def test_missing_file_and_deleted_right_do_not_prevent_withdrawing_statement(rig
     assert plan.status == 'revoke_preview'
     assert call(rig, revoke=result.relation_id, confirmation=plan.plan_token).status == 'revoked'
     assert records(service)[0]['state'] == 'revoked'
+
+
+def test_disabled_connection_cannot_create_new_declaration_but_history_can_be_withdrawn(rig):
+    service, book, _, _, options = rig
+    original = book.read_bytes()
+    # First create an explicit, lower-trust statement while the source is live.
+    created = apply(rig)
+    assert inspect(rig, created.relation_id).status == 'declared_current'
+    before = records(service)
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute("UPDATE provider_connections SET enabled=0 WHERE provider_id=? AND credential_id=?",
+                   (options['provider_id'], options['credential_id']))
+    assert inspect(rig, created.relation_id).status == 'needs_review'
+    assert records(service) == before
+    # A second file/right selection cannot create new evidence from a
+    # disabled connection, even though its stale SQLite entitlement remains.
+    with pytest.raises(DeclarationRejected, match='^source_connection_disabled$'):
+        call(rig)
+    assert records(service) == before
+    assert not rows(service, 'acquisition_ledger')
+    assert not rows(service, 'placements')
+    # Undo is always possible: disabling the supplier must not trap history.
+    undo = engine.withdraw_declared_link(
+        service, identity_id='default', relation_id=created.relation_id,
+    )
+    assert undo.status == 'revoke_preview'
+    result = engine.withdraw_declared_link(
+        service, identity_id='default', relation_id=created.relation_id,
+        confirmation=undo.plan_token,
+    )
+    assert result.status == 'revoked'
+    assert records(service)[0]['state'] == 'revoked'
+    assert book.read_bytes() == original
+
+
+def test_disabling_connection_between_preview_and_confirmation_fails_closed(rig):
+    service, book, _, _, options = rig
+    preview = call(rig)
+    assert preview.status == 'preview'
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute("UPDATE provider_connections SET enabled=0 WHERE provider_id=? AND credential_id=?",
+                   (options['provider_id'], options['credential_id']))
+    with pytest.raises(DeclarationRejected, match='^source_connection_disabled$'):
+        call(rig, confirmation=preview.plan_token)
+    assert not records(service)
+    assert not rows(service, 'acquisition_ledger')
+    assert not rows(service, 'placements')
