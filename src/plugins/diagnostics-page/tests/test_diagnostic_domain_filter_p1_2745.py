@@ -146,3 +146,58 @@ def test_gtk_domain_ui_is_separate_and_affects_query_and_selection():
     assert 'domain_filter.connect("changed", lambda *_: invalidate_selection())' in code
     assert "normalize_diagnostic_domain(domain_filter.get_text())" in code
     assert 'domain=domain_filter.get_text().strip(),' in code
+
+
+@pytest.mark.parametrize("name", [
+    "Download", "loan_download", "loan download",
+    "Téléchargement de prêt", "Téléchargement du prêt",
+    "Téléchargements de prêts",
+])
+def test_loan_download_domain_aliases_are_closed_and_accent_independent(name):
+    assert normalize_diagnostic_domain(name) == "loan_download"
+
+
+def test_loan_download_domain_is_global_and_bulk_export_keeps_scope():
+    noise = [event(i) for i in range(115)]
+    wanted = [event(250, domain="loan_download", module="PNB"),
+              event(251, domain="loan_download", module="LOAN")]
+    broker = Broker(noise + wanted)
+    page = fetch_explorer_page(
+        broker, domain="Téléchargements de prêts", period="all",
+        severity="error",
+    )
+    assert page["total"] == 2
+    assert broker.calls[0]["domain"] == "loan_download"
+    rows = sanitized_rows(page)
+    assert {row["module"] for row in rows} == {"PNB", "LOAN"}
+    assert {row["domain"] for row in rows} == {"loan_download"}
+
+    export = collect_filtered_selection(
+        broker, domain="Download", period="all", mode="all",
+    )
+    assert export.count == 2 and export.inspected == 2
+    assert all(call["domain"] == "loan_download" for call in broker.calls)
+    payload = json.loads(export.export_json)
+    assert payload["selection"]["domain_filter"] == "loan_download"
+    assert {row["event_id"] for row in payload["events"]} == {
+        "event-0250", "event-0251",
+    }
+    # Domain provenance is used to recheck selection; it is not an
+    # exported free-form detail and cannot leak private provider content.
+    assert all("domain" not in row for row in payload["events"])
+
+
+def test_malformed_loan_domain_broker_rows_never_pass_gtk_sanitizer():
+    rows = sanitized_rows({"events": [
+        event(1, domain="loan_download", module="PLUGIN"),
+        event(2, domain="loan_download", module="LIBRARY"),
+        event(3, domain="loan_download", source="app_log", module="PNB"),
+        event(4, domain="loan_download", module="PNB"),
+        event(5, domain="loan_download", module="LOAN"),
+    ]})
+    # The GTK sanitizer displays newest events first, rather than
+    # preserving fixture insertion order. Check identity, not row position.
+    by_id = {row["event_id"]: row for row in rows}
+    assert all("domain" not in by_id[f"event-{i:04}"] for i in (1, 2, 3))
+    assert all(by_id[f"event-{i:04}"]["domain"] == "loan_download"
+               for i in (4, 5))
