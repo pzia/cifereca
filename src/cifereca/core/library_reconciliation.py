@@ -405,8 +405,22 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         hashes[(row['sha256'], row['size'])].append((ai, row))
     rights = tables.get('entitlements', [])
     acquisitions = defaultdict(list)
+    # Numilog placements contain identity/provider/edition but no buyer
+    # credential. An orphan receipt for the same edition and local owner can
+    # remain after its entitlement was removed. Index it independently of
+    # entitlement_id so the sole surviving linked receipt cannot impersonate
+    # a unique provenance. Historical NULL/empty owners also conflict when
+    # they are present in the retained SQLite evidence snapshot.
+    numilog_edition_receipts = defaultdict(list)
+    numilog_unknown_owner_receipts = defaultdict(list)
     for row in tables.get('acquisition_ledger', []):
         acquisitions[row['entitlement_id']].append(row)
+        if row.get('provider_id') == 'numilog' and row.get('item_id'):
+            owner = row.get('identity_id')
+            if owner in (None, ''):
+                numilog_unknown_owner_receipts[row['item_id']].append(row)
+            else:
+                numilog_edition_receipts[(owner, row['item_id'])].append(row)
     rights_by_placement = defaultdict(list)
     for ri, right in enumerate(rights):
         rights_by_placement[(right['identity_id'], right['provider_id'], right['item_id'])].append((ri, right))
@@ -508,7 +522,27 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                             and a['artifact_id'] == placement['artifact_id']
                             and all(a.get(k) == right.get(k) for k in ('identity_id', 'provider_id', 'credential_id', 'account_id', 'item_id'))]
                 # Conflicting owner evidence in the linked ledger is not ignored.
-                if (matching and len(ledger) == 1 and len(candidates) == 1
+                # For Numilog, also require unique provenance across the
+                # whole local identity + edition, just like the transactional
+                # writer. One orphan receipt under a different credential
+                # cannot be discarded merely because it has no surviving
+                # entitlement row. No source/account is inferred from SHA.
+                receipt_unique = True
+                if matching and right['provider_id'] == 'numilog':
+                    edition_receipts = (
+                        numilog_edition_receipts.get(
+                            (observation.identity_id, right['item_id']), []
+                        ) + numilog_unknown_owner_receipts.get(right['item_id'], [])
+                    )
+                    receipt_unique = (
+                        len(edition_receipts) == 1
+                        and edition_receipts[0].get('acquisition_id')
+                        == matching[0].get('acquisition_id')
+                    )
+                    if not receipt_unique:
+                        categories.add('ambiguous')
+                if (matching and receipt_unique
+                        and len(ledger) == 1 and len(candidates) == 1
                         and placement['state'] == 'present'
                         and observation.validation == 'ok'
                         and observation.structure_validation == 'epub_structure_crc_ok'
