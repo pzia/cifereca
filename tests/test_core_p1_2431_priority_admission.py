@@ -394,3 +394,56 @@ def test_subclassed_int_priority_never_invokes_dynamic_hooks_or_enters_queue():
     finally:
         pool.shutdown(wait=True)
     assert admission.snapshot()["inflight"] == 0
+
+
+@pytest.mark.parametrize("callback_error", (SystemExit, KeyboardInterrupt))
+@pytest.mark.parametrize("task_fails", (False, True))
+def test_fatal_completion_callback_cannot_kill_worker_or_strand_shared_slots(
+    callback_error, task_fails,
+):
+    """An untrusted callback must not kill the only worker after completion."""
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=2, reserve_user_slots=0)
+    pool = PriorityExecutor(
+        max_workers=1, shared_admission=admission,
+        admission_scope="PRIVATE_ACCOUNT",
+    )
+    entered, release, callback_ran = (
+        threading.Event(), threading.Event(), threading.Event()
+    )
+
+    def first_task():
+        entered.set()
+        assert release.wait(3)
+        if task_fails:
+            raise ValueError("PRIVATE_TASK_ERROR")
+        return "first-ok"
+
+    def fatal_callback(_future):
+        callback_ran.set()
+        raise callback_error("PRIVATE_CALLBACK_SECRET")
+
+    try:
+        first = pool.submit(TaskPriority.USER_ACTION, first_task)
+        assert entered.wait(2)
+        first.add_done_callback(fatal_callback)
+        second = pool.submit(TaskPriority.USER_ACTION, lambda: "second-ok")
+        release.set()
+        assert callback_ran.wait(3)
+        if task_fails:
+            with pytest.raises(ValueError, match="PRIVATE_TASK_ERROR"):
+                first.result(timeout=3)
+        else:
+            assert first.result(timeout=3) == "first-ok"
+        assert second.result(timeout=3) == "second-ok"
+        assert pool.admission_snapshot()["admitted"] == 2
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+
+    assert admission.snapshot()["inflight"] == 0
+    assert admission.snapshot()["running"] == 0
+    assert pool.admission_snapshot()["pending"] == 0
+    assert all(not thread.is_alive() for thread in pool._threads)
+    assert "PRIVATE_ACCOUNT" not in repr(admission.snapshot())
