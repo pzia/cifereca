@@ -538,7 +538,7 @@ class DetailPanel(Gtk.Box):
             self.window.service.can_download_loan(loan)
             if loan.medium == "digital" else False
         )
-        if loan.medium == "digital" and not downloadable:
+        if loan.medium == "digital" and not downloadable and loan.source_provider != "bnf-pret":
             # Presentation is read-only. Explain a withheld action without
             # logging at every GTK rerender or triggering any provider fetch.
             eligibility = getattr(
@@ -555,6 +555,21 @@ class DetailPanel(Gtk.Box):
                     self._group(
                         "Téléchargement du prêt", [("Disponibilité", reason)],
                     )
+        if (include_pnb_action and loan.source_provider == "bnf-pret"
+                and loan.medium == "digital" and loan.state == "active"):
+            prepare_bnf = self.window.action_button(
+                "Récupérer le jeton ACSM BnF…", "document-save-symbolic",
+            )
+            prepare_bnf.set_tooltip_text(
+                "Action volontaire : vérifie le prêt BnF du compte exact, "
+                "puis demande séparément l'accord pour l'import ADEPT. "
+                "Aucun nouvel emprunt."
+            )
+            prepare_bnf.connect(
+                "clicked",
+                lambda _b: self.window.prepare_bnf_acsm_for_loan(loan, prepare_bnf),
+            )
+            buttons.append(prepare_bnf)
         if include_pnb_action and downloadable:
             prepare = self.window.action_button("Télécharger le livre du prêt", "document-save-symbolic", suggested=True)
             prepare.connect("clicked", lambda _b: self.window.prepare_pnb_for_loan(loan, send=False, control=prepare))

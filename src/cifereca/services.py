@@ -260,6 +260,25 @@ class LibraryService:
     def can_download_loan(self, loan: Loan) -> bool:
         return self.loan_download_eligibility(loan)["available"] is True
 
+    def stage_bnf_loan_acsm(
+        self, loan: Loan, *, confirmed: bool = False,
+        expected_identity_id: str = "",
+    ) -> dict[str, str]:
+        """Deliberate BnF ACSM candidate only; never the automatic download path.
+
+        Caller must capture the exact identity before its UI confirmation and
+        pass it back. The Core revalidates this owner before and after HTTP.
+        No entitlement, acquisition, ADEPT or borrowed-state mutation.
+        """
+        from .core.bnf_explicit_acsm import stage_bnf_loan_acsm
+        return stage_bnf_loan_acsm(
+            self, loan, confirmed=confirmed,
+            expected_identity_id=expected_identity_id,
+            interprocess_lock=InterProcessLock,
+            lock_path=acquisition_lock_file, busy_error=LockBusyError,
+            inspect_artifact=inspect_artifact,
+        )
+
     def save_configuration(self, data: dict[str, Any]) -> dict[str, Any]:
         """Apply staged settings and journal directory changes before publishing them."""
         from copy import deepcopy
