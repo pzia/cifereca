@@ -159,7 +159,9 @@ class ReaderHTTPClient:
                         declared = int(length)
                     except (ValueError, TypeError):
                         raise ReaderHTTPError('invalid_loan_token') from None
-                    if not 0 < declared <= MAX_TOKEN_BYTES:
+                    if declared <= 0:
+                        raise ReaderHTTPError('invalid_loan_token')
+                    if declared > MAX_TOKEN_BYTES:
                         raise ReaderHTTPError('token_limit')
                 mime = response.headers.get('content-type', '').partition(';')[0].strip().lower()
                 if mime in {'text/html', 'application/xhtml+xml'}:
