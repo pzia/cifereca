@@ -46,6 +46,25 @@ def _valid_loan_token(path: Path, inspect_artifact) -> bool:
     )
 
 
+def _discard_invalid_candidate(path: object, destination: Path) -> None:
+    """Delete only an untrusted ACSM inside our exact staging directory.
+
+    The provider return value is not trusted: never unlink an arbitrary path
+    or follow a symlink when rejecting a candidate.
+    """
+    if not isinstance(path, Path):
+        return
+    try:
+        if path.suffix.casefold() != ".acsm":
+            return
+        if (not destination.is_symlink() and not path.is_symlink()
+                and path.parent.resolve() == destination.resolve()
+                and path.is_file()):
+            path.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
+
+
 def stage_bnf_loan_acsm(
     service, loan: Loan, *, confirmed: bool, expected_identity_id: str,
     interprocess_lock, lock_path, busy_error, inspect_artifact,
@@ -122,7 +141,11 @@ def stage_bnf_loan_acsm(
                         pass
                     _refuse("bnf_loan_scope_unproven")
             except (OSError, ValueError):
+                _discard_invalid_candidate(artifact, destination)
                 _refuse("bnf_loan_token_invalid")
+            except ProviderConfigurationError:
+                _discard_invalid_candidate(artifact, destination)
+                raise
             # The borrower/session may have been replaced during HTTP.
             # A valid ACSM from a stale session must never be handed to ADEPT.
             try:
