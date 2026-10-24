@@ -74,14 +74,12 @@ def public_fields(value: object) -> dict[str, Any]:
             or type(value.get("source_kind")) is not str
             or value["source_kind"] not in _SOURCE_KIND):
         return {}
-    if phase == "terminal" and (
-        (status == "success") != (reason == "connected")
-        and not (status == "skipped" and reason in {
-            "plugin_missing", "plugin_not_ready", "interactive_auth_required",
-        })
-        and not (status == "cancelled" and reason == "cancelled")
-        and not (status == "failed" and reason in {"connect_failed", "session_invalid"})
-    ):
+    if phase == "terminal" and reason not in {
+        "success": {"connected"},
+        "failed": {"connect_failed", "session_invalid"},
+        "skipped": {"plugin_missing", "plugin_not_ready", "interactive_auth_required"},
+        "cancelled": {"cancelled"},
+    }.get(status, set()):
         return {}
     fields = {k: value[k] for k in _FIELDS}
     if "scope_ref" in value:
