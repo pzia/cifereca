@@ -34,7 +34,7 @@ def test_bad_token_or_http_failure_is_one_get_without_saved_artifact(
     )
     try:
         with pytest.raises(ProviderError, match=reason):
-            session.download_digital(loan, account, tmp_path)
+            session.download_digital(loan, account, tmp_path, explicit_user_action=True)
         assert len(downloaded) == 1
         assert downloaded[0].method == "GET"
         assert not list(tmp_path.rglob("*.acsm"))
@@ -49,7 +49,7 @@ def test_symlinked_staging_directory_is_refused(tmp_path):
     shortcut.symlink_to(tmp_path / "destination", target_is_directory=True)
     try:
         with pytest.raises(ProviderError, match="download_storage_failed"):
-            session.download_digital(loan, account, shortcut)
+            session.download_digital(loan, account, shortcut, explicit_user_action=True)
         assert len(downloaded) == 1
         assert not (tmp_path / "destination").exists()
     finally:
