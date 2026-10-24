@@ -155,6 +155,24 @@ def _evidence(db, *, identity_id, credential_id, account_id, item_id,
         ("item_id", item_id), ("state", "active"), ("entitlement_type", "owned"),
     )) and not right.get("loan_id") and not right.get("expires_at"),
              "owned_right_not_attested")
+    # An attested placement records provider + identity + edition, but NOT
+    # credential or account. The selected connection having one right does
+    # not prove that a different connection of the SAME local identity has
+    # no competing right to the same edition. Without this global-in-identity
+    # uniqueness check, a second borrower could inherit the first buyer's
+    # placement through 'already_linked' (or an unsafe subsequent undo).
+    # Historical/inactive rights also remain conflicts: no account can be
+    # recovered from a placement's provider/item coordinates alone.
+    edition_rights = _rows(
+        db, "entitlements",
+        "provider_id='numilog' AND identity_id=? AND item_id=?",
+        (identity_id, item_id),
+    )
+    _require(
+        len(edition_rights) == 1
+        and edition_rights[0].get("entitlement_id") == right["entitlement_id"],
+        "placement_account_ambiguous",
+    )
     raw = right.get("metadata_json")
     try:
         metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else None
