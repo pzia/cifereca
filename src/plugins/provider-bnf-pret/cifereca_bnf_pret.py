@@ -134,13 +134,18 @@ class BnfProviderSession(ProviderSession):
                          state='active', can_return=False, renewable=False,
                          raw={'inventory_exhaustive': False}) for row in snapshot.loans]
 
-    def download_digital(self, loan: Loan, account: Account, target_dir: Path):
+    def download_digital(self, loan: Loan, account: Account, target_dir: Path,
+                         *, explicit_user_action: bool = False):
         """Explicit candidate ACSM fetch; the automatic Core path stays denied.
 
         The public digital_download capability remains false until the Core
         confirms selection, exact identity, staging and ADEPT consent end-to-end.
         Never infer a right from this GET or from the ACSM content alone.
         """
+        if explicit_user_action is not True:
+            # Generic acquisitions call the ProviderSession signature without
+            # this opt-in. Never turn an observed Web loan into an implicit GET.
+            raise ProviderCapabilityError('bnf_web_explicit_only')
         with self._lock:
             if (self._closed or not self.connected or len(self._accounts) != 1
                     or account is not self._accounts[0] or type(loan) is not Loan
