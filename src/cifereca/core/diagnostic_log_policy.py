@@ -27,6 +27,7 @@ def is_public_core_observation(logger: str, message: str) -> bool:
         public_connection_log_fields,
         public_connection_success_log_fields,
     )
+    from .diagnostic_provider_connection_attempt import log_fields as connect_attempt
     from .diagnostic_loan_download import public_log_fields as loan_download
     from .diagnostic_reconciliation import public_reconciliation_log_fields as audit
     from .diagnostic_source_sync import public_log_fields as source_sync
@@ -36,6 +37,7 @@ def is_public_core_observation(logger: str, message: str) -> bool:
     return bool(
         public_connection_log_fields(message)
         or public_connection_success_log_fields(message)
+        or connect_attempt(message)
         or loan_download(message)
         or audit(message)
         or source_sync(message)
