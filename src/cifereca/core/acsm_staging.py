@@ -5,18 +5,73 @@ and retention configuration. This boundary creates staging directories and
 removes transient ACSM inputs only when explicitly invoked by that service.
 Injected cache, clock, logger and sanitizer preserve facade monkeypatches.
 """
+import os
+import stat
+from pathlib import Path
+
 from .loan_safe_trace import unbound_loan_trace_ref
 
 
-def acquisition_work_dir(storage_path, identity_id, provider_id, loan_id=None, *, component_name):
-    """Return a mutable staging directory outside the user library tree."""
-    base = (storage_path.parent / 'acquisition-work'
-            / component_name(identity_id, 'default')
-            / component_name(provider_id, 'provider'))
+def _staging_components(identity_id, provider_id, loan_id, component_name):
+    parts = ['acquisition-work',
+             component_name(identity_id, 'default'),
+             component_name(provider_id, 'provider')]
     if loan_id:
-        base = base / component_name(loan_id, 'loan')
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+        parts.append(component_name(loan_id, 'loan'))
+    # Do not rely on an injected sanitizer being correct: dir_fd operations
+    # must never accept a traversal component or an absolute path.
+    for part in parts:
+        if (not isinstance(part, str) or part in ('', '.', '..')
+                or '/' in part or '\\' in part):
+            raise ValueError('invalid_acquisition_stage_component')
+    return parts
+
+
+def _private_directory(parent_fd, name):
+    """Open only a directly owned directory, never an attacker-supplied link."""
+    try:
+        os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(name, flags, dir_fd=parent_fd)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+            raise PermissionError('untrusted_acquisition_stage_directory')
+        # fchmod operates on the verified inode rather than a path, so a
+        # rename/symlink swap cannot redirect the permission change.
+        if stat.S_IMODE(info.st_mode) != 0o700:
+            os.fchmod(fd, 0o700)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def acquisition_work_dir(storage_path, identity_id, provider_id, loan_id=None, *, component_name):
+    """Create a private 0700 staging tree, independent of umask.
+
+    The storage parent is a trusted application directory. All staging
+    components beneath it are opened with O_NOFOLLOW and owned by this user.
+    Refuse unsafe pre-existing paths rather than following links or chmodding
+    directories belonging to another account.
+    """
+    parent = Path(storage_path).parent
+    parts = _staging_components(identity_id, provider_id, loan_id, component_name)
+    parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(parent, flags)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid():
+            raise PermissionError('untrusted_acquisition_storage_parent')
+        for part in parts:
+            next_fd = _private_directory(fd, part)
+            os.close(fd)
+            fd = next_fd
+    finally:
+        os.close(fd)
+    return parent.joinpath(*parts)
 
 
 def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
