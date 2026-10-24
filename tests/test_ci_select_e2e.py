@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 28)
+        self.assertEqual(len(mod.ALL), 30)
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertEqual(mod.select(["e2e/maintenance_tools_probe.py"]), mod.MAINT)
@@ -24,6 +24,23 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("book-detail-1300", mod.ALL)
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
+
+    def test_2800_optimizer_native_handoff_selected_for_real_plugin_changes(self):
+        self.assertEqual(
+            mod.select(["src/plugins/epub_optimizer/cifereca_epub_optimizer_plugin.py"]),
+            mod.OPTIMIZER_GTK,
+        )
+        self.assertEqual(
+            mod.select(["src/plugins/epub_optimizer/tests/test_mounted_artifact_handoff_p1_2800.py"]),
+            mod.OPTIMIZER_GTK,
+        )
+        self.assertEqual(
+            mod.select(["e2e/optimizer_handoff_probe.py"]),
+            mod.OPTIMIZER_GTK,
+        )
+        self.assertEqual(set(mod.OPTIMIZER_GTK), {
+            "optimizer-handoff-1366", "optimizer-handoff-1600",
+        })
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",

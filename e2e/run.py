@@ -139,6 +139,16 @@ SCENARIOS = {
         "runner": "gtk-constellations",
         "width": 1600,
     },
+    "optimizer-handoff-1366": {
+        "plugin": "ui.page.epub-optimizer", "fixture": "startup",
+        "description": "P1 #2800 : Optimiseur préconstruit, vrais clics GTK/XTEST A→retour→B, verrou busy à 1366.",
+        "runner": "gtk-optimizer-handoff", "width": 1366,
+    },
+    "optimizer-handoff-1600": {
+        "plugin": "ui.page.epub-optimizer", "fixture": "startup",
+        "description": "P1 #2800 : Optimiseur préconstruit, vrais clics GTK/XTEST A→retour→B, verrou busy à 1600.",
+        "runner": "gtk-optimizer-handoff", "width": 1600,
+    },
     "diagnostics-1366": {
         "plugin": "ui.page.diagnostics",
         "fixture": "startup",
@@ -396,6 +406,14 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/constellations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
+            elif scenario.get("runner") == "gtk-optimizer-handoff":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s",
+                    f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/optimizer_handoff_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
             elif scenario.get("runner") == "gtk-diagnostics":
                 width = scenario["width"]
                 command = [
@@ -537,7 +555,7 @@ def main() -> int:
                                     if type(width) is int and type(height) is int and 0 <= width <= 5000 and 0 <= height <= 5000:
                                         print(f"UX611_NUMERIC {route}.{family}={width}x{height}", flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-optimizer-handoff"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
