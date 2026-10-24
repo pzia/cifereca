@@ -90,8 +90,7 @@ def test_loans_keep_other_upstream_when_one_fails(
         assert [row.id for row in rows] == [loan_id]
         assert session.last_loan_errors == [{
             "upstream": failed_upstream,
-            "error": f"{failed_upstream} down",
-            "type": "RuntimeError",
+            "code": "paris_loans_upstream_failed",
         }]
     finally:
         session.close()
