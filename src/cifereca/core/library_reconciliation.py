@@ -466,7 +466,23 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
             if in_file_stopped():
                 break
             candidates = artifacts.get(placement['artifact_id'], [])
-            matches = [a for a in candidates if a['sha256'] == observation.sha256 and a['size'] == observation.size]
+            # A corrupt/legacy database may have many rows for one artifact
+            # identifier. Never materialize an unbounded matches list, or
+            # skip cancellation/time limits while examining one placement.
+            matches = []
+            for artifact in candidates:
+                comparisons += 1
+                if in_file_stopped():
+                    break
+                if (artifact['sha256'] == observation.sha256
+                        and artifact['size'] == observation.size):
+                    matches.append(artifact)
+                    if len(matches) > 1:
+                        # More than one matching artifact is never a unique
+                        # provenance chain; keep byte evidence only.
+                        break
+            if 'comparison_budget' in result.reasons or 'cancelled' in result.reasons:
+                break
             if not matches:
                 if candidates:
                     categories.add('hash_mismatch')
