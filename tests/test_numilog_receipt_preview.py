@@ -30,8 +30,16 @@ def test_receipt_never_guesses_a_local_entitlement_binding(case, mutation):
         with storage._connect() as db:db.execute('DELETE FROM entitlements')
     if mutation == 'duplicate':storage.entitlement_put({**right,'entitlement_id':'another'})
     if mutation == 'public':storage.entitlement_put({**right,'metadata':{'source':'public_catalog'}})
-    if mutation == 'foreign':storage.entitlement_put({**right,'identity_id':'alex'})
-    if mutation == 'loan':storage.entitlement_put({**right,'entitlement_type':'loan','loan_id':'fictional'})
+    # Legacy inconsistent/cross-identity states are deliberately seeded via
+    # SQLite. The production entitlement_put() must reject both mutations.
+    if mutation == 'foreign':
+        with storage._connect() as db:
+            db.execute("UPDATE entitlements SET identity_id=? WHERE entitlement_id=?",
+                       ('alex', right['entitlement_id']))
+    if mutation == 'loan':
+        with storage._connect() as db:
+            db.execute("UPDATE entitlements SET entitlement_type=?, loan_id=? WHERE entitlement_id=?",
+                       ('loan', 'fictional', right['entitlement_id']))
     if mutation == 'revoked':storage.entitlement_put({**right,'state':'revoked'})
     if mutation == 'expiry':storage.entitlement_put({**right,'expires_at':'2030-01-01'})
     acquired = case.service.acquire_direct_item(case.item)

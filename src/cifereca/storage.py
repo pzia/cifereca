@@ -1930,13 +1930,29 @@ class Storage:
             row.setdefault("entitlement_id", self._entitlement_id_for(row))
         now = int(time.time())
         with self._lock, self._connect() as db:
-            db.execute(
+            # Entitlement IDs historically omit identity_id. The same
+            # provider/credential/borrower/item/loan can therefore be
+            # presented while its connection is assigned to another identity.
+            # Never let an ordinary sync "move" the old right or replace
+            # its provenance/metadata through ON CONFLICT. A real ownership
+            # migration needs an explicit, separately reviewed operation.
+            # WHERE executes in the SAME atomic UPSERT as the write, so
+            # concurrent SQLite writers cannot race a preliminary SELECT.
+            cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
                 "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,state=excluded.state,"
                 "loan_id=COALESCE(excluded.loan_id,entitlements.loan_id),expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
-                "metadata_json=excluded.metadata_json,identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at",
+                "metadata_json=excluded.metadata_json,identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at "
+                "WHERE entitlements.provider_id=excluded.provider_id "
+                "AND entitlements.credential_id=excluded.credential_id "
+                "AND entitlements.account_id IS excluded.account_id "
+                "AND entitlements.item_id=excluded.item_id "
+                "AND entitlements.entitlement_type=excluded.entitlement_type "
+                "AND entitlements.loan_id IS excluded.loan_id "
+                "AND (entitlements.identity_id IS NULL "
+                "OR entitlements.identity_id=excluded.identity_id)",
                 (
                     row["entitlement_id"], str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
                     row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"),
@@ -1944,6 +1960,10 @@ class Storage:
                     row.get("loan_id"), row.get("expires_at"), self._json_dump(row.get("metadata")), now, now, row.get("identity_id"),
                 ),
             )
+            if cursor.rowcount != 1:
+                # Closed error only: account, item, title, loan ID, database
+                # path and provider-supplied text must not leave the Core.
+                raise ValueError("entitlement_source_scope_conflict")
         return str(row["entitlement_id"])
 
     def entitlement_put_attested_owned(self, row: dict[str, Any]) -> bool:
