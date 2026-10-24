@@ -1,20 +1,60 @@
-# Revue de complétude des simulateurs plugins — première itération
+# Matrice de couverture des plugins — inventaire P2 #770
 
-Commande d'inventaire (lecture seule, sans réseau) :
+Le rapport se reconstruit **depuis tous les manifests courants** de
+`src/plugins/*/cifereca-plugin.json`. Aucun nombre de packages n'est figé.
+La matrice reviewée `plugin_coverage.toml` conserve, séparément, les données
+associées et les chemins de scénarios (contrat, erreurs/hors ligne, GTK).
+Les chemins sont vérifiés dans le dépôt : une preuve absente, périmée,
+extérieure ou un nouveau package non classé fait échouer le contrôle strict.
 
-```sh
-python3 simulation/plugin_coverage.py --json
+```bash
 python3 simulation/plugin_coverage.py --strict
+python3 simulation/plugin_coverage.py --json
+python3 -m unittest discover -s simulation/tests -p 'test_plugin_coverage*.py' -v
 ```
 
-La matrice `plugin_coverage.toml` doit classer **chaque package** trouvé dans
-`src/plugins/*/cifereca-plugin.json`. L'inventaire sépare :
-- présence des tests unitaires (nombre de fichiers, **pas résultat des tests**) ;
-- service simulé réellement relié à un identifiant plugin du manifest ;
-- jeux de données locaux/générés ;
-- validation E2E GTK : **non attestée** par ce rapport.
-Le champ `status=partial` signifie seulement qu'au moins un JDD ou serveur de\nfixtures existe,
-jamais « plugin recetté ». Les écarts sont suivis dans #770 à #774.
+### Colonnes et états
+
+- `roles`, `plugin_ids`, `capabilities`, `ui_routes` : **lu dans le manifest**,
+  et non deviné à partir d'une étiquette du tableau.
+- `services` : correspondance du vrai identifiant plugin dans le catalogue des
+  faux services ; `http_fixtures` : scénario HTTP injectable sans activation du
+  fournisseur. Un service déclaré sans activation ne constitue pas un parcours.
+- `data`, `fixture_profiles` : données locales/HTTP et profils configurés
+  pour les produire ; l'existence d'un profil ne prouve pas que le plugin tourne.
+- `unit_test_files` : nombre de fichiers de tests plugin, **pas de PASS CI**.
+  `contract_tests`, `failure_tests` et `gtk_scenarios` : références
+  explicitement auditées de fichiers existants. **Aucune exécution n'est
+  inférée de leur existence**, ni des textes des noms de fichiers.
+- `dimensions` : statut indépendant pour `http_fixture`, `dataset`,
+  `contract`, `failure_offline`, `gtk_e2e`.
+  - `partial` : au moins une pièce statique existe, mais la recette complète
+    n'est **pas** attestée.
+  - `absent` : aucune pièce recevable.
+  - `not_applicable` : par exemple HTTP pour un plugin local qui n'est
+    ni un provider HTTP ni un transport.
+  - `covered` : réservé à une preuve d'exécution et de périmètre suffisants ;
+    **jamais déduit du seul manifeste, des fixtures ou de scripts GTK**.
+- `status` global reste `partial` tant qu'il existe seulement des preuves
+  statiques. `e2e_gtk_verified=false` est volontaire : les scripts d'E2E
+  ne sont pas une attestation de leur exécution.
+
+### Limites et évolution
+
+Ce rapport **n'exécute pas les suites** et ne lit aucune base personnelle :
+aucun compte réel, secret, URL privée ni accès réseau. L'attestation d'exécution
+GitHub Actions est un résultat distinct, qui n'est pas fabriqué par cet outil.
+Certains plugins locaux n'exigent aucun serveur HTTP ; `ux-all` ne signifie
+pas que tous les plugins ont une E2E GTK. Les états négatifs documentés peuvent
+encore ne pas être exercés sur la GUI.
+
+Un nouveau plugin doit avoir son bloc `[package.nom]` dans la TOML et des
+preuves propres si elles existent. Ajouter un chemin de scénario seulement
+s'il teste réellement le cas ; une référence périmée ou une preuve d'un autre
+package est refusée. Les preuves de scénarios d'intégration communs vivent dans
+`simulation/tests/`, les contrats internes dans `src/plugins/<package>/tests/`
+et les probes GTK dans `e2e/`. Les tickets #771–#774 suivent les améliorations
+du **contenu** des scénarios indépendamment de cet inventaire.
 
 ## JDD locaux ajoutés (pilote #772 et #773)
 
