@@ -134,3 +134,108 @@ def test_absent_staging_tree_returns_zero_without_creating_it(service):
     assert instance._cleanup_old_acsm_work() == {'deleted':0,'kept':0}
     assert not instance.storage.path.parent.exists()
     forget.assert_not_called(); logger.info.assert_not_called()
+
+
+def test_staging_permissions_are_private_even_with_umask_022(service):
+    instance, _, _ = service
+    old_umask = os.umask(0o022)
+    try:
+        leaf = instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    finally:
+        os.umask(old_umask)
+    root = instance.storage.path.parent / 'acquisition-work'
+    for directory in (root, root / 'alice', root / 'alice/paris', leaf):
+        assert directory.stat().st_mode & 0o777 == 0o700
+
+
+def test_existing_public_staging_directories_are_tightened_without_losing_files(service):
+    instance, _, _ = service
+    root = instance.storage.path.parent / 'acquisition-work'
+    leaf = root / 'alice/paris/loan-1'
+    leaf.mkdir(parents=True)
+    token = leaf / 'kept.acsm'
+    token.write_bytes(b'private synthetic token')
+    for directory in (root, root / 'alice', root / 'alice/paris', leaf):
+        directory.chmod(0o755)
+    assert instance._acquisition_work_dir('alice', 'paris', 'loan-1') == leaf
+    assert token.read_bytes() == b'private synthetic token'
+    for directory in (root, root / 'alice', root / 'alice/paris', leaf):
+        assert directory.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize('level', [0, 1, 2, 3])
+def test_staging_rejects_symlink_at_every_level_without_chmod_target(service, tmp_path, level):
+    instance, _, _ = service
+    root = instance.storage.path.parent / 'acquisition-work'
+    parts = ('acquisition-work', 'alice', 'paris', 'loan-1')
+    parent = instance.storage.path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    for part in parts[:level]:
+        parent = parent / part
+        parent.mkdir(exist_ok=True)
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    outside.chmod(0o755)
+    secret = outside / 'keep.acsm'
+    secret.write_bytes(b'private')
+    (parent / parts[level]).symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    assert secret.read_bytes() == b'private'
+    assert outside.stat().st_mode & 0o777 == 0o755
+
+
+def test_staging_rejects_symlink_storage_parent(service, tmp_path):
+    instance, _, _ = service
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    parent = instance.storage.path.parent
+    parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize('value', ['..', '../outside', '/tmp/evil', 'other/subdir', ''])
+def test_staging_rejects_unsanitized_components(service, monkeypatch, value):
+    instance, _, _ = service
+    monkeypatch.setattr(facade, 'safe_library_component', lambda _value, _fallback: value)
+    with pytest.raises(ValueError, match='invalid_acquisition_stage_component'):
+        instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    assert not (instance.storage.path.parent / 'acquisition-work').exists()
+
+
+def test_retention_refuses_linked_staging_root(service, tmp_path):
+    instance, forget, _ = service
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    private = outside / 'external.acsm'
+    private.write_bytes(b'external')
+    os.utime(private, (0, 0))
+    parent = instance.storage.path.parent
+    parent.mkdir(parents=True)
+    (parent / 'acquisition-work').symlink_to(outside, target_is_directory=True)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=1) == {'deleted': 0, 'kept': 0}
+    assert private.read_bytes() == b'external'
+    forget.assert_not_called()
+
+
+def test_retention_ignores_linked_subdirectories_and_token_files(service, tmp_path):
+    instance, forget, _ = service
+    root = instance.storage.path.parent / 'acquisition-work'
+    root.mkdir(parents=True)
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    external = outside / 'old.acsm'
+    external.write_bytes(b'external')
+    os.utime(external, (0, 0))
+    (root / 'linked').symlink_to(outside, target_is_directory=True)
+    (root / 'linked-file.acsm').symlink_to(external)
+    own = root / 'own.acsm'
+    own.write_bytes(b'own')
+    os.utime(own, (0, 0))
+    assert instance._cleanup_old_acsm_work(max_age_seconds=1) == {'deleted': 1, 'kept': 1}
+    assert external.read_bytes() == b'external'
+    assert not own.exists()
+    assert (root / 'linked-file.acsm').is_symlink()
+    forget.assert_called_once_with(own)
