@@ -25,7 +25,7 @@ import httpx
 import datasetctl
 from plugin_coverage import build_report
 from baen.pseudo_baen_service import BaenFakeApp, Handler
-from cifereca_baen import BaenSession, ProviderError
+from cifereca_baen import BaenSession, ProviderError, UNVERIFIED_SEARCH_WARNING
 
 
 class LocalBaenServer:
@@ -57,8 +57,14 @@ class LocalBaenServer:
         except HTTPError as error:
             return error.code, dict(error.headers), error.read()
 
-    def client(self):
+    def client(self, *, timeout_on_query: bool = False):
         def fetch(request):
+            # A real socket stall would make this test timing-dependent.
+            # Inject ReadTimeout at the trusted transport boundary instead,
+            # without contacting a remote host or even the local server.
+            if timeout_on_query and request.url.params.get("q") == "timeout":
+                self.calls.append(str(request.url))
+                raise httpx.ReadTimeout("PRIVATE_SYNTHETIC_TIMEOUT", request=request)
             status, headers, content = self.get(str(request.url))
             return httpx.Response(status, headers=headers, content=content, request=request)
         return httpx.Client(transport=httpx.MockTransport(fetch), trust_env=False)
@@ -130,8 +136,9 @@ class BaenContractTests(unittest.TestCase):
                 self.assertEqual(session.search("", page=2), [])
                 self.assertEqual([i.title for i in session.search("Garden")], ["The Garden of Words"])
                 self.assertEqual(session.search("nothing"), [])
-                self.assertEqual(session.last_search_warnings, [],
-                                 "attested 200 zero is not partial")
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ], "zero markup cannot attest the upstream q/page semantics")
                 self.assertIn("page=2", server.calls[1])
                 self.assertIn("pageSize=2", server.calls[1])
 
@@ -160,10 +167,59 @@ class BaenContractTests(unittest.TestCase):
             try:
                 # Provider #1917 now exposes stable, redacted failure
                 # categories rather than the former generic error string.
-                for query, code in (("rate-limit", "rate_limited"), ("down", "service_unavailable")):
-                    with self.subTest(query=query), self.assertRaisesRegex(ProviderError, f"^Baen : {code}$"):
-                        session.search(query)
+                from cifereca.search_failures import search_failure_code
+                from cifereca.core.known_catalog_fallback import public_service_unavailable
+                for query, code, core_code in (
+                    ("auth-required", "auth_required", "SearchAuthenticationRequired"),
+                    ("access-denied", "access_denied", "SearchAccessDenied"),
+                    ("rate-limit", "rate_limited", "SearchTemporarilyUnavailable"),
+                    ("down", "service_unavailable", "SearchTemporarilyUnavailable"),
+                ):
+                    with self.subTest(query=query):
+                        before = len(server.calls)
+                        with self.assertRaisesRegex(ProviderError, f"^Baen : {code}$") as raised:
+                            session.search(query)
+                        self.assertEqual(len(server.calls), before + 1)
+                        self.assertEqual(search_failure_code(raised.exception), core_code)
+                        self.assertEqual(
+                            public_service_unavailable(raised.exception),
+                            core_code == "SearchTemporarilyUnavailable",
+                        )
+                        self.assertIsNone(raised.exception.__cause__)
                 self.assertEqual(session.search("nothing"), [])
+            finally:
+                session.close()
+
+    def test_deterministic_read_timeout_preserves_outage_and_next_success(self):
+        from cifereca.search_failures import search_failure_code
+        from cifereca.core.known_catalog_fallback import public_service_unavailable
+        with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
+            session = make_session(server, transport=RecordingTransport(server))
+            session.client.close()
+            session.client = server.client(timeout_on_query=True)
+            try:
+                with self.assertRaisesRegex(
+                    ProviderError, "^Baen : service_unavailable$",
+                ) as raised:
+                    session.search("timeout")
+                self.assertEqual(len(server.calls), 1)
+                self.assertIn("q=timeout", server.calls[0])
+                self.assertEqual(
+                    search_failure_code(raised.exception),
+                    "SearchTemporarilyUnavailable",
+                )
+                self.assertTrue(public_service_unavailable(raised.exception))
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertNotIn("PRIVATE_SYNTHETIC_TIMEOUT", str(raised.exception))
+
+                # Recovery is observable: no permanent error state/cache and
+                # no retry of the timed-out query.
+                self.assertEqual([r.title for r in session.search("Garden")],
+                                 ["The Garden of Words"])
+                self.assertEqual(len(server.calls), 2)
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ])
             finally:
                 session.close()
 
@@ -178,7 +234,9 @@ class BaenContractTests(unittest.TestCase):
                 ))
                 self.assertEqual(len(server.calls), 1)
                 self.assertEqual(session.search("nothing"), [])
-                self.assertFalse(session.last_search_warnings)
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ])
                 self.assertEqual(len(server.calls), 2)
             finally:
                 session.close()
