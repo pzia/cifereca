@@ -11,10 +11,20 @@ from typing import Any
 
 def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -> dict[str, Any]:
     """Cross-reference active Paris entitlements, acquisitions and pinned grants."""
-    owners = {
-        str(row["credential_id"]): str(row["identity_id"])
-        for row in storage.provider_connections()
-        if str(row.get("provider_id") or "").lower() == "paris"
+    # A duplicate credential bound to different identities cannot prove its
+    # owner. The previous last-row-wins dict silently selected whichever
+    # connection happened to be returned last by SQLite.
+    owner_candidates: dict[str, set[str]] = defaultdict(set)
+    for row in storage.provider_connections():
+        if str(row.get("provider_id") or "").casefold() != "paris":
+            continue
+        credential = str(row.get("credential_id") or "").strip()
+        identity = str(row.get("identity_id") or "").strip()
+        if credential and identity:
+            owner_candidates[credential].add(identity)
+    owners: dict[str, str | None] = {
+        credential: next(iter(identities)) if len(identities) == 1 else None
+        for credential, identities in owner_candidates.items()
     }
     grants = {
         (str(row["credential_id"]), str(row["account_id"])): row
@@ -46,15 +56,36 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
         if source not in current["sources"]:
             current["sources"].append(source)
         if source == "acquisition":
-            current["acquisition_status"] = str(row.get("status") or "")
-            ade = ((row.get("metadata") or {}).get("adept_binding") or {})
-            if isinstance(ade, dict) and ade.get("adept_profile_id"):
-                current["recorded_adept_profile_id"] = str(ade["adept_profile_id"])
+            statuses = current.setdefault("acquisition_statuses", [])
+            status = str(row.get("status") or "")
+            if status not in statuses:
+                statuses.append(status)
+            # A completed and failed ledger row with the same transaction
+            # scope is contradictory; never silently choose the last one.
+            current["acquisition_status"] = (
+                status if len(statuses) == 1 else "ambiguous"
+            )
+            metadata = row.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            ade = metadata.get("adept_binding")
+            if isinstance(ade, dict):
+                profile_id = ade.get("adept_profile_id")
+                if isinstance(profile_id, str) and profile_id.strip():
+                    profiles = current.setdefault("recorded_adept_profile_ids", [])
+                    profile_id = profile_id.strip()
+                    if profile_id not in profiles:
+                        profiles.append(profile_id)
+                    # A conflicting ADEPT profile has *no* single origin.
+                    current["recorded_adept_profile_id"] = (
+                        profile_id if len(profiles) == 1 else None
+                    )
 
     for row in storage.entitlements(provider_id="paris", state="active"):
         add(row, row.get("loan_id"), source="entitlement")
     for row in storage.acquisitions(provider_id="paris"):
-        loan_id = (row.get("metadata") or {}).get("provider_loan_id")
+        metadata = row.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        loan_id = metadata.get("provider_loan_id")
         if loan_id:
             add(row, loan_id, source="acquisition")
 
@@ -105,6 +136,10 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                     else:
                         row["binding_state"] = "locally_consistent"
             row["sources"].sort()
+            if "recorded_adept_profile_ids" in row:
+                row["recorded_adept_profile_ids"].sort()
+            if "acquisition_statuses" in row:
+                row["acquisition_statuses"].sort()
             exposures_for_loan.append(row)
 
         if credential_id is not None and not any(
@@ -125,15 +160,25 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             for row in exposures_for_loan
         )
         recorded = {
-            row["recorded_adept_profile_id"] for row in exposures_for_loan
-            if row.get("recorded_adept_profile_id")
+            profile for row in exposures_for_loan
+            for profile in row.get("recorded_adept_profile_ids", (
+                [row["recorded_adept_profile_id"]]
+                if row.get("recorded_adept_profile_id") else []
+            ))
         }
         profiles_in_conflict = len(profiles | recorded) > 1
+        ledger_status_ambiguous = any(
+            len(row.get("acquisition_statuses", ())) > 1
+            for row in exposures_for_loan
+        )
         groups.append({
             "loan_id": loan_id,
             "multiple_connections": shared,
             "profile_disagreement": profiles_in_conflict,
-            "requires_attention": shared or inconsistent or profiles_in_conflict,
+            "requires_attention": (
+                shared or inconsistent or profiles_in_conflict or ledger_status_ambiguous
+            ),
+            "ledger_status_ambiguous": ledger_status_ambiguous,
             "multiple_item_ids": len({row["item_id"] for row in exposures_for_loan}) > 1,
             "exposures": exposures_for_loan,
         })
