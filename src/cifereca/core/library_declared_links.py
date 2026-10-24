@@ -386,8 +386,15 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
                 _require(db.execute('SELECT changes()').fetchone()[0] == 1,
                          'relation_scope_changed')
             _require(len(_json(record)) <= _MAX_RECORD_BYTES, 'declaration_budget')
-            _require(sum(len(_json(r)) for r in records) + len(_json(record))
-                     <= _MAX_STORE_BYTES, 'declaration_budget')
+            # Creation appends a record, whereas withdrawal REPLACES an
+            # existing record. Charging both the old and replacement bytes
+            # against the bounded store would reject a valid undo when the
+            # registry is nearly full and strand the user's declaration.
+            # Never bypass _records' own corruption/budget checks.
+            remaining = (sum(len(_json(r)) for r in records
+                             if revoke is None or r['relation_id'] != revoke))
+            _require(remaining + len(_json(record)) <= _MAX_STORE_BYTES,
+                     'declaration_budget')
             if revoke is None:
                 final = revalidate_observed_file(observation, roots, identity_id=identity_id,
                                                  cancelled=lambda: cancelled() or not valid())
