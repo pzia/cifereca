@@ -260,3 +260,30 @@ def test_kobo_preview_rejects_stale_reused_session_as_failed_request():
     assert _rows(service.diagnostics)[-1]["reason_code"] == "session_invalid"
     assert _rows(service.diagnostics)[-1]["status"] == "failed"
     session.connect.assert_not_called()
+
+
+def test_scope_ref_rotates_with_process_secret_without_exposing_stable_hash(monkeypatch):
+    from cifereca.core import diagnostic_provider_connection_attempt as trace
+    first = trace._connection_scope("PRIVATE_IDENTITY", "paris", "PRIVATE_CREDENTIAL")
+    monkeypatch.setattr(trace, "_PROCESS_SECRET", b"synthetic-other-process-secret-32"[:32])
+    next_process = trace._connection_scope("PRIVATE_IDENTITY", "paris", "PRIVATE_CREDENTIAL")
+    assert first is not None and next_process is not None
+    assert first != next_process
+    assert "PRIVATE" not in first + next_process
+
+
+def test_disabled_diagnostics_does_not_suppress_canonical_log(caplog):
+    disabled = Diagnostics(enabled=False)
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        attempt = _attempt(disabled)
+        attempt.emit(disabled, "terminal", "failed", "connect_failed")
+    assert _rows(disabled) == []
+    body = [
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("EVENT provider connection attempt ")
+    ]
+    assert len(body) == 2
+    assert [log_fields(message)["phase"] for message in body] == [
+        "requested", "terminal",
+    ]
+    assert all("task_ref" not in log_fields(message) for message in body)
