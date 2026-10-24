@@ -770,12 +770,15 @@ class ParisClient:
         )
         # Exact delivery hosts observed in authenticated Paris diagnostics.
         # edenlivres and edelivres are distinct observed hosts, never aliases.
-        # Do not authorize all supplier subdomains, HTTP or arbitrary ports.
-        supplier_host = (
-            host in {"www.edenlivres.fr", "www.cantook.net", "acs4.edelivres.fr", "acs4.edenlivres.fr", "acs4.cantook.net"}
-            and parsed.scheme == "https" and port in {None, 443}
-        )
-        if (parsed.scheme not in {"http", "https"} or parsed.username or parsed.password
+        # A signed loan/ACSM redirect must never downgrade to plaintext HTTP
+        # or navigate to an arbitrary service port, INCLUDING for legacy
+        # "existing_host" entries. This check is run before every GET hop.
+        supplier_host = host in {
+            "www.edenlivres.fr", "www.cantook.net", "acs4.edelivres.fr",
+            "acs4.edenlivres.fr", "acs4.cantook.net",
+        }
+        if (parsed.scheme != "https" or port not in (None, 443)
+                or parsed.username is not None or parsed.password is not None
                 or not (existing_host or supplier_host)):
             _TRACE_LOG.warning(
                 "PNB redirect refused site=%s reason=host_scheme_port_or_credentials",
