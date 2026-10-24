@@ -39,6 +39,15 @@ def connect_configured_sources(
         refresh_query_providers(window)
         if getattr(window, "_closed", False):
             return
+        # Refresh already-built Synchronisation cards after asynchronous
+        # login. No provider I/O: the GTK callback reads Core's in-memory
+        # accounts plus the identity-scoped configured-only notices (#3105).
+        if getattr(window, "_sync_sources_box", None) is not None:
+            refresh_sync = getattr(window, "_refresh_sync_page", None)
+            if callable(refresh_sync):
+                refresh_sync()
+        if getattr(window, "_closed", False):
+            return
         _TRACE_LOG.info("TRACE gui populate-accounts end")
         _TRACE_LOG.info("TRACE gui populate-loans begin count=%s", len(window.service.last_loans))
         window._populate_loans(window.service.last_loans)
