@@ -56,11 +56,16 @@ def _scope(service, *, identity_id, credential_id, account_id):
     identities = getattr(service, "identities", None)
     accounts = getattr(service, "accounts", None)
     _require(type(accounts) is list and type(identities) is list, "scope_unavailable")
+    # One Numilog connection may expose several independently selected
+    # borrowers. The exact provider/credential/account coordinates must be
+    # unique; other borrowers on the same credential are NOT proof of this
+    # borrower's purchase, but cannot make this selected account disappear.
     exact = [row for row in accounts
              if getattr(row, "provider_id", None) == "numilog"
-             and getattr(row, "credential_id", None) == credential_id]
-    _require(len(exact) == 1 and exact[0].identity_id == identity_id
-             and exact[0].unique_id == account_id, "account_scope_changed")
+             and getattr(row, "credential_id", None) == credential_id
+             and getattr(row, "unique_id", None) == account_id]
+    _require(len(exact) == 1 and exact[0].identity_id == identity_id,
+             "account_scope_changed")
     config = service.config
     storage = service.storage
     roots = configured_identity_roots(config, identity_id)[identity_id]
@@ -73,7 +78,8 @@ def _scope(service, *, identity_id, credential_id, account_id):
             active = service.current_identity
             matches = [row for row in service.accounts
                        if getattr(row, "provider_id", None) == "numilog"
-                       and getattr(row, "credential_id", None) == credential_id]
+                       and getattr(row, "credential_id", None) == credential_id
+                       and getattr(row, "unique_id", None) == account_id]
             return (service.config is config and config.data is data
                     and service.storage is storage
                     and service.accounts is accounts and service.identities is identities
