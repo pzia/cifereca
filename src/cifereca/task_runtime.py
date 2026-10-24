@@ -8,7 +8,7 @@ import time
 from typing import Any, Callable
 
 from cifereca.plugin_api import Cancelled, TaskControl, TaskHandle
-from .task_queue import PriorityExecutor
+from .task_queue import PriorityExecutor, TaskPriority
 from .task_admission import SharedTaskAdmission
 
 
@@ -162,7 +162,7 @@ class TaskBrokerImpl:
         # A plugin may control its advertised priority. Do not coerce bool,
         # float, numeric strings, or arbitrary __int__ objects into a trusted
         # user-action lane. Reject before allocating controls/executor work.
-        if not isinstance(priority, int) or isinstance(priority, bool):
+        if type(priority) not in (int, TaskPriority):
             raise ValueError("invalid task priority")
         task_id = next(self._ids)
         control = _TaskControl(on_progress)
