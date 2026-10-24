@@ -535,6 +535,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             )):
                 loan_download_detail = candidate
                 public_detail = candidate
+                # Only attested Core terminal download operations may enter this domain.
+                business_domain = "loan_download"
                 message = "Téléchargement du prêt · " + candidate["status"] + " · " + candidate["code"]
                 severity = ("info" if candidate["status"] == "success"
                             else "error" if candidate["status"] == "failed"
@@ -643,7 +645,9 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
-    if type(domain) is not str or domain not in ("", "browser_recorder", "reconciliation"):
+    if type(domain) is not str or domain not in (
+        "", "browser_recorder", "reconciliation", "loan_download",
+    ):
         raise ValueError("unknown diagnostic domain")
     # Provider and module are independent filters. A caller-supplied value
     # is never interpreted as a provider name, account alias or URL.

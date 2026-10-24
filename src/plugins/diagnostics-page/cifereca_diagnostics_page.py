@@ -657,10 +657,11 @@ class DiagnosticsPagePlugin:
         domain_filter.set_width_chars(18)
         domain_filter.set_max_width_chars(26)
         domain_filter.set_hexpand(True)
-        domain_filter.set_placeholder_text("Browser / Réconciliation · Entrée")
+        domain_filter.set_placeholder_text("Browser / Réconciliation / Download")
         domain_filter.set_tooltip_text(
-            "Filtre global : Browser, recorder, Réconciliation, Reconciliation "
-            "ou Réconcilitation. Vide : tous domaines."
+            "Filtre global : Browser, recorder, Réconciliation, Reconciliation, "
+            "Réconcilitation, Download ou Téléchargements de prêts. "
+            "Vide : tous domaines ; seules les observations Core attestées sont retenues."
         )
         domain_row.append(domain_caption)
         domain_row.append(domain_filter)

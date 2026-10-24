@@ -44,6 +44,7 @@ DOMAIN_LABELS = {
     "": "Tous domaines",
     "browser_recorder": "Browser Recorder",
     "reconciliation": "Réconciliation",
+    "loan_download": "Téléchargements de prêts",
 }
 
 
@@ -67,6 +68,12 @@ def normalize_diagnostic_domain(value: object) -> str:
         return "browser_recorder"
     if canonical in ("reconciliation", "reconcilitation"):
         return "reconciliation"
+    if canonical in (
+        "download", "loan download", "download loan",
+        "telechargement de pret", "telechargement du pret",
+        "telechargements de prets",
+    ):
+        return "loan_download"
     raise ValueError("unknown diagnostic domain")
 
 
@@ -220,7 +227,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         domain = raw.get("domain")
         if (raw.get("source") == "core_events"
                 and ((raw.get("module") == "PLUGIN" and domain == "browser_recorder")
-                     or (raw.get("module") == "LIBRARY" and domain == "reconciliation"))):
+                     or (raw.get("module") == "LIBRARY" and domain == "reconciliation")
+                     or (raw.get("module") in ("PNB", "LOAN")
+                         and domain == "loan_download"))):
             safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
