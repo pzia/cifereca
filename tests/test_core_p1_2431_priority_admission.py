@@ -370,3 +370,27 @@ def test_plugin_supplied_priority_int_hook_is_never_called_under_pool_lock():
         assert pool.submit(TaskPriority.USER_ACTION, lambda: 42).result(timeout=3) == 42
     finally:
         pool.shutdown(wait=True)
+
+
+def test_subclassed_int_priority_never_invokes_dynamic_hooks_or_enters_queue():
+    class PluginPriority(int):
+        def __int__(self):
+            raise AssertionError("PRIVATE_INT_HOOK")
+
+        def __lt__(self, other):
+            raise AssertionError("PRIVATE_COMPARISON_HOOK")
+
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=1, reserve_user_slots=0)
+    pool = PriorityExecutor(max_workers=1, shared_admission=admission)
+    try:
+        with pytest.raises(ValueError, match="invalid task priority"):
+            pool.submit(PluginPriority(0), lambda: pytest.fail("not callable"))
+        assert pool.admission_snapshot()["admitted"] == 0
+        assert admission.snapshot()["inflight"] == 0
+        assert pool.submit(TaskPriority.USER_ACTION, lambda: "ok").result(timeout=3) == "ok"
+        assert pool.submit(40, lambda: "int-ok").result(timeout=3) == "int-ok"
+    finally:
+        pool.shutdown(wait=True)
+    assert admission.snapshot()["inflight"] == 0
