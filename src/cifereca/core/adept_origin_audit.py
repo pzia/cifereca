@@ -76,9 +76,18 @@ def inspect_paris_adept_origins(
         and str(row.get("loan_id") or "") == provider_loan_id
         and str(row.get("item_id") or "") == provider_item_id
     ]
-    rights_by_id = {
-        str(row.get("entitlement_id")): row for row in rights
-        if row.get("entitlement_id")
+    # Historical entitlement identifiers may collide across two Paris
+    # connections or library identities. A global id -> row dict silently
+    # overwrote one right and suppressed an otherwise exact legacy match.
+    # Scope the old entitlement evidence to its recorded provenance.
+    rights_by_source = {
+        (
+            str(row.get("entitlement_id")),
+            str(row.get("identity_id") or ""),
+            str(row.get("credential_id") or ""),
+            str(row.get("account_id") or ""),
+        )
+        for row in rights if row.get("entitlement_id")
     }
     source_rows = []
     for row in rights:
@@ -106,11 +115,13 @@ def inspect_paris_adept_origins(
         else:
             # Legacy rows: only their exact entitlement can attest the
             # transaction, never title/ISBN/filename or the selected UI tab.
-            right = rights_by_id.get(str(row.get("entitlement_id") or ""))
-            if right is None or any(
-                str(row.get(k) or "") != str(right.get(k) or "")
-                for k in ("identity_id", "credential_id", "account_id")
-            ):
+            source_key = (
+                str(row.get("entitlement_id") or ""),
+                str(row.get("identity_id") or ""),
+                str(row.get("credential_id") or ""),
+                str(row.get("account_id") or ""),
+            )
+            if source_key not in rights_by_source:
                 continue
 
         identity = str(row.get("identity_id") or "")
