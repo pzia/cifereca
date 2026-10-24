@@ -1962,9 +1962,9 @@ class Storage:
             "kobo": "kobo.personal_manifest",
             "numilog": "numilog.authenticated_library",
         }
-        if type(row) is not dict or row.get("provider_id") not in expected:
+        provider = row.get("provider_id") if type(row) is dict else None
+        if type(provider) is not str or provider not in expected:
             raise ValueError("invalid_attested_owned_right")
-        provider = row["provider_id"]
         fields = (
             "entitlement_id", "provider_id", "credential_id",
             "identity_id", "item_id",
