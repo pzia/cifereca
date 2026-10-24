@@ -153,3 +153,46 @@ def test_service_facade_is_read_only_and_does_not_call_kobo_or_paris(tmp_path):
         assert service.storage.acquisitions(provider_id="paris") == []
     finally:
         service.close()
+
+
+def test_malformed_artifact_inspection_is_unknown_not_usable(tmp_path):
+    artifact = tmp_path / "historical.epub"
+    artifact.write_bytes(b"private fixture")
+    row = _acq("alice", "paris-a", "hb", path=artifact, state="attested")
+    from cifereca.core.adept_origin_audit import _artifact_state
+    for response in (
+        None,
+        SimpleNamespace(valid=True),
+        SimpleNamespace(valid=True, protected=None),
+        SimpleNamespace(valid=1, protected=False),
+        SimpleNamespace(valid=False, protected=None),
+    ):
+        assert _artifact_state(row["metadata"], lambda _, r=response: r) == "inspection_unavailable"
+    assert _artifact_state(row["metadata"], lambda _: SimpleNamespace(
+        valid=False, protected=False)) == "invalid"
+    assert _artifact_state(row["metadata"], lambda _: SimpleNamespace(
+        valid=True, protected=True)) == "protected"
+    assert _artifact_state(row["metadata"], lambda _: SimpleNamespace(
+        valid=True, protected=False)) == "usable"
+    assert artifact.read_bytes() == b"private fixture"
+
+
+def test_broken_inspector_does_not_abort_historical_origin_report(tmp_path):
+    artifact = tmp_path / "historical.epub"
+    artifact.write_bytes(b"private fixture")
+    rows = [_acq("alice", "paris-a", "hb", path=artifact, state="attested"),
+            _acq("bob", "paris-b", "magali", path=artifact)]
+    calls = []
+    def broken_inspector(path):
+        calls.append(path)
+        raise RuntimeError("PRIVATE_ACCOUNT/PRIVATE_LOAN/PRIVATE_PATH")
+    report = _audit([_right("alice", "paris-a"), _right("bob", "paris-b")],
+                    rows, inspector=broken_inspector)
+    assert len(calls) == 2
+    assert report["status"] == "inventory_attested"
+    assert report["shared_visibility"] is True
+    assert report["profile_disagreement"] is True
+    assert [o["artifact_state"] for o in report["origins"]] == [
+        "inspection_unavailable", "inspection_unavailable"]
+    assert "PRIVATE_" not in str(report)
+    assert artifact.read_bytes() == b"private fixture"
