@@ -235,7 +235,9 @@ def test_well_formed_non_atom_http_200_is_not_empty_catalogue(payload):
         with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
             session.search("book", page=0)
         assert len(requests) == 1
-        assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+        assert search_failure_code(caught.value) == (
+            None if payload.startswith(b"<html") else "SearchTemporarilyUnavailable"
+        )
         assert caught.value.__cause__ is None
         assert SECRET not in repr(diagnostics.events) + str(caught.value)
     finally:
@@ -250,5 +252,48 @@ def test_valid_atom_feed_without_entries_is_still_legitimate_zero():
     try:
         assert session.search("book") == []
         assert calls == [1]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(("payload", "expected"), (
+    (b"<html><body>PRIVATE_LOGIN_SSO</body></html>", None),
+    (b"<!DOCTYPE html><html><body>PRIVATE_LOGIN_SSO", None),
+    (b"<feed xmlns='http://www.w3.org/2005/Atom'><entry>", "SearchTemporarilyUnavailable"),
+))
+def test_html_200_sso_never_authorizes_stale_but_broken_atom_does(payload, expected):
+    from cifereca.search_failures import search_failure_code
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+    requests = []
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(200, content=payload)
+    session, diag = session_with_handler(handler)
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+            session.search("book", page=0)
+        assert search_failure_code(caught.value) == expected
+        assert public_service_unavailable(caught.value) is (expected is not None)
+        assert caught.value.__cause__ is None
+        assert len(requests) == 1
+        assert "PRIVATE_LOGIN_SSO" not in repr(diag.events) + str(caught.value)
+    finally:
+        session.close()
+
+
+def test_direct_parser_and_pagination_do_not_claim_outage_for_html_200():
+    from cifereca.search_failures import search_failure_code
+    session, _ = session_with_handler()
+    try:
+        for body in (b"<html/>", b"<HTML><body>login</body></HTML>",
+                     b"<!doctype html><html><body>"):
+            for parse in (
+                lambda: session._parse_feed(body, SIGNED),
+                lambda: GutenbergSession._next_page_url(body, SIGNED),
+            ):
+                with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+                    parse()
+                assert search_failure_code(caught.value) is None
+                assert caught.value.__cause__ is None
     finally:
         session.close()
