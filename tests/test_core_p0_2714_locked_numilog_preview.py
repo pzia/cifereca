@@ -180,7 +180,6 @@ def test_foreign_credential_same_identity_edition_is_never_reviewable(
     # A second buyer's unreceipted, even inactive, entitlement must not be
     # silently ignored by the preview when the strict writer rejects it.
     storage, _root, observation = evidence
-    before_file = durable_files(tmp_path)
     with storage._lock, storage._connect() as db:
         db.execute(
             "INSERT INTO entitlements "
@@ -191,6 +190,9 @@ def test_foreign_credential_same_identity_edition_is_never_reviewable(
              "PRIVATE-other-credential", "PRIVATE-other-borrower", "edition",
              state, "owned", "{}", 1, 1),
         )
+    # Measure after the intentional fixture INSERT, not before it. The
+    # read-only preview must leave the already-written WAL untouched.
+    before_file = durable_files(tmp_path)
     result = preview(evidence)
     assert result.status == "blocked"
     assert result.reason == "right_ambiguous_or_missing"
