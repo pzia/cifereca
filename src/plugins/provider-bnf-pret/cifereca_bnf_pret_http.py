@@ -78,7 +78,8 @@ def form_fields(form):
 class ReaderHTTPClient:
     def __init__(self, *, transport=None):
         self.http = httpx.Client(timeout=httpx.Timeout(15, connect=10),
-                                 follow_redirects=False, transport=transport)
+                                 follow_redirects=False, trust_env=False,
+                                 transport=transport)
 
     def close(self):
         self.http.close()
@@ -126,6 +127,56 @@ class ReaderHTTPClient:
             except (httpx.HTTPError, UnicodeError):
                 raise ReaderHTTPError('transport_unavailable') from None
         raise ReaderHTTPError('redirect_limit')
+
+    def loan_token(self, loan_id: str) -> bytes:
+        """One non-retried GET for a loan previously checked by its session.
+
+        Unlike HTML requests, this never follows a redirect (even to BnF).
+        The response is bounded before buffering and independently inspected
+        as an ADEPT loan token by the caller; no private URL is returned.
+        """
+        from cifereca_bnf_pret_download import MAX_TOKEN_BYTES, exact_loan_id
+        loan_id = exact_loan_id(loan_id)
+        url = ORIGIN + '/loans/' + loan_id
+        # Enforce a second, narrow URL boundary independent of auth/login.
+        if not re.fullmatch(r'/loans/[A-Za-z0-9_-]{1,128}', urlsplit(url).path):
+            raise ReaderHTTPError('url_refused')
+        deadline = time.monotonic() + 30
+        try:
+            with self.http.stream(
+                'GET', url, headers={'Accept': 'application/vnd.adobe.adept+xml, application/octet-stream'},
+                timeout=min(15, max(0.1, deadline - time.monotonic())),
+            ) as response:
+                if 300 <= response.status_code < 400:
+                    raise ReaderHTTPError('download_redirect_refused')
+                if response.status_code != 200:
+                    code = {401: 'auth_required', 403: 'access_denied',
+                            429: 'rate_limited'}.get(response.status_code, 'http_unavailable')
+                    raise ReaderHTTPError(code)
+                length = response.headers.get('content-length', '')
+                if length:
+                    try:
+                        declared = int(length)
+                    except (ValueError, TypeError):
+                        raise ReaderHTTPError('invalid_loan_token') from None
+                    if not 0 < declared <= MAX_TOKEN_BYTES:
+                        raise ReaderHTTPError('token_limit')
+                mime = response.headers.get('content-type', '').partition(';')[0].strip().lower()
+                if mime in {'text/html', 'application/xhtml+xml'}:
+                    raise ReaderHTTPError('invalid_loan_token')
+                data = bytearray()
+                for chunk in response.iter_bytes():
+                    if time.monotonic() >= deadline:
+                        raise ReaderHTTPError('operation_timeout')
+                    if len(data) + len(chunk) > MAX_TOKEN_BYTES:
+                        raise ReaderHTTPError('token_limit')
+                    data.extend(chunk)
+                if not data:
+                    raise ReaderHTTPError('invalid_loan_token')
+                return bytes(data)
+        except httpx.HTTPError:
+            # Errors may carry a private loan URL or response metadata.
+            raise ReaderHTTPError('transport_unavailable') from None
 
     def login(self, username, password):
         self.clear()
