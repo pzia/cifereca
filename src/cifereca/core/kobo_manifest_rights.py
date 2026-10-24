@@ -64,7 +64,9 @@ def mirror_kobo_manifest_rights(
         )
         metadata = row.metadata if isinstance(row.metadata, dict) else {}
         archived = metadata.get("archived") is True
-        service.storage.entitlement_put({
+        # A discovery-time reservation is not an atomic owner proof.
+        # Only the guarded SQLite UPSERT may refresh an existing purchase.
+        if not service.storage.entitlement_put_attested_owned({
             "entitlement_id": ident,
             "provider_id": "kobo", "credential_id": credential_id,
             "account_id": account_id, "identity_id": identity_id,
@@ -80,7 +82,8 @@ def mirror_kobo_manifest_rights(
                 "downloadable": row.downloadable is True,
                 "source": "kobo.personal_manifest",
             },
-        })
+        }):
+            continue
         by_scope[key] = {"entitlement_id": ident}
         used_ids[ident] = identity_id
         count += 1
