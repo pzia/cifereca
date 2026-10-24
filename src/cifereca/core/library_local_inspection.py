@@ -1882,7 +1882,7 @@ class LocalInspection:
             details=(
                 'Piste descriptive seulement : titre et auteur OPF concordent '
                 'avec une description locale, sans preuve d’édition, de compte, '
-                'de droit, de provenance ou de placement.\\n\\n'
+                'de droit, de provenance ou de placement.\n\n'
                 + self._cases[key].details
             ),
         ) for key in self._descriptive_file_keys.get(right_key, ())
