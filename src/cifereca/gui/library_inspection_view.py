@@ -805,6 +805,7 @@ class LocalInspectionController:
         current_total = [0]
         candidate_items = [()]
         candidate_index = [0]
+        candidate_kind = ['exact']
         manual_mode = [False]
         manual_index = [0]
         manual_total = [0]
@@ -882,7 +883,11 @@ class LocalInspectionController:
                     query=manual_search.get_text()[:160], **options,
                 )
                 manual_total[0] = page.total
-                manual_toggle.set_label('Voir les candidats exacts')
+                manual_toggle.set_label(
+                    'Voir les pistes descriptives'
+                    if candidate_kind[0] == 'descriptive'
+                    else 'Voir les candidats exacts'
+                )
                 candidate_title.set_text('Fichiers non liés · comparaison manuelle')
                 candidate_note.set_text(
                     'Aucune suggestion fiable n’est nécessaire pour explorer '
@@ -940,13 +945,23 @@ class LocalInspectionController:
                 reset_pair(selected.key if selected is not None else None)
                 return
             manual_toggle.set_label('Comparer tous les fichiers non liés')
-            candidate_title.set_text(
-                'Fichiers candidats · comparaison bibliographique uniquement'
-            )
-            candidate_note.set_text(
-                'Même identifiant explicite dans une notice : '
-                'aucun lien de droit prouvé.'
-            )
+            if candidate_kind[0] == 'descriptive':
+                candidate_title.set_text(
+                    'Pistes descriptives · titre et auteur OPF'
+                )
+                candidate_note.set_text(
+                    'Titre et auteur concordants : hypothèse seulement, '
+                    'sans ISBN vérifié ni preuve de fournisseur, de droit '
+                    'ou de compte. Vérification manuelle obligatoire.'
+                )
+            else:
+                candidate_title.set_text(
+                    'Fichiers candidats · comparaison bibliographique uniquement'
+                )
+                candidate_note.set_text(
+                    'Même identifiant explicite dans une notice : '
+                    'aucun lien de droit prouvé.'
+                )
             candidate_prev.set_label('◀ Candidat')
             candidate_next.set_label('Candidat ▶')
             files = candidate_items[0]
@@ -1476,6 +1491,14 @@ class LocalInspectionController:
                 reset_pair()
                 if case.key.startswith('right:'):
                     candidate_items[0] = session.candidate_files(case.key)
+                    candidate_kind[0] = 'exact'
+                    if not candidate_items[0]:
+                        # Read-only fallback, independently labeled and
+                        # never promoted to an edition/account match.
+                        candidate_items[0] = session.descriptive_files(case.key)
+                        candidate_kind[0] = (
+                            'descriptive' if candidate_items[0] else 'none'
+                        )
                     candidate_index[0] = 0
                     manual_mode[0] = False
                     manual_index[0] = 0
@@ -1512,6 +1535,7 @@ class LocalInspectionController:
                 child = listing.get_first_child()
             detail.set_text('Sélectionnez un cas pour consulter ses preuves.' if page.total else 'Aucun cas dans ces filtres. Ce résultat ne prouve pas l’absence d’un livre.')
             candidate_items[0] = ()
+            candidate_kind[0] = 'exact'
             selected_right[0] = None
             selected_provider[0] = None
             action_scroll.set_visible(False)
