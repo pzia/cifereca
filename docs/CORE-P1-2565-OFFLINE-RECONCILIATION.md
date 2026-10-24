@@ -437,26 +437,40 @@ une colonne de comparaison s'affiche à côté du détail du droit. Elle montre
 leurs métadonnées OPF, leurs chemins et leurs contrôles SHA/structure sans
 changer de droit sélectionné.
 
-Les candidats sont uniquement les fichiers **de l'identité active**,
-effectivement inventoriés, **sans lien de droit confirmé**, dont un
-identifiant bibliographique **explicite et exact** correspond à une notice
-du **même triplet (identité, fournisseur de la notice, édition du droit)**.
-Le moteur utilise les candidats `metadata_only` calculés pendant l'audit
-existant, jamais une proximité de titre, auteur, répertoire, nom de
-fichier, SHA ou ISBN approximatif. La comparaison ne confirme **aucun**
-fournisseur, compte, achat ou attribution au fichier ; un ISBN désigne
-potentiellement plusieurs publications ou achats.
+Les **candidats exacts** viennent uniquement des fichiers **de l'identité
+active**, effectivement inventoriés et **sans lien de droit confirmé** :
+un identifiant bibliographique explicite correspond à une notice locale
+de la même identité, du fournisseur et de l'édition sélectionnée.
+`metadata_candidates()` reste fondé **exclusivement sur les identifiants**
+et classe ces correspondances `metadata_only` : aucun titre, ISBN papier,
+chemin ni SHA ne peut constituer une preuve de compte, d'achat ou de droit.
 
-Si plusieurs droits ou fichiers partagent l'identifiant, ils restent
-**tous candidats** : pas d'appariement 1:1 implicite, de score propriétaire
-ou de rapprochement forcé. Si aucune notice explicite ou aucun candidat
-validé n'est disponible, le panneau l'annonce comme **indéterminé**,
-jamais comme preuve de fichier ou de téléchargement manquant.
-La liste est bornée (20 comparaisons par droit, avec mention des autres)
-et hérite des limites de l'inventaire, du budget de métadonnées et de la
-révocation de la session. Elle reste privée, en mémoire et en lecture
-seule, sans publication vers plugins/diagnostics ni autorisation
-d'acquisition/réparation.
+Depuis les PR **#3046 et #3047**, deux cas supplémentaires sont affichés
+sans les confondre avec ces candidats exacts :
+
+- **Zéro candidat exact** : le navigateur commun Kobo/Numilog/Paris peut
+  présenter jusqu'à 20 **pistes descriptives** à partir de fichiers EPUB
+  observés pour la même identité : **titre OPF ET auteur OPF** concordent,
+  après normalisation déterministe des accents/casses/espaces, avec la
+  description locale du droit ou de sa notice. Le fichier doit avoir un SHA
+  observé, mais le SHA ne sert **pas** au rapprochement descriptif. Ce n'est
+  ni un rapprochement fuzzy, ni une preuve d'édition numérique, de compte,
+  de provenance ou de possession. L'API privée `descriptive_files()` est
+  distincte de `candidate_files()` ; aucune de ces APIs n'autorise une
+  écriture. L'index est limité à 10 000 fichiers, 50 par clé, 20 par droit.
+- **Un identifiant partagé par plusieurs fichiers** : chaque EPUB
+  concerné est marqué **`ambiguous`**, même lorsqu'une seule notice
+  correspond. Les ambiguïtés sont dédoublonnées dans les compteurs
+  expurgés ; ni une notice→N EPUB ni N notices→un EPUB ne donne une
+  attribution 1:1. Un budget interrompu reste explicitement incomplet.
+
+Sans piste exacte **ni** descriptive, le navigateur manuel de tous les
+fichiers non liés reste immédiatement accessible, paginé et filtrable.
+Un inventaire partiel peut produire des pistes pour les fichiers déjà
+observés, jamais une preuve négative concernant les fichiers non parcourus.
+Toutes les pistes restent privées, bornées, révocables et non probantes,
+sans publication de titres/comptes dans le rapport expurgé et sans
+modification de fichier, licence, droit, artefact ou SQLite.
 
 Recette synthétique : 6 EPUB Numilog, 3 chaînes de droits complètes,
 3 droits sans lien confirmé, 2 fichiers partageant le même ISBN et
