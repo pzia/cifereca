@@ -135,3 +135,29 @@ def test_plugin_priority_custom_int_not_invoked_under_broker_or_pool_lock():
         assert broker.submit(lambda control: "ok", priority=40).result(timeout=3) == "ok"
     finally:
         broker.close()
+
+
+def test_subclassed_integer_plugin_priority_rejected_before_broker_allocation():
+    from cifereca.task_queue import TaskPriority
+
+    class PluginPriority(int):
+        def __int__(self):
+            raise AssertionError("PRIVATE_PROFILE_INT_HOOK")
+
+        def __lt__(self, other):
+            raise AssertionError("PRIVATE_PRIORITY_HOOK")
+
+    broker = TaskBrokerImpl(_Service(), max_workers=1)
+    try:
+        with pytest.raises(ValueError, match="invalid task priority"):
+            broker.for_plugin("plugin").submit(
+                lambda control: pytest.fail("plugin executed"),
+                priority=PluginPriority(0),
+            )
+        assert broker._executor is None
+        assert broker._controls == {}
+        assert broker.submit(
+            lambda control: "enum-ok", priority=TaskPriority.USER_ACTION,
+        ).result(timeout=3) == "enum-ok"
+    finally:
+        broker.close()
