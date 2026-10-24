@@ -73,8 +73,18 @@ def test_two_failing_accounts_keep_two_records_same_canonical_source_without_ids
     assert diag["errors"]["connect_failed"] == 2
     assert len(diag["connection_failures"]["items"]) == 2
     events, _ = _source_diagnostics(service.diagnostics)
-    assert len([e for e in events if e.get("detail", {}).get("provider_id")
-                == "provider.test"]) == 2
+    # A provider_id alone is NOT an event kind. The new P0 #3101
+    # observations contribute requested/invoked/terminal records, but never
+    # inflate the two legacy, per-account failure records (#2370).
+    failures = [e for e in events if e.get("detail", {}).get("code")
+                == "provider_connect_failed"]
+    assert len(failures) == 2
+    attempts = [e["detail"] for e in events
+                if e.get("detail", {}).get("operation_ref")]
+    assert len(attempts) == 6
+    assert len({e["operation_ref"] for e in attempts}) == 2
+    assert sum(e["phase"] == "connect_invoked" for e in attempts) == 2
+    assert all(e["network_auth"] == "unknown" for e in attempts)
     exported = json.dumps(diag) + json.dumps(events) + caplog.text
     assert SECRET not in exported
     assert "private-other-account" not in exported

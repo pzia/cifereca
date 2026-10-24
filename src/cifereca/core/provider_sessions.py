@@ -453,7 +453,11 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     call this helper at all. The opened session is owned by LibraryService.
     """
     credential_id = str(credential_id or "").strip()
-    if not credential_id or not self.storage.identity_for_connection("kobo", credential_id):
+    bound_identity = (
+        self.storage.identity_for_connection("kobo", credential_id)
+        if credential_id else None
+    )
+    if not credential_id or not bound_identity:
         raise ProviderConfigurationError("Compte Kobo demandé non configuré")
     row = next(
         (
@@ -468,11 +472,20 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     plugin = self.registry.maybe_get("kobo")
     if plugin is None or plugin.descriptor.state != "ready":
         raise ProviderConfigurationError("Provider Kobo indisponible")
+    from .diagnostic_provider_connection_attempt import new_attempt
+    attempt = new_attempt(
+        self.registry, "kobo", diagnostics=self.diagnostics,
+        identity_id=bound_identity, credential_id=credential_id,
+        source_kind="preview", caller_category="explicit_refresh",
+    )
     key = self._session_key("kobo", credential_id)
     existing = self._sessions.get(key)
     if existing is not None and existing.connected:
         if existing.provider_id != "kobo" or existing.credential_id != credential_id:
+            attempt.emit(self.diagnostics, "terminal", "failed", "session_invalid")
             raise ProviderConfigurationError("Session Kobo différente du compte demandé")
+        attempt.emit(self.diagnostics, "session_reused", "success", "session_reused")
+        attempt.emit(self.diagnostics, "terminal", "success", "connected")
         return existing
     session = plugin.create_session(
         credential_id=credential_id,
@@ -482,12 +495,14 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
         config=self.config, storage=self.storage, diagnostics=self.diagnostics,
     )
     try:
+        attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
         session.connect()
         if (not session.connected or session.provider_id != "kobo"
                 or session.credential_id != credential_id
                 or not getattr(session.capabilities, "backup", False)):
             raise ProviderConfigurationError("Session Kobo sans capacité de sauvegarde")
     except Exception:
+        attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
         try:
             session.close()
         except Exception:
@@ -499,6 +514,7 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
         except Exception:
             pass
     self._sessions[key] = session
+    attempt.emit(self.diagnostics, "terminal", "success", "connected")
     return session
 
 
@@ -545,6 +561,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
     must be available for the current account-oriented GUI. Anonymous
     catalogue-only providers will be included once their plugin is ready.
     """
+    from .diagnostic_provider_connection_attempt import new_attempt
     started_all = time.monotonic()
     logger.info("TRACE connect-configured begin")
     self.disconnect_configured()
@@ -595,13 +612,22 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         ):
             continue
         credential_id = "__public__"
-        session = plugin.create_session(
-            credential_id=credential_id, label=plugin.descriptor.display_name, credentials={}, options={},
-            config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-        )
         key = self._session_key(provider_id, credential_id)
         public_started = time.monotonic()
+        attempt = new_attempt(
+            self.registry, provider_id, diagnostics=self.diagnostics,
+            source_kind="singleton_public",
+        )
+        session = None
+        invoked = False
         try:
+            session = plugin.create_session(
+                credential_id=credential_id, label=plugin.descriptor.display_name,
+                credentials={}, options={}, config=self.config, storage=self.storage,
+                diagnostics=self.diagnostics,
+            )
+            invoked = True
+            attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
             session.connect()
             # Only an affirmative session state attests a successful connection.
             # connect() returning normally is not proof (notably for SSO).
@@ -609,20 +635,30 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 raise ProviderConfigurationError("provider_not_connected")
             self._sessions[key] = session
             connected.append(key)
+            attempt.emit(self.diagnostics, "terminal", "success", "connected")
             _publish_connection_success(
                 self.diagnostics, self.registry, provider_id,
                 singleton=True, account_count=0,
                 duration_ms=int((time.monotonic() - public_started) * 1000),
             )
-            self.diagnostics.add(
-                "PLUGIN", "public provider connected", "ok",
-                detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
-            )
-        except Exception:
             try:
-                session.close()
+                self.diagnostics.add(
+                    "PLUGIN", "public provider connected", "ok",
+                    detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
+                )
             except Exception:
+                # Optional reporting must never invert a successful connection.
                 pass
+        except Exception:
+            attempt.emit(
+                self.diagnostics, "terminal", "failed",
+                "connect_failed" if invoked else "session_invalid",
+            )
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
             errors[key] = "Connexion à la source indisponible"
             public_failure = public_connection_failure(self.registry, provider_id)
             failures.append(public_failure)
@@ -643,9 +679,15 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         if not provider_id or not credential_id:
             continue
         item_started = time.monotonic()
+        attempt = new_attempt(
+            self.registry, provider_id, diagnostics=self.diagnostics,
+            identity_id=identity_id, credential_id=credential_id,
+            source_kind="configured",
+        )
         logger.info("TRACE provider prepare kind=configured")
         plugin = self.registry.maybe_get(provider_id)
         if plugin is None:
+            attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_missing")
             errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
             missing = public_connection_failure(
                 self.registry, provider_id, code=MISSING_PROVIDER_CODE,
@@ -658,22 +700,28 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             continue
         if plugin.descriptor.state != "ready":
             # Skeletons are visible to the GUI/docs but never perform I/O.
+            attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_not_ready")
             continue
         if getattr(plugin.descriptor, "interactive_authentication", False):
             # A configured SSO provider cannot be opened, authenticated or
             # declared connected by the automatic startup connection sweep.
             # Its explicit UI flow owns the consent and authenticated state.
+            attempt.emit(self.diagnostics, "terminal", "skipped", "interactive_auth_required")
             continue
-        session = plugin.create_session(
-            credential_id=credential_id,
-            label=str(row.get("label") or plugin.descriptor.display_name),
-            credentials=dict(row.get("credentials") or {}),
-            options=dict(row.get("options") or {}),
-            config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-        )
         key = self._session_key(provider_id, credential_id)
+        session = None
+        invoked = False
         try:
+            session = plugin.create_session(
+                credential_id=credential_id,
+                label=str(row.get("label") or plugin.descriptor.display_name),
+                credentials=dict(row.get("credentials") or {}),
+                options=dict(row.get("options") or {}),
+                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
+            )
             logger.info("TRACE provider connect begin kind=configured")
+            invoked = True
+            attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
             accounts = session.connect()
             if getattr(session, "connected", None) is not True:
                 raise ProviderConfigurationError("provider_not_connected")
@@ -694,16 +742,24 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 })
             all_accounts.extend(accounts)
             connected.append(key)
+            attempt.emit(self.diagnostics, "terminal", "success", "connected")
             _publish_connection_success(
                 self.diagnostics, self.registry, provider_id,
                 singleton=False, account_count=len(accounts),
                 duration_ms=int((time.monotonic() - item_started) * 1000),
             )
-            self.diagnostics.add(
-                "PLUGIN", "provider connected", "ok",
-                detail={"code": "provider_connected", "accounts": len(accounts)},
-            )
+            try:
+                self.diagnostics.add(
+                    "PLUGIN", "provider connected", "ok",
+                    detail={"code": "provider_connected", "accounts": len(accounts)},
+                )
+            except Exception:
+                pass
         except Exception:
+            attempt.emit(
+                self.diagnostics, "terminal", "failed",
+                "connect_failed" if invoked else "session_invalid",
+            )
             # Never invoke logger.exception: the traceback may include signed
             # endpoints, plugin credentials, response bodies and local paths.
             public_failure = public_connection_failure(self.registry, provider_id)
@@ -711,10 +767,11 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 "TRACE provider connect error code=provider_connect_failed provider_id=%s dt=%.3fs",
                 public_failure["provider_id"], time.monotonic()-item_started,
             )
-            try:
-                session.close()
-            except Exception:
-                pass
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
             errors[key] = "Connexion à la source indisponible"
             failures.append(public_failure)
             _publish_connection_failure(
