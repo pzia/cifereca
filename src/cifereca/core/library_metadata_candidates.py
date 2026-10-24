@@ -160,6 +160,12 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
         return result
     result.match_phase_executed = True
     started = time.perf_counter()
+    # The inverse ambiguity matters too: one catalogue notice (or ISBN) can
+    # match several independent EPUBs. Neither file may be presumed to be the
+    # unique copy/edition. Keep only integer indices, bounded by the existing
+    # max_candidates budget; this is descriptive evidence, never ownership.
+    first_file_by_notice = {}
+    ambiguous = set()
     try:
         for fi, observation in enumerate(inventory.files):
             if stopped():
@@ -174,9 +180,15 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
                     result.reasons.add('metadata_candidate_count_budget')
                     return result
             for ci in sorted(matches):
+                previous = first_file_by_notice.setdefault(ci, fi)
+                if previous != fi:
+                    ambiguous.update((previous, fi))
                 result.candidates.append(MetadataCandidate(fi, ci))
             if len(matches) > 1:
-                result.ambiguous_files.append(fi)
+                ambiguous.add(fi)
     finally:
+        # Populate even if time/candidate limits interrupted the match loop:
+        # report ambiguity only among the positively observed candidates.
+        result.ambiguous_files = sorted(ambiguous)
         result.match_ms = max(0, min(600_000, int((time.perf_counter() - started) * 1000)))
     return result
