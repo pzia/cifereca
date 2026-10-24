@@ -641,10 +641,14 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 singleton=True, account_count=0,
                 duration_ms=int((time.monotonic() - public_started) * 1000),
             )
-            self.diagnostics.add(
-                "PLUGIN", "public provider connected", "ok",
-                detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
-            )
+            try:
+                self.diagnostics.add(
+                    "PLUGIN", "public provider connected", "ok",
+                    detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
+                )
+            except Exception:
+                # Optional reporting must never invert a successful connection.
+                pass
         except Exception:
             attempt.emit(
                 self.diagnostics, "terminal", "failed",
@@ -744,10 +748,13 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 singleton=False, account_count=len(accounts),
                 duration_ms=int((time.monotonic() - item_started) * 1000),
             )
-            self.diagnostics.add(
-                "PLUGIN", "provider connected", "ok",
-                detail={"code": "provider_connected", "accounts": len(accounts)},
-            )
+            try:
+                self.diagnostics.add(
+                    "PLUGIN", "provider connected", "ok",
+                    detail={"code": "provider_connected", "accounts": len(accounts)},
+                )
+            except Exception:
+                pass
         except Exception:
             attempt.emit(
                 self.diagnostics, "terminal", "failed",
