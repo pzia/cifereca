@@ -46,6 +46,7 @@ LANGUAGE_SEARCH_CODES = {
 DEFAULT_OPDS_SEARCH_URL = "https://www.gutenberg.org/ebooks/search.opds/"
 GUTENBERG_PAGE_SIZE = 25
 MAX_REQUESTED_PAGES = 101
+MAX_SEARCH_OPDS_BYTES = 2 * 1024 * 1024  # Bound parsed Atom and HTTP body.
 _EPUB_REL = "http://opds-spec.org/acquisition"
 _EBOOK_RE = re.compile(r"(?:urn:gutenberg:|/ebooks/)(\d+)", re.I)
 _LOG = logging.getLogger("cifereca.plugin.provider.gutenberg")
@@ -657,7 +658,31 @@ class GutenbergSession(ProviderSession):
             endpoint = _safe_url(current_url)
             _LOG.info("TRACE gutenberg search page begin endpoint=%s query_len=%s scope=%s field=%s requested_page=%s hop=%s",endpoint, len(query), scope, field, page, page_index)
             try:
-                response = self.client.get(current_url, params=params); response.raise_for_status()
+                # The former Client.get() buffered the entire upstream
+                # response before any XML safety check. Bound raw bytes while
+                # the socket is open; refuse compression rather than letting
+                # httpx inflate an unbounded chunk before our byte budget.
+                with self.client.stream(
+                    "GET", current_url, params=params,
+                    headers={"Accept-Encoding": "identity"},
+                ) as response:
+                    response.raise_for_status()
+                    encoding = response.headers.get("content-encoding", "").strip().casefold()
+                    if encoding not in {"", "identity"}:
+                        raise _unavailable_opds_xml() from None
+                    declared = response.headers.get("content-length", "")
+                    if (len(declared) <= 9 and declared.isascii() and declared.isdecimal()
+                            and int(declared) > MAX_SEARCH_OPDS_BYTES):
+                        raise _unavailable_opds_xml() from None
+                    chunks = []
+                    total = 0
+                    for chunk in response.iter_raw(chunk_size=65536):
+                        total += len(chunk)
+                        if total > MAX_SEARCH_OPDS_BYTES:
+                            raise _unavailable_opds_xml() from None
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
+                    response_url = str(response.url)
             except httpx.HTTPError as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
                 self._diagnostic("GUTENBERG", "OPDS search", "error", duration_ms=elapsed_ms,detail={"endpoint": endpoint, "status": status, "error": type(exc).__name__, "requested_page": page})
@@ -684,8 +709,8 @@ class GutenbergSession(ProviderSession):
                     failure.code = "search_temporarily_unavailable"
                     failure.retryable = False  # No second equivalent GET.
                 raise failure from None
-            self._remember_page(rows_cache,page_index,str(response.url))
-            next_url=self._next_page_url(response.content,str(response.url))
+            self._remember_page(rows_cache,page_index,response_url)
+            next_url=self._next_page_url(content,response_url)
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
             if page_index == page: break
             if not next_url:
@@ -700,7 +725,7 @@ class GutenbergSession(ProviderSession):
                 return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
-        parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        parsed = self._parse_feed(content, response_url); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
         if field not in ("all", ""):
             # Filters are applied *after* obtaining one requested OPDS page.
             # Zero rows here are not evidence that the entire corpus lacks
