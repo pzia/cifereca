@@ -1,8 +1,16 @@
-# Liaisons ADEPT exceptionnelles des comptes Paris — P0 #976
+# Liaisons ADEPT exceptionnelles des comptes Paris — P1 #976
 
-La connexion Paris n'est **pas** une preuve que le titulaire de cette connexion est
-l'emprunteur Adobe. Un sous-compte rattaché doit être lié explicitement à une
-identité Cifereca et à son profil ADEPT stable avant tout fulfillment ACSM.
+Le **compte emprunteur Paris** (origine du prêt et de l'ACSM), le **profil
+ADEPT réellement utilisé** (licence et restitution) et l'**identité de
+rangement Cifereca** sont trois provenances distinctes. Ni le nom du compte
+Paris, ni l'identité sélectionnée dans l'interface, ni l'import historique
+d'un livre ne prouvent quel profil Adobe a activé le prêt.
+
+Pour une *nouvelle* activation, le parcours normal utilise le profil stable
+configuré pour l'identité ou une exception explicite, vérifiée et révocable.
+Pour une *licence historique*, la liaison actuelle n'est jamais substituée
+au profil enregistré lors du fulfillment : l'audit examine les preuves
+existantes sans relancer ACSM, sans modifier de binding et sans restituer.
 
 Le compte principal suit normalement le profil associé à son identité (#1063).
 Une exception attestée peut aussi lier ce compte au profil d'une autre identité :
@@ -28,11 +36,17 @@ ADEPT locaux et les liaisons existantes. L'indicateur
 `configuration_consistent` signifie uniquement que la configuration locale
 n'a pas changé ; il **ne prouve pas** la propriété Adobe côté serveur.
 
-## 2. Vérifier hors de Cifereca l'emprunteur Adobe
+## 2. Vérifier séparément les provenances avant une nouvelle activation
 
-Déterminer **de manière humaine et explicite** à quel utilisateur Adobe
-correspond le sous-compte Paris. Vérifier le profil ADEPT déjà associé à
-l'identité Cifereca choisie. En cas d'incertitude, **ne pas confirmer** :
+Relever le **compte Paris** ayant obtenu le droit, puis vérifier quel
+**profil ADEPT** est autorisé et configuré pour traiter cet ACSM. Ils
+peuvent appartenir à des identités Cifereca différentes, y compris pour
+un compte Paris principal : ne jamais inférer leur égalité d'un nom ou
+d'une connexion. Le profil ADEPT effectif d'une activation *passée*
+doit être établi par la provenance enregistrée et, si possible,
+l'inventaire existant, **sans activation d'essai**.
+
+En cas d'incertitude pour une opération nouvelle, **ne pas confirmer** :
 Cifereca conserve `attention_required` et n'active pas l'ACSM.
 
 ## 3. Confirmer l'association
@@ -47,8 +61,10 @@ cifereca-cli paris-adept bind \
 
 `--confirm-ownership` est une attestation explicite de l'opérateur, jamais
 un choix déduit de l'identité UI ni une vérification distante automatisée.
-La commande vérifie qu'il s'agit d'un sous-compte non principal, visible
-sous la connexion exacte, et que le profil ADEPT stable de l'identité existe.
+La commande vérifie que le compte ciblé est visible sous la connexion
+exacte (sous-compte ou alias canonique `primary`) et que le profil ADEPT
+stable de l'identité choisie existe. Elle ne certifie pas une autorisation
+Adobe distante.
 Sans ce drapeau, **aucune ouverture de base ni écriture de liaison** n'a lieu.
 Ne pas transmettre mots de passe, jetons ou fichiers ACSM dans les arguments.
 
@@ -68,8 +84,8 @@ acquisitions existantes.
 
 Les liaisons sont invalidées si le propriétaire de la connexion ou le profil
 ADEPT stable change. L'activation demeure bloquée tant qu'une nouvelle
-confirmation explicite n'est pas faite. Les comptes principaux restent
-liés à leur connexion prouvée.
+confirmation explicite n'est pas faite. Un compte Paris principal peut aussi recevoir une exception explicite et
+révocable : cela ne déplace pas l'origine du prêt ni son droit fournisseur.
 
 ## 5. Auditer les emprunts visibles sur plusieurs connexions (hors réseau)
 
@@ -85,6 +101,12 @@ distante, suppression ou restitution n'est effectuée.
 
 La sortie JSON signale `multiple_connections`, `profile_disagreement`,
 `binding_state`, `recorded_adept_profile_id` et `multiple_item_ids`.
+Le résolveur Core par transaction (`audit_paris_adept_loan_origins`) est
+**distinct de cette commande globale** : il qualifie séparément
+`status` (force de la meilleure preuve individuelle),
+`origin_resolution` (cohérence de l'ensemble) et les indices d'artefact.
+Un `status=inventory_attested` ne transforme jamais deux profils ou
+licences contradictoires en origine unique autorisée pour un retour.
 Un filtre de connexion conserve les autres provenances du même identifiant
 de prêt afin de ne pas masquer les conflits. La présence d'un même identifiant
 de prêt chez deux connexions ne prouve **pas** à elle seule qu'il s'agit d'une
@@ -100,5 +122,7 @@ mécanismes existants : `audit` ne déclenche pas de synchronisation.
 - Une attestation n'apporte pas à elle seule une preuve serveur Adobe.
 - Une même transaction de prêt visible sous plusieurs connexions reste
   protégée par les gardes de provenance et les verrous du Core.
-- Avant clôture P0 #976 : recette réelle 2 connexions Paris × 2 profils ADEPT,
-  sous-comptes rattachés, prêts communs et vérification de restitution.
+- Avant clôture P1 #976 : recette réelle 2 connexions Paris × 2 profils ADEPT,
+  sous-comptes rattachés, prêts communs et vérification de restitution
+  **explicite** par le profil historique de la licence, jamais par déduction
+  depuis le compte emprunteur.
