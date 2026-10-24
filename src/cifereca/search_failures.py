@@ -54,6 +54,10 @@ def search_failure_code(error: BaseException) -> str | None:
             pending.append(error.__context__)
         if error.__cause__ is not None:
             pending.append(error.__cause__)
+    # An exhausted graph may hide an HTTP 401/403. A partial inspection
+    # cannot authorize known-catalog stale fallback as if no refusal existed.
+    if pending:
+        return provider_refusal
     # A closed, built-in provider refusal outranks a generic timeout marker,
     # but a concrete underlying HTTP 401/403 outranks both.
     return provider_refusal or ("SearchTemporarilyUnavailable" if unavailable else None)
@@ -85,4 +89,5 @@ def should_stop_search_variants(error: BaseException) -> bool:
             pending.append(error.__context__)
         if error.__cause__ is not None:
             pending.append(error.__cause__)
-    return False
+    # Unsupported depth is not permission to retry the same unknown route.
+    return bool(pending)
