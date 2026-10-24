@@ -16,6 +16,16 @@ SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode
 
 # Additional *generic diagnostic collector* guard only. This never modifies
 # the public redaction helper used by Library and Synchronisation views.
+# Generic diagnostic text is NOT a trusted public site field. URL-like
+# strings may carry opaque account/loan identifiers even without a query.
+# Leave redact_text() alone: other views legitimately show public URLs.
+_GENERIC_DIAGNOSTIC_URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\x22']+")
+
+
+def _redact_generic_diagnostic_text(value: str) -> str:
+    return redact_text(_GENERIC_DIAGNOSTIC_URL.sub("<redacted-url>", value))
+
+
 _DIAGNOSTIC_PRIVATE_KEYS = re.compile(
     r"(?:^|[_-])(?:credential(?:[_-]?id)?|account[_-]?id|identity[_-]?id"
     r"|profile[_-]?id|loan[_-]?id|source[_-]?item[_-]?id|book[_-]?title"
@@ -52,7 +62,9 @@ def _redact_generic_diagnostic_detail(detail: dict) -> dict:
             return result
         if type(value) is list:
             return [guard(item, depth + 1) for item in value[:100]]
-        if type(value) in (str, bool, int, float) or value is None:
+        if type(value) is str:
+            return _redact_generic_diagnostic_text(value)
+        if type(value) in (bool, int, float) or value is None:
             return value
         return "<redacted>"
 
@@ -177,8 +189,8 @@ class Diagnostics:
             safe_detail = {}
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            category=redact_text(category)[:160] if type(category) is str else "DIAGNOSTICS",
-            operation=redact_text(operation)[:160] if type(operation) is str else "[opération masquée]",
+            category=_redact_generic_diagnostic_text(category)[:160] if type(category) is str else "DIAGNOSTICS",
+            operation=_redact_generic_diagnostic_text(operation)[:160] if type(operation) is str else "[opération masquée]",
             status=status if type(status) is str and status in _GENERIC_STATUSES else "unknown",
             duration_ms=duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000 else None,
             detail=safe_detail,
