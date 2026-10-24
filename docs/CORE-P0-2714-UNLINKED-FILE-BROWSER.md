@@ -13,12 +13,19 @@ Une suggestion ISBN/SHA absente ne prouve pas qu'un livre est absent.
 ## Navigation — uniquement privée / lecture seule
 
 Sous un droit non lié :
-- si des `metadata_only` exacts sont trouvés, leur vue existante
-  reste accessible. Le bouton « Comparer tous les fichiers non liés »
-  bascule dans le **navigateur local** ;
-- en cas de **zéro candidat bibliographique**, le navigateur local
-  est immédiatement ouvert, avec texte « Aucune suggestion fiable ».
-  L'absence de rapprochement ne bloque plus l'exploration ;
+- si des candidats `metadata_only` sur **ISBN ou identifiant explicite
+  exact** sont trouvés, leur vue reste prioritaire. Le bouton
+  « Comparer tous les fichiers non liés » ouvre le **navigateur local** ;
+- si **aucun identifiant exact** ne relie la notice aux fichiers déjà
+  observés, le Core peut afficher des **pistes descriptives séparées** :
+  titre **ET** auteur OPF concordent avec la description locale du droit
+  après normalisation casse/accents/espaces. La GUI indique explicitement
+  « Pistes descriptives · titre et auteur OPF », **sans preuve de
+  fournisseur, compte, édition ni droit**. Un homonyme n'autorise aucune
+  transaction. Le bouton de bascule permet toujours la recherche manuelle ;
+- sans candidat exact **ni** piste descriptive, le navigateur local est
+  immédiatement ouvert avec « Aucune suggestion fiable ». Un audit
+  partiel n'atteste jamais l'absence d'un EPUB non encore parcouru ;
 - une **liste de 25 EPUB/PDF par page** permet de sélectionner
   directement un fichier, avec recherche locale instantanée dans
   les métadonnées OPF titre/auteurs, le nom/chemin privé,
