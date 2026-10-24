@@ -126,3 +126,36 @@ def test_same_item_other_credential_does_not_create_fake_receipt_or_catalogue(ri
     assert len(_rows(service, "acquisition_ledger")) == 1
     assert _rows(service, "placements") == []
     assert _rows(service, "catalog_entries") == []
+
+
+def test_shared_inspection_preflight_explains_cross_credential_ambiguity(rig):
+    from pathlib import Path
+    from cifereca.core.library_audit import audit_library
+    from cifereca.core.library_local_inspection import LocalInspection
+
+    service, book, options = rig
+    _second_right(service)
+    audit = audit_library(
+        Path(service.storage.path), {"default": (book.parent,)},
+    )
+    inspection = LocalInspection(
+        audit, lambda: True, "default", roots=(book.parent,), service=service,
+    )
+    try:
+        right = next(
+            key for key, scope in inspection._manual_right_scopes.items()
+            if scope[2] == options["credential_id"]
+        )
+        file = inspection.unconfirmed_files(
+            query="PRIVATE_edition", limit=5,
+        ).cases[0].key
+        review = inspection.preflight_manual_link(right, file)
+        assert review.status == "blocked"
+        assert "right_scope_ambiguous" in review.codes
+        assert review.read_only is True
+        assert review.attachment_authorized is False
+        assert _rows(service, "placements") == []
+        # Neither credential nor entitlement ID enters closed public codes.
+        assert "PRIVATE" not in json.dumps(review.codes)
+    finally:
+        inspection.close()
