@@ -96,26 +96,19 @@ def test_deadline_expiring_inside_single_file_cannot_attest(monkeypatch):
     assert "confirmed_link" not in result.files[0]
 
 
-def test_deadline_with_two_rights_never_attests_first_before_second(monkeypatch):
-    inventory, tables = _duplicate_rights()
-    # The Numilog writer now detects an ambiguous edition BEFORE walking
-    # its rights. Exercise the inner-loop cutoff with the independent Kobo
-    # proof path, preserving the original timeout safety invariant.
-    for right in tables["entitlements"]:
-        right["provider_id"] = "kobo"
-        right["attested_source"] = "kobo.personal_manifest"
-    for ledger in tables["acquisition_ledger"]:
-        ledger["provider_id"] = "kobo"
-    tables["placements"][0]["provider_id"] = "kobo"
-    # Cut off before evaluating the second competing right. Observed rows
-    # are not proof that the as-yet-unread rows contain no conflict.
-    ticks = iter((0, 0, 0, 0, 10))
+def test_deadline_inside_one_file_before_right_verification_never_attests(monkeypatch):
+    inventory, tables = _fixture(1)
+    # The source-agnostic account-ambiguity gate now rejects *both* Kobo
+    # and Numilog editions with multiple accounts before inner comparison.
+    # Keep this independent deadline test on an otherwise unique right.
+    # Start, file entry and placement fit; right verification expires.
+    ticks = iter((0, 0, 0, 10))
     monkeypatch.setattr(engine.time, "monotonic", lambda: next(ticks, 10))
     result = _reconcile(inventory, tables, seconds=10)
     assert result.reasons == {"comparison_budget"}
     assert "confirmed_link" not in result.files[0]
     assert _attested(result) == []
-    assert result.unverified_rights == [0, 1]
+    assert result.unverified_rights == [0]
 
 
 def test_cancellation_inside_selected_file_revokes_tentative_link():
