@@ -472,7 +472,20 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                     categories.add('hash_mismatch')
                 continue
             result.edges.append(EvidenceEdge(fi, 'placements', pi, 'explicit_placement_sha_size', 'bytes'))
-            for ri, right in rights_by_placement.get((observation.identity_id, placement['provider_id'], placement['source_item_id']), []):
+            edition_rights = rights_by_placement.get((
+                observation.identity_id, placement['provider_id'],
+                placement['source_item_id'],
+            ), [])
+            # A Numilog placement has no account/credential column: an
+            # exact ledger for ONE borrower cannot make the placement owned
+            # by that borrower when the same local identity has a competing
+            # right for the edition, even one without a usable receipt.
+            # Match the Numilog transaction's cross-credential uniqueness
+            # check. A second unrelated identity/edition remains isolated.
+            if placement['provider_id'] == 'numilog' and len(edition_rights) > 1:
+                categories.add('ambiguous')
+                continue
+            for ri, right in edition_rights:
                 comparisons += 1
                 if in_file_stopped():
                     break
