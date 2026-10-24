@@ -729,6 +729,17 @@ class LocalInspection:
         scope_counts = Counter(
             key for right in rights if (key := right_scope(right)) is not None
         )
+        # Numilog's attested placement cannot encode borrower/credential.
+        # A second right for the same local identity and provider edition
+        # must be surfaced as ambiguous *before* the human confirms. This
+        # matches the fresh Numilog transaction, which checks ALL credentials.
+        numilog_edition_counts = Counter(
+            (row.get('identity_id'), row.get('item_id'))
+            for row in rights
+            if row.get('identity_id') == identity_id
+            and row.get('provider_id') == 'numilog'
+            and type(row.get('item_id')) is str and row.get('item_id')
+        )
         # Active unverified rights remain the audit's original universe.
         # Closed/returned/expired Paris loans are a distinct READ-ONLY
         # inspection population, never counted as active missing rights.
@@ -837,7 +848,12 @@ class LocalInspection:
                     and right.get('entitlement_type') == 'owned'
                     and scope is not None
                 ),
-                'ambiguous': scope is None or scope_counts[scope] != 1,
+                'ambiguous': (
+                    scope is None or scope_counts[scope] != 1
+                    or (right.get('provider_id') == 'numilog'
+                        and numilog_edition_counts.get(
+                            (identity_id, right.get('item_id')), 0) != 1)
+                ),
                 'ledger_conflict': len(own_ledger_indices) != len(ledger_indices),
                 'ledger_count': len(own_ledger),
                 'ledger_complete': ledger_ok,
