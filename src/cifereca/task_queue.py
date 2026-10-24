@@ -181,9 +181,23 @@ class PriorityExecutor:
                         with diagnostic_task_scope():
                             result = fn()
                     except BaseException as exc:  # noqa: BLE001 - Future boundary
-                        future.set_exception(exc)
+                        try:
+                            future.set_exception(exc)
+                        except BaseException:
+                            # Future marks itself finished before invoking
+                            # caller callbacks. A callback raising SystemExit
+                            # or KeyboardInterrupt must not kill this worker.
+                            # Never echo its potentially private message.
+                            if not future.done():
+                                raise
                     else:
-                        future.set_result(result)
+                        try:
+                            future.set_result(result)
+                        except BaseException:
+                            # Same boundary for successful task callbacks.
+                            # A genuine incomplete Future is not swallowed.
+                            if not future.done():
+                                raise
                 finally:
                     elapsed_ns = max(0, monotonic_ns() - started_at)
                     with self._lock:
@@ -223,7 +237,16 @@ class PriorityExecutor:
         # Never call it under the pool lock: callbacks may inspect admission
         # metrics, submit more work or call shutdown themselves.
         for future in cancelled:
-            future.cancel()
+            try:
+                future.cancel()
+            except BaseException:
+                # Future.cancel() sets CANCELLED before invoking callbacks.
+                # A plugin callback raising SystemExit/KeyboardInterrupt must
+                # not abandon other futures already removed from the queue.
+                # Do not publish callback text; propagate only if cancellation
+                # never actually happened.
+                if not future.cancelled():
+                    raise
         # Never synchronously join this executor from one of its workers.
         # Apart from a self-join RuntimeError, joining a *different* worker
         # can deadlock if that worker awaits completion of this task. The
