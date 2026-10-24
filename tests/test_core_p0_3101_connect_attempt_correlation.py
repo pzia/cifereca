@@ -301,3 +301,22 @@ def test_constructor_failure_emits_terminal_without_false_connect_invocation(sin
     assert all(row["network_auth"] == "unknown" for row in rows)
     assert PRIVATE_URL not in repr(rows)
     session.connect.assert_not_called()
+
+
+@pytest.mark.parametrize("singleton", [False, True])
+def test_optional_legacy_diagnostics_failure_never_duplicates_terminal(singleton, monkeypatch):
+    service, session, plugin = _rig(singleton=singleton, succeeds=True)
+    def broken(*args, **kwargs):
+        raise RuntimeError("UNSAFE_DIAGNOSTICS_SIDE_EFFECT")
+    monkeypatch.setattr(service.diagnostics, "add", broken)
+    result = provider_sessions.connect_configured(
+        service, logger=logging.getLogger("cifereca"),
+    )
+    rows = _rows(service.diagnostics)
+    assert [r["phase"] for r in rows] == [
+        "requested", "connect_invoked", "terminal",
+    ]
+    assert rows[-1]["status"] == "success"
+    assert not result["errors"]
+    assert len(result["connected"]) == 1
+    assert session.connect.call_count == 1
