@@ -98,6 +98,15 @@ def test_deadline_expiring_inside_single_file_cannot_attest(monkeypatch):
 
 def test_deadline_with_two_rights_never_attests_first_before_second(monkeypatch):
     inventory, tables = _duplicate_rights()
+    # The Numilog writer now detects an ambiguous edition BEFORE walking
+    # its rights. Exercise the inner-loop cutoff with the independent Kobo
+    # proof path, preserving the original timeout safety invariant.
+    for right in tables["entitlements"]:
+        right["provider_id"] = "kobo"
+        right["attested_source"] = "kobo.personal_manifest"
+    for ledger in tables["acquisition_ledger"]:
+        ledger["provider_id"] = "kobo"
+    tables["placements"][0]["provider_id"] = "kobo"
     # Cut off before evaluating the second competing right. Observed rows
     # are not proof that the as-yet-unread rows contain no conflict.
     ticks = iter((0, 0, 0, 0, 10))
