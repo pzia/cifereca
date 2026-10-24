@@ -175,8 +175,12 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
                 continue
             matches = set()
             for key in identifiers(observation.metadata):
+                # A file can have several explicit identifiers. Enforce the
+                # output cap on the UNION, not on each individual lookup:
+                # otherwise disjoint ISBN/edition matches can overrun the
+                # bounded report or falsely imply a complete comparison.
                 matches.update(index.get((observation.identity_id, key), ()))
-                if len(matches) > max_candidates-len(result.candidates):
+                if len(matches) > max_candidates - len(result.candidates):
                     result.reasons.add('metadata_candidate_count_budget')
                     return result
             for ci in sorted(matches):
