@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import time
 import unicodedata
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from cifereca_runtime_diagnostics import safe_message, output_bytes, operation_family, stderr_summary
 from cifereca_kobo_adept_loan_envelope import attested_readonly_loans_list
@@ -17,6 +19,22 @@ from cifereca.plugin_api import (
     ArtifactInput, AttentionRequired, DrmMutationRequest, DrmMutationResult,
     PluginContext, UserFacingError,
 )
+
+
+# Operation owner is an explicitly annotated Core/plugin caller category, not
+# a guessed identity from argv, profile names or timing proximity.
+_ADEPT_CALLER = ContextVar("cifereca_adept_caller", default="unattributed")
+
+
+@contextmanager
+def _adept_caller(category):
+    if category not in ("activation", "core_probe"):
+        raise ValueError("invalid closed ADEPT caller category")
+    marker = _ADEPT_CALLER.set(category)
+    try:
+        yield
+    finally:
+        _ADEPT_CALLER.reset(marker)
 
 
 class KoboAdeptError(UserFacingError):
@@ -137,6 +155,7 @@ class KoboAdeptRuntime:
             "stdout_mode", "stdout_summary", "stderr_summary", "json_line", "json_column",
             "launch_error", "loan_count", "inventory_valid",
             "error_code", "retryable", "validation_reason",
+            "caller_category",
         }
         detail = {key: value for key, value in self.last_run_diagnostic.items() if key in allowed}
         if (detail.get("error_code") != "kobo_adept_invalid_response"
@@ -178,7 +197,10 @@ class KoboAdeptRuntime:
 
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
         started = time.monotonic()
-        self.last_run_diagnostic = {'operation': operation_family(args)}
+        self.last_run_diagnostic = {
+            'operation': operation_family(args),
+            'caller_category': _ADEPT_CALLER.get(),
+        }
         if max_output_bytes is None:
             output_limit = _MAX_JSON_RESPONSE_BYTES
         elif (type(max_output_bytes) is not int
@@ -836,12 +858,13 @@ class KoboAdeptRuntime:
         def elapsed_ms(start_ns):
             return max(0, min(600000, (time.perf_counter_ns() - start_ns) // 1000000))
 
-        started = time.perf_counter_ns()
-        contract = self.contract()
-        contract_ms = elapsed_ms(started)
-        started = time.perf_counter_ns()
-        capabilities = self.capabilities()
-        capabilities_ms = elapsed_ms(started)
+        with _adept_caller("core_probe"):
+            started = time.perf_counter_ns()
+            contract = self.contract()
+            contract_ms = elapsed_ms(started)
+            started = time.perf_counter_ns()
+            capabilities = self.capabilities()
+            capabilities_ms = elapsed_ms(started)
         result = public_core_probe(
             contract, capabilities, bool(shutil.which(self.command[0])),
         )
@@ -916,8 +939,9 @@ class Plugin:
     def __init__(self): self.service = None
     def activate(self, context):
         self.service = KoboAdeptRuntime(context)
-        self.service.contract()
-        self.service.capabilities()
+        with _adept_caller("activation"):
+            self.service.contract()
+            self.service.capabilities()
         return self.service
     def deactivate(self): self.service = None
 
