@@ -260,6 +260,9 @@ class LoanRecord:
     loan_id: str = field(repr=False)
     resource_id: str = field(repr=False)
     title: str = field(default="", repr=False, compare=False)
+    # Only Book/loan-card microdata can attest a public bibliographic author.
+    # Do not use headers, linked catalogue names or unrelated book scopes.
+    authors: tuple[str, ...] = field(default=(), repr=False, compare=False)
     # Raw dates intentionally absent: no date selector has been qualified.
 
 
@@ -298,8 +301,15 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
             continue
         titles = {n.text() for n in card.walk() if n.tag == "a"
                   and _id(n.attrs.get("href", ""), "resources") and n.text()}
+        author_values = _properties(card).get("author", ())
+        # A pathological card cannot flood a Loan model with unrelated text.
+        # An excess is uncertainty, not a reason to discard the real loan.
+        if len(author_values) > 8:
+            partial = True
+            author_values = ()
         loan = LoanRecord(next(iter(lids)), next(iter(rids)),
-                          next(iter(titles)) if len(titles) == 1 else "")
+                          next(iter(titles)) if len(titles) == 1 else "",
+                          tuple(author_values))
         if loan.loan_id in loans and loans[loan.loan_id] != loan:
             raise WebParseError("ambiguous_loans")
         loans[loan.loan_id] = loan

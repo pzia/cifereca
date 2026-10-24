@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.1.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.2.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -70,6 +70,25 @@ Aucun fichier, placement ou historique n'est supprimé par ce fournisseur.
 
 La version **0.3.0** ajoute `catalog.search` et `catalog.detail` à `sync.loans`.
 Emprunt, réservation, retour et téléchargement ADEPT ne sont pas annoncés.
+
+## Métadonnées de prêt attestées — 0.3.2 (#3104)
+
+Le type de la ligne est désormais indiqué comme **Prêt numérique** dès qu'un
+prêt numérique BnF est positivement observé. Un auteur n'est renseigné que
+si la **carte de ce prêt** (`.active-loans .js-loan`) fournit elle-même
+`itemprop=author` : jamais via un en-tête, une fiche homonyme, un autre
+compte, un élément masqué ou un autre livre imbriqué. Plusieurs auteurs
+explicitement présents sont conservés ; plus de huit valeurs rendent le
+champ inconnu sans effacer le prêt.
+
+Cette règle de lecture est testée sur HTML synthétique ; la présence réelle
+de `itemprop=author` dans l'activité privée n'est **pas encore attestée**.
+En l'absence d'un sélecteur fiable et de la valeur d'échéance rattachée au
+prêt du compte, `due_at` reste inconnu. Sans preuve de l'URL de couverture
+de la **ressource exacte** et de son hôte autorisé, `thumbnail_url` reste vide.
+La fiche publique de certains livres propose une image sur
+`imagedelivery.net` ; cela ne qualifie pas les images des cartes de prêt.
+Ce travail n'ajoute aucun achat, droit, URL de téléchargement ni mutation.
 
 ## Préparation du téléchargement explicite — 0.3.1
 
