@@ -154,6 +154,7 @@ class DiagnosticEntry:
     # Arbitrary plugin detail={"provider_id": ...} is NOT an attestation.
     verified_public_provider_id: str | None = None
     verified_public_provider_success: bool = False
+    verified_provider_connection_attempt: bool = False
     verified_source_sync: bool = False
     verified_kobo_adept: bool = False
     verified_numilog_startup: bool = False
@@ -267,6 +268,46 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+
+    def add_core_provider_connection_attempt(self, event: object) -> None:
+        """P0 #3101: a single Core request emits attested phase records.
+
+        A random operation_ref joins these records across Diagnostics and the
+        canonical app log. Neither event_id nor timestamps are correlation
+        keys. No credential, borrower or HTTP-login-count is published.
+        """
+        from .core.diagnostic_provider_connection_attempt import (
+            public_fields, log_message,
+        )
+        fields = public_fields(event)
+        if not fields:
+            return
+        severity = (
+            logging.ERROR if fields["status"] == "failed"
+            else logging.WARNING if fields["status"] in {"cancelled", "skipped"}
+            else logging.INFO
+        )
+        if self.enabled and (self.level != "errors" or severity >= logging.ERROR):
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="PLUGIN", operation="provider_connect",
+                status=(
+                    "error" if fields["status"] == "failed"
+                    else "warning" if fields["status"] in {"skipped", "cancelled"}
+                    else "ok" if fields["status"] == "success" else "unknown"
+                ),
+                duration_ms=fields["duration_ms"], detail=fields,
+                verified_provider_connection_attempt=True,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            message = log_message(fields)
+            logger = logging.getLogger("cifereca")
+            if message is not None and logger.isEnabledFor(severity):
+                logger.log(severity, "%s", message)
+        except Exception:
+            pass
 
     def add_core_provider_connect_failure(
         self, provider_id: str, *, singleton: bool = False,
