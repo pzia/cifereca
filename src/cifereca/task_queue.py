@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import itertools
 import queue
 import threading
@@ -106,7 +107,11 @@ class PriorityExecutor:
                     self._rejected += 1
                     raise RuntimeError("shared task admission full")
                 self._leases[future] = lease
-                future.add_done_callback(self._release_cancelled_lease)
+            # Register for all futures, not only shared-admission tasks.
+            # Cancellation removes a queued task from local pending capacity
+            # immediately; a cancelled low-priority entry may otherwise
+            # block a new user action while waiting behind other work.
+            future.add_done_callback(self._release_cancelled_lease)
             self._queued_at[future] = monotonic_ns()
             self._queue.put((queued_priority, next(self._sequence), future, fn))
             self._pending += 1
@@ -114,8 +119,29 @@ class PriorityExecutor:
             return future
 
     def _release_cancelled_lease(self, future: Future[Any]) -> None:
-        if future.cancelled():
-            self._release_lease(future)
+        if not future.cancelled():
+            return
+        # A bounded queue must remain physically bounded under repeated
+        # cancellations. Do not merely decrement _pending while retaining
+        # cancelled low-priority items in the heap: that grows memory without
+        # bound as new high-priority tasks are admitted.
+        with self._lock:
+            if self._max_pending is not None:
+                with self._queue.mutex:
+                    for index, (_, _, queued, _) in enumerate(self._queue.queue):
+                        if queued is future:
+                            self._queue.queue.pop(index)
+                            heapq.heapify(self._queue.queue)
+                            # Mirror PriorityQueue.task_done() for an entry
+                            # removed under the queue's own condition lock.
+                            self._queue.unfinished_tasks -= 1
+                            if not self._queue.unfinished_tasks:
+                                self._queue.all_tasks_done.notify_all()
+                            self._queue.not_full.notify()
+                            if self._queued_at.pop(future, None) is not None:
+                                self._pending -= 1
+                            break
+        self._release_lease(future)
 
     def _release_lease(self, future: Future[Any]) -> None:
         with self._lock:
@@ -163,8 +189,9 @@ class PriorityExecutor:
                 if future is None or fn is None:
                     return
                 with self._lock:
-                    self._pending -= 1
                     queued_at = self._queued_at.pop(future, None)
+                    if queued_at is not None:
+                        self._pending -= 1
                 if not future.set_running_or_notify_cancel():
                     self._release_lease(future)
                     continue
@@ -221,8 +248,8 @@ class PriorityExecutor:
                         except queue.Empty:
                             break
                         if future is not None:
-                            self._pending -= 1
-                            self._queued_at.pop(future, None)
+                            if self._queued_at.pop(future, None) is not None:
+                                self._pending -= 1
                             cancelled.append(future)
                         self._queue.task_done()
                 for _ in self._threads:

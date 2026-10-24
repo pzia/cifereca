@@ -52,16 +52,24 @@ def test_cancelled_pending_task_never_runs_and_does_not_strand_shutdown():
         assert entered.wait(2)
         cancelled = pool.submit(40, lambda: fired.append("unexpected"))
         assert cancelled.cancel()
-        # A cancelled item still occupies a physical queue slot until dequeued.
-        # This bounds memory even under repeated cancellation/resubmission.
-        with pytest.raises(RuntimeError, match="queue full"):
-            pool.submit(40, lambda: fired.append("unexpected"))
+        # Physically prune cancelled entries, not only their pending count:
+        # repeated cancellation and resubmission must remain memory bounded.
+        assert pool.admission_snapshot()["pending"] == 0
+        assert pool._queue.qsize() == 0
+        for _ in range(16):
+            queued = pool.submit(40, lambda: fired.append("unexpected"))
+            assert pool._queue.qsize() == 1
+            assert queued.cancel()
+            assert pool._queue.qsize() == 0
+        manual = pool.submit(0, lambda: fired.append("user"))
+        assert pool._queue.qsize() == 1
         release.set()
         first.result(timeout=3)
+        manual.result(timeout=3)
         pool.shutdown(wait=True)
         assert cancelled.cancelled()
         assert pool.admission_snapshot()["pending"] == 0
-        assert fired == []
+        assert fired == ["user"]
     finally:
         release.set()
         pool.shutdown(wait=True)
@@ -488,3 +496,77 @@ def test_fatal_cancel_callback_cannot_strand_other_shutdown_futures(callback_err
     assert admission.snapshot()["inflight"] == 0
     assert admission.snapshot()["running"] == 0
     assert all(not thread.is_alive() for thread in pool._threads)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_cancelled_queued_task_immediately_frees_local_pending_slot(shared):
+    """Cancellation of a lower-priority Future cannot block a manual action."""
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=2, reserve_user_slots=0) if shared else None
+    pool = PriorityExecutor(
+        max_workers=1, max_pending=1, shared_admission=admission,
+        admission_scope="PRIVATE_ACCOUNT" if shared else None,
+    )
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def blocking():
+        entered.set()
+        assert release.wait(3)
+        calls.append("running")
+
+    try:
+        running = pool.submit(TaskPriority.NORMAL, blocking)
+        assert entered.wait(2)
+        stale = pool.submit(TaskPriority.MAINTENANCE, lambda: calls.append("CANCELLED"))
+        assert pool.admission_snapshot()["pending"] == 1
+        with pytest.raises(RuntimeError, match="executor pending queue full"):
+            pool.submit(TaskPriority.USER_ACTION, lambda: calls.append("rejected"))
+        assert stale.cancel() is True
+        assert pool.admission_snapshot()["pending"] == 0
+        assert pool.timing_snapshot()["queue_wait"]["samples"] == 1
+        if shared:
+            assert admission.snapshot()["inflight"] == 1
+        manual = pool.submit(TaskPriority.USER_ACTION, lambda: calls.append("user"))
+        assert pool.admission_snapshot()["pending"] == 1
+        release.set()
+        running.result(timeout=3)
+        manual.result(timeout=3)
+        assert calls == ["running", "user"]
+        assert stale.cancelled()
+        assert pool.admission_snapshot()["pending"] == 0
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+    if shared:
+        assert admission.snapshot()["inflight"] == 0
+    assert all(not worker.is_alive() for worker in pool._threads)
+
+
+def test_cancelled_pending_count_is_stable_across_shutdown_race():
+    """Shutdown's queue drain and Future callbacks must not double-decrement."""
+    pool = PriorityExecutor(max_workers=1, max_pending=2)
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking():
+        entered.set()
+        assert release.wait(3)
+
+    try:
+        running = pool.submit(TaskPriority.USER_ACTION, blocking)
+        assert entered.wait(2)
+        cancelled_first = pool.submit(TaskPriority.MAINTENANCE, lambda: None)
+        cancelled_second = pool.submit(TaskPriority.METADATA, lambda: None)
+        assert cancelled_first.cancel()
+        assert pool.admission_snapshot()["pending"] == 1
+        pool.shutdown(wait=False, cancel_futures=True)
+        assert cancelled_first.cancelled()
+        assert cancelled_second.cancelled()
+        assert pool.admission_snapshot()["pending"] == 0
+        release.set()
+        running.result(timeout=3)
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+    assert pool.admission_snapshot()["pending"] == 0
