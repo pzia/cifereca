@@ -149,26 +149,59 @@ def subscribe_virtual_sources(self, callback: Callable[[], None]) -> Callable[[]
 
 
 def _connect_changed_virtual_provider(self, provider_id: str) -> None:
-    """Connect only one newly published public adapter; keep other sessions."""
+    """Connect one published virtual adapter with one attested request lifetime.
+
+    This activation path is independent of the configured startup sweep.
+    Never publish a successful session from a non-affirmative connect().
+    """
+    from .diagnostic_provider_connection_attempt import new_attempt
+    attempt = new_attempt(
+        self.registry, provider_id, diagnostics=self.diagnostics,
+        source_kind="virtual", caller_category="plugin_activation",
+    )
     plugin = self.registry.maybe_get(provider_id)
     if plugin is None:
+        attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_missing")
         return
     key = self._session_key(provider_id, "__public__")
-    if key in self._sessions:
+    existing = self._sessions.get(key)
+    if (existing is not None
+            and getattr(existing, "connected", None) is True
+            and getattr(existing, "provider_id", None) == provider_id):
+        attempt.emit(self.diagnostics, "session_reused", "success", "session_reused")
+        attempt.emit(self.diagnostics, "terminal", "success", "connected")
         return
+    # A stale entry must never count as reuse or remain selectable after a
+    # failed replacement. Do not let its close() exception prevent recovery.
+    if existing is not None:
+        self._sessions.pop(key, None)
+        try:
+            existing.close()
+        except Exception:
+            pass
     session = None
+    invoked = False
     try:
         session = plugin.create_session(
             credential_id="__public__", label=plugin.descriptor.display_name,
             credentials={}, options={}, config=self.config, storage=self.storage,
             diagnostics=self.diagnostics,
         )
-        if session.provider_id != provider_id:
+        if getattr(session, "provider_id", None) != provider_id:
             raise ProviderConfigurationError("virtual session provider mismatch")
+        invoked = True
+        attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
         session.connect()
+        if getattr(session, "connected", None) is not True:
+            raise ProviderConfigurationError("virtual session not connected")
         self._sessions[key] = session
         self._session_errors.pop(key, None)
+        attempt.emit(self.diagnostics, "terminal", "success", "connected")
     except Exception:
+        attempt.emit(
+            self.diagnostics, "terminal", "failed",
+            "connect_failed" if invoked else "session_invalid",
+        )
         if session is not None:
             try:
                 session.close()
