@@ -196,3 +196,51 @@ def test_broken_inspector_does_not_abort_historical_origin_report(tmp_path):
         "inspection_unavailable", "inspection_unavailable"]
     assert "PRIVATE_" not in str(report)
     assert artifact.read_bytes() == b"private fixture"
+
+
+def test_legacy_entitlement_id_collision_does_not_hide_either_exact_paris_origin():
+    # Two separate Paris rights may contain the same local entitlement_id.
+    # The lookup must compare the recorded source triple, not whichever row
+    # happened to be visited last in the right enumeration.
+    rights = [
+        _right("alice", "paris-a", entitlement="shared-local-id"),
+        _right("bob", "paris-b", entitlement="shared-local-id"),
+    ]
+    acquisitions = [
+        _acq("alice", "paris-a", "hb", entitlement="shared-local-id"),
+        _acq("bob", "paris-b", "magali", entitlement="shared-local-id"),
+    ]
+    for row in acquisitions:
+        row["metadata"].pop("provider_loan_id")
+    before = deepcopy((rights, acquisitions))
+    for ordered in (rights, list(reversed(rights))):
+        result = _audit(ordered, acquisitions)
+        assert len(result["origins"]) == 2
+        assert {r["recorded_adept_profile_id"] for r in result["origins"]} == {
+            "hb", "magali",
+        }
+        assert result["profile_disagreement"] is True
+        assert result["shared_visibility"] is True
+        assert result["status"] == "recorded"
+    assert (rights, acquisitions) == before
+
+
+def test_legacy_identical_entitlement_id_cannot_cross_attest_a_third_account():
+    rights = [
+        _right("alice", "paris-a", entitlement="shared-local-id"),
+        _right("bob", "paris-b", entitlement="shared-local-id"),
+    ]
+    acquisitions = [
+        _acq("alice", "paris-a", "hb", entitlement="shared-local-id"),
+        _acq("bob", "paris-b", "magali", entitlement="shared-local-id"),
+        _acq("charlie", "paris-c", "foreign", entitlement="shared-local-id"),
+    ]
+    for row in acquisitions:
+        row["metadata"].pop("provider_loan_id")
+    result = _audit(rights, acquisitions)
+    assert len(result["origins"]) == 2
+    assert "foreign" not in {
+        origin["recorded_adept_profile_id"] for origin in result["origins"]
+    }
+    assert result["status"] == "recorded"
+    assert result["profile_disagreement"]
