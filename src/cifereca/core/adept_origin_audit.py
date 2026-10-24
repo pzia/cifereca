@@ -156,7 +156,7 @@ def inspect_paris_adept_origins(
             "recorded_adept_profile_id": profile or None,
             "recorded_adept_loan_ref": (
                 _opaque_ref("adept-loan", binding["adept_loan_id"])
-                if isinstance(binding.get("adept_loan_id"), str) and binding["adept_loan_id"] else None
+                if isinstance(binding.get("adept_loan_id"), str) and binding["adept_loan_id"].strip() else None
             ),
             "evidence": strength,
             "artifact_state": _artifact_state(metadata, artifact_inspector),
@@ -184,10 +184,13 @@ def inspect_paris_adept_origins(
     if len(profiles) > 1 or loan_reference_disagreement:
         origin_resolution = "conflicting_records"
     elif len(profiles) == 1 and any(
-        not row["recorded_adept_profile_id"] for row in origins
+        not row["recorded_adept_profile_id"]
+        or not row["recorded_adept_loan_ref"]
+        for row in origins
     ):
-        # A partial historical record cannot confirm that all transactions
-        # share even a recorded ADEPT profile.
+        # A profile name alone cannot identify the exact Adobe transaction.
+        # Even when another row has inventory evidence, a missing historical
+        # ADEPT loan reference cannot be promoted to a single return origin.
         origin_resolution = "unknown"
     elif len(profiles) == 1 and all(
         row["evidence"] == "inventory_attested" for row in origins
