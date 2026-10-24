@@ -20,6 +20,19 @@ from cifereca.gui.maintenance_result_view import MaintenanceResultView
 from cifereca.plugin_api import MaintenanceResult
 
 
+def _inspection_host_size(parent):
+    """The synthetic parent must fit the same allocated MainWindow as the UI."""
+    return min(920, parent.get_width()), min(620, parent.get_height())
+
+
+def _inspection_geometry_ready(controller):
+    """Mapped precedes allocation: zero dimensions cannot prove a fit."""
+    window = controller.dialog
+    return (controller.session is not None and window is not None
+            and window.get_mapped()
+            and window.get_width() > 0 and window.get_height() > 0)
+
+
 def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
              report, done, checkpoint=lambda phase: None):
     report['checks']['inspection_setup_entered']=True
@@ -65,7 +78,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
     # into a claimed full entry E2E.
     report['checks']['inspection_fixture_created']=True
     host=Adw.Window(transient_for=parent,modal=True,title='Inspection locale synthétique')
-    host.set_default_size(920,620)
+    host.set_default_size(*_inspection_host_size(parent))
     host.service=service
     host.runner=parent.runner
     def show_error(*_args):
@@ -83,6 +96,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         device.key(key,True);device.key(key,False)
 
     def choose(dropdown,index,callback):
+        # A previous candidate/preflight click may leave these top-of-page
+        # filters outside a short viewport. Reveal the target before XTEST;
+        # a mapped dropdown alone does not mean its popup can receive input.
+        if widgets.get('main_scroll') is not None:
+            widgets['main_scroll'].get_vadjustment().set_value(0)
         # A mapped window does not prove that the native popup owns input.
         # Await GTK state instead of an estimated animation duration.
         def popup_open():
@@ -157,7 +175,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         def click():
             report['checks']['inspection_click_dispatched']=True
             device.click_widget(response)
-            until(lambda:controller.session is not None and controller.dialog is not None and controller.dialog.get_mapped(),initial)
+            until(lambda: _inspection_geometry_ready(controller), initial)
         until(allocated,click)
 
     def initial():
