@@ -15,6 +15,7 @@ python3 simulation/datasetctl.py down ux-small
 | --- | --- |
 | `/health` | Seed, disponibilité et comptes synthétiques |
 | `/allbooks/category/index/id/2012?page=N&pageSize=N&q=X` | Catalogue, recherche serveur, pagination, 0 résultat |
+| `?q=auth-required`, `?q=access-denied` | HTTP 401 et 403, refus sans repli public périmé |
 | `?q=rate-limit`, `?q=down` | HTTP 429, HTTP 503 |
 | `?q=layout-change` | HTTP 200 non qualifié : résultat partiel, pas zéro attesté |
 | Recherche `q=nothing` | Deux marqueurs exacts de zéro uniquement pour le corpus vide |
@@ -39,4 +40,7 @@ python3 -m unittest discover -s simulation/tests -p 'test_baen_http_service.py' 
 
 Cet ensemble valide catalogue, fiches, délégation de téléchargement et
 erreurs de contrat, **pas** un parcours applicatif GTK ni le vrai service
-de transport HTTP.
+de transport HTTP. Le scénario `q=timeout` injecte un `httpx.ReadTimeout`
+**dans le MockTransport du test**, sans sommeil, socket distante ni nouvelle
+route serveur : il vérifie la classification Core, l'absence de retry et la
+récupération après échec. Ce test ne mesure aucune latence réseau réelle.
