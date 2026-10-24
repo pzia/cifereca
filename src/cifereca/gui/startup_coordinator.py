@@ -118,8 +118,14 @@ def connect_configured_sources(
             window, "_source_inventory_startup_connection_seen", False
         ) is True else "startup/connect_configured"
     )
-    connect = partial(
-        window.service.connect_configured, caller_category=caller_category,
+    # The dedicated Core facade accepts this audited marker. Historical
+    # test/plugin service doubles may expose only connect_configured(); do
+    # not force a new argument into that established public method.
+    connect_with_caller = getattr(window.service, "connect_configured_with_caller", None)
+    connect = (
+        partial(connect_with_caller, caller_category=caller_category)
+        if callable(connect_with_caller)
+        else window.service.connect_configured
     )
     window.runner.submit(
         "Connexion aux providers…", connect, ok, err, control=control,
