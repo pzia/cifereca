@@ -2085,7 +2085,11 @@ class Storage:
             "ON CONFLICT(entitlement_id) DO UPDATE SET "
             "revision_id=excluded.revision_id,state=excluded.state,"
             "loan_id=excluded.loan_id,"
-            "expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
+            # This is a fresh POSITIVE supplier observation, not a patch
+            # of an unrelated acquisition record. If the current supplier
+            # omits the expiry, the *old* deadline is no longer attested.
+            # Retaining it could immediately re-realize the newly seen loan.
+            "expires_at=excluded.expires_at,"
             "metadata_json=excluded.metadata_json,updated_at=excluded.updated_at "
             "WHERE entitlements.identity_id IS excluded.identity_id "
             "AND entitlements.provider_id=excluded.provider_id "
