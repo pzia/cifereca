@@ -153,3 +153,38 @@ def test_core_refuses_fallback_to_other_credential_session_before_network(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert not downloaded
+
+
+
+@pytest.mark.parametrize("mutation", ["identity", "session", "account"])
+def test_source_rebound_during_token_get_disposes_candidate_without_rights(
+    connected_core, monkeypatch, mutation,
+):
+    """The exact session and borrower must survive the network boundary."""
+    service, session, account, loan, state, downloaded = connected_core
+    before_rights = service.storage.entitlements()
+    before_acquisitions = service.storage.acquisitions()
+    original_download = session.download_digital
+    staged_paths = []
+
+    def change_during_get(*args, **kwargs):
+        path, url = original_download(*args, **kwargs)
+        staged_paths.append(path)
+        if mutation == "identity":
+            service.current_identity = service.identity_by_id("alex")
+        elif mutation == "session":
+            service._sessions[service._session_key(
+                "bnf-pret", account.credential_id)] = object()
+        else:
+            service.accounts = [replace(account)]
+        return path, url
+
+    monkeypatch.setattr(session, "download_digital", change_during_get)
+    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default")
+    assert len(downloaded) == 1
+    assert len(staged_paths) == 1
+    assert not staged_paths[0].exists()
+    assert service.storage.entitlements() == before_rights
+    assert service.storage.acquisitions() == before_acquisitions
