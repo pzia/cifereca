@@ -35,8 +35,11 @@ session à l'origine du portail. Aucune assertion issue d'une capture, cookie
 importé, export d'état, HTML privé ou persistance SSO n'est utilisé. Une étape
 2FA/CAPTCHA/JavaScript ou un formulaire inconnu est refusé avec
 `auth_interactive_required` / `unsupported_form`, sans repli navigateur.
-**Connexion authentifiée sur un vrai compte et sélecteurs réels non encore
-recettés** : le parcours public et les tests synthétiques ne prouvent pas ce succès.
+**Recette utilisateur du 24/10/2026** : la connexion réelle a réussi et deux
+prêts numériques ont été affichés dans « Mes emprunts » (voir #3104). La
+synchronisation manuelle est volontairement `partial`, sans clôture par
+absence. Cette preuve ne valide pas les dates, couvertures, le GET de jeton
+ACSM ni le fonctionnement d'ADEPT sur un véritable prêt.
 
 Les redirections sont contrôlées avant chaque requête. Les POST sont réservés
 à la connexion, sans retry ni transfert POST par 307/308. Une lecture de prêts
@@ -73,7 +76,9 @@ Emprunt, réservation, retour et téléchargement ADEPT ne sont pas annoncés.
 Le fournisseur expose uniquement pour intégration future son adaptateur
 `download_digital(loan, account, target_dir, explicit_user_action=True)`, **sans déclarer**
 `digital_download` ou `acquisition.download` dans ses capacités publiques.
-L'interface et la synchronisation ne l'appellent pas. Toute invocation générique sans\n`explicit_user_action=True` est refusée avant une requête Web. Le garde Core
+La synchronisation ne l'appelle jamais : seul le parcours CoreUI initié par
+l'utilisateur invoque l'adaptateur avec `explicit_user_action=True`. Toute
+invocation générique est refusée avant une requête Web. Le garde Core
 `bnf_web_explicit_only` reste actif : aucun ACSM n'est obtenu à l'ouverture.
 
 Ce chemin exige une connexion active, l'objet de compte **exact** et un prêt
@@ -93,11 +98,14 @@ fichier existant. L'URL privée, le corps XML et la référence de prêt ne sont
 pas envoyés dans les diagnostics ni retournés comme URL de catalogue.
 
 **Ce n'est pas un fulfillment ADEPT ni une preuve transactionnelle serveur.**
-Étapes encore bloquantes : raccordement Core/UI à une action explicite et
-consentie avec le profil ADEPT du prêt, vérification de provenance/expiration
-du jeton, recette réelle et publication de l'EPUB/PDF seulement après preuve.
-Les tests 0.3.1 sont purement synthétiques et ne justifient pas l'annonce
-du téléchargement aux utilisateurs.
+Le parcours CoreUI est disponible depuis #3110 : deux confirmations séparées
+(GET du jeton, import ADEPT manuel), contrôle du compte et de l'identité.
+Un import réussi reste identifié comme `manual`, sans inventer une attestation
+de droit BnF. Le Core revalide indépendamment le jeton et n'accepte pas un
+ACSM d'achat ou du XML à entités au seul motif que le fournisseur l'a proposé.
+Restent à recetter sur compte réel : réponse effective de `/loans/{id}`,
+rattachement/validité du jeton, profil ADEPT d'origine et résultat EPUB/PDF.
+Ne pas déduire de cette UI que l'obtention BnF est opérationnelle en réel.
 
 ## Catalogue et fiches en lecture seule
 
@@ -147,5 +155,7 @@ python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
 
 Tests HTTPX MockTransport : chaîne SSO/formulaires/cookies, inventaire partiel,
 compte exact, deux sessions isolées, HTML modifié, erreurs 403/429, taille,
-redirection interdite, absence de mutation et fermeture. Aucun compte réel,
-assertion privée, téléchargement ou preuve GTK n'est nécessaire à ces tests.
+redirection interdite, absence de mutation et fermeture. Les suites Core et
+CoreUI couvrent le double consentement, l'immuabilité du prêt choisi et la
+validation indépendante de l'ACSM. Ces tests synthétiques ne remplacent ni la
+recette du GET réel, ni celle d'ADEPT.
