@@ -89,9 +89,17 @@ def _profile_fixtures(profiles_dir: Path) -> list[tuple[str, set[str]]]:
     return rows
 
 
-def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
-                 catalog_path: Path = CATALOG, profiles_dir: Path = PROFILES,
+def build_report(*, matrix_path: Path | None = None,
+                 packages_dir: Path | None = None,
+                 catalog_path: Path | None = None,
+                 profiles_dir: Path | None = None,
                  repo_root: Path | None = None) -> dict:
+    # Resolve defaults at CALL time so a fixture can exercise the exact CLI
+    # on a synthetic repository, rather than using stale import-time paths.
+    matrix_path = MATRIX if matrix_path is None else matrix_path
+    packages_dir = PACKAGES if packages_dir is None else packages_dir
+    catalog_path = CATALOG if catalog_path is None else catalog_path
+    profiles_dir = PROFILES if profiles_dir is None else profiles_dir
     repo = repo_root if repo_root is not None else packages_dir.parents[1]
     spec = tomllib.loads(matrix_path.read_text(encoding="utf-8"))
     if spec.get("version") != 1:
