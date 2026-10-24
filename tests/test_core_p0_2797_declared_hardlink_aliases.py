@@ -44,8 +44,10 @@ def test_two_paths_one_inode_cannot_declare_two_paris_borrowers(paris_borrowers)
 
     with pytest.raises(engine.DeclarationRejected, match="^declaration_conflict$"):
         engine.declare_local_link(
-            service, **opts("paired-uid", second_path),
-            observation=files[str(second_path)],
+            service, **{
+                **opts("paired-uid", second_path),
+                "observation": files[str(second_path)],
+            },
         )
     assert records(service) == before
     assert len(records(service)) == 1
@@ -101,7 +103,10 @@ def test_renamed_hardlink_still_conflicts_until_user_revokes(paris_borrowers):
     relocated = _observed(second_path.parent)[str(second_path)]
     with pytest.raises(engine.DeclarationRejected, match="^declaration_conflict$"):
         engine.declare_local_link(
-            service, **opts("paired-uid", second_path), observation=relocated,
+            service, **{
+                **opts("paired-uid", second_path),
+                "observation": relocated,
+            },
         )
     assert len(records(service)) == 1
     assert records(service)[0]["relation_id"] == created.relation_id
