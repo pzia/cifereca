@@ -24,12 +24,23 @@ _RESPONSE_VALIDATION_REASONS = frozenset({
 })
 _METRICS = {"duration_ms": (0, 86_400_000), "stdout_bytes": (0, 67_108_864),
             "stderr_bytes": (0, 67_108_864), "returncode": (-255, 255)}
+_MEASURED_READS = frozenset({"contract", "capabilities", "profile list", "loans list"})
+_CALLER_CATEGORIES = frozenset({"activation", "core_probe", "unattributed"})
+
+
+def _valid_read_observation(key: str, value: object) -> bool:
+    if type(value) is not str:
+        return False
+    if key == "caller_category":
+        return value in _CALLER_CATEGORIES
+    return re.fullmatch(r"rs_[0-9a-f]{24}", value) is not None
 
 
 def public_fields(value: object) -> dict:
     if type(value) is not dict or set(value) - {
         "schema_version", "plugin_id", "operation_kind", "operation", "phase",
         "status", "code", "retryable", "task_ref", "validation_reason", *_METRICS,
+        "caller_category", "read_scope_ref",
     }:
         return {}
     for key, expected in (("plugin_id", PLUGIN_ID), ("operation_kind", "kobo_adept"),
@@ -40,6 +51,10 @@ def public_fields(value: object) -> dict:
         return {}
     if type(value.get("operation")) is not str or value["operation"] not in OPERATIONS:
         return {}
+    for key in ("caller_category", "read_scope_ref"):
+        if key in value and (value["operation"] not in _MEASURED_READS
+                             or not _valid_read_observation(key, value[key])):
+            return {}
     status, code = value.get("status"), value.get("code")
     if type(status) is not str or type(code) is not str:
         return {}
@@ -91,6 +106,13 @@ def from_runtime(detail: object, status: object) -> dict:
         value = detail.get(key)
         if type(value) is int and low <= value <= high:
             fields[key] = value
+    # Optional runtime measurements, never identity, freshness or ownership
+    # attestations. Preserve them only for the four measured read operations.
+    if operation in _MEASURED_READS:
+        for key in ("caller_category", "read_scope_ref"):
+            value = detail.get(key)
+            if _valid_read_observation(key, value):
+                fields[key] = value
     return public_fields(fields)
 
 
