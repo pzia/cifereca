@@ -313,3 +313,30 @@ def test_missing_adept_profile_does_not_inherit_attestation_from_other_record():
     assert report["adept_loan_reference_disagreement"] is False
     assert _audit([], [], loan="", item="book")[
         "adept_loan_reference_disagreement"] is False
+
+
+def test_missing_adobe_loan_reference_does_not_inherit_other_record_evidence():
+    first = _acq("alice", "paris-a", "hb", state="attested")
+    second = _acq("bob", "paris-b", "hb")
+    second["metadata"]["adept_binding"].pop("adept_loan_id")
+    before = deepcopy([first, second])
+    report = _audit([], [first, second])
+    assert report["status"] == "inventory_attested"
+    assert report["profile_disagreement"] is False
+    assert report["adept_loan_reference_disagreement"] is False
+    assert report["origin_resolution"] == "unknown"
+    assert {o["recorded_adept_loan_ref"] for o in report["origins"]} == {
+        None, next(o["recorded_adept_loan_ref"] for o in report["origins"]
+                   if o["recorded_adept_loan_ref"])
+    }
+    assert [first, second] == before
+
+
+def test_single_recorded_profile_without_adobe_loan_is_not_a_return_origin():
+    origin = _acq("alice", "paris-a", "hb")
+    origin["metadata"]["adept_binding"]["adept_loan_id"] = ""
+    report = _audit([], [origin])
+    assert report["status"] == "recorded"
+    assert report["origins"][0]["recorded_adept_profile_id"] == "hb"
+    assert report["origins"][0]["recorded_adept_loan_ref"] is None
+    assert report["origin_resolution"] == "unknown"
