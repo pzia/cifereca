@@ -8,7 +8,17 @@ from cifereca import logging_utils
 from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 from cifereca.core.diagnostic_log_policy import is_public_core_observation
 from cifereca.core.diagnostic_source_sync import log_message, public_log_fields
-from cifereca.core.public_provider_diagnostics import public_connection_log_message
+from cifereca.core.public_provider_diagnostics import (
+    public_connection_log_message,
+    public_connection_success_log_message,
+)
+from cifereca.core.diagnostic_loan_download import (
+    log_message as loan_download_log, public_log_fields as parse_download,
+)
+from cifereca.core.diagnostic_reconciliation import (
+    from_audit_result, public_reconciliation_log_message,
+    public_reconciliation_log_fields, _REASONS,
+)
 from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
 from cifereca.diagnostics import Diagnostics
 from cifereca.plugin_api import Cancelled
@@ -221,3 +231,80 @@ def test_legacy_url_text_is_removed_while_explicit_public_context_survives(monke
     assert "PRIVATE" not in rendered and "https://" not in rendered
     assert "site=bibliotheques.paris.fr" in rendered
     assert "book_id=9782000000000" in rendered
+
+
+@pytest.mark.parametrize("kind", ["connect", "download", "audit"])
+@pytest.mark.parametrize("level", ["normal", "detailed", "errors"])
+def test_closed_event_is_preserved_canonically_and_can_be_parsed(
+    monkeypatch, kind, level,
+):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", level)
+    if kind == "connect":
+        body = public_connection_success_log_message({
+            "provider_id": "paris", "code": "provider_connected",
+            "source_kind": "configured", "account_count": 3,
+        })
+        from cifereca.core.public_provider_diagnostics import (
+            public_connection_success_log_fields as parse,
+        )
+        severity = logging.INFO
+    elif kind == "download":
+        body = loan_download_log({
+            "schema_version": 1, "provider_id": "paris",
+            "operation_kind": "download_loan",
+            "phase": "terminal", "status": "failed",
+            "code": "provider_failure", "duration_ms": 25,
+        })
+        parse, severity = parse_download, logging.ERROR
+    else:
+        # A canonical Core audit can have dozens of closed reason codes:
+        # generic log sanitization must not alter the exact serialization.
+        report = {"status": "incomplete_scan", "reasons": sorted(_REASONS)[:40]}
+        body = public_reconciliation_log_message(from_audit_result(report))
+        parse, severity = public_reconciliation_log_fields, logging.ERROR
+    assert body is not None
+    assert parse(body)
+    assert is_public_core_observation("cifereca", body)
+    item = record("%s", args=(body,), level=severity)
+    accepted = logging_utils.RedactionFilter().filter(item)
+    if level == "errors" and severity < logging.WARNING:
+        assert not accepted
+    else:
+        assert accepted
+        assert item.getMessage() == body
+        assert parse(item.getMessage()) == parse(body)
+        assert item.exc_info is item.exc_text is item.stack_info is None
+
+
+@pytest.mark.parametrize("kind", ["connect", "download", "audit"])
+def test_extended_closed_event_never_bypasses_redaction_or_normalizes_payload(
+    monkeypatch, kind,
+):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    if kind == "connect":
+        body = public_connection_success_log_message({
+            "provider_id": "kobo", "code": "provider_connected",
+            "source_kind": "singleton_public", "account_count": 1,
+        })
+    elif kind == "download":
+        body = loan_download_log({
+            "schema_version": 1, "provider_id": "paris",
+            "operation_kind": "download_loan", "phase": "terminal",
+            "status": "failed", "code": "provider_failure",
+            "duration_ms": 12,
+        })
+    else:
+        body = public_reconciliation_log_message(from_audit_result({
+            "status": "incomplete_scan", "reasons": ["entry_budget"],
+        }))
+    assert body
+    for attack in (
+        body + ' "password":"PRIVATE_PASSWORD"',
+        body.replace('"schema_version":1', '"schema_version":1,"password":"PRIVATE_PASSWORD"'),
+    ):
+        assert not is_public_core_observation("cifereca", attack)
+        item = record(attack)
+        assert logging_utils.RedactionFilter().filter(item)
+        assert "PRIVATE_PASSWORD" not in item.getMessage()
+        assert not is_public_core_observation("cifereca", item.getMessage())
+    assert not is_public_core_observation("cifereca.plugin", body)
