@@ -67,7 +67,8 @@ def inspect_paris_adept_origins(
     if not provider_loan_id or not provider_item_id:
         return {
             "status": "unknown", "shared_visibility": False,
-            "profile_disagreement": False, "sources": [], "origins": [],
+            "profile_disagreement": False, "origin_resolution": "unknown",
+            "sources": [], "origins": [],
         }
 
     rights = [
@@ -154,6 +155,22 @@ def inspect_paris_adept_origins(
     origins.sort(key=lambda row: (row["source_ref"], row["acquisition_ref"]))
     profiles = {row["recorded_adept_profile_id"] for row in origins if row["recorded_adept_profile_id"]}
     strengths = {row["evidence"] for row in origins}
+    # The report-level status describes the strongest individual evidence,
+    # not a consensus across transactions. In particular, one attested
+    # profile does not override a different historical profile claim.
+    # Keep the legacy status contract but expose resolution separately.
+    if len(profiles) > 1:
+        origin_resolution = "conflicting_records"
+    elif len(profiles) == 1 and all(
+        row["recorded_adept_profile_id"] == next(iter(profiles))
+        and row["evidence"] == "inventory_attested"
+        for row in origins
+    ):
+        origin_resolution = "single_inventory_attested"
+    elif len(profiles) == 1:
+        origin_resolution = "single_recorded"
+    else:
+        origin_resolution = "unknown"
     status = (
         "inventory_attested" if "inventory_attested" in strengths else
         "recorded" if "recorded" in strengths else "unknown"
@@ -162,6 +179,7 @@ def inspect_paris_adept_origins(
         "status": status,
         "shared_visibility": len({identity for identity, _ in sources if identity}) > 1,
         "profile_disagreement": len(profiles) > 1,
+        "origin_resolution": origin_resolution,
         "sources": [
             {"library_identity_id": identity, "source_ref": ref}
             for identity, ref in sources
