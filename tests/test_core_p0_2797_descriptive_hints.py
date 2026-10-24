@@ -167,7 +167,9 @@ def test_descriptive_index_requires_both_exact_normalized_title_and_author():
         index, title="Autre titre", authors="Anais Dupre",
     )
     states[0] = {"confirmed_link"}
-    assert not index_file_descriptions(rows, states, identity_id="alice")
+    after = index_file_descriptions(rows, states, identity_id="alice")
+    assert ("l ete des iles", "anais dupre") not in after
+    assert after[("l ete des iles", "autre nom")] == [(2, "epub")]
 
 
 def test_title_author_guesses_are_bounded_and_do_not_guess_from_filename_or_isbn():
