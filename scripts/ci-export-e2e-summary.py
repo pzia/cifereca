@@ -204,6 +204,7 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
             ("inspection_click_dispatched", "inspection_clicked"),
             ("inspection_window_mapped", "inspection_open"),
             ("P0_2712_initial_window_width_ok", "inspection_width_ok"),
+            ("P0_2712_initial_window_height_ok", "inspection_height_ok"),
             ("P0_2712_initial_header_ok", "inspection_header_ok"),
             ("P0_2712_initial_scroller_child_ok", "inspection_scroller_child_ok"),
             ("P0_2712_main_scroll_present", "inspection_scroll_ok"),
