@@ -137,3 +137,50 @@ def test_malformed_declaration_namespace_still_fails_closed_for_history(rig):
         inspect(rig, created.relation_id)
     assert not rows(service, "placements")
     assert "PRIVATE" not in repr(created)
+
+
+def test_history_by_relation_id_without_reloading_deleted_file(rig, monkeypatch):
+    service, book, _root, _right, options = rig
+    created = apply(rig)
+    # A restart may retain SQLite history but have neither the previous
+    # FileObservation nor the EPUB nor the connected supplier.
+    book.unlink()
+    service.accounts.clear()
+    def never_check_bytes(*_args, **_kwargs):
+        raise AssertionError("read-only history unexpectedly reopened old EPUB")
+    monkeypatch.setattr(engine, "revalidate_observed_file", never_check_bytes)
+    before = records(service)
+    viewed = inspect(rig, created.relation_id, observation=None)
+    assert viewed.status == "needs_review"
+    assert viewed.before == before[0]
+    assert viewed.changed == 0
+    assert "PRIVATE" not in repr(viewed)
+    # Only a known, scoped historical relation may omit the observation.
+    with pytest.raises(engine.DeclarationRejected, match="invalid_observation"):
+        inspect(rig, None, observation=None)
+    with pytest.raises(engine.DeclarationRejected, match="identity_not_active"):
+        inspect(rig, created.relation_id, observation=None, identity_id="alex")
+    undo = engine.withdraw_declared_link(
+        service, identity_id="default", relation_id=created.relation_id,
+    )
+    engine.withdraw_declared_link(
+        service, identity_id="default", relation_id=created.relation_id,
+        confirmation=undo.plan_token,
+    )
+    assert inspect(rig, created.relation_id, observation=None).status == "revoked"
+    assert not rows(service, "placements")
+    assert not rows(service, "acquisition_ledger")
+
+
+def test_missing_file_observation_is_never_promoted_to_current(rig, monkeypatch):
+    service = rig[0]
+    created = apply(rig)
+    def never_check_bytes(*_args, **_kwargs):
+        raise AssertionError("missing observation does not authorize revalidation")
+    monkeypatch.setattr(engine, "revalidate_observed_file", never_check_bytes)
+    result = inspect(rig, created.relation_id, observation=None)
+    assert result.status == "needs_review"
+    assert result.changed == 0
+    # Recording a lower-trust statement does not change the attested graph.
+    assert not rows(service, "acquisition_ledger")
+    assert not rows(service, "placements")
