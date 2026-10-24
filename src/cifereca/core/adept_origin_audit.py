@@ -68,6 +68,7 @@ def inspect_paris_adept_origins(
         return {
             "status": "unknown", "shared_visibility": False,
             "profile_disagreement": False, "origin_resolution": "unknown",
+            "adept_loan_reference_disagreement": False,
             "sources": [], "origins": [],
         }
 
@@ -155,16 +156,29 @@ def inspect_paris_adept_origins(
     origins.sort(key=lambda row: (row["source_ref"], row["acquisition_ref"]))
     profiles = {row["recorded_adept_profile_id"] for row in origins if row["recorded_adept_profile_id"]}
     strengths = {row["evidence"] for row in origins}
+    # Both profile and historical ADEPT loan reference identify the recorded
+    # fulfillment origin. An identical profile with distinct Adobe loan refs
+    # is not a single safe return target. These refs are opaque diagnostics,
+    # not a fresh server check and never an authorization to return.
+    adept_loan_refs = {
+        row["recorded_adept_loan_ref"]
+        for row in origins if row["recorded_adept_loan_ref"]
+    }
+    loan_reference_disagreement = len(adept_loan_refs) > 1
     # The report-level status describes the strongest individual evidence,
     # not a consensus across transactions. In particular, one attested
     # profile does not override a different historical profile claim.
     # Keep the legacy status contract but expose resolution separately.
-    if len(profiles) > 1:
+    if len(profiles) > 1 or loan_reference_disagreement:
         origin_resolution = "conflicting_records"
+    elif len(profiles) == 1 and any(
+        not row["recorded_adept_profile_id"] for row in origins
+    ):
+        # A partial historical record cannot confirm that all transactions
+        # share even a recorded ADEPT profile.
+        origin_resolution = "unknown"
     elif len(profiles) == 1 and all(
-        row["recorded_adept_profile_id"] == next(iter(profiles))
-        and row["evidence"] == "inventory_attested"
-        for row in origins
+        row["evidence"] == "inventory_attested" for row in origins
     ):
         origin_resolution = "single_inventory_attested"
     elif len(profiles) == 1:
@@ -179,6 +193,7 @@ def inspect_paris_adept_origins(
         "status": status,
         "shared_visibility": len({identity for identity, _ in sources if identity}) > 1,
         "profile_disagreement": len(profiles) > 1,
+        "adept_loan_reference_disagreement": loan_reference_disagreement,
         "origin_resolution": origin_resolution,
         "sources": [
             {"library_identity_id": identity, "source_ref": ref}
