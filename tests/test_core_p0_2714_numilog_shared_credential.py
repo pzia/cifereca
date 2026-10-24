@@ -138,3 +138,25 @@ def test_foreign_borrower_must_not_borrow_other_accounts_receipt(rig):
             service, **{**options, "account_id": sibling.unique_id},
         )
     assert not _rows(service, "placements")
+
+
+def test_same_edition_on_two_numilog_accounts_remains_ambiguous(rig):
+    service, _book, options = rig
+    sibling = _sibling(service.accounts[0])
+    service.accounts.append(sibling)
+    # Numilog placements carry provider+edition but not account. The
+    # independent purchase on a sibling account must therefore block an
+    # attested placement for *either* borrower, until account provenance is
+    # unambiguous. A user-declared link is a separate lower-trust workflow.
+    service.storage.entitlement_put({
+        "entitlement_id": "PRIVATE-second-account-same-edition",
+        "provider_id": "numilog",
+        "credential_id": options["credential_id"],
+        "account_id": sibling.unique_id, "identity_id": "default",
+        "item_id": options["item_id"], "entitlement_type": "owned",
+        "state": "active",
+        "metadata": {"source": "numilog.authenticated_library"},
+    })
+    with pytest.raises(ManualAttachmentRejected, match="^ambiguous_or_missing_right$"):
+        reconcile_numilog_manual(service, **options)
+    assert not _rows(service, "placements")
