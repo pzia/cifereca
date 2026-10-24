@@ -18,7 +18,7 @@ BNF = Path(__file__).resolve().parents[1] / "src/plugins/provider-bnf-pret"
 for directory in (BNF, BNF / "tests"):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
-from bnf_token_fixture import connected
+from bnf_token_fixture import connected, TOKEN
 
 
 @pytest.fixture()
@@ -125,12 +125,14 @@ def test_core_independently_refuses_invalid_loan_claim_even_if_provider_returns_
     service, session, account, loan, state, downloaded = connected_core
     original_rights = service.storage.entitlements()
     original_acquisitions = service.storage.acquisitions()
+    staged_paths = []
 
     def unverified_download(_loan, _account, target_dir, *, explicit_user_action):
         assert explicit_user_action is True
         target_dir.mkdir(parents=True, exist_ok=True)
         staged = target_dir / "unverified.acsm"
         staged.write_bytes(payload)
+        staged_paths.append(staged)
         return staged, ""
 
     monkeypatch.setattr(session, "download_digital", unverified_download)
@@ -139,6 +141,7 @@ def test_core_independently_refuses_invalid_loan_claim_even_if_provider_returns_
             loan, confirmed=True, expected_identity_id="default",
         )
     assert not downloaded
+    assert len(staged_paths) == 1 and not staged_paths[0].exists()
     assert service.storage.entitlements() == original_rights
     assert service.storage.acquisitions() == original_acquisitions
 
@@ -197,3 +200,42 @@ def test_source_rebound_during_token_get_disposes_candidate_without_rights(
         service.current_identity = original_identity
         service.accounts = original_accounts
         service._sessions[session_key] = session
+
+
+
+def test_url_bearing_candidate_is_rejected_and_deleted(connected_core, monkeypatch):
+    service, session, account, loan, state, downloaded = connected_core
+    files = []
+
+    def wrong_return(_loan, _account, target_dir, *, explicit_user_action):
+        assert explicit_user_action is True
+        target_dir.mkdir(parents=True, exist_ok=True)
+        candidate = target_dir / "private.acsm"
+        candidate.write_bytes(TOKEN)
+        files.append(candidate)
+        return candidate, "https://pret.bnf.fr/loans/synthetic"
+
+    monkeypatch.setattr(session, "download_digital", wrong_return)
+    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_token_invalid$"):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default")
+    assert len(files) == 1 and not files[0].exists()
+    assert not downloaded and not service.storage.acquisitions()
+
+
+def test_untrusted_artifact_outside_stage_is_never_deleted(
+    connected_core, tmp_path, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    unrelated = tmp_path / "outside.acsm"
+    unrelated.write_bytes(TOKEN)
+
+    def wrong_return(_loan, _account, target_dir, *, explicit_user_action):
+        return unrelated, ""
+
+    monkeypatch.setattr(session, "download_digital", wrong_return)
+    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_token_invalid$"):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default")
+    assert unrelated.read_bytes() == TOKEN
+    assert not downloaded and not service.storage.acquisitions()
