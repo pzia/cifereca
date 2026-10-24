@@ -63,6 +63,13 @@ def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
         and type(account.identity_id) is str and bool(account.identity_id)
     ):
         return False
+    # A missing/ambiguous secondary UID must not become "primary" merely
+    # because its returned loan list happens to be empty. In particular,
+    # [] + a complete DILICOM status is NOT absence proof for the principal
+    # account unless the selected Account really is_primary.
+    if (account.is_primary is not True
+            and account.unique_id in ('', 'primary')):
+        return False
     borrower = account.unique_id or 'primary'
     return all(
         type(row.source_provider) is str
