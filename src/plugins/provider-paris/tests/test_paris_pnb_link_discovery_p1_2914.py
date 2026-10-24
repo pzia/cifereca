@@ -100,16 +100,56 @@ def test_canloan_false_stops_before_html_classification(caplog):
 
 
 def test_no_external_url_is_ever_confirmed_just_from_pattern(caplog):
-    # The extraction is deliberately not a network operation and the
-    # downstream resolver still owns the host/redirect policy. Evidence
-    # reports a closed external class; it must not allow arbitrary origins.
+    # Discovery must never return a lookalike origin, even before the
+    # independent downstream redirect guard. Neither step calls the network.
     html = (
         '<a href="https://host.PRIVATE.example/ASSARedirect.ashx?url='
         '%2Ffake%2Floan-book.ashx%3Ftoken%3DPRIVATE">Borrow</a>'
     )
     with caplog.at_level(logging.INFO, logger="cifereca"):
-        candidate = ParisClient._pnb_loan_href(_payload(html))
-    assert candidate.startswith("https://host.PRIVATE.example/")
+        with pytest.raises(ParisError, match="Aucun emprunt lancé"):
+            ParisClient._pnb_loan_href(_payload(html))
     text = _trace(caplog)
-    assert "candidate_site=external" in text
+    assert "anchors=1 candidates=0" in text
+    assert "rejected_candidate_origin=1" in text
+    assert "candidate_site=unknown" in text
     assert "PRIVATE" not in text
+
+
+@pytest.mark.parametrize("unsafe_href", (
+    "http://bibliotheques.paris.fr/numerique/ASSARedirect.ashx?url=loan-book.ashx",
+    "https://bibliotheques.paris.fr:8443/numerique/ASSARedirect.ashx?url=loan-book.ashx",
+    "https://private@bibliotheques.paris.fr/numerique/ASSARedirect.ashx?url=loan-book.ashx",
+    "//evil.example/numerique/ASSARedirect.ashx?url=loan-book.ashx",
+    "https://bibliotheques.paris.fr.evil.example/numerique/ASSARedirect.ashx?url=loan-book.ashx",
+))
+def test_candidate_pattern_with_untrusted_origin_is_never_selected(unsafe_href, caplog):
+    html = '<a href="' + unsafe_href + '">Unsafe</a>'
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        with pytest.raises(ParisError, match="Aucun emprunt lancé"):
+            ParisClient._pnb_loan_href(_payload(html))
+    text = _trace(caplog)
+    assert "candidates=0" in text and "rejected_candidate_origin=1" in text
+    assert "loan-book.ashx" not in text
+    assert "evil.example" not in text
+    assert "private@" not in text
+
+
+def test_external_lookalike_does_not_make_one_official_link_ambiguous(caplog):
+    good = _borrow_href()
+    bad = "https://evil.example/ASSARedirect.ashx?url=loan-book.ashx"
+    html = '<a href="' + bad + '">Bad</a><a href="' + good + '">Good</a>'
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        assert ParisClient._pnb_loan_href(_payload(html)) == good
+    text = _trace(caplog)
+    assert "anchors=2 candidates=1" in text
+    assert "rejected_candidate_origin=1" in text
+    assert "candidate_site=bibliotheques.paris.fr" in text
+    assert "evil.example" not in text
+
+
+def test_official_https_anchor_can_use_explicit_443(caplog):
+    href = "https://bibliotheques.paris.fr:443" + _borrow_href()
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        assert ParisClient._pnb_loan_href(_payload('<a href="' + href + '">OK</a>')) == href
+    assert "candidates=1" in _trace(caplog)
