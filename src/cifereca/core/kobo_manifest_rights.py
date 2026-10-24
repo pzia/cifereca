@@ -64,7 +64,9 @@ def mirror_kobo_manifest_rights(
         )
         metadata = row.metadata if isinstance(row.metadata, dict) else {}
         archived = metadata.get("archived") is True
-        service.storage.entitlement_put({
+        # A discovery-time reservation is not an atomic owner proof.
+        # Only the guarded SQLite UPSERT may refresh an existing purchase.
+        owned_row = {
             "entitlement_id": ident,
             "provider_id": "kobo", "credential_id": credential_id,
             "account_id": account_id, "identity_id": identity_id,
@@ -80,7 +82,21 @@ def mirror_kobo_manifest_rights(
                 "downloadable": row.downloadable is True,
                 "source": "kobo.personal_manifest",
             },
-        })
+        }
+        # Discovery and commit are separate: a competing identity can
+        # claim the canonical ID between the read and our UPSERT. Use the
+        # scoped fallback, but never overwrite a collided fallback either.
+        if not service.storage.entitlement_put_attested_owned(owned_row):
+            if previous is not None or ident != canonical:
+                continue
+            fallback = stable_id(
+                "kobo-manifest-identity", identity_id,
+                credential_id, account_id, item_id,
+            )
+            owned_row["entitlement_id"] = fallback
+            if not service.storage.entitlement_put_attested_owned(owned_row):
+                continue
+            ident = fallback
         by_scope[key] = {"entitlement_id": ident}
         used_ids[ident] = identity_id
         count += 1
