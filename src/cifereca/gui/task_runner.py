@@ -75,6 +75,15 @@ class TaskRunner:
         # enqueue a worker after the window owner has been torn down.
         if getattr(self.window, "_closed", False):
             return
+        # Reject invalid work before disabling a GTK widget, allocating a
+        # coalescing reservation or publishing a phantom task-start callback.
+        # PriorityExecutor enforces the same contract at its own boundary.
+        if not callable(fn):
+            raise TypeError("task must be callable")
+        if type(priority) not in (int, TaskPriority):
+            raise ValueError("invalid task priority")
+        if coalesce_key is not None and type(kind) is not str:
+            raise ValueError("invalid task coalescing kind")
         if coalesce_key is not None and (
             type(coalesce_key) is not str or not coalesce_key or len(coalesce_key) > 128
         ):

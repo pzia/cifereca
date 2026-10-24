@@ -357,3 +357,74 @@ def test_gtk_queue_exposes_actual_deliver_callback_not_a_wrapper():
     assert "measured_deliver" not in body
     assert "phase_observer(" in body and "'gtk_delivery_wait'" in body
     assert "queued_completion_at = gtk_pending_since" in body
+
+
+@pytest.mark.parametrize("bad_fn", [None, False, object(), "PRIVATE_TOKEN"])
+def test_invalid_gui_task_is_rejected_before_disabling_manual_control(
+    session, bad_fn,
+):
+    s = session
+    button = Control()
+    with pytest.raises(TypeError, match="task must be callable"):
+        s.runner.submit(
+            "Private title", bad_fn, control=button,
+            priority=TaskPriority.USER_ACTION, origin="user",
+        )
+    assert button.enabled == []
+    assert s.runner._count == 0
+    assert s.runner._coalesced == {}
+    assert s.runner.pool.admission_snapshot()["admitted"] == 0
+    assert s.queue.empty()
+    assert s.events == []
+
+
+@pytest.mark.parametrize("bad_priority", [
+    True, False, 0.5, "0", None, object(),
+])
+def test_invalid_gui_priority_never_leaves_phantom_activity(
+    session, bad_priority,
+):
+    s = session
+    button = Control()
+    with pytest.raises(ValueError, match="invalid task priority"):
+        s.runner.submit(
+            "Private label", lambda: pytest.fail("invalid task ran"),
+            control=button, priority=bad_priority, origin="user",
+        )
+    assert button.enabled == []
+    assert s.runner._count == 0 and not s.runner._coalesced
+    assert s.runner.pool.admission_snapshot()["admitted"] == 0
+    assert s.queue.empty() and s.events == []
+
+
+def test_hostile_priority_hook_and_bad_coalescing_kind_are_never_executed(session):
+    s = session
+    class PluginPriority(int):
+        def __int__(self):
+            raise AssertionError("PRIVATE_PLUGIN_INT_HOOK")
+    class NonHashableKind(list):
+        pass
+    control = Control()
+    with pytest.raises(ValueError, match="invalid task priority"):
+        s.runner.submit(
+            "Private label", lambda: None, priority=PluginPriority(0),
+            control=control,
+        )
+    with pytest.raises(ValueError, match="invalid task coalescing kind"):
+        s.runner.submit(
+            "Private label", lambda: None, priority=TaskPriority.NORMAL,
+            kind=NonHashableKind(["PRIVATE"]), coalesce_key="same",
+            control=control,
+        )
+    assert control.enabled == []
+    assert s.runner._count == 0 and not s.runner._coalesced
+    assert s.runner.pool.admission_snapshot()["admitted"] == 0
+    assert s.queue.empty()
+    # A later real request remains usable and its widget is restored.
+    s.runner.submit(
+        "User action", lambda: "ok", control=control,
+        priority=TaskPriority.USER_ACTION, origin="user",
+    )
+    s.drain_until(lambda: any(e[0] == "finished" for e in s.events))
+    assert control.enabled == [False, True]
+    assert s.runner._count == 0
