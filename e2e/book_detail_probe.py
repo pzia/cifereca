@@ -932,6 +932,13 @@ def main():
     def component_open_overflow():
         bar = panel("library").action_scroll
         assert bar.overflow_button.get_visible() and bar.overflow_button.get_mapped()
+        # #1216: mapped is insufficient when CSS/insets put the menu beyond
+        # the viewport. Check the actual allocation before physical input.
+        for button in [*bar._buttons[:bar._overflow_visible_count], bar.overflow_button]:
+            ok, bounds = button.compute_bounds(bar)
+            assert ok and bounds.get_x() >= 0
+            assert bounds.get_x() + bounds.get_width() <= bar.get_width(), "Action hors viewport"
+        report["checks"]["detail_actions_within_viewport"] = True
         report["overflow_pointer"] = device.click_widget(bar.overflow_button)
         later(200, component_click_hidden)
 
