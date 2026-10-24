@@ -686,12 +686,16 @@ def _xml_root(content):
         # service itself is unavailable; don't authorize a stale fallback.
         prefix = content.lstrip(b' \t\r\n\xef\xbb\xbf').lower()[:80]
         if prefix.startswith((b'<html', b'<!doctype html')):
-            raise _unverified_html_opds_response() from None
-        # Broken supplier XML is not a zero; never echo parser messages.
-        raise _malformed_opds_protocol() from None
+            failed = _unverified_html_opds_response()
+        else:
+            failed = _malformed_opds_protocol()
+        # Never raise from inside the ParseError handler: Core deliberately
+        # inspects suppressed __context__ for hidden HTTP refusals, and a
+        # hidden ParseError would reclassify this HTML login as an outage.
     except (RecursionError, OverflowError, ValueError):
         # Parser/budget refusals remain non-fallback security failures.
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from None
+    raise failed
 
 
 def _opds_fetch(session,url):
