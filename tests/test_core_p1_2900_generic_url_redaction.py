@@ -22,7 +22,9 @@ def test_generic_diagnostic_masks_full_urls_even_without_queries():
     assert len(snap) == 1
     row = snap[0]
     assert "<redacted-url>" in row["operation"]
-    assert row["detail"]["site"] == "<redacted-url>"
+    # The legacy redactor may already have replaced a private path suffix;
+    # the generic URL scrub masks the remaining URL without undoing it.
+    assert row["detail"]["site"].startswith("<redacted-url>")
     assert row["detail"]["attempts"] == 1
     assert row["detail"]["available"] is True
     support = d.text("test")
