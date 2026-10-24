@@ -30,6 +30,10 @@ from .public_provider_diagnostics import (
     public_connection_success_fields,
     public_connection_success_log_fields,
 )
+from .diagnostic_provider_connection_attempt import (
+    public_fields as public_connect_attempt_fields,
+    log_fields as public_connect_attempt_log,
+)
 from .diagnostic_loan_download import (
     public_fields as public_loan_download_fields,
     public_log_fields as public_loan_download_log,
@@ -247,6 +251,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_connection_success_log_fields(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
+            connect_attempt_detail = (
+                public_connect_attempt_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
             audit_detail = (
                 public_reconciliation_log_fields(match["body"])
                 if match["logger"] == "cifereca" else {}
@@ -257,7 +265,9 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             }
             if audit_detail and match["level"] != audit_level[audit_detail["status"]]:
                 audit_detail = {}
-            if loan_download_detail:
+            if connect_attempt_detail:
+                message = "connexion fournisseur · " + connect_attempt_detail["phase"]
+            elif loan_download_detail:
                 message = "Téléchargement du prêt · " + loan_download_detail["status"] + " · " + loan_download_detail["code"]
             elif audit_detail:
                 message = {
@@ -323,7 +333,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
                 "LOAN" if loan_download_detail else
                 "ADEPT" if adept_detail else
-                "PLUGIN" if connection_detail or connection_success_detail else
+                "PLUGIN" if connection_detail or connection_success_detail or connect_attempt_detail else
                 "LIBRARY" if audit_detail else None
             )
             # A provider identity comes only from a closed Core log schema,
@@ -331,7 +341,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # ADEPT is a shared runtime; a Numilog plugin session line alone
             # has no Core registry attestation. Neither proves a provider.
             attested_provider_id = (
-                connection_detail.get("provider_id")
+                connect_attempt_detail.get("provider_id")
+                or connection_detail.get("provider_id")
                 or connection_success_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
                 or loan_download_detail.get("provider_id")
@@ -350,6 +361,11 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": connection_success_detail, "status": "ok"}
                    if connection_success_detail else {}),
+                **({"detail": connect_attempt_detail, "status": (
+                    "error" if connect_attempt_detail["status"] == "failed" else
+                    "warning" if connect_attempt_detail["status"] in {"skipped", "cancelled"} else
+                    "ok" if connect_attempt_detail["status"] == "success" else "unknown"
+                )} if connect_attempt_detail else {}),
                 **({"detail": audit_detail, "status": audit_detail["status"]}
                    if audit_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
@@ -465,6 +481,18 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     == validated["provider_id"]):
                 public_detail = validated
                 message = "connexion fournisseur échouée"
+        if (category == "PLUGIN" and operation == "provider_connect"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_provider_connection_attempt") is True):
+            candidate = public_connect_attempt_fields(row.get("detail"))
+            expected_status = (
+                "error" if candidate.get("status") == "failed" else
+                "warning" if candidate.get("status") in {"skipped", "cancelled"} else
+                "ok" if candidate.get("status") == "success" else "unknown"
+            )
+            if candidate and status == expected_status:
+                public_detail = candidate
+                message = "connexion fournisseur · " + candidate["phase"]
         # Success is independently attested and schema-checked. A generic
         # plugin claiming "provider connected" cannot become Core evidence.
         if (category == "PLUGIN"
@@ -574,6 +602,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
               and operation in {"provider connect", "public provider connect"}
               and row.get("verified_public_provider_id") == public_detail.get("provider_id")
               and public_detail.get("code")):
+            attested_provider_id = public_detail["provider_id"]
+        elif (category == "PLUGIN" and operation == "provider_connect"
+              and row.get("verified_provider_connection_attempt") is True
+              and public_detail.get("operation_ref")):
             attested_provider_id = public_detail["provider_id"]
         elif (category == "PLUGIN"
               and operation in {"provider connected", "public provider connected"}
