@@ -1,5 +1,6 @@
 """BnF reader provider using the same public provider contract as Paris."""
 from __future__ import annotations
+from pathlib import Path
 import threading
 from uuid import uuid4
 from cifereca.plugin_api import (
@@ -11,6 +12,7 @@ from cifereca.plugin_api import (
 from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
 from cifereca_bnf_pret_catalog import read_search, read_detail, MAX_SEARCH_PAGES, resource_url
+from cifereca_bnf_pret_download import save_private_loan_token, validate_loan_token
 
 DESCRIPTOR = ProviderDescriptor(
     id='bnf-pret', display_name='BnF Prêt', state='ready',
@@ -43,6 +45,8 @@ _PUBLIC_CODES = frozenset({
     'unrecognized_detail', 'ambiguous_detail', 'next_page_unavailable',
     'search_redirect_mismatch', 'detail_redirect_mismatch', 'ambiguous_search',
     'search_page_limit', 'inventory_not_exhaustive',
+    'loan_not_observed', 'invalid_loan_token', 'token_limit',
+    'download_redirect_refused', 'download_storage_failed',
 })
 
 
@@ -61,6 +65,9 @@ class BnfProviderSession(ProviderSession):
         self._closed = False
         self.last_loan_errors = [{'code': 'inventory_not_exhaustive'}]
         self.last_search_warnings = []
+        # Only loans positively observed during this credential session are
+        # eligible for an explicit, fresh-read token retrieval.
+        self._observed_loans = {}
 
     def _report_failure(self, phase, error):
         code = _public_code(error)
@@ -81,6 +88,7 @@ class BnfProviderSession(ProviderSession):
         with self._lock:
             self.connected = False
             self._accounts = []
+            self._observed_loans = {}
             username = str(self.credentials.get('username') or '').strip()
             password = str(self.credentials.get('password') or '')
             if self._closed or not username or not password:
@@ -116,12 +124,55 @@ class BnfProviderSession(ProviderSession):
                 raise ProviderConfigurationError(self._report_failure('loans', exc)) from None
             if self._closed or epoch != self._epoch:
                 raise ProviderConfigurationError('session_closed')
+            # A partial/empty page cannot close historical rights; nevertheless
+            # it must not authorize token downloads from stale observations.
+            self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
             return [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
                          record_id=row.resource_id, title=row.title or 'Prêt BnF',
                          source_provider=self.provider_id, source_credential=self.credential_id,
                          source_account_id=account.unique_id, identity_id=account.identity_id,
                          state='active', can_return=False, renewable=False,
                          raw={'inventory_exhaustive': False}) for row in snapshot.loans]
+
+    def download_digital(self, loan: Loan, account: Account, target_dir: Path):
+        """Explicit candidate ACSM fetch; the automatic Core path stays denied.
+
+        The public digital_download capability remains false until the Core
+        confirms selection, exact identity, staging and ADEPT consent end-to-end.
+        Never infer a right from this GET or from the ACSM content alone.
+        """
+        with self._lock:
+            if (self._closed or not self.connected or len(self._accounts) != 1
+                    or account is not self._accounts[0] or type(loan) is not Loan
+                    or loan.source_provider != self.provider_id
+                    or loan.source_credential != self.credential_id
+                    or loan.source_account_id != account.unique_id
+                    or loan.identity_id != account.identity_id
+                    or loan.medium != 'digital' or loan.state != 'active'
+                    or not loan.id or not loan.record_id
+                    or self._observed_loans.get(loan.id) != loan.record_id):
+                raise ProviderConfigurationError('loan_not_observed')
+            epoch = self._epoch
+            try:
+                # No stale loan can trigger the GET: re-read the exact Web
+                # account and demand the same loan/resource pair right now.
+                fresh = self._snapshot(self.client.activity())
+                if not any(row.loan_id == loan.id and row.resource_id == loan.record_id
+                           for row in fresh.loans):
+                    raise ReaderHTTPError('loan_not_observed')
+                token = self.client.loan_token(loan.id)
+                validate_loan_token(token)
+                if self._closed or epoch != self._epoch:
+                    raise ReaderHTTPError('session_closed')
+                path = save_private_loan_token(token, target_dir)
+                if self._closed or epoch != self._epoch:
+                    path.unlink(missing_ok=True)
+                    raise ReaderHTTPError('session_closed')
+                # URLs / opaque loan ids must not enter the generic Core
+                # catalogue, diagnostics or acquisition hook.
+                return path, ''
+            except (ReaderHTTPError, WebParseError) as error:
+                raise ProviderError(self._report_failure('download', error)) from None
 
     def _catalog_error(self, phase, error):
         code = self._report_failure(phase, error)
@@ -208,6 +259,7 @@ class BnfProviderSession(ProviderSession):
         self._epoch = uuid4().hex
         self.connected = False
         self._accounts = []
+        self._observed_loans = {}
         with self._lock:
             self.client.clear()
             self.client.close()
