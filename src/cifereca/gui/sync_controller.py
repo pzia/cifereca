@@ -24,7 +24,6 @@ from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_source_details import add_sync_detail
-from ..core.sync_connection_visibility import unavailable_paris_connections
 
 
 def _build_sync_page(self):
@@ -184,6 +183,7 @@ def _refresh_sync_page(self) -> None:
     # #3105: a configured Paris credential with a failed/absent session is
     # NOT a SyncSourceRef. Only a separate, inert configuration row may show it.
     # The helper reads local config only, scoped to this identity.
+    from cifereca.core.sync_connection_visibility import unavailable_paris_connections
     unavailable_paris = unavailable_paris_connections(self.service, scope.identity_id)
     if not sync_action_scope_current(self, scope):
         return
