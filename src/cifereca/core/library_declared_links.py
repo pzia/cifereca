@@ -419,12 +419,18 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
     try:
         _require(relation_id is None or (type(relation_id) is str
                  and re.fullmatch('[0-9a-f]{32}', relation_id) is not None), 'invalid_relation')
-        _require(type(observation) is FileObservation, 'invalid_observation')
+        # History survives process restart and file removal. A relation ID
+        # can be inspected without reviving an old FileObservation; it is
+        # then ALWAYS unverified, even if the right still exists.
+        _require((type(observation) is FileObservation
+                  or (observation is None and relation_id is not None)),
+                 'invalid_observation')
         _require(callable(cancelled), 'invalid_cancellation')
         scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                         account_id, item_id)))
         roots, valid, _epoch = _scope(service, scope, require_live_account=False)
-        _require(observation.identity_id == identity_id, 'file_scope_changed')
+        if observation is not None:
+            _require(observation.identity_id == identity_id, 'file_scope_changed')
         with _transaction(service.storage, False) as db:
             records = [r for r in _records(db) if (
                 r['relation_id'] == relation_id if relation_id is not None else
@@ -452,7 +458,8 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
                     if str(exc) not in ('source_scope_changed', 'right_scope_changed'):
                         raise
             matches = False
-            if (context is not None and record['file'] == _file(observation)
+            if (context is not None and observation is not None
+                    and record['file'] == _file(observation)
                     and context['connection']['enabled'] == 1):
                 fresh = revalidate_observed_file(
                     observation, roots, identity_id=identity_id,
