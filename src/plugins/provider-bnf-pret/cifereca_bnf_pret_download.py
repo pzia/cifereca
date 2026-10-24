@@ -53,8 +53,9 @@ def save_private_loan_token(payload: bytes, target_dir: Path) -> Path:
         if directory.is_symlink() or not directory.is_dir():
             raise ReaderHTTPError("download_storage_failed")
         file = directory / ("bnf-loan-" + uuid4().hex + ".acsm")
+        temporary = directory / ("." + uuid4().hex + ".part")
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(file, flags, 0o600)
+        fd = os.open(temporary, flags, 0o600)
     except OSError:
         raise ReaderHTTPError("download_storage_failed") from None
     try:
@@ -62,10 +63,14 @@ def save_private_loan_token(payload: bytes, target_dir: Path) -> Path:
             output.write(payload)
             output.flush()
             os.fsync(output.fileno())
+        # Atomic publication of a complete .acsm with no overwrite, including
+        # in the astronomically unlikely event of a filename collision.
+        os.link(temporary, file, follow_symlinks=False)
         return file
     except OSError:
+        raise ReaderHTTPError("download_storage_failed") from None
+    finally:
         try:
-            file.unlink(missing_ok=True)
+            temporary.unlink(missing_ok=True)
         except OSError:
             pass
-        raise ReaderHTTPError("download_storage_failed") from None
