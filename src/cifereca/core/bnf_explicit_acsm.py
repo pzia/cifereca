@@ -123,6 +123,24 @@ def stage_bnf_loan_acsm(
                     _refuse("bnf_loan_scope_unproven")
             except (OSError, ValueError):
                 _refuse("bnf_loan_token_invalid")
+            # The borrower/session may have been replaced during HTTP.
+            # A valid ACSM from a stale session must never be handed to ADEPT.
+            try:
+                still_bound = (
+                    active_identity()
+                    and service._session_for_source(
+                        loan.source_provider, loan.source_credential) is session
+                    and service._account_for_loan(loan) is account
+                    and session.connected is True
+                )
+            except Exception:
+                still_bound = False
+            if not still_bound:
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                _refuse("bnf_loan_scope_unproven")
             # The candidate is deliberately NOT an acquisition, a loan
             # fulfillment receipt, or a new/expired entitlement.
             return {"status": "candidate_acsm", "path": str(artifact)}
