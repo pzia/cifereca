@@ -612,17 +612,21 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         ):
             continue
         credential_id = "__public__"
-        session = plugin.create_session(
-            credential_id=credential_id, label=plugin.descriptor.display_name, credentials={}, options={},
-            config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-        )
         key = self._session_key(provider_id, credential_id)
         public_started = time.monotonic()
         attempt = new_attempt(
             self.registry, provider_id, diagnostics=self.diagnostics,
             source_kind="singleton_public",
         )
+        session = None
+        invoked = False
         try:
+            session = plugin.create_session(
+                credential_id=credential_id, label=plugin.descriptor.display_name,
+                credentials={}, options={}, config=self.config, storage=self.storage,
+                diagnostics=self.diagnostics,
+            )
+            invoked = True
             attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
             session.connect()
             # Only an affirmative session state attests a successful connection.
@@ -642,11 +646,15 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
             )
         except Exception:
-            attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
-            try:
-                session.close()
-            except Exception:
-                pass
+            attempt.emit(
+                self.diagnostics, "terminal", "failed",
+                "connect_failed" if invoked else "session_invalid",
+            )
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
             errors[key] = "Connexion à la source indisponible"
             public_failure = public_connection_failure(self.registry, provider_id)
             failures.append(public_failure)
@@ -696,16 +704,19 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             # Its explicit UI flow owns the consent and authenticated state.
             attempt.emit(self.diagnostics, "terminal", "skipped", "interactive_auth_required")
             continue
-        session = plugin.create_session(
-            credential_id=credential_id,
-            label=str(row.get("label") or plugin.descriptor.display_name),
-            credentials=dict(row.get("credentials") or {}),
-            options=dict(row.get("options") or {}),
-            config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-        )
         key = self._session_key(provider_id, credential_id)
+        session = None
+        invoked = False
         try:
+            session = plugin.create_session(
+                credential_id=credential_id,
+                label=str(row.get("label") or plugin.descriptor.display_name),
+                credentials=dict(row.get("credentials") or {}),
+                options=dict(row.get("options") or {}),
+                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
+            )
             logger.info("TRACE provider connect begin kind=configured")
+            invoked = True
             attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
             accounts = session.connect()
             if getattr(session, "connected", None) is not True:
@@ -738,7 +749,10 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 detail={"code": "provider_connected", "accounts": len(accounts)},
             )
         except Exception:
-            attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
+            attempt.emit(
+                self.diagnostics, "terminal", "failed",
+                "connect_failed" if invoked else "session_invalid",
+            )
             # Never invoke logger.exception: the traceback may include signed
             # endpoints, plugin credentials, response bodies and local paths.
             public_failure = public_connection_failure(self.registry, provider_id)
@@ -746,10 +760,11 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 "TRACE provider connect error code=provider_connect_failed provider_id=%s dt=%.3fs",
                 public_failure["provider_id"], time.monotonic()-item_started,
             )
-            try:
-                session.close()
-            except Exception:
-                pass
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
             errors[key] = "Connexion à la source indisponible"
             failures.append(public_failure)
             _publish_connection_failure(
