@@ -138,8 +138,8 @@ def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
         fixture_names = set(data) | set(served) | set(fixture_services)
         fixture_profiles = [key for key, available in profile_fixtures
                             if available & fixture_names]
-        has_http_role = bool(set(roles) & {"provider.library", "transport"})
-        gtk_applicable = bool(set(roles) & {"ui.page", "provider.library"})
+        has_http_role = bool(set(roles) & {"provider.library", "provider.collection", "transport"})
+        gtk_applicable = bool(set(roles) & {"ui.page", "provider.library", "provider.collection"})
         dimensions = {
             "http_fixture": ("partial" if served or fixture_services else
                              "absent" if has_http_role else "not_applicable"),
