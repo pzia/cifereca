@@ -2034,6 +2034,7 @@ class Storage:
             raise ValueError("invalid_positive_loan")
         now = int(time.time())
         rows = []
+        seen_loans: dict[tuple[str, str, str, str], tuple[str, str, str | None]] = {}
         for entitlement in entitlements:
             if type(entitlement) is not Entitlement or entitlement.entitlement_type != "loan":
                 raise ValueError("invalid_positive_loan")
@@ -2051,6 +2052,15 @@ class Storage:
                            for value in fields)
                     or entitlement.state != "active"):
                 raise ValueError("invalid_positive_loan")
+            source_loan = (source.provider_id, source.credential_id,
+                           source.account_id, entitlement.loan_id)
+            signature = (entitlement.entitlement_id, source.identity_id,
+                         entitlement.expires_at)
+            if source_loan in seen_loans:
+                if seen_loans[source_loan] != signature:
+                    raise ValueError("loan_source_duplicate_conflict")
+                continue
+            seen_loans[source_loan] = signature
             rows.append((
                 entitlement.entitlement_id, source.provider_id,
                 source.credential_id, source.account_id, entitlement.item_id,
@@ -2083,7 +2093,22 @@ class Storage:
             "AND entitlements.loan_id IS excluded.loan_id"
         )
         with self._lock, self._connect() as db:
+            if db.in_transaction:
+                raise ValueError("storage_busy")
+            # Acquire the SQLite writer before checking logical loan identity:
+            # two writers racing with different editions for the same source
+            # loan ID must not each establish a separate entitlement PK.
+            db.execute("BEGIN IMMEDIATE")
             for row in rows:
+                foreign_edition = db.execute(
+                    "SELECT 1 FROM entitlements WHERE provider_id=? "
+                    "AND credential_id=? AND account_id IS ? AND loan_id=? "
+                    "AND entitlement_type='loan' AND state='active' "
+                    "AND entitlement_id<>? LIMIT 1",
+                    (row[1], row[2], row[3], row[8], row[0]),
+                ).fetchone()
+                if foreign_edition is not None:
+                    raise ValueError("loan_source_duplicate_conflict")
                 if db.execute(statement, row).rowcount != 1:
                     # sqlite3.Connection.__exit__ rolls back the WHOLE batch
                     # before any observer can see the partial positive state.
