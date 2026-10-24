@@ -91,13 +91,18 @@ def inspect_paris_adept_origins(
         )
         for row in rights if row.get("entitlement_id")
     }
-    source_rows = []
-    for row in rights:
-        source_rows.append((
+    # Source visibility is supported only by persisted provider rights.
+    # An ADEPT acquisition manually imported into another library identity
+    # does NOT mean that its destination saw this loan at Paris.
+    source_rows = [
+        (
             str(row.get("identity_id") or ""),
             str(row.get("credential_id") or ""),
             str(row.get("account_id") or ""),
-        ))
+        )
+        for row in rights
+    ]
+    recorded_source_keys = set(source_rows)
 
     origins = []
     for row in acquisitions:
@@ -129,7 +134,10 @@ def inspect_paris_adept_origins(
         identity = str(row.get("identity_id") or "")
         credential = str(row.get("credential_id") or "")
         account = str(row.get("account_id") or "")
-        source_rows.append((identity, credential, account))
+        # This triple describes where acquisition was *recorded*, which
+        # may be different from the original Paris borrower/source.
+        # Never promote it to provider visibility without an entitlement.
+        recorded_source = (identity, credential, account)
         binding = metadata.get("adept_binding")
         if not isinstance(binding, dict):
             binding = {}
@@ -140,6 +148,10 @@ def inspect_paris_adept_origins(
         origins.append({
             "library_identity_id": identity,
             "source_ref": _opaque_ref("paris", identity, credential, account),
+            "source_visibility_evidence": (
+                "persisted_entitlement" if recorded_source in recorded_source_keys
+                else "acquisition_only"
+            ),
             "acquisition_ref": _opaque_ref("acquisition", row.get("acquisition_id")),
             "recorded_adept_profile_id": profile or None,
             "recorded_adept_loan_ref": (
@@ -191,7 +203,13 @@ def inspect_paris_adept_origins(
     )
     return {
         "status": status,
-        "shared_visibility": len({identity for identity, _ in sources if identity}) > 1,
+        # Distinct Paris credential/account scopes, not a count of local
+        # library identities or acquisition destinations. Historical
+        # entitlements do not attest present-day server visibility.
+        "shared_visibility": len({
+            (credential, account) for _, credential, account in source_rows
+            if credential
+        }) > 1,
         "profile_disagreement": len(profiles) > 1,
         "adept_loan_reference_disagreement": loan_reference_disagreement,
         "origin_resolution": origin_resolution,

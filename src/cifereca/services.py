@@ -2865,7 +2865,9 @@ class LibraryService:
         from .core.adept_origin_audit import inspect_paris_adept_origins
         if str(loan.source_provider).casefold() != "paris":
             return {"status": "unsupported_source", "shared_visibility": False,
-                    "profile_disagreement": False, "sources": [], "origins": []}
+                    "profile_disagreement": False,
+                    "adept_loan_reference_disagreement": False,
+                    "origin_resolution": "unknown", "sources": [], "origins": []}
         return inspect_paris_adept_origins(
             loan_id=str(loan.id or ""),
             item_id=str(loan.record_id or loan.id or ""),

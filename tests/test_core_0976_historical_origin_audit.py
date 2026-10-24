@@ -313,3 +313,67 @@ def test_missing_adept_profile_does_not_inherit_attestation_from_other_record():
     assert report["adept_loan_reference_disagreement"] is False
     assert _audit([], [], loan="", item="book")[
         "adept_loan_reference_disagreement"] is False
+
+def test_non_paris_origin_audit_preserves_closed_report_schema(tmp_path):
+    from dataclasses import replace
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        # An unrelated provider cannot be evidence for a Paris transaction,
+        # and its refusal report must have the same safe keys as a Paris audit.
+        foreign_loan = replace(loan, source_provider="kobo")
+        service.storage.entitlements = lambda **_: (_ for _ in ()).throw(
+            AssertionError("must not inspect rights for an unsupported provider")
+        )
+        service.storage.acquisitions = lambda **_: (_ for _ in ()).throw(
+            AssertionError("must not inspect acquisitions for an unsupported provider")
+        )
+        report = service.audit_paris_adept_loan_origins(foreign_loan)
+        assert report == {
+            "status": "unsupported_source", "shared_visibility": False,
+            "profile_disagreement": False,
+            "adept_loan_reference_disagreement": False,
+            "origin_resolution": "unknown", "sources": [], "origins": [],
+        }
+    finally:
+        service.close()
+
+
+def test_historical_import_destination_is_not_a_second_paris_source():
+    rights = [_right("alice", "paris-a")]
+    acquisition = _acq("bob", "paris-import", "hb", state="attested")
+    before = deepcopy((rights, [acquisition]))
+    report = _audit(rights, [acquisition])
+    assert len(report["sources"]) == 1
+    assert report["sources"][0]["library_identity_id"] == "alice"
+    assert report["shared_visibility"] is False
+    assert len(report["origins"]) == 1
+    assert report["origins"][0]["library_identity_id"] == "bob"
+    assert report["origins"][0]["source_visibility_evidence"] == "acquisition_only"
+    assert report["origin_resolution"] == "single_inventory_attested"
+    assert (rights, [acquisition]) == before
+
+
+def test_visible_paris_accounts_are_counted_independently_of_library_destination():
+    rights = [_right("alice", "paris-a"), _right("alice", "paris-b")]
+    acq = _acq("alice", "paris-a", "hb")
+    report = _audit(rights, [acq])
+    assert len(report["sources"]) == 2
+    assert report["shared_visibility"] is True
+    assert report["origins"][0]["source_visibility_evidence"] == "persisted_entitlement"
+
+
+def test_duplicate_library_rows_for_same_paris_connection_are_not_two_sources():
+    rights = [_right("alice", "paris-a"), _right("bob", "paris-a")]
+    report = _audit(rights, [])
+    assert len(report["sources"]) == 2  # two local traces, one Paris account
+    assert report["shared_visibility"] is False
+    assert report["origins"] == []
+
+
+def test_acquisition_only_audit_keeps_origin_without_claiming_provider_exposure():
+    origin = _acq("alice", "paris-import", "hb", state="attested")
+    report = _audit([], [origin])
+    assert report["sources"] == []
+    assert report["shared_visibility"] is False
+    assert report["origins"][0]["source_visibility_evidence"] == "acquisition_only"
+    assert report["status"] == "inventory_attested"
