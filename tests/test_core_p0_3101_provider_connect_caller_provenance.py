@@ -30,7 +30,7 @@ def _events(service):
 ))
 def test_facade_passes_only_selected_safe_consumer_for_all_one_request_phases(category):
     service, session, plugin = _rig(succeeds=True)
-    LibraryService.connect_configured(service, caller_category=category)
+    LibraryService.connect_configured_with_caller(service, caller_category=category)
     events = _events(service)
     assert [row["phase"] for row in events] == [
         "requested", "connect_invoked", "terminal",
@@ -77,7 +77,8 @@ def test_gtk_submission_freezes_real_caller_before_running_worker(
     window = NS(
         _closed=False,
         _source_inventory_startup_connection_seen=startup_seen,
-        service=NS(connect_configured=connect),
+        service=NS(connect_configured=lambda: None,
+                   connect_configured_with_caller=connect),
         runner=NS(submit=lambda *a, **kw: submitted.append((a, kw))),
     )
     assert startup_coordinator.connect_configured_sources(
@@ -97,7 +98,10 @@ def test_caller_is_snapshot_at_submission_not_worker_state():
     window = NS(
         _closed=False,
         _source_inventory_startup_connection_seen=False,
-        service=NS(connect_configured=lambda *, caller_category: caller_category),
+        service=NS(
+            connect_configured=lambda: "legacy",
+            connect_configured_with_caller=lambda *, caller_category: caller_category,
+        ),
         runner=NS(submit=lambda *a, **kw: scheduled.append(a[1])),
     )
     startup_coordinator.connect_configured_sources(window, idle_add=lambda fn: None)
