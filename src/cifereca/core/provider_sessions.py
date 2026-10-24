@@ -453,7 +453,11 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     call this helper at all. The opened session is owned by LibraryService.
     """
     credential_id = str(credential_id or "").strip()
-    if not credential_id or not self.storage.identity_for_connection("kobo", credential_id):
+    bound_identity = (
+        self.storage.identity_for_connection("kobo", credential_id)
+        if credential_id else None
+    )
+    if not credential_id or not bound_identity:
         raise ProviderConfigurationError("Compte Kobo demandé non configuré")
     row = next(
         (
@@ -468,11 +472,20 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     plugin = self.registry.maybe_get("kobo")
     if plugin is None or plugin.descriptor.state != "ready":
         raise ProviderConfigurationError("Provider Kobo indisponible")
+    from .diagnostic_provider_connection_attempt import new_attempt
+    attempt = new_attempt(
+        self.registry, "kobo", diagnostics=self.diagnostics,
+        identity_id=bound_identity, credential_id=credential_id,
+        source_kind="preview", caller_category="explicit_refresh",
+    )
     key = self._session_key("kobo", credential_id)
     existing = self._sessions.get(key)
     if existing is not None and existing.connected:
         if existing.provider_id != "kobo" or existing.credential_id != credential_id:
+            attempt.emit(self.diagnostics, "terminal", "failed", "session_invalid")
             raise ProviderConfigurationError("Session Kobo différente du compte demandé")
+        attempt.emit(self.diagnostics, "session_reused", "success", "session_reused")
+        attempt.emit(self.diagnostics, "terminal", "success", "connected")
         return existing
     session = plugin.create_session(
         credential_id=credential_id,
@@ -482,12 +495,14 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
         config=self.config, storage=self.storage, diagnostics=self.diagnostics,
     )
     try:
+        attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
         session.connect()
         if (not session.connected or session.provider_id != "kobo"
                 or session.credential_id != credential_id
                 or not getattr(session.capabilities, "backup", False)):
             raise ProviderConfigurationError("Session Kobo sans capacité de sauvegarde")
     except Exception:
+        attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
         try:
             session.close()
         except Exception:
@@ -499,6 +514,7 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
         except Exception:
             pass
     self._sessions[key] = session
+    attempt.emit(self.diagnostics, "terminal", "success", "connected")
     return session
 
 
