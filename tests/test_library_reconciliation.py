@@ -399,6 +399,42 @@ class GraphTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
         self.assertNotIn(self.inventory.files[0].sha256, json.dumps(report.redacted()))
 
+    def test_artifact_fanout_cancellation_never_confirms_partial_chain(self):
+        # A legacy/corrupt snapshot may contain many artifacts under one ID.
+        # Cancellation in the middle of one placement must revoke its proof.
+        from unittest.mock import patch
+        artifact = dict(self.snapshot.tables['artifacts'][0])
+        # A same-ID fanout of 500 *identical* byte signatures is rejected
+        # earlier by the 24-byte-candidate cap, so it never exercises
+        # cancellation inside a placement. Keep only the last candidate's
+        # bytes matching; the 499 preceding corrupt legacy rows require a
+        # genuinely long, interruptible per-placement comparison.
+        wrong = dict(artifact, sha256='0' * 64)
+        self.snapshot.tables['artifacts'] = [
+            dict(wrong) for _ in range(499)
+        ] + [dict(artifact)]
+        calls = [0]
+
+        def cancelled():
+            calls[0] += 1
+            return calls[0] > 40
+
+        report = reconcile(self.inventory, self.snapshot, cancelled=cancelled)
+        self.assertIn('cancelled', report.reasons)
+        self.assertNotIn('confirmed_link', report.files.get(0, set()))
+        self.assertEqual(report.unverified_rights, [0])
+        self.assertFalse(any(edge.table == 'entitlements' and edge.certainty == 'attested'
+                             for edge in report.edges))
+        self.assertFalse(report.redacted()['acquisition_authorized'])
+
+    def test_artifact_fanout_is_bounded_and_never_attests_duplicate_bytes(self):
+        artifact = dict(self.snapshot.tables['artifacts'][0])
+        self.snapshot.tables['artifacts'] = [dict(artifact) for _ in range(500)]
+        report = reconcile(self.inventory, self.snapshot)
+        self.assertNotIn('confirmed_link', report.files.get(0, set()))
+        self.assertEqual(report.unverified_rights, [0])
+        self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
+
     def test_29_confirmed_links_are_repeatable_with_unchanged_evidence(self):
         # #2796: identical cohorts and proof snapshots must not drift 256 -> 227.
         from copy import deepcopy
