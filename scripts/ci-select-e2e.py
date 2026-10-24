@@ -35,7 +35,8 @@ CONSTELLATIONS_GTK = ("constellations-detail-1366", "constellations-detail-1600"
 CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
 RECOMMENDATIONS_GTK = ("recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
-ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK
+OPTIMIZER_GTK = ("optimizer-handoff-1366", "optimizer-handoff-1600")
+ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366")
@@ -75,6 +76,7 @@ PROBES = {
     "e2e/book_detail_probe.py": BOOK_DETAIL,
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
+    "e2e/optimizer_handoff_probe.py": OPTIMIZER_GTK,
     "e2e/llm_settings_probe.py": LLM,
     "e2e/maintenance_tools_probe.py": MAINT,
     "e2e/search_filter_probe.py": ("search-filter-p0",),
@@ -126,6 +128,8 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             selected.update(CONSTELLATIONS)
         elif path.startswith("src/plugins/recommendations/"):
             selected.update(RECOMMENDATIONS)
+        elif path.startswith("src/plugins/epub_optimizer/"):
+            selected.update(OPTIMIZER_GTK)
         elif path in SYNC_PRODUCERS:
             selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):
