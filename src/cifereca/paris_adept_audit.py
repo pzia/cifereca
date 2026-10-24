@@ -20,7 +20,9 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             continue
         credential = str(row.get("credential_id") or "").strip()
         identity = str(row.get("identity_id") or "").strip()
-        if credential and identity:
+        if credential:
+            # A credential with an unbound row is NOT a unique owner merely
+            # because a second row happens to have a valid identity.
             owner_candidates[credential].add(identity)
     owners: dict[str, str | None] = {
         credential: next(iter(identities)) if len(identities) == 1 else None
