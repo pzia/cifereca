@@ -30,8 +30,14 @@ def scope_evidence(snapshot: EvidenceSnapshot, identity_ids: tuple[str, ...]) ->
         entitlement_id = right.get('entitlement_id')
         if type(entitlement_id) is str and entitlement_id.strip():
             right_ids.add(entitlement_id)
+        # A credential may have multiple *borrowers* (e.g. Paris primary
+        # and paired cards) holding the same edition. The account is part of
+        # the source of an entitlement, never just the login. A foreign
+        # ledger row with a different borrower does not contradict this
+        # right, and must not enter the selected identity's private audit.
+        # Still keep direct entitlement-ID collisions independently above.
         key = (right.get('provider_id'), right.get('credential_id'),
-               right.get('item_id'))
+               right.get('account_id'), right.get('item_id'))
         if all(type(value) is str and value.strip() for value in key):
             sources.add(key)
     result = {}
@@ -42,7 +48,8 @@ def scope_evidence(snapshot: EvidenceSnapshot, identity_ids: tuple[str, ...]) ->
         elif table == 'acquisition_ledger':
             result[table] = [r for r in rows if r.get('identity_id') in selected
                              or r.get('entitlement_id') in right_ids
-                             or (r.get('provider_id'), r.get('credential_id'), r.get('item_id')) in sources]
+                             or (r.get('provider_id'), r.get('credential_id'),
+                                 r.get('account_id'), r.get('item_id')) in sources]
         elif table == 'adept_profile_bindings':
             result[table] = [r for r in rows if r.get('scope_type') == 'identity' and r.get('scope_id') in selected]
         elif table == 'paris_borrower_adept_bindings':
