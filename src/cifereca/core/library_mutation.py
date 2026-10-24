@@ -139,6 +139,16 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
     for loan in loans:
         if loan.medium != "digital":
             continue
+        # A loan's originating provider/borrower stays the upstream site,
+        # independent of the ADEPT profile that may decrypt or return it.
+        # The caller's local identity must agree with the source observation:
+        # never relabel a foreign imported/historical loan as our own.
+        # Check every row before the atomic positive batch reaches SQLite.
+        if (type(identity_id) is not str or not identity_id
+                or type(loan) is not Loan
+                or type(loan.identity_id) is not str
+                or loan.identity_id != identity_id):
+            raise ValueError("loan_identity_scope_mismatch")
         source = SourceIdentity(
             provider_id=loan.source_provider,
             credential_id=loan.source_credential,
