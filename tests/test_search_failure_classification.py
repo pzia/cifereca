@@ -283,3 +283,16 @@ def test_forked_http_refusal_blocks_stale_in_real_federation(tmp_path):
         assert "PRIVATE_" not in repr((batches, summary))
     finally:
         service.close()
+
+
+def test_exception_graph_budget_fails_closed_without_stale_permission():
+    from cifereca.search_failures import should_stop_search_variants
+    root = httpx.ReadTimeout("PRIVATE_OUTAGE")
+    current = root
+    for i in range(150):
+        wrapper = ProviderError("PRIVATE_" + str(i))
+        current.__context__ = wrapper
+        current = wrapper
+    assert search_failure_code(root) is None
+    assert not public_service_unavailable(root)
+    assert should_stop_search_variants(root)
