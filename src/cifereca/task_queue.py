@@ -88,7 +88,7 @@ class PriorityExecutor:
         # plugin-defined __int__ hook under that lock.
         if not callable(fn):
             raise TypeError("executor task must be callable")
-        if not isinstance(priority, int) or isinstance(priority, bool):
+        if type(priority) not in (int, TaskPriority):
             raise ValueError("invalid task priority")
         queued_priority = int(priority)
         with self._lock:
