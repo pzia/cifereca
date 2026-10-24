@@ -2034,6 +2034,7 @@ class Storage:
             raise ValueError("invalid_positive_loan")
         now = int(time.time())
         rows = []
+        seen_source_loans: dict[tuple[str, str, str, str], tuple] = {}
         for entitlement in entitlements:
             if type(entitlement) is not Entitlement or entitlement.entitlement_type != "loan":
                 raise ValueError("invalid_positive_loan")
@@ -2051,14 +2052,26 @@ class Storage:
                            for value in fields)
                     or entitlement.state != "active"):
                 raise ValueError("invalid_positive_loan")
-            rows.append((
+            row = (
                 entitlement.entitlement_id, source.provider_id,
                 source.credential_id, source.account_id, entitlement.item_id,
                 entitlement.revision_id, "loan", "active",
                 entitlement.loan_id, entitlement.expires_at,
                 self._json_dump(entitlement.metadata), now, now,
                 source.identity_id,
-            ))
+            )
+            # The upstream loan coordinate does NOT contain an edition ID.
+            # Two editions for the same account/loan must not create two
+            # concurrent rights, even if their hashed entitlement IDs differ.
+            source_key = (source.provider_id, source.credential_id,
+                          source.account_id, entitlement.loan_id)
+            previous = seen_source_loans.get(source_key)
+            if previous is not None:
+                if previous != row:
+                    raise ValueError("loan_duplicate_ambiguous")
+                continue
+            seen_source_loans[source_key] = row
+            rows.append(row)
         # Empty/physical-only source inventories are read-only: in particular
         # they must not accidentally commit an unrelated cached transaction.
         if not rows:
@@ -2084,6 +2097,19 @@ class Storage:
         )
         with self._lock, self._connect() as db:
             for row in rows:
+                # The lookup and UPSERT share ONE writer transaction. A
+                # previous refresh may already have assigned this provider
+                # loan ID to another edition (or another local profile).
+                # Never insert another entitlement merely because the new
+                # edition changes the entitlement PK and avoids ON CONFLICT.
+                existing = db.execute(
+                    "SELECT entitlement_id FROM entitlements "
+                    "WHERE provider_id=? AND credential_id=? AND account_id=? "
+                    "AND entitlement_type='loan' AND loan_id=? LIMIT 2",
+                    (row[1], row[2], row[3], row[8]),
+                ).fetchall()
+                if any(other_id != row[0] for (other_id,) in existing):
+                    raise ValueError("loan_duplicate_ambiguous")
                 if db.execute(statement, row).rowcount != 1:
                     # sqlite3.Connection.__exit__ rolls back the WHOLE batch
                     # before any observer can see the partial positive state.
