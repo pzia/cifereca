@@ -53,8 +53,9 @@ class RedactionFilter(logging.Filter):
             return False
         message = record.getMessage()
         from .core.diagnostic_log_policy import is_public_core_observation
-        if message.startswith("TRACE") and is_public_core_observation(record.name, message):
-            # A fully validated body is already public. Keep its canonical
+        if message.startswith(("TRACE ", "EVENT ")) and is_public_core_observation(record.name, message):
+            # Only an exact closed Core event is already public, including
+            # longer reconciliation audit records. Keep its canonical
             # serialization intact instead of rewriting/truncating arguments.
             # The validation does not attest any attached traceback/stack.
             record.msg, record.args = message, ()
