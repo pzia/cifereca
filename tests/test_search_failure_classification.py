@@ -215,3 +215,71 @@ def test_sso_redirect_loop_does_not_retry_or_return_known_public_catalogue(
         )
     finally:
         service.close()
+
+
+def _forked_exception(explicit, implicit):
+    """Build an exception with BOTH branches, including suppressed context."""
+    wrapped = ProviderError("PRIVATE_ACCOUNT_OR_BOOK_TITLE")
+    wrapped.__cause__ = explicit
+    wrapped.__context__ = implicit
+    wrapped.__suppress_context__ = True
+    return wrapped
+
+
+@pytest.mark.parametrize("status,expected", [
+    (401, "SearchAuthenticationRequired"), (403, "SearchAccessDenied"),
+])
+@pytest.mark.parametrize("refusal_branch", ["context", "cause"])
+def test_forked_cause_and_context_never_mask_a_http_refusal(
+    status, expected, refusal_branch,
+):
+    timeout = httpx.ReadTimeout("PRIVATE_SIGNED_URL")
+    refusal = _http_error(status)
+    error = _forked_exception(
+        refusal if refusal_branch == "cause" else timeout,
+        refusal if refusal_branch == "context" else timeout,
+    )
+    assert search_failure_code(error) == expected
+    assert is_technical_search_error(error)
+    assert not public_service_unavailable(error)
+    error.__context__.__cause__ = error  # arbitrary cycle
+    assert search_failure_code(error) == expected
+
+
+def test_forked_redirect_context_stops_variants_without_authorizing_stale():
+    from cifereca.search_failures import should_stop_search_variants
+    error = _forked_exception(
+        ProviderError("PRIVATE_OTHER_REASON"),
+        httpx.TooManyRedirects("PRIVATE_LOGIN_REDIRECT"),
+    )
+    assert search_failure_code(error) is None
+    assert should_stop_search_variants(error)
+    assert not public_service_unavailable(error)
+
+
+def test_forked_http_refusal_blocks_stale_in_real_federation(tmp_path):
+    service = _service(tmp_path)
+    calls, batches = [], []
+    try:
+        _known(service, provider="bad", title="Maritime Book")
+        bad = _FakeSession("bad")
+        def search(*args, **kwargs):
+            calls.append(args)
+            raise _forked_exception(
+                httpx.ReadTimeout("PRIVATE_SIGNED_ACSM_URL"),
+                _http_error(403),
+            )
+        bad.search = search
+        service._sessions = {"bad": bad, "good": _FakeSession("good")}
+        summary = service.search_progressive(
+            "Maritime Book", force=True, on_batch=batches.append,
+        )
+        result = next(row for row in batches if row.provider_id == "bad")
+        assert len(calls) == 1
+        assert result.error_code == "SearchAccessDenied"
+        assert result.results == ()
+        assert summary.providers_failed == 1
+        assert any(row.provider_id == "good" and row.results for row in batches)
+        assert "PRIVATE_" not in repr((batches, summary))
+    finally:
+        service.close()
