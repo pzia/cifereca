@@ -19,7 +19,7 @@ SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode
 # Generic diagnostic text is NOT a trusted public site field. URL-like
 # strings may carry opaque account/loan identifiers even without a query.
 # Leave redact_text() alone: other views legitimately show public URLs.
-_GENERIC_DIAGNOSTIC_URL = re.compile(r"(?i)\\b[a-z][a-z0-9+.-]*://[^\\s<>\\\"']+")
+_GENERIC_DIAGNOSTIC_URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\x22']+")
 
 
 def _redact_generic_diagnostic_text(value: str) -> str:
