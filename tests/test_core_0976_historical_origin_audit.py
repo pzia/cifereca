@@ -272,3 +272,44 @@ def test_origin_resolution_distinguishes_recorded_from_attested_and_unknown():
              _acq("bob", "paris-b", "hb", state="recorded")]
     assert _audit(rights, mixed)["origin_resolution"] == "single_recorded"
     assert _audit([], [], loan="", item="book")["origin_resolution"] == "unknown"
+
+
+def test_two_adobe_loans_with_one_profile_are_not_one_return_origin():
+    rights = [_right("alice", "paris-a"), _right("bob", "paris-b")]
+    first = _acq("alice", "paris-a", "hb", state="attested")
+    second = _acq("bob", "paris-b", "hb", state="attested")
+    first["metadata"]["adept_binding"]["adept_loan_id"] = "PRIVATE-LICENCE-A"
+    second["metadata"]["adept_binding"]["adept_loan_id"] = "PRIVATE-LICENCE-B"
+    before = deepcopy((rights, [first, second]))
+    report = _audit(rights, [first, second])
+    assert report["status"] == "inventory_attested"
+    assert report["profile_disagreement"] is False
+    assert report["adept_loan_reference_disagreement"] is True
+    assert report["origin_resolution"] == "conflicting_records"
+    assert len({o["recorded_adept_loan_ref"] for o in report["origins"]}) == 2
+    assert "PRIVATE-LICENCE" not in str(report)
+    assert (rights, [first, second]) == before
+
+
+def test_same_adobe_loan_and_profile_are_consistent_only_with_inventory_evidence():
+    first = _acq("alice", "paris-a", "hb", state="attested")
+    second = _acq("bob", "paris-b", "hb", state="attested")
+    report = _audit([], [first, second])
+    assert report["adept_loan_reference_disagreement"] is False
+    assert report["origin_resolution"] == "single_inventory_attested"
+    second["metadata"]["adept_binding"]["inventory_status"] = "unknown"
+    report = _audit([], [first, second])
+    assert report["adept_loan_reference_disagreement"] is False
+    assert report["origin_resolution"] == "single_recorded"
+
+
+def test_missing_adept_profile_does_not_inherit_attestation_from_other_record():
+    first = _acq("alice", "paris-a", "hb", state="attested")
+    second = _acq("bob", "paris-b", None)
+    report = _audit([], [first, second])
+    assert report["status"] == "inventory_attested"
+    assert report["profile_disagreement"] is False
+    assert report["origin_resolution"] == "unknown"
+    assert report["adept_loan_reference_disagreement"] is False
+    assert _audit([], [], loan="", item="book")[
+        "adept_loan_reference_disagreement"] is False
