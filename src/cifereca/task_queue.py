@@ -181,9 +181,23 @@ class PriorityExecutor:
                         with diagnostic_task_scope():
                             result = fn()
                     except BaseException as exc:  # noqa: BLE001 - Future boundary
-                        future.set_exception(exc)
+                        try:
+                            future.set_exception(exc)
+                        except BaseException:
+                            # Future marks itself finished before invoking
+                            # caller callbacks. A callback raising SystemExit
+                            # or KeyboardInterrupt must not kill this worker.
+                            # Never echo its potentially private message.
+                            if not future.done():
+                                raise
                     else:
-                        future.set_result(result)
+                        try:
+                            future.set_result(result)
+                        except BaseException:
+                            # Same boundary for successful task callbacks.
+                            # A genuine incomplete Future is not swallowed.
+                            if not future.done():
+                                raise
                 finally:
                     elapsed_ns = max(0, monotonic_ns() - started_at)
                     with self._lock:
