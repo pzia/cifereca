@@ -237,7 +237,16 @@ class PriorityExecutor:
         # Never call it under the pool lock: callbacks may inspect admission
         # metrics, submit more work or call shutdown themselves.
         for future in cancelled:
-            future.cancel()
+            try:
+                future.cancel()
+            except BaseException:
+                # Future.cancel() sets CANCELLED before invoking callbacks.
+                # A plugin callback raising SystemExit/KeyboardInterrupt must
+                # not abandon other futures already removed from the queue.
+                # Do not publish callback text; propagate only if cancellation
+                # never actually happened.
+                if not future.cancelled():
+                    raise
         # Never synchronously join this executor from one of its workers.
         # Apart from a self-join RuntimeError, joining a *different* worker
         # can deadlock if that worker awaits completion of this task. The
