@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace as NS
 
+import pytest
+
 from cifereca.gui.exact_search_notice_navigation import (
     can_open_loaded_search_notice, open_loaded_search_notice,
 )
@@ -79,6 +81,35 @@ def test_same_provider_multiple_accounts_and_editions_never_merge():
     )
 
 
+@pytest.mark.parametrize("collection", [None, ""])
+def test_optional_collection_still_selects_the_exact_loaded_notice(collection):
+    row = _row(collection=collection)
+    other = _row(collection="public", result_id="item-2")
+    window, events, *_ = _window(row, other)
+    coordinates = {**_coords(), "source_collection": ""}
+    assert can_open_loaded_search_notice(window, **coordinates)
+    assert events == []
+    assert open_loaded_search_notice(window, **coordinates)
+    assert events == [("navigate", "search"), ("select", "kobo:item-1")]
+    # Empty is never a wildcard for the populated collection on the other row.
+    assert open_loaded_search_notice(window, **_coords())
+    assert events[-1] == ("select", "kobo:item-2")
+
+
+def test_empty_collection_does_not_select_a_different_collection_or_account():
+    row = _row()
+    window, events, *_ = _window(row)
+    assert not open_loaded_search_notice(
+        window, **{**_coords(), "source_collection": ""}
+    )
+    row.source_collection = None
+    assert not open_loaded_search_notice(window, **_coords())
+    assert not open_loaded_search_notice(
+        window, **{**_coords(credential="account-2"), "source_collection": ""}
+    )
+    assert events == []
+
+
 def test_same_coordinates_duplicated_or_colliding_row_keys_fail_closed():
     first = _row()
     duplicate = _row(result_id="item-2")
@@ -134,6 +165,8 @@ def test_invalid_coordinates_cannot_navigate_or_echo_sensitive_data():
         {**_coords(), "provider": 1},
         {**_coords(), "record_id": "x" * 513},
         {**_coords(), "source_collection": "edition-other"},
+        {**_coords(), "source_collection": None},
+        {**_coords(), "source_collection": "x" * 513},
     ):
         assert not open_loaded_search_notice(window, **malformed)
     assert events == []
