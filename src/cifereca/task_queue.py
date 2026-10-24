@@ -234,8 +234,8 @@ class PriorityExecutor:
                         except queue.Empty:
                             break
                         if future is not None:
-                            self._pending -= 1
-                            self._queued_at.pop(future, None)
+                            if self._queued_at.pop(future, None) is not None:
+                                self._pending -= 1
                             cancelled.append(future)
                         self._queue.task_done()
                 for _ in self._threads:
