@@ -38,7 +38,7 @@ gap = "États diagnostics combinés manquants"
 contract_tests = ["src/plugins/ebooksgratuits/tests/test_dataset_integration.py"]
 failure_tests = ["simulation/tests/test_ebooksgratuits_negative_protocol_p0.py"]
 data = ["ebooksgratuits"]
-gap = "ux-all n'active pas le service ; erreurs et pagination à enrichir"
+gap = "ux-all configure le faux service ; activation et parcours GTK du plugin non attestés ; erreurs/pagination à enrichir"
 
 [package.epub_optimizer]
 contract_tests = ["src/plugins/epub_optimizer/tests/test_engine.py"]
@@ -71,7 +71,7 @@ gap = "Fichiers manquants, couvertures, langues, doublons, chemins et actions n�
 contract_tests = ["src/plugins/provider-bnf-pret/tests/test_http_provider.py"]
 failure_tests = ["src/plugins/provider-bnf-pret/tests/test_explicit_token_failures.py"]
 data = []
-gap = "BnF Prêt en migration HTTPX : contrats synthétiques seulement ; aucun SSO réel ni E2E GTK attesté"
+gap = "BnF Prêt HTTPX : SSO + 2 prêts réels observés (#3104), ACSM/ADEPT et E2E GTK non recettés ; contrats synthétiques"
 
 [package.provider-bnf-catalogue]
 contract_tests = ["src/plugins/provider-bnf-catalogue/tests/test_dataset_integration.py"]
