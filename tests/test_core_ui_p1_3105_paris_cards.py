@@ -72,3 +72,25 @@ def test_other_identity_hides_paris_and_invalidates_old_reconnect_button():
     old_retry.click()
     assert ("user-reconnect",) not in calls
     assert not w.runner.tasks
+
+
+def test_async_provider_connection_rebuilds_existing_sync_page_only():
+    from cifereca.gui.startup_coordinator import connect_configured_sources
+    from tests.test_core_ui_2370_connection_summary import _connection_host
+
+    host, _messages, jobs, pending = _connection_host({
+        "connected": ["paris"], "errors": {}, "connection_failures": {"items": ()},
+    })
+    host._sync_sources_box = object()
+    host._refresh_sync_page = lambda: jobs.append("sync-page")
+    assert connect_configured_sources(host, idle_add=pending.append) is False
+    assert jobs == ["accounts", "sync-page", "loans", "dashboard"]
+    assert len(pending) == 1
+
+    host, _messages, jobs, pending = _connection_host({
+        "connected": [], "errors": {}, "connection_failures": {"items": ()},
+    })
+    # On startup a page may not yet exist; no eager card construction.
+    host._refresh_sync_page = lambda: jobs.append("sync-page")
+    connect_configured_sources(host, idle_add=pending.append)
+    assert jobs == ["accounts", "loans", "dashboard"]
