@@ -388,16 +388,25 @@ def test_unattested_loan_or_expired_entitlement_is_not_a_purchase(
     try:
         account, _session, _calls = _connect(service, number=0)
         item, eid = _owned(service, account)
-        service.storage.entitlement_put({
-            "entitlement_id": eid, "provider_id": "numilog",
-            "credential_id": account.credential_id,
-            "account_id": account.unique_id,
-            "identity_id": account.identity_id,
-            "item_id": item, "entitlement_type": "owned", "state": "active",
-            "expires_at": "2099-01-01T00:00:00Z" if fake_right == "expired" else None,
-            "loan_id": "borrower-loan" if fake_right == "loan" else None,
-            "metadata": {"source": "numilog.authenticated_library"},
-        })
+        # The read-only preview must recognize legacy inconsistent rows.
+        # A normal Core writer must no longer be able to forge an owned
+        # entitlement with a loan_id; simulate that old SQLite state directly.
+        if fake_right == "loan":
+            with service.storage._connect() as db:
+                db.execute(
+                    "UPDATE entitlements SET loan_id=? WHERE entitlement_id=?",
+                    ("borrower-loan", eid),
+                )
+        else:
+            service.storage.entitlement_put({
+                "entitlement_id": eid, "provider_id": "numilog",
+                "credential_id": account.credential_id,
+                "account_id": account.unique_id,
+                "identity_id": account.identity_id,
+                "item_id": item, "entitlement_type": "owned", "state": "active",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "metadata": {"source": "numilog.authenticated_library"},
+            })
         broker, sid = _broker(service, account)
         result = _preview(broker, sid)
         assert result.ok
