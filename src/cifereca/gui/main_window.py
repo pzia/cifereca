@@ -1964,6 +1964,10 @@ class MainWindow(Adw.ApplicationWindow):
             lambda exc: self.show_error(str(exc), "Restitution ADEPT impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="adept-return")
 
+    def prepare_bnf_acsm_for_loan(self, loan: Loan, control: Gtk.Widget | None = None) -> None:
+        from .bnf_acsm_action_controller import prepare_bnf_acsm
+        prepare_bnf_acsm(self, loan, control, Adw=Adw, TaskPriority=TaskPriority)
+
     def prepare_pnb_for_loan(self, loan: Loan, send: bool = False, control: Gtk.Widget | None = None) -> None:
         def work():
             if send:
