@@ -184,10 +184,24 @@ def _records(db):
                 value[key] = item
             return value
 
+        def reject_nonfinite(_value):
+            # Python's decoder accepts NaN/Infinity by default, although
+            # these are not JSON and cannot describe durable proof state.
+            raise DeclarationRejected('declaration_store_invalid')
+
         try:
-            record = json.loads(raw, object_pairs_hook=unique_object)
+            record = json.loads(
+                raw, object_pairs_hook=unique_object,
+                parse_constant=reject_nonfinite,
+            )
+        except DeclarationRejected:
+            # Duplicate keys / non-JSON constants are a distinct structural
+            # corruption. Do not accidentally catch our ValueError subclass.
+            raise
         except (ValueError, TypeError, RecursionError):
-            raise DeclarationRejected('declaration_store_invalid') from None
+            # Preserve the historical closed diagnostic for broken JSON text;
+            # existing history/listing clients rely on this status.
+            raise DeclarationRejected('invalid_local_context') from None
         _require(type(record) is dict and set(record) == {
             'version', 'relation_id', 'scope', 'file', 'right_state', 'state',
             'origin', 'created_at', 'revoked_at',
