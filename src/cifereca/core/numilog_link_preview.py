@@ -94,6 +94,22 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                 if len(rights) != 1:
                     return stop("right_ambiguous_or_missing")
                 right = rights[0]
+                # Placements encode local identity/provider/edition, NOT the
+                # upstream credential or buyer account. The final Numilog
+                # transaction already refuses a second right for the same
+                # local edition even if its credential differs, or its state
+                # is inactive. Apply the same guard in the read-only preview:
+                # otherwise the UI advertises a reviewable link that the
+                # strictly scoped writer must reject.
+                edition_rights = _rows(
+                    db,
+                    "SELECT entitlement_id FROM entitlements "
+                    "WHERE identity_id=? AND provider_id=? AND item_id=? LIMIT 3",
+                    (identity_id, "numilog", item_id),
+                )
+                if (len(edition_rights) != 1
+                        or edition_rights[0]["entitlement_id"] != right["entitlement_id"]):
+                    return stop("right_ambiguous_or_missing")
                 if (right["identity_id"] != identity_id
                         or right["account_id"] != account_id
                         or right["state"] != "active"

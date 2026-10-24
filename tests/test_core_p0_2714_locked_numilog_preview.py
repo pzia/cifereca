@@ -170,3 +170,59 @@ def test_rebound_connection_to_foreign_identity_is_not_a_scoped_binding(evidence
     result = preview(evidence)
     assert result.reason == "source_unavailable"
     assert result.status == "blocked" and not result.attachment_authorized
+
+
+@pytest.mark.parametrize("state", ["active", "expired", "realized"])
+def test_foreign_credential_same_identity_edition_is_never_reviewable(
+    evidence, tmp_path, state,
+):
+    # The provider/item placement has NO credential or account column.
+    # A second buyer's unreceipted, even inactive, entitlement must not be
+    # silently ignored by the preview when the strict writer rejects it.
+    storage, _root, observation = evidence
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO entitlements "
+            "(entitlement_id,identity_id,provider_id,credential_id,"
+            "account_id,item_id,state,entitlement_type,metadata_json,"
+            "discovered_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("PRIVATE-foreign-buyer", "alice", "numilog",
+             "PRIVATE-other-credential", "PRIVATE-other-borrower", "edition",
+             state, "owned", "{}", 1, 1),
+        )
+    # Measure after the intentional fixture INSERT, not before it. The
+    # read-only preview must leave the already-written WAL untouched.
+    before_file = durable_files(tmp_path)
+    result = preview(evidence)
+    assert result.status == "blocked"
+    assert result.reason == "right_ambiguous_or_missing"
+    assert result.read_only is True
+    assert result.attachment_authorized is False
+    assert len(list(storage._connect().execute("SELECT * FROM placements"))) == 0
+    assert durable_files(tmp_path) == before_file
+    assert "PRIVATE" not in json.dumps(result.__dict__)
+    assert observation.sha256 not in json.dumps(result.__dict__)
+
+
+@pytest.mark.parametrize("owner,edition", [
+    ("bob", "edition"),
+    ("alice", "unrelated-edition"),
+])
+def test_other_identity_or_edition_does_not_poison_numilog_preview(
+    evidence, owner, edition,
+):
+    storage, *_ = evidence
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO entitlements "
+            "(entitlement_id,identity_id,provider_id,credential_id,"
+            "account_id,item_id,state,entitlement_type,metadata_json,"
+            "discovered_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("PRIVATE-other-right", owner, "numilog",
+             "PRIVATE-other-credential", "PRIVATE-other-account", edition,
+             "active", "owned", "{}", 1, 1),
+        )
+    result = preview(evidence)
+    assert result.status == "reviewable"
+    assert result.reason == "fresh_proofs_require_confirmation"
+    assert not result.attachment_authorized
