@@ -2100,6 +2100,13 @@ class Storage:
             "AND entitlements.loan_id IS excluded.loan_id"
         )
         with self._lock, self._connect() as db:
+            # A SELECT does not acquire SQLite's write reservation. Without
+            # BEGIN IMMEDIATE two *different* Core processes can each see
+            # "no loan" before either inserts a conflicting edition. The
+            # writer lock must precede the first source/loan lookup.
+            if db.in_transaction:
+                raise ValueError("storage_busy")
+            db.execute("BEGIN IMMEDIATE")
             for row in rows:
                 # The lookup and UPSERT share ONE writer transaction. A
                 # previous refresh may already have assigned this provider
