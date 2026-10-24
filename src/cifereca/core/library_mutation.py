@@ -136,6 +136,7 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
     # Build and validate the complete positive batch before touching SQLite.
     # A conflict in a later loan must not commit earlier positive rows.
     pending: list[Entitlement] = []
+    observed_loans: dict[tuple[str, str, str, str], tuple[str, str | None]] = {}
     for loan in loans:
         if loan.medium != "digital":
             continue
@@ -171,6 +172,19 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
                 "document_type": loan.document_type,
             },
         )
+        # A provider borrower cannot simultaneously lend two editions (or
+        # two contradictory deadlines) under one loan ID. Otherwise the
+        # edition-dependent entitlement PK would create multiple active
+        # rights for a single source loan. Identical page duplicates are
+        # harmless; a conflicting duplicate rejects the complete batch.
+        source_key = (source.provider_id, source.credential_id,
+                      source.account_id, entitlement.loan_id)
+        signature = (entitlement.item_id, entitlement.expires_at)
+        if source_key in observed_loans:
+            if observed_loans[source_key] != signature:
+                raise ValueError("loan_source_duplicate_conflict")
+            continue
+        observed_loans[source_key] = signature
         pending.append(entitlement)
     # This is a single SQLite transaction, even when several accounts and
     # providers contributed positive rows to the opening sync.
