@@ -241,6 +241,40 @@ class BaenContractTests(unittest.TestCase):
             finally:
                 session.close()
 
+    def test_invalid_public_epub_is_rejected_through_real_plugin_download(self):
+        # The fake server serves corrupt EPUB bytes on an explicit test fault.
+        # The production plugin still requests an ordinary trusted Baen URL;
+        # only the injected local transport redirects it to that fault case.
+        with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
+            transport = RecordingTransport(server)
+            session = make_session(server, transport=transport)
+            real_get = server.get
+            try:
+                book = session.search("Firefly")[0]
+
+                def corrupt_download(url):
+                    if url.endswith("/downloads/firefly-atlas.epub"):
+                        return real_get(url + "?fault=invalid-epub")
+                    return real_get(url)
+
+                server.get = corrupt_download
+                destination = Path(tmp) / "rejected"
+                with self.assertRaisesRegex(
+                    ProviderError, "téléchargement inaccessible ou EPUB invalide",
+                ):
+                    session.download_direct(book, destination)
+                self.assertEqual(list(destination.glob("*.epub")), [])
+                self.assertEqual(len(transport.calls), 1)
+                self.assertEqual(
+                    transport.calls[0]["url"],
+                    "https://www.baen.com/downloads/firefly-atlas.epub",
+                )
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ])
+            finally:
+                session.close()
+
     def test_health_and_epub_are_deterministic_and_invalid_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
             with urlopen(server.root + "/health", timeout=3) as response:
