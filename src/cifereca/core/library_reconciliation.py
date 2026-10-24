@@ -31,10 +31,11 @@ _COLUMNS = {
 }
 
 # These tables can be reduced inside SQLite for exactly one active identity.
-# DO NOT filter acquisition_ledger: foreign acquisition entries with a matching
-# entitlement or exact provider/credential/item are evidence of conflicting
-# ownership even when their identity_id differs. Artifacts are content-addressed
-# and have no identity_id; they must also remain unfiltered.
+# The acquisition ledger also needs foreign conflict evidence, but ONLY for
+# an exact selected entitlement ID or provider/credential/borrower/item tuple.
+# Its unrelated foreign rows must never exhaust the selected profile's bounded
+# snapshot before the later in-memory scope filter can discard them.
+# Artifacts are content-addressed and have no identity; keep them unfiltered.
 _SCOPABLE_COLUMNS = frozenset({
     'entitlements', 'placements', 'backup_items', 'catalog_entries',
 })
@@ -169,17 +170,54 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                 # identity cancellation callback at most every 64 rows.
                 # SQLite's progress handler also enforces the shared deadline
                 # during slow SELECT/fetchmany work.
-                # Scope the bibliographic and placement-heavy tables BEFORE
-                # JSON extraction. SQLite still operates only on the private,
-                # immutable in-memory image; no source disk handle is opened.
-                # Retain the full acquisition ledger for inter-identity
-                # entitlement/source collisions (scope_evidence keeps those).
-                scoped = identity_id is not None and name in _SCOPABLE_COLUMNS
-                cursor = db.execute(
-                    f"SELECT {','.join(wanted)} FROM {name}"
-                    + (" WHERE identity_id=?" if scoped else "") + " LIMIT ?",
-                    (identity_id, remaining_rows + 1) if scoped else (remaining_rows + 1,),
-                )
+                # Scope candidate evidence BEFORE spending the global row
+                # budget. The later Core in-memory scope guard remains
+                # mandatory and independently rejects foreign borrowers.
+                # SQLite operates solely on the immutable private image.
+                sql = f"SELECT {','.join(wanted)} FROM {name}"
+                params = ()
+                if identity_id is not None:
+                    if name in _SCOPABLE_COLUMNS:
+                        sql += " WHERE identity_id=?"
+                        params = (identity_id,)
+                    elif name == 'acquisition_ledger':
+                        # Keep selected receipts, explicit collisions of the
+                        # SAME right ID, and conflicting owners of the SAME
+                        # provider + login + borrower + edition. A second
+                        # borrower sharing a login/ISBN is not a conflict.
+                        # Reject missing/blank selected coordinates as join
+                        # authority; a direct nonblank right ID still counts.
+                        required = {
+                            'identity_id', 'entitlement_id', 'provider_id',
+                            'credential_id', 'account_id', 'item_id',
+                        }
+                        entitlement_columns = (
+                            {r[1] for r in db.execute('PRAGMA table_info(entitlements)')}
+                            if 'entitlements' in names else set()
+                        )
+                        if not required <= entitlement_columns:
+                            result.reasons.add('snapshot_schema_incomplete')
+                            result.tables[name] = []
+                            continue
+                        key_columns = (
+                            'provider_id', 'credential_id', 'account_id', 'item_id',
+                        )
+                        valid_keys = ' AND '.join(
+                            f"typeof({key})='text' AND length(trim({key}))>0"
+                            for key in key_columns
+                        )
+                        sql += (
+                            " WHERE identity_id=? OR entitlement_id IN ("
+                            "SELECT entitlement_id FROM entitlements "
+                            "WHERE identity_id=? AND typeof(entitlement_id)='text' "
+                            "AND length(trim(entitlement_id))>0) "
+                            "OR (provider_id,credential_id,account_id,item_id) IN ("
+                            "SELECT provider_id,credential_id,account_id,item_id "
+                            "FROM entitlements WHERE identity_id=? AND "
+                            + valid_keys + ")"
+                        )
+                        params = (identity_id, identity_id, identity_id)
+                cursor = db.execute(sql + " LIMIT ?", (*params, remaining_rows + 1))
                 projected = []
                 overflow = False
                 if name == 'catalog_entries':
