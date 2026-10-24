@@ -698,15 +698,15 @@ class LibraryService:
         """
         return provider_sessions.connect_kobo_preview(self, credential_id)
 
-    def connect_configured(self) -> dict[str, Any]:
-        """Connect all enabled provider identities from local preferences.
+    def connect_configured(self, *, caller_category: str = "other") -> dict[str, Any]:
+        """Connect configured sources and attest a caller only when supplied.
 
-        Failures are isolated per provider account: one unavailable source does
-        not prevent another source from starting. At least one logical account
-        must be available for the current account-oriented GUI. Anonymous
-        catalogue-only providers will be included once their plugin is ready.
+        CLI/programmatic callers default to "other"; the GUI passes the
+        actually known start/reconnect category at its submission boundary.
         """
-        return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
+        return provider_sessions.connect_configured(
+            self, logger=_TRACE_LOG, caller_category=caller_category,
+        )
 
     def login(self, username: str, password: str) -> dict[str, Any]:
         return provider_sessions.login(self, username, password)
