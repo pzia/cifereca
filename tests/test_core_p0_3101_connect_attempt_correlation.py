@@ -195,3 +195,68 @@ def test_generic_diagnostics_cannot_claim_correlated_operation(tmp_path):
     assert len(rows) == 1
     assert "operation_ref" not in rows[0].get("detail", {})
     assert "provider_id" not in rows[0]
+
+
+def _preview_rig():
+    diagnostics = Diagnostics()
+    real = NS(
+        connected=False, provider_id="kobo", credential_id="SECRET_KOBO",
+        capabilities=NS(backup=True), close=Mock(),
+    )
+    def connect():
+        real.connected = True
+    real.connect = Mock(side_effect=connect)
+    plugin = NS(descriptor=NS(id="kobo", state="ready", display_name="Kobo"),
+                create_session=Mock(return_value=real))
+    storage = NS(identity_for_connection=lambda provider, credential:
+                 "SECRET_IDENTITY" if (provider, credential) == ("kobo", "SECRET_KOBO")
+                 else None)
+    service = NS(
+        storage=storage,
+        config=NS(provider_accounts=lambda **kw: [{
+            "provider": "kobo", "id": "SECRET_KOBO",
+            "identity_id": "SECRET_IDENTITY", "enabled": True,
+            "credentials": {"password": PRIVATE},
+        }]),
+        registry=NS(maybe_get=lambda provider: plugin),
+        _sessions={},
+        _session_key=lambda p, c: p + ":" + c,
+        diagnostics=diagnostics,
+    )
+    return service, real, plugin
+
+
+def test_kobo_preview_first_connect_then_real_session_reuse_with_distinct_refs():
+    service, session, plugin = _preview_rig()
+    first = provider_sessions.connect_kobo_preview(service, "SECRET_KOBO")
+    second = provider_sessions.connect_kobo_preview(service, "SECRET_KOBO")
+    assert first is second is session
+    assert session.connect.call_count == 1
+    assert plugin.create_session.call_count == 1
+    events = _rows(service.diagnostics)
+    assert [e["phase"] for e in events] == [
+        "requested", "connect_invoked", "terminal",
+        "requested", "session_reused", "terminal",
+    ]
+    assert [e["source_kind"] for e in events] == ["preview"] * 6
+    assert len({e["operation_ref"] for e in events}) == 2
+    assert len({e["scope_ref"] for e in events}) == 1
+    assert all(e["caller_category"] == "explicit_refresh" for e in events)
+    assert all(e["network_auth"] == "unknown" for e in events)
+    assert PRIVATE not in repr(events)
+    assert "SECRET_IDENTITY" not in repr(events)
+    assert "SECRET_KOBO" not in repr(events)
+
+
+def test_kobo_preview_rejects_stale_reused_session_as_failed_request():
+    service, session, plugin = _preview_rig()
+    stale = NS(connected=True, provider_id="paris", credential_id="SECRET_KOBO")
+    service._sessions["kobo:SECRET_KOBO"] = stale
+    with pytest.raises(Exception, match="Session Kobo différente"):
+        provider_sessions.connect_kobo_preview(service, "SECRET_KOBO")
+    assert [e["phase"] for e in _rows(service.diagnostics)] == [
+        "requested", "terminal",
+    ]
+    assert _rows(service.diagnostics)[-1]["reason_code"] == "session_invalid"
+    assert _rows(service.diagnostics)[-1]["status"] == "failed"
+    session.connect.assert_not_called()
