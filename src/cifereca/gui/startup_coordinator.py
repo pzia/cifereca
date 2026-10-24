@@ -4,6 +4,7 @@ GLib scheduling is injected; no GTK import or background processing is added.
 from __future__ import annotations
 import logging
 import time
+from functools import partial
 from typing import Any
 from ..task_queue import TaskPriority
 from .startup_lifecycle import once_while_open
@@ -108,8 +109,26 @@ def connect_configured_sources(
             window.dashboard_loading_status.set_visible(True)
 
     control = getattr(window, "startup_connect_button", None)
+    # Capture the *known* caller on the GTK side before dispatching the
+    # worker. The very first UI connection belongs to startup; subsequent
+    # user-requested re-connections are explicit refreshes. Never infer the
+    # caller from log timestamps, provider messages or a worker thread.
+    caller_category = (
+        "explicit_refresh" if getattr(
+            window, "_source_inventory_startup_connection_seen", False
+        ) is True else "startup/connect_configured"
+    )
+    # The dedicated Core facade accepts this audited marker. Historical
+    # test/plugin service doubles may expose only connect_configured(); do
+    # not force a new argument into that established public method.
+    connect_with_caller = getattr(window.service, "connect_configured_with_caller", None)
+    connect = (
+        partial(connect_with_caller, caller_category=caller_category)
+        if callable(connect_with_caller)
+        else window.service.connect_configured
+    )
     window.runner.submit(
-        "Connexion aux providers…", window.service.connect_configured, ok, err, control=control,
+        "Connexion aux providers…", connect, ok, err, control=control,
         priority=TaskPriority.PROVIDER_SYNC, kind="provider-connect",
     )
     return False

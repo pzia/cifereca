@@ -699,14 +699,18 @@ class LibraryService:
         return provider_sessions.connect_kobo_preview(self, credential_id)
 
     def connect_configured(self) -> dict[str, Any]:
-        """Connect all enabled provider identities from local preferences.
-
-        Failures are isolated per provider account: one unavailable source does
-        not prevent another source from starting. At least one logical account
-        must be available for the current account-oriented GUI. Anonymous
-        catalogue-only providers will be included once their plugin is ready.
-        """
+        """Public facade with its stable, no-argument compatibility contract."""
         return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
+
+    def connect_configured_with_caller(self, *, caller_category: str) -> dict[str, Any]:
+        """Core-owned GUI entrypoint carrying an attested, closed caller kind.
+
+        A separate name avoids silently changing the public API used by
+        CLI, legacy plugins and service facade reflection contracts.
+        """
+        return provider_sessions.connect_configured(
+            self, logger=_TRACE_LOG, caller_category=caller_category,
+        )
 
     def login(self, username: str, password: str) -> dict[str, Any]:
         return provider_sessions.login(self, username, password)
