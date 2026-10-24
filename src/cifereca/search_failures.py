@@ -11,9 +11,16 @@ def search_failure_code(error: BaseException) -> str | None:
     a stale public-catalogue fallback. Cyclic exception chains are tolerated.
     """
     seen = set()
+    pending = [error]
     unavailable = False
     provider_refusal = None
-    while error is not None and id(error) not in seen:
+    # Explicit and implicit exception links can both exist, even when
+    # context display is suppressed. A 401/403 on either branch forbids
+    # reusing stale public catalogue data.
+    while pending and len(seen) < 128:
+        error = pending.pop()
+        if error is None or id(error) in seen:
+            continue
         seen.add(id(error))
         if isinstance(error, httpx.HTTPStatusError):
             status = error.response.status_code
@@ -43,7 +50,10 @@ def search_failure_code(error: BaseException) -> str | None:
         # Distinguish it from redirect loops, which may mean login/auth.
         if isinstance(error, (httpx.TransportError, httpx.DecodingError, ParseError)):
             unavailable = True
-        error = error.__cause__ or error.__context__
+        if error.__context__ is not None:
+            pending.append(error.__context__)
+        if error.__cause__ is not None:
+            pending.append(error.__cause__)
     # A closed, built-in provider refusal outranks a generic timeout marker,
     # but a concrete underlying HTTP 401/403 outranks both.
     return provider_refusal or ("SearchTemporarilyUnavailable" if unavailable else None)
@@ -63,9 +73,16 @@ def should_stop_search_variants(error: BaseException) -> bool:
     if is_technical_search_error(error):
         return True
     seen = set()
-    while error is not None and id(error) not in seen:
+    pending = [error]
+    while pending and len(seen) < 128:
+        error = pending.pop()
+        if error is None or id(error) in seen:
+            continue
         seen.add(id(error))
         if isinstance(error, httpx.TooManyRedirects):
             return True
-        error = error.__cause__ or error.__context__
+        if error.__context__ is not None:
+            pending.append(error.__context__)
+        if error.__cause__ is not None:
+            pending.append(error.__cause__)
     return False
