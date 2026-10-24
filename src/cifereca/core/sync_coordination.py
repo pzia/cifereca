@@ -433,7 +433,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         source_outcomes: dict[str, str] = {}
         try:
             loans: list[Loan] = []
-            seen_loans: set[tuple[str, str, str, str]] = set()
+            # Preserve the exact positive observation for each upstream
+            # loan. A repeated ID with another edition/expiry is ambiguous,
+            # never a reason to silently accept whichever page came first.
+            seen_loans: dict[tuple[str, str, str, str], tuple] = {}
             provider_errors: list[dict[str, str]] = []
             accounts = sorted(
                 [a for a in self.accounts_for_identity(identity.identity_id) if self.sync_source_enabled(a)],
@@ -473,14 +476,38 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             "TRACE loans sync partial code=loan_partial_failure count=%s",
                             len(partial_errors),
                         )
+                    # Stage this WHOLE account before accepting any row. If
+                    # page N contradicts page 1, mark the account failed but
+                    # retain independent successful accounts. A partial
+                    # supplier response cannot prove negative loan status.
+                    additions: dict[tuple[str, str, str, str], tuple] = {}
+                    accepted: list[Loan] = []
+                    for loan in account_loans:
+                        key = (
+                            loan.source_provider, loan.source_credential,
+                            loan.source_account_id, loan.id,
+                        )
+                        signature = (
+                            loan.provider, loan.medium, loan.record_id or loan.id,
+                            loan.due_at, loan.document_type,
+                        )
+                        previous = (
+                            additions[key] if key in additions else
+                            seen_loans.get(key)
+                        )
+                        if previous is not None:
+                            if previous != signature:
+                                raise ProviderConfigurationError("loan_source_duplicate_conflict")
+                            continue
+                        additions[key] = signature
+                        accepted.append(loan)
+                    seen_loans.update(additions)
+                    loans.extend(accepted)
                     source_outcomes[source_id] = (
                         "partial" if partial_errors else "success"
                     )
-                    for loan in account_loans:
-                        key = (loan.source_provider, loan.source_credential, str(loan.source_account_id or ""), loan.id)
-                        if key not in seen_loans:
-                            seen_loans.add(key); loans.append(loan)
                 except Exception:
+                    source_outcomes[source_id] = "failed"
                     errors += 1
                     provider_errors.append({"code": "loan_source_failed"})
                     # logger.exception would serialize a provider-controlled
