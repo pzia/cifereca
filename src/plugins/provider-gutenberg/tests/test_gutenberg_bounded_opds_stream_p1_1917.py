@@ -61,7 +61,8 @@ def test_200_oversized_or_unsupported_encoding_is_closed_outage(mode):
         if mode == "raw-chunks":
             return httpx.Response(200, stream=streamed)
         return httpx.Response(
-            200, content=ATOM_ZERO, headers={"Content-Encoding": "gzip"},
+            200, stream=httpx.ByteStream(ATOM_ZERO),
+            headers={"Content-Encoding": "gzip"},
         )
 
     obj = session(respond)
