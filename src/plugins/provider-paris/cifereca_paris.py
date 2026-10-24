@@ -411,22 +411,28 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             try:
                 rows.extend(self.client.loans(upstream, account.unique_id))
-            except Exception as exc:
-                errors.append({"upstream": upstream, "error": str(exc), "type": type(exc).__name__})
+            except Exception:
+                # HTTP/provider exceptions may carry a signed loan URL,
+                # reader number or opaque secret even without a recognizable
+                # key name. Keep only fixed diagnostic codes at *emission*;
+                # Core needs the failed upstream, never its raw exception.
+                errors.append({
+                    "upstream": upstream,
+                    "code": "paris_loans_upstream_failed",
+                })
                 try:
                     self.diagnostics.add(
                         "API", f"loans {upstream}", "error",
-                        detail={"provider": self.provider_id, "credential_id": self.credential_id,
-                                "account_id": account.unique_id, "error": type(exc).__name__, "message": str(exc)},
+                        detail={"provider": "paris", "upstream": upstream,
+                                "code": "paris_loans_upstream_failed"},
                     )
                 except Exception:
                     pass
         self.last_loan_errors = errors
         if errors and not rows and len(errors) == 2:
             raise ProviderConfigurationError(
-                "Bibliothèques de Paris : impossible de synchroniser les prêts DILICOM et SYRACUSE: "
-                + " ; ".join(f"{e['upstream']}: {e['error']}" for e in errors)
-            )
+                "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
+            ) from None
         rows = self._decorate(rows, self.provider_id, self.credential_id)
         for loan in rows:
             self._enrich_digital_loan_metadata(loan)
