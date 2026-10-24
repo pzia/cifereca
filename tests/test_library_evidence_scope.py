@@ -60,7 +60,7 @@ class ScopeTests(unittest.TestCase):
         # conflicting-owner evidence and must not be hidden by this guard.
         right = dict(identity_id='PRIVATE_ALICE', entitlement_id='right-a',
                      provider_id='numilog', credential_id='cred-a',
-                     item_id='item-a', state='active')
+                     account_id='borrower-a', item_id='item-a', state='active')
         foreign_same_entitlement = dict(identity_id='PRIVATE_BOB',
                                         entitlement_id='right-a',
                                         provider_id='another',
@@ -68,11 +68,18 @@ class ScopeTests(unittest.TestCase):
         foreign_same_source = dict(identity_id='PRIVATE_BOB',
                                    entitlement_id='right-b',
                                    provider_id='numilog', credential_id='cred-a',
-                                   item_id='item-a')
+                                   account_id='borrower-a', item_id='item-a')
         scoped = scope_evidence(EvidenceSnapshot({
             'entitlements': [right],
             'acquisition_ledger': [
                 foreign_same_entitlement, foreign_same_source,
+                # One credential may have several unrelated borrowers.
+                dict(identity_id='PRIVATE_BOB', entitlement_id='right-c',
+                     provider_id='numilog', credential_id='cred-a',
+                     account_id='borrower-b', item_id='item-a'),
+                dict(identity_id='PRIVATE_BOB', entitlement_id='right-d',
+                     provider_id='numilog', credential_id='cred-a',
+                     account_id=None, item_id='item-a'),
                 dict(identity_id='PRIVATE_BOB', entitlement_id=None,
                      provider_id=None, credential_id=None, item_id=None),
             ],
