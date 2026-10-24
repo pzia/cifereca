@@ -396,31 +396,15 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
     if type(seconds) not in (int, float) or not 0 < seconds <= 60:
         raise ValueError('invalid_comparison_limits')
     result = ReconciliationReport(reasons=set(inventory.reasons) | set(snapshot.reasons))
-    # No ADEPT runtime is contacted by this offline tranche.
+    # No ADEPT runtime is contacted by this offline tranche. The entire
+    # SQLite evidence indexing phase consumes the SAME comparison deadline
+    # as the later per-file joins. Otherwise a huge private snapshot could
+    # spend minutes in preprocessing before the reported 30/60s budget starts.
     tables = snapshot.tables
-    artifacts = defaultdict(list)
-    hashes = defaultdict(list)
-    for ai, row in enumerate(tables.get('artifacts', [])):
-        artifacts[row['artifact_id']].append(row)
-        hashes[(row['sha256'], row['size'])].append((ai, row))
     rights = tables.get('entitlements', [])
-    acquisitions = defaultdict(list)
-    for row in tables.get('acquisition_ledger', []):
-        acquisitions[row['entitlement_id']].append(row)
-    rights_by_placement = defaultdict(list)
-    for ri, right in enumerate(rights):
-        rights_by_placement[(right['identity_id'], right['provider_id'], right['item_id'])].append((ri, right))
-    placements = tables.get('placements', [])
-    by_path = defaultdict(list)
-    for index, row in enumerate(placements):
-        by_path[(row['identity_id'], row['path'])].append((index, row))
-    backup_hashes = defaultdict(list)
-    for bi, row in enumerate(tables.get('backup_items', [])):
-        if row.get('sha256') and row.get('size'):
-            backup_hashes[(row['identity_id'], row['sha256'], row['size'])].append((bi, row))
-    verified = set()
     deadline = time.monotonic() + seconds
     comparisons = 0
+    verified = set()
 
     def in_file_stopped():
         # A single path may have thousands of competing rights/placements.
@@ -435,6 +419,52 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
             result.reasons.add('comparison_budget')
             return True
         return False
+
+    indexed = 0
+
+    def index_stopped():
+        nonlocal indexed
+        indexed += 1
+        # Amortize clock/cancel calls for small libraries, but keep latency
+        # bounded when a large or corrupt SQLite evidence table is indexed.
+        # At a cutoff, the partially built lookup maps are never consulted
+        # for attestations. Every active right remains unverified.
+        if indexed % 128 or not in_file_stopped():
+            return False
+        result.unverified_rights = [
+            i for i, row in enumerate(rights) if row['state'] == 'active'
+        ]
+        return True
+
+    artifacts = defaultdict(list)
+    hashes = defaultdict(list)
+    for ai, row in enumerate(tables.get('artifacts', [])):
+        if index_stopped():
+            return result
+        artifacts[row['artifact_id']].append(row)
+        hashes[(row['sha256'], row['size'])].append((ai, row))
+    acquisitions = defaultdict(list)
+    for row in tables.get('acquisition_ledger', []):
+        if index_stopped():
+            return result
+        acquisitions[row['entitlement_id']].append(row)
+    rights_by_placement = defaultdict(list)
+    for ri, right in enumerate(rights):
+        if index_stopped():
+            return result
+        rights_by_placement[(right['identity_id'], right['provider_id'], right['item_id'])].append((ri, right))
+    placements = tables.get('placements', [])
+    by_path = defaultdict(list)
+    for index, row in enumerate(placements):
+        if index_stopped():
+            return result
+        by_path[(row['identity_id'], row['path'])].append((index, row))
+    backup_hashes = defaultdict(list)
+    for bi, row in enumerate(tables.get('backup_items', [])):
+        if index_stopped():
+            return result
+        if row.get('sha256') and row.get('size'):
+            backup_hashes[(row['identity_id'], row['sha256'], row['size'])].append((bi, row))
 
     for fi, observation in enumerate(inventory.files):
         if cancelled():
