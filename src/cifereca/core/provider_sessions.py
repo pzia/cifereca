@@ -553,7 +553,7 @@ def _publish_connection_success(
         pass
 
 
-def connect_configured(self, *, logger) -> dict[str, Any]:
+def connect_configured(self, *, logger, caller_category: str = "other") -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
 
     Failures are isolated per provider account: one unavailable source does
@@ -617,6 +617,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         attempt = new_attempt(
             self.registry, provider_id, diagnostics=self.diagnostics,
             source_kind="singleton_public",
+            caller_category=caller_category,
         )
         session = None
         invoked = False
@@ -683,6 +684,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             self.registry, provider_id, diagnostics=self.diagnostics,
             identity_id=identity_id, credential_id=credential_id,
             source_kind="configured",
+            caller_category=caller_category,
         )
         logger.info("TRACE provider prepare kind=configured")
         plugin = self.registry.maybe_get(provider_id)
