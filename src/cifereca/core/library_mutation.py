@@ -129,6 +129,20 @@ def catalog_index_path(self, path: Path, *, title: str | None=None, item_id: str
     )
 
 
+def _positive_loan_identity(loan: Loan) -> tuple[tuple, tuple]:
+    """One upstream loan key and the identity-sensitive book/expiry projection.
+
+    A duplicated upstream loan ID that points to two editions, lifetimes or
+    branches is ambiguous, not two separate owned books or a last-row-wins
+    update. URLs, ADEPT profiles and untrusted raw JSON are NOT identity keys.
+    """
+    key = (loan.source_provider, loan.source_credential,
+           loan.source_account_id, loan.id)
+    signature = (str(loan.record_id or loan.id), loan.provider, loan.medium,
+                 loan.due_at, loan.document_type, loan.title)
+    return key, signature
+
+
 def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool=False,
                           complete_scopes: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]] | None = None,
                           realize_expired: bool = True) -> dict[str, int]:
@@ -136,6 +150,7 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
     # Build and validate the complete positive batch before touching SQLite.
     # A conflict in a later loan must not commit earlier positive rows.
     pending: list[Entitlement] = []
+    seen: dict[tuple, tuple] = {}
     for loan in loans:
         if loan.medium != "digital":
             continue
@@ -149,6 +164,16 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
                 or type(loan.identity_id) is not str
                 or loan.identity_id != identity_id):
             raise ValueError("loan_identity_scope_mismatch")
+        if type(loan.id) is not str or not loan.id:
+            raise ValueError("invalid_positive_loan")
+        key, signature = _positive_loan_identity(loan)
+        if key in seen:
+            if seen[key] != signature:
+                raise ValueError("loan_duplicate_ambiguous")
+            # A provider can repeat the SAME observation in one page or
+            # across pages: keep one right and one acquisition decision.
+            continue
+        seen[key] = signature
         source = SourceIdentity(
             provider_id=loan.source_provider,
             credential_id=loan.source_credential,
