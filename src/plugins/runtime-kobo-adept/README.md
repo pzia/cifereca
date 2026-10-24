@@ -24,3 +24,28 @@ rend que statut, cause fermée et compteurs. Une lecture indisponible n’est ja
 présentée comme zéro prêt. Titres, chemins, identifiants de prêt/profil restent
 exclus des diagnostics. Un prêt suivi par le CLI n’atteste pas à lui seul un
 achat, un droit fournisseur ou une association à un fichier local.
+
+
+### Mesures de portée des lectures (#2845, 1.2.33)
+
+Les diagnostics des lectures `contract`, `capabilities`, `profile list` et
+`loans list` incluent une référence `read_scope_ref` opaque de 27 caractères.
+Elle compare uniquement la configuration de commande et la portée demandée,
+au sein d'une même instance du runtime : portée globale, profil par défaut
+(non résolu), ou nom de profil explicite. Le nom, la commande et les arguments
+ne sont pas publiés. La référence utilise un HMAC avec un secret aléatoire
+privé de l'instance ; elle change à chaque instance/redémarrage et lorsque
+la configuration de commande ou le profil change. Ce secret n'est ni journalisé
+ni persisté. Si la mesure échoue, elle est omise sans empêcher la lecture.
+
+La référence accompagne aussi un échec de lecture ; elle ne conserve aucune
+réponse réussie et ne remplace pas les causes d'erreur. Aucun identifiant de
+portée n'est produit pour les mutations, payloads, commandes inconnues ou
+l'inventaire isolé de réconciliation qui n'émet pas de diagnostics.
+
+Une même référence n'atteste **ni** l'identité Cifereca, **ni** le compte distant,
+**ni** l'identité binaire/version réelle de l'exécutable, **ni** la fraîcheur
+ou l'exhaustivité de l'inventaire. Elle n'autorise aucun cache/coalescence et
+ne supprime aucun rafraîchissement explicite. Les lectures restent exécutées
+à chaque appel. La classification des consommateurs non annotés reste
+`unattributed` ; la matrice des onze appels terrain reste à qualifier.
