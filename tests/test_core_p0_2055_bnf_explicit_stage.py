@@ -180,11 +180,20 @@ def test_source_rebound_during_token_get_disposes_candidate_without_rights(
         return path, url
 
     monkeypatch.setattr(session, "download_digital", change_during_get)
-    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-        service.stage_bnf_loan_acsm(
-            loan, confirmed=True, expected_identity_id="default")
-    assert len(downloaded) == 1
-    assert len(staged_paths) == 1
-    assert not staged_paths[0].exists()
-    assert service.storage.entitlements() == before_rights
-    assert service.storage.acquisitions() == before_acquisitions
+    original_identity = service.current_identity
+    original_accounts = service.accounts
+    session_key = service._session_key("bnf-pret", account.credential_id)
+    try:
+        with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+            service.stage_bnf_loan_acsm(
+                loan, confirmed=True, expected_identity_id="default")
+        assert len(downloaded) == 1
+        assert len(staged_paths) == 1
+        assert not staged_paths[0].exists()
+        assert service.storage.entitlements() == before_rights
+        assert service.storage.acquisitions() == before_acquisitions
+    finally:
+        # Restore the fixture's connection before LibraryService.close().
+        service.current_identity = original_identity
+        service.accounts = original_accounts
+        service._sessions[session_key] = session
