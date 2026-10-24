@@ -25,10 +25,11 @@ def test_corrupt_or_ambiguous_json_fails_closed_without_private_error(rig, raw):
         with engine._transaction(service.storage, False) as db:
             engine._records(db)
     assert str(caught.value) == "declaration_store_invalid"
-    # Preview itself may return a closed failure result; never authorize write.
-    result = call(rig)
-    assert result.status not in {"preview", "declared", "already_declared"}
+    # The public preview also fails with a closed code; no confirmation token.
+    with pytest.raises(engine.DeclarationRejected) as public:
+        call(rig)
+    assert str(public.value) == "declaration_store_invalid"
     assert rows(service, "entitlements") == rights
     assert rows(service, "placements") == placements
     assert book.read_bytes() == before
-    assert "PRIVATE_SECRET" not in repr(result)
+    assert "PRIVATE_SECRET" not in str(public.value)
