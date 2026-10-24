@@ -193,6 +193,23 @@ def _evidence(db, *, identity_id, credential_id, account_id, item_id,
         ("status", "complete"),
     )) and type(acquisition.get("artifact_id")) is str
         and bool(acquisition["artifact_id"]), "acquisition_unproven")
+    # The placement stores identity/provider/edition, never the purchasing
+    # account. A surviving receipt under a *different* credential (or a
+    # legacy receipt with unknown local owner) is contradictory evidence even
+    # if its entitlement was deleted. The account-filtered selected receipt
+    # query above would otherwise miss it and incorrectly attest this buyer.
+    # Check the entire identity-scoped edition, including ownerless history.
+    edition_receipts = _rows(
+        db, "acquisition_ledger",
+        "provider_id='numilog' AND item_id=? AND "
+        "(identity_id=? OR identity_id IS NULL OR identity_id='')",
+        (item_id, identity_id),
+    )
+    _require(
+        len(edition_receipts) == 1
+        and edition_receipts[0].get("acquisition_id") == acquisition["acquisition_id"],
+        "acquisition_ambiguous_or_missing",
+    )
     artifacts = _rows(db, "artifacts", "artifact_id=?",
                       (acquisition["artifact_id"],))
     _require(len(artifacts) == 1
