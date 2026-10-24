@@ -72,6 +72,10 @@ class BaenFakeApp:
 
     def list_books(self, h: BaseHTTPRequestHandler, args: dict) -> None:
         q = str((args.get("q") or [""])[0]).casefold().strip()
+        if q == "auth-required":
+            return self.send(h, HTTPStatus.UNAUTHORIZED, "text/plain", b"401 simulated")
+        if q == "access-denied":
+            return self.send(h, HTTPStatus.FORBIDDEN, "text/plain", b"403 simulated")
         if q == "rate-limit":
             return self.send(h, HTTPStatus.TOO_MANY_REQUESTS, "text/plain", b"429 simulated")
         if q == "down":
