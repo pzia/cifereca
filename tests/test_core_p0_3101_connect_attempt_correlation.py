@@ -287,3 +287,17 @@ def test_disabled_diagnostics_does_not_suppress_canonical_log(caplog):
         "requested", "terminal",
     ]
     assert all("task_ref" not in log_fields(message) for message in body)
+
+
+@pytest.mark.parametrize("singleton", [False, True])
+def test_constructor_failure_emits_terminal_without_false_connect_invocation(singleton):
+    service, session, plugin = _rig(singleton=singleton)
+    plugin.create_session.side_effect = RuntimeError(PRIVATE_URL)
+    provider_sessions.connect_configured(service, logger=logging.getLogger("cifereca"))
+    rows = _rows(service.diagnostics)
+    assert [row["phase"] for row in rows] == ["requested", "terminal"]
+    assert rows[-1]["status"] == "failed"
+    assert rows[-1]["reason_code"] == "session_invalid"
+    assert all(row["network_auth"] == "unknown" for row in rows)
+    assert PRIVATE_URL not in repr(rows)
+    session.connect.assert_not_called()
