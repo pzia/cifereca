@@ -685,6 +685,8 @@ class ParisClient:
         rejected_scheme = 0
         malformed_hrefs = 0
         external_hrefs = 0
+        rejected_candidate_origin = 0
+        expected_host = urlparse(BASE_URL).hostname
         for href in links.hrefs:
             decoded = href
             for _ in range(2):
@@ -704,6 +706,25 @@ class ParisClient:
             assaredirect_hrefs += int(path_known)
             loan_book_hrefs += int(loan_marker)
             if path_known and loan_marker:
+                # A lookalike link is not a valid Paris borrow candidate.
+                # Validate both the decoded shape used for discovery and the
+                # ORIGINAL href passed to urljoin by the redirect resolver.
+                # Never query either URL merely to verify its provenance.
+                try:
+                    original_target = urlparse(urljoin(BASE_URL + "/", href))
+                    decoded_target = urlparse(urljoin(BASE_URL + "/", decoded))
+                    valid_origin = all(
+                        target.scheme == "https"
+                        and target.hostname == expected_host
+                        and target.username is None and target.password is None
+                        and target.port in (None, 443)
+                        for target in (original_target, decoded_target)
+                    )
+                except ValueError:
+                    valid_origin = False
+                if not valid_origin:
+                    rejected_candidate_origin += 1
+                    continue
                 if href not in candidates:
                     candidates.append(href)
         selected_site = (
@@ -717,13 +738,14 @@ class ParisClient:
             "assaredirect_hrefs=%s loan_book_hrefs=%s "
             "dom_assaredirect=%s dom_loan_book=%s "
             "rejected_scheme=%s malformed_hrefs=%s external_hrefs=%s "
-            "candidate_site=%s",
+            "rejected_candidate_origin=%s candidate_site=%s",
             bool(html_view), len(html_view), len(links.hrefs), len(candidates),
             links.forms, links.post_forms, links.form_actions,
             assaredirect_hrefs, loan_book_hrefs,
             "assaredirect.ashx" in html_view.casefold(),
             "loan-book.ashx" in html_view.casefold(),
-            rejected_scheme, malformed_hrefs, external_hrefs, selected_site,
+            rejected_scheme, malformed_hrefs, external_hrefs,
+            rejected_candidate_origin, selected_site,
         )
         if len(candidates)==1:return candidates[0]
         reason='ambiguous_link' if candidates else 'missing_link'
