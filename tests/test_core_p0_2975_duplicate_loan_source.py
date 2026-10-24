@@ -138,3 +138,90 @@ def test_same_loan_id_of_other_borrower_is_not_ambiguous(tmp_path):
         assert {row["account_id"] for row in _rights(service)} == {"reader", "paired"}
     finally:
         service.close()
+
+
+def test_later_refresh_cannot_create_second_edition_for_same_upstream_loan(tmp_path):
+    service = _service(tmp_path)
+    try:
+        first = _loan("same")
+        library_mutation._persist_active_loans(
+            service, "default", [first], realize_expired=False,
+        )
+        before = service.storage.entitlements()
+        other_edition = replace(first, record_id="other-edition",
+                                title="PRIVATE alternate edition")
+        with pytest.raises(ValueError, match="^loan_duplicate_ambiguous$"):
+            library_mutation._persist_active_loans(
+                service, "default", [other_edition], realize_expired=False,
+            )
+        assert service.storage.entitlements() == before
+        assert not service.storage.acquisitions()
+        assert not service.storage.placements()
+    finally:
+        service.close()
+
+
+def test_later_foreign_profile_cannot_register_same_loan_as_another_edition(tmp_path):
+    service = _service(tmp_path)
+    try:
+        other_profile = _loan("shared", identity="alex")
+        library_mutation._persist_active_loans(
+            service, "alex", [other_profile], realize_expired=False,
+        )
+        before = service.storage.entitlements()
+        ours = replace(other_profile, identity_id="default",
+                       record_id="different-edition")
+        with pytest.raises(ValueError, match="^loan_duplicate_ambiguous$"):
+            library_mutation._persist_active_loans(
+                service, "default", [ours], realize_expired=False,
+            )
+        assert service.storage.entitlements() == before
+        assert before[0]["identity_id"] == "alex"
+    finally:
+        service.close()
+
+
+def test_later_conflict_rolls_back_earlier_valid_refresh_in_one_transaction(tmp_path):
+    service = _service(tmp_path)
+    try:
+        original = _loan("existing")
+        reused = _loan("loan-id-reused")
+        library_mutation._persist_active_loans(
+            service, "default", [original, reused], realize_expired=False,
+        )
+        before = service.storage.entitlements()
+        refreshed = replace(original, title="PRIVATE should rollback")
+        contradictory = replace(reused, record_id="other-edition")
+        with pytest.raises(ValueError, match="^loan_duplicate_ambiguous$"):
+            library_mutation._persist_active_loans(
+                service, "default", [refreshed, contradictory],
+                realize_expired=False,
+            )
+        assert service.storage.entitlements() == before
+    finally:
+        service.close()
+
+
+def test_low_level_storage_writer_never_accepts_two_edition_ids_for_one_loan(tmp_path):
+    from cifereca.acquisition_engine import Entitlement, SourceIdentity
+
+    service = _service(tmp_path)
+    try:
+        source = SourceIdentity("paris", "cred", "reader", "default")
+        one = Entitlement(
+            source=source, item_id="edition-A", entitlement_type="loan",
+            state="active", loan_id="loan-shared",
+        )
+        other = Entitlement(
+            source=source, item_id="edition-B", entitlement_type="loan",
+            state="active", loan_id="loan-shared",
+        )
+        with pytest.raises(ValueError, match="^loan_duplicate_ambiguous$"):
+            service.storage.entitlement_put_positive_loans((one, other))
+        assert service.storage.entitlements() == []
+        assert service.storage.entitlement_put_positive_loans((one, one)) == (
+            one.entitlement_id,
+        )
+        assert len(service.storage.entitlements()) == 1
+    finally:
+        service.close()
