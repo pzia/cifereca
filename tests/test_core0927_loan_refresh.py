@@ -72,7 +72,8 @@ def test_refresh_clears_detail_when_provider_no_longer_lists_loan():
     assert detail.shown == []
     assert len(detail.empty_calls) == 1
     title, message = detail.empty_calls[0]
-    assert "absent" in title.lower()
+    assert "non retrouvé" in title.lower()
+    assert "n’est pas confirmée" in message
     assert "fichiers locaux" in message.lower()
 
 
@@ -92,3 +93,20 @@ def test_refresh_matches_full_provider_loan_identity_not_title_only():
 
     assert host._displayed_loan is fresh
     assert detail.shown == [fresh]
+
+
+def test_refresh_zero_rows_explains_uncertainty_without_claiming_no_provider_loans():
+    toasts = []
+    host = SimpleNamespace(
+        _displayed_loan=None,
+        _populate_loans=lambda rows: None,
+        loan_page=SimpleNamespace(detail=_Detail()),
+        toast=lambda message: toasts.append(message),
+    )
+
+    _method("_loans_refreshed")(host, [])
+
+    assert toasts == [
+        "Aucun emprunt reçu · Vérifiez l’identité, les sources et les filtres"
+    ]
+    assert not any("0 emprunt(s) actualisé(s)" in item for item in toasts)

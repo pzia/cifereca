@@ -161,8 +161,17 @@ def _loans_refreshed(self, rows):
                     (displayed.id,displayed.source_provider,displayed.source_credential,displayed.source_account_id)),None)
         self._displayed_loan=fresh
         if fresh:self.loan_page.detail.show_loan(fresh)
-        else:self.loan_page.detail.empty("Prêt absent du catalogue", "La liste des prêts a été actualisée ; les fichiers locaux sont conservés.")
-    self.toast(f"{len(rows)} emprunt(s) actualisé(s)")
+        else:self.loan_page.detail.empty(
+            "Prêt non retrouvé dans cette actualisation",
+            "La réponse peut être vide ou partielle ; la disparition du prêt "
+            "chez le fournisseur n’est pas confirmée. Les fichiers locaux sont conservés.",
+        )
+    if rows:
+        self.toast(f"{len(rows)} emprunt(s) actualisé(s)")
+    else:
+        # A zero-row response is not proof that a library has zero loans:
+        # an identity mismatch or a provider-side partial response is possible.
+        self.toast("Aucun emprunt reçu · Vérifiez l’identité, les sources et les filtres")
 
 
 def confirm_renew(self, loan: Loan, control: Gtk.Widget) -> None:
