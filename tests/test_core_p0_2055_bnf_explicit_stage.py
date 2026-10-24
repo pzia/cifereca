@@ -109,3 +109,47 @@ def test_identity_switch_before_confirmation_refuses_without_network(connected_c
     with pytest.raises(ProviderConfigurationError, match="bnf_loan_scope_unproven"):
         service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert not downloaded
+
+
+@pytest.mark.parametrize("payload", [
+    (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" '
+     b'fulfillmentType="buy"/>'),
+    (b'<!DOCTYPE token [<!ENTITY hostile "private">]>'
+     b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" '
+     b'fulfillmentType="loan"/>'),
+    b'<fulfillmentToken fulfillmentType="loan"/>',
+])
+def test_core_independently_refuses_invalid_loan_claim_even_if_provider_returns_file(
+    connected_core, tmp_path, monkeypatch, payload,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    original_rights = service.storage.entitlements()
+    original_acquisitions = service.storage.acquisitions()
+
+    def unverified_download(_loan, _account, target_dir, *, explicit_user_action):
+        assert explicit_user_action is True
+        target_dir.mkdir(parents=True, exist_ok=True)
+        staged = target_dir / "unverified.acsm"
+        staged.write_bytes(payload)
+        return staged, ""
+
+    monkeypatch.setattr(session, "download_digital", unverified_download)
+    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_token_invalid$"):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert not downloaded
+    assert service.storage.entitlements() == original_rights
+    assert service.storage.acquisitions() == original_acquisitions
+
+
+def test_core_refuses_fallback_to_other_credential_session_before_network(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    monkeypatch.setattr(session, "credential_id", "another-credential")
+    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert not downloaded
