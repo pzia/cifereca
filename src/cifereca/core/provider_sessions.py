@@ -545,6 +545,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
     must be available for the current account-oriented GUI. Anonymous
     catalogue-only providers will be included once their plugin is ready.
     """
+    from .diagnostic_provider_connection_attempt import new_attempt
     started_all = time.monotonic()
     logger.info("TRACE connect-configured begin")
     self.disconnect_configured()
@@ -601,7 +602,12 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         )
         key = self._session_key(provider_id, credential_id)
         public_started = time.monotonic()
+        attempt = new_attempt(
+            self.registry, provider_id, diagnostics=self.diagnostics,
+            source_kind="singleton_public",
+        )
         try:
+            attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
             session.connect()
             # Only an affirmative session state attests a successful connection.
             # connect() returning normally is not proof (notably for SSO).
@@ -609,6 +615,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 raise ProviderConfigurationError("provider_not_connected")
             self._sessions[key] = session
             connected.append(key)
+            attempt.emit(self.diagnostics, "terminal", "success", "connected")
             _publish_connection_success(
                 self.diagnostics, self.registry, provider_id,
                 singleton=True, account_count=0,
@@ -619,6 +626,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
             )
         except Exception:
+            attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
             try:
                 session.close()
             except Exception:
@@ -643,9 +651,15 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         if not provider_id or not credential_id:
             continue
         item_started = time.monotonic()
+        attempt = new_attempt(
+            self.registry, provider_id, diagnostics=self.diagnostics,
+            identity_id=identity_id, credential_id=credential_id,
+            source_kind="configured",
+        )
         logger.info("TRACE provider prepare kind=configured")
         plugin = self.registry.maybe_get(provider_id)
         if plugin is None:
+            attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_missing")
             errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
             missing = public_connection_failure(
                 self.registry, provider_id, code=MISSING_PROVIDER_CODE,
@@ -658,11 +672,13 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             continue
         if plugin.descriptor.state != "ready":
             # Skeletons are visible to the GUI/docs but never perform I/O.
+            attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_not_ready")
             continue
         if getattr(plugin.descriptor, "interactive_authentication", False):
             # A configured SSO provider cannot be opened, authenticated or
             # declared connected by the automatic startup connection sweep.
             # Its explicit UI flow owns the consent and authenticated state.
+            attempt.emit(self.diagnostics, "terminal", "skipped", "interactive_auth_required")
             continue
         session = plugin.create_session(
             credential_id=credential_id,
@@ -674,6 +690,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         key = self._session_key(provider_id, credential_id)
         try:
             logger.info("TRACE provider connect begin kind=configured")
+            attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
             accounts = session.connect()
             if getattr(session, "connected", None) is not True:
                 raise ProviderConfigurationError("provider_not_connected")
@@ -694,6 +711,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 })
             all_accounts.extend(accounts)
             connected.append(key)
+            attempt.emit(self.diagnostics, "terminal", "success", "connected")
             _publish_connection_success(
                 self.diagnostics, self.registry, provider_id,
                 singleton=False, account_count=len(accounts),
@@ -704,6 +722,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 detail={"code": "provider_connected", "accounts": len(accounts)},
             )
         except Exception:
+            attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
             # Never invoke logger.exception: the traceback may include signed
             # endpoints, plugin credentials, response bodies and local paths.
             public_failure = public_connection_failure(self.registry, provider_id)
