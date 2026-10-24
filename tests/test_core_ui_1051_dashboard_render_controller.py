@@ -505,3 +505,104 @@ def test_dashboard_invalid_counts_never_leak_private_data_or_create_fake_ownersh
     assert "— droits d’achat distants · fichier local non présumé" in labels
     assert "SECRET" not in repr(labels)
     assert "-7" not in repr(labels)
+
+
+def test_p1_1867_store_only_dashboard_distinguishes_ownership_catalogue_and_loans():
+    card = _card(
+        providers=["kobo", "numilog"],
+        statistics={
+            "local_books": 0, "known_loans": None,
+            "loan_sources_observed": 0, "remote_owned_rights": 5,
+        },
+        sources=[
+            {"provider_id": "kobo", "label": "Kobo", "connected": True},
+            {"provider_id": "numilog", "label": "Numilog", "connected": True},
+        ],
+    )
+    window, events, _, _, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "0 livres locaux · aucune source de prêt configurée" in labels
+    assert "5 droits d’achat distants · fichier local non présumé" in labels
+    assert "Sources : Kobo (Mes achats / Catalogue), Numilog (Mes achats)" in labels
+    assert events == ["statistics", "snapshot"]
+
+
+def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
+    card = _card(
+        providers=["numilog"],
+        sources=[
+            {"provider_id": "numilog", "label": "Numilog", "connected": True},
+            {"provider_id": "numilog-catalog", "label": "Numilog", "connected": False},
+        ],
+        statistics={"local_books": 2, "known_loans": 0,
+                    "loan_sources_observed": 0, "remote_owned_rights": 1},
+    )
+    window, _, _, _, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "2 livres locaux · aucune source de prêt configurée" in labels
+    assert "Sources : Numilog (Mes achats), Numilog (Catalogue public) (recherche indisponible)" in labels
+
+
+def test_p1_1867_loan_evidence_or_unknown_source_keeps_existing_count():
+    cards = [
+        _card(providers=["numilog"], statistics={
+            "local_books": 1, "known_loans": 0,
+            "loan_sources_observed": 1,
+        }),
+        _card(providers=["paris", "numilog"], statistics={
+            "local_books": 1, "known_loans": 3,
+            "loan_sources_observed": 1,
+        }),
+        _card(providers=["unrecognized-provider"], statistics={
+            "local_books": 1, "known_loans": None,
+            "loan_sources_observed": 0,
+        }),
+        _card(providers=["kobo"], capabilities=[
+            {"id": "loans", "label": "Emprunts"}
+        ], statistics={"local_books": 1, "known_loans": None}),
+        _card(statistics={"local_books": 1, "known_loans": None}),
+    ]
+    window, _, _, _, render = _window(cards)
+    render()
+    labels = [_descendant_labels(node) for node in window.dashboard_cards.children]
+    assert "1 livres locaux · 0 prêts de bibliothèque connus" in labels[0]
+    assert "1 livres locaux · 3 prêts de bibliothèque connus" in labels[1]
+    assert all("1 livres locaux · — prêts de bibliothèque connus" in row
+               for row in labels[2:])
+    assert not any("aucune source de prêt configurée" in str(row) for row in labels)
+
+
+def test_p1_1867_no_implicit_provider_call_for_unrecognized_or_malformed_scope():
+    cards = [
+        _card(providers=["kobo", "PRIVATE_UNKNOWN"],
+              statistics={"local_books": 0, "known_loans": None}),
+        _card(providers="kobo",
+              statistics={"local_books": 0, "known_loans": None}),
+        _card(providers=["numilog"], statistics={
+            "local_books": 0, "known_loans": 0, "loan_sources_observed": 0
+        }),
+    ]
+    window, events, _, _, render = _window(cards)
+    render()
+    labels = [_descendant_labels(node) for node in window.dashboard_cards.children]
+    assert "0 livres locaux · — prêts de bibliothèque connus" in labels[0]
+    assert "0 livres locaux · — prêts de bibliothèque connus" in labels[1]
+    assert "0 livres locaux · aucune source de prêt configurée" in labels[2]
+    assert events == ["statistics", "snapshot"]
+
+def test_p1_1867_catalogue_descriptor_with_scope_already_named_not_duplicated():
+    card = _card(
+        providers=["numilog"],
+        statistics={"local_books": 0, "known_loans": None},
+        sources=[{
+            "provider_id": "numilog-catalog",
+            "label": "Numilog — Catalogue public", "connected": True,
+        }],
+    )
+    window, _, _, _, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "Sources : Numilog — Catalogue public" in labels
+    assert "Catalogue public (Catalogue public)" not in str(labels)
