@@ -328,6 +328,14 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
             # Revocation withdraws a statement only. A removed right or a
             # missing/replaced book must not trap an obsolete declaration.
             context = _context(db, scope) if revoke is None else {}
+            # A disabled supplier connection is historical evidence only.
+            # It may be reviewed or its declaration withdrawn, but cannot
+            # authorize a NEW "current" user statement against a stale right.
+            # The guard is repeated under the same SQLite writer transaction
+            # during confirmation; no stale preview can bypass it.
+            if revoke is None:
+                _require(context['connection']['enabled'] == 1,
+                         'source_connection_disabled')
             records = _records(db)
             placements = _collisions(db, scope, observation, records) if revoke is None else []
             if revoke is None:
