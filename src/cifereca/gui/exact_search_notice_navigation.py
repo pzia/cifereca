@@ -27,9 +27,13 @@ def loaded_notice_key(
     """Return only an unambiguous, visible row key, never an offer/rights."""
     if getattr(window, "_closed", False) or getattr(window, "_search_mode", "") != "global":
         return None
-    fields = (provider, credential, record_id, docbase, source_collection, identity_id)
+    fields = (provider, credential, record_id, docbase, identity_id)
     if any(type(value) is not str or not 1 <= len(value) <= 512
            for value in fields):
+        return None
+    # SearchResult.source_collection is optional. Its absence is an exact
+    # coordinate (normalized to ""), not permission to match any collection.
+    if type(source_collection) is not str or len(source_collection) > 512:
         return None
     context = _current_context(window)
     if (context is None or context[-1] != identity_id

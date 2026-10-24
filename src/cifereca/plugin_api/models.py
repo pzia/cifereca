@@ -1042,6 +1042,8 @@ class UiLoadedSearchNoticeHost(UiPageHost, Protocol):
     Never triggers a fresh Search request or changes identity. A user click
     selecting the row uses the normal Search detail and holdings behavior.
     Returns False on stale, missing, disabled, hidden or ambiguous notices.
+    An absent optional source_collection is passed as "" and matches only
+    a row whose collection is absent or empty, never an arbitrary collection.
     """
 
     def can_open_loaded_search_notice(
