@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -44,7 +45,9 @@ def test_connection_submit_uses_existing_provider_priority_and_no_implicit_sync(
     ) is False
     assert len(submissions) == 1
     args, kw = submissions[0]
-    assert args[1] == window.service.connect_configured
+    assert isinstance(args[1], partial)
+    assert args[1].func == window.service.connect_configured
+    assert args[1].keywords == {"caller_category": "startup/connect_configured"}
     assert kw["priority"] == TaskPriority.PROVIDER_SYNC
     assert kw["kind"] == "provider-connect"
     assert posted == []
