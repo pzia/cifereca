@@ -674,14 +674,25 @@ class GutenbergSession(ProviderSession):
                     if (len(declared) <= 9 and declared.isascii() and declared.isdecimal()
                             and int(declared) > MAX_SEARCH_OPDS_BYTES):
                         raise _unavailable_opds_xml() from None
-                    chunks = []
-                    total = 0
-                    for chunk in response.iter_raw(chunk_size=65536):
-                        total += len(chunk)
-                        if total > MAX_SEARCH_OPDS_BYTES:
+                    if response.is_stream_consumed:
+                        # MockTransport may return a fully buffered Response
+                        # for offline fixtures. It is already closed and has
+                        # no raw stream left; recheck its bytes before XML.
+                        # Actual socket responses use the bounded raw loop.
+                        if not response.is_closed:
                             raise _unavailable_opds_xml() from None
-                        chunks.append(chunk)
-                    content = b"".join(chunks)
+                        content = response.content
+                        if len(content) > MAX_SEARCH_OPDS_BYTES:
+                            raise _unavailable_opds_xml() from None
+                    else:
+                        chunks = []
+                        total = 0
+                        for chunk in response.iter_raw(chunk_size=65536):
+                            total += len(chunk)
+                            if total > MAX_SEARCH_OPDS_BYTES:
+                                raise _unavailable_opds_xml() from None
+                            chunks.append(chunk)
+                        content = b"".join(chunks)
                     response_url = str(response.url)
             except httpx.HTTPError as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
