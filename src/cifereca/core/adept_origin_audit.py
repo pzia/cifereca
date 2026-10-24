@@ -28,12 +28,21 @@ def _artifact_state(metadata: Mapping[str, Any], artifact_inspector: Callable[[P
         if not path.is_file():
             return "missing"
         inspection = artifact_inspector(path)
-        if not inspection.valid:
+        # A malformed or partially available inspector result cannot attest
+        # an unprotected, usable artifact. Treat unknown as unknown rather
+        # than relying on truthiness or a missing attribute.
+        valid = inspection.valid
+        protected = inspection.protected
+        if type(valid) is not bool or type(protected) is not bool:
+            return "inspection_unavailable"
+        if not valid:
             return "invalid"
-        if inspection.protected is True:
+        if protected:
             return "protected"
         return "usable"
-    except (OSError, ValueError):
+    except Exception:
+        # A third-party inspector may fail with a non-I/O exception; this
+        # read-only audit must remain available without leaking its message.
         return "inspection_unavailable"
 
 
