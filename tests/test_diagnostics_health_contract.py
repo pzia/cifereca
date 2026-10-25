@@ -83,7 +83,7 @@ def test_diagnostics_check_contract_is_structural():
     assert check_service_contract("diagnostics.check", CheckProvider()).ok
 
 
-def test_diagnostics_broker_aggregates_and_redacts_plugin_checks():
+def test_diagnostics_broker_aggregates_original_plugin_checks():
     rows = DiagnosticsBrokerImpl(Service()).active_checks()
 
     source = next(row for row in rows if row.message == "Source Paris Alice")
@@ -94,10 +94,37 @@ def test_diagnostics_broker_aggregates_and_redacts_plugin_checks():
     assert providers.detail["count"] == 2
 
     plugin = next(row for row in rows if row.check_id == "runtime.test")
-    assert plugin.detail["authorization"] == "<redacted>"
-    assert plugin.detail["url"] == "https://example.test/<redacted>"
+    assert plugin.detail["authorization"] == "Bearer secret-value"
+    assert plugin.detail["url"] == "https://example.test/download?token=secret"
     assert plugin.detail["resolved_executable"] is True
 
     failed = next(row for row in rows if row.component == "diagnostics.fail")
     assert failed.status == "error"
     assert failed.detail == {"code": "diagnostic_check_failed"}
+
+
+def test_diagnostics_broker_preserves_plugin_check_messages_and_ids():
+    service = Service()
+
+    class RawCheck:
+        def checks(self):
+            return (HealthCheckResult(
+                "https://example.test/LOAN/ABC",
+                "login=reader@example.test",
+                "warning",
+                "password=VISIBLE token=STILL_VISIBLE",
+                {"path": "/home/reader/books/loan.epub", "title": "A Book"},
+            ),)
+
+    class RawManager(Manager):
+        def services(self, category):
+            if category == "diagnostics.check":
+                return (SimpleNamespace(plugin_id="diagnostics.raw", service=RawCheck()),)
+            return super().services(category)
+
+    service.plugin_manager = RawManager()
+    row = next(x for x in DiagnosticsBrokerImpl(service).active_checks()
+               if x.check_id == "https://example.test/LOAN/ABC")
+    assert row.component == "login=reader@example.test"
+    assert row.message == "password=VISIBLE token=STILL_VISIBLE"
+    assert row.detail == {"path": "/home/reader/books/loan.epub", "title": "A Book"}
