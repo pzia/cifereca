@@ -184,7 +184,9 @@ def _render_search_results(self) -> int:
         # for this source, including malformed remote flags.
         direct = (
             kobo_download_ready if item.source_provider == "kobo"
-            else False if stale_known or item.source_provider == "numilog-catalog"
+            else False if (stale_known or item.source_provider == "numilog-catalog"
+                           or (item.source_provider == "numilog"
+                               and result_row(item)["state"] != "remote_owned"))
             else self.service.can_direct_download(item)
         )
         callback = None
