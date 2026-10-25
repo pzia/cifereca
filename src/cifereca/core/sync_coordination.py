@@ -123,22 +123,6 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             raise ProviderConfigurationError("loan_source_scope_changed")
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
-        if snapshot is not None:
-            # Publish the same cache payload as the legacy reader, but only
-            # after the Core rechecks its registered session/account epoch.
-            # The snapshot is *positive* evidence, never a negative diff.
-            from dataclasses import asdict
-            from ..services import _loan_cache_key
-            serial = []
-            for loan in loans:
-                item = asdict(loan)
-                item["raw"] = {}
-                serial.append(item)
-            self.storage.cache_put(
-                "account", _loan_cache_key(account), serial,
-                int(self.config.get("cache.dashboard_seconds", 300)),
-            )
-            self._record_loan_statistics(account, loans)
         # An explicit source refresh has the SAME positive-loan semantics as
         # opening sync. Never infer absence, close loans missing from an
         # empty/partial list, expire another account's loans or acquire EPUBs.
@@ -149,6 +133,10 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                     self, account.identity_id, loans,
                     reconcile_missing=False, realize_expired=False,
                 )
+        if snapshot is not None:
+            # A typed read is not a committed observation if rights-mirroring
+            # rejected it. Never poison subsequent cache reads with that batch.
+            _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
         # Use the same provider partial-inventory signal as opening sync.
         # BnF HTML observations are deliberately non-exhaustive even when
@@ -446,6 +434,62 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
     return True
 
 
+def _registered_typed_loan_scope_current(
+    self, account: Account, session: Any, scope: tuple[Any, ...],
+) -> bool:
+    """Revalidate the Core owner/epoch in addition to the provider envelope.
+
+    A live session's credential/account can be replaced without closing the
+    old Python object. The provider adapter cannot see the Core registry.
+    """
+    try:
+        if (type(account) is not Account or (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+            self._account_context_epoch,
+        ) != scope):
+            return False
+        matching = [
+            row for row in self.accounts
+            if type(row) is Account and (
+                row.identity_id, row.provider_id,
+                row.credential_id, row.unique_id,
+            ) == scope[:4]
+        ]
+        return bool(
+            len(matching) == 1 and matching[0] is account
+            and self.identity_by_id(account.identity_id) is not None
+            and self._sessions.get(self._session_key(
+                account.provider_id, account.credential_id,
+            )) is session
+            and getattr(session, "connected", None) is True
+            and self.sync_source_enabled(account)
+        )
+    except Exception:
+        return False
+
+
+def _cache_validated_typed_loan_observation(
+    self, account: Account, loans: list[Loan],
+) -> None:
+    """Match legacy positive caching after successful rights persistence.
+
+    No remote payload is retained: raw loan evidence remains transient.
+    """
+    from dataclasses import asdict
+    from ..services import _loan_cache_key
+    rows = []
+    for loan in loans:
+        item = asdict(loan)
+        item["raw"] = {}
+        rows.append(item)
+    self.storage.cache_put(
+        "account", _loan_cache_key(account), rows,
+        int(self.config.get("cache.dashboard_seconds", 300)),
+    )
+    self._record_loan_statistics(account, loans)
+
+
 def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, logger) -> dict[str, Any]:
     from ..brokers import SynchronizationBrokerImpl
     source_status = SynchronizationBrokerImpl(self)
@@ -504,6 +548,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             # never a reason to silently accept whichever page came first.
             seen_loans: dict[tuple[str, str, str, str], tuple] = {}
             provider_errors: list[dict[str, str]] = []
+            # Each typed reader is pinned to the Core registry/epoch. Recheck
+            # the whole staged set just before the identity-level rights write.
+            typed_observations: list[tuple[Account, Any, tuple[Any, ...], list[Loan]]] = []
             accounts = sorted(
                 [a for a in self.accounts_for_identity(identity.identity_id) if self.sync_source_enabled(a)],
                 key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id),
@@ -518,7 +565,28 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 try:
                     loan_started = time.monotonic()
                     logger.info("TRACE loans sync begin")
-                    account_loans = self._loans_for_account(account, force=True)
+                    session = self._sessions.get(
+                        self._session_key(account.provider_id, account.credential_id),
+                    )
+                    snapshot = None
+                    typed_scope = (
+                        account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id,
+                        self._account_context_epoch,
+                    )
+                    if session is not None and callable(
+                        getattr(session, "loan_inventory_snapshot", None)
+                    ):
+                        # Exactly one provider read, with the provider's atomic
+                        # status and branch evidence. Never infer a missing
+                        # loan/return from the envelope or a successful GET.
+                        from ..plugin_api.loan_inventory import read_loan_inventory
+                        snapshot = read_loan_inventory(session, account)
+                        if snapshot.status in {"failed", "cancelled"}:
+                            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+                        account_loans = list(snapshot.loans)
+                    else:
+                        account_loans = self._loans_for_account(account, force=True)
                     logger.info(
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
@@ -527,8 +595,19 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         # Do not persist any row from an ambiguous account batch;
                         # avoid displaying or logging provider-controlled details.
                         raise ProviderConfigurationError("loan_source_scope_mismatch")
-                    session = self._sessions.get(self._session_key(account.provider_id, account.credential_id))
-                    partial_errors = list(getattr(session, "last_loan_errors", []) or []) if session is not None else []
+                    if snapshot is not None and not _registered_typed_loan_scope_current(
+                        self, account, session, typed_scope,
+                    ):
+                        raise ProviderConfigurationError("loan_source_scope_changed")
+                    # Legacy side-channel is used ONLY for legacy readers.
+                    # Typed partial evidence stays coherent with its rows
+                    # despite a later unrelated call mutating last_loan_errors.
+                    partial_errors = (
+                        [None] if snapshot is not None and snapshot.status == "partial"
+                        else [] if snapshot is not None
+                        else list(getattr(session, "last_loan_errors", []) or [])
+                        if session is not None else []
+                    )
                     if partial_errors:
                         errors += len(partial_errors)
                         # Provider partial errors are untrusted data (potentially
@@ -569,6 +648,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         accepted.append(loan)
                     seen_loans.update(additions)
                     loans.extend(accepted)
+                    if snapshot is not None:
+                        typed_observations.append(
+                            (account, session, typed_scope, list(account_loans)),
+                        )
                     source_outcomes[source_id] = (
                         "partial" if partial_errors else "success"
                     )
@@ -585,12 +668,29 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             detail["loans"] = len(loans)
             if provider_errors:
                 detail["provider_errors"] = provider_errors
+            # The identity batch may span multiple provider GETs. An earlier
+            # typed reader must still be registered under its exact scope
+            # after the last account read, before a single rights write.
+            if any(
+                not _registered_typed_loan_scope_current(self, account, session, scope)
+                for account, session, scope, _rows in typed_observations
+            ):
+                raise ProviderConfigurationError("loan_source_scope_changed")
             # No current supplier offers a Core-attested exhaustive per-account
             # negative listing contract (including pagination and row validity).
             # Preserve old active rights until a specific complete scope is
             # explicitly proven; separately proven expiry remains effective.
             lifecycle = self._persist_active_loans(identity.identity_id, loans)
             all_loans.extend(loans)
+            for account, session, scope, observed in typed_observations:
+                # Cache is a positive read optimization, never a source of
+                # authority. If publication races with a logout, drop cache
+                # rather than publishing an observation for the old binding.
+                if _registered_typed_loan_scope_current(self, account, session, scope):
+                    try:
+                        _cache_validated_typed_loan_observation(self, account, observed)
+                    except Exception:
+                        logger.warning("TRACE typed loan cache failed code=loan_cache_unavailable")
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
             for loan in loans:
                 # Re-resolve the currently registered provider session: an
