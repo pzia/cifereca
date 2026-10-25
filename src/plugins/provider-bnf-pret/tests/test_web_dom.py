@@ -244,6 +244,7 @@ class WebDOMTests(unittest.TestCase):
             'https://pret.bnf.fr/loans/a.jpg',
             'https://pret.bnf.fr/sso/saml/cover.jpg',
             'https://pret.bnf.fr/images/../cover.jpg',
+            'https://pret.bnf.fr/images/../covers/cover.jpg',
             'https://pret.bnf.fr/images/%2e%2e/cover.jpg',
             'https://imagedelivery.net/abcdefghijk/abcdef1234567890/private',
             'data:image/png;base64,AAAA',
