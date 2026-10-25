@@ -574,7 +574,10 @@ class DiagnosticsPagePlugin:
             ["Toutes les sources (ancien)", "Événements Core", "Journal applicatif", "Journal unifié"]
         )
         source_selector.set_selected(3 if journal_available else 0)
-        source_selector.set_tooltip_text("Journal canonique ; anciennes sources accessibles en mode avancé")
+        source_selector.set_tooltip_text(
+            "Journal canonique ; anciennes sources accessibles en mode avancé"
+            if journal_available else "Source des événements"
+        )
         severity_selector = Gtk.DropDown.new_from_strings(
             ["Tous niveaux", "Debug", "Info", "Avertissements", "Erreurs", "Critiques"]
         )
