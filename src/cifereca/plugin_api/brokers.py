@@ -138,7 +138,9 @@ class TaskBroker(Protocol):
 
 @runtime_checkable
 class DiagnosticsBroker(Protocol):
-    def snapshot(self) -> tuple[Mapping[str, Any], ...]: ...
+    def snapshot(self) -> tuple[Mapping[str, Any], ...]:
+        """Latest structured physical journal occurrences, in chronological order."""
+        ...
     def events(
         self, *, source: str = "journal", module: str = "", severity: str = "",
         provider_id: str = "",

@@ -692,8 +692,8 @@ def prepare_analysis(
         records = snapshot()
         if not isinstance(records, (list, tuple)):
             raise ValueError("structured_diagnostics_unavailable")
-        # Diagnostics.snapshot() exposes the Core's append-ordered deque.
-        # Sample the *latest* records, newest first, so a full history or
+        # The Core broker projects the latest structured journal occurrences.
+        # Sample these records newest first, so a large history or
         # a tight byte budget does not hide the incident being investigated.
         for item in reversed(records[-_MAX_STRUCTURED:]):
             if not isinstance(item, Mapping):

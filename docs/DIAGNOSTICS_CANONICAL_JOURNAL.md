@@ -85,3 +85,23 @@ paramètre `source`, la consultation est persistante et ne consulte pas le
 snapshot mémoire. Les sources `all`, `core_events`, `app_log` restent
 accessibles **seulement par sélection explicite**, pour les anciens clients
 et tests. Leur disparition nécessite une migration distincte des appelants.
+
+
+## Compatibilité broker : snapshot et export texte (#3133)
+
+Le contrat `DiagnosticsBroker.snapshot()` renvoie désormais les **100 dernières
+occurrences structurées** du journal physique (ordre chronologique), avec
+`event_id` identique à `events(source="journal")`. Il n'ouvre jamais le
+snapshot mémoire ni n'active de fournisseur. Les logs applicatifs libres restent
+interrogeables par `events()`, mais ne sont pas déguisés en diagnostics
+structurés. La rétention réelle peut être inférieure à 100 événements ; un
+journal absent donne un tuple vide, sans repli sur la mémoire.
+
+Le contrat `DiagnosticsBroker.export_text()` sérialise les **mêmes événements
+physiques** en NDJSON lisible dans un éditeur, précédé d'un en-tête de version
+et d'indications de couverture/rotations. La limite de l'export brut est
+conservée. **Aucune expurgation** des login, mots de passe, cookies, jetons,
+URLs, titres ou chemins n'est appliquée à ce texte ; l'export est local et
+explicite. Le support-report historique et `Diagnostics.text()` constituent
+encore des voies distinctes à migrer ; leur présence n'est pas assimilée à la
+fermeture de #3133.

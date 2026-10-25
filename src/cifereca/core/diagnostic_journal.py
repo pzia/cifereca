@@ -258,6 +258,70 @@ def query_journal(
     }
 
 
+
+def recent_diagnostics_snapshot(log_path: Path, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
+    """Compatibility snapshot sourced solely from persisted structured events.
+
+    The snapshot is not another collector: each row retains its physical
+    journal event ID and unchanged diagnostic payload. Plain application logs
+    belong to events(), not the historical structured snapshot surface.
+    """
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError("invalid journal snapshot limit")
+    events, _gaps, _missing = _events(Path(log_path))
+    structured = [row for row in events if row.get("operation")]
+    structured.sort(key=lambda row: (row["timestamp"], row["event_id"]))
+    result = []
+    for event in structured[-limit:]:
+        row = {
+            "event_id": event["event_id"],
+            "timestamp": event["timestamp"],
+            "source": "journal",
+            "category": event["module"],
+            "operation": event["operation"],
+            "status": event["status"],
+            "severity": event["severity"],
+            "message": event["message"],
+            "detail": dict(event.get("detail") or {}),
+        }
+        if "duration_ms" in event:
+            row["duration_ms"] = event["duration_ms"]
+        if "task_ref" in event:
+            row["task_ref"] = event["task_ref"]
+        result.append(row)
+    return tuple(result)
+
+
+def journal_text_export(log_path: Path, *, version: str) -> str:
+    """Human-openable NDJSON export of the SAME physical events as raw export.
+
+    No masking is performed. Exports remain explicitly local and bounded by
+    the raw journal's size and coverage limits.
+    """
+    try:
+        document = json.loads(export_raw_journal(log_path))
+    except ValueError as exc:
+        if str(exc) != "journal_empty":
+            raise
+        document = {
+            "coverage": "empty_or_missing", "rotation_gaps": [],
+            "active_log_missing": _lines(Path(log_path))[1] == "missing", "events": [],
+        }
+    header = [
+        f"cifereca v{version}",
+        "format: cifereca-journal-ndjson",
+        "coverage: " + str(document["coverage"]),
+        "active_log_missing: " + str(document["active_log_missing"]).lower(),
+        "rotation_gaps: " + json.dumps(document["rotation_gaps"], ensure_ascii=False),
+    ]
+    return "\n".join([
+        *header,
+        *(json.dumps(event, ensure_ascii=False, allow_nan=False)
+          for event in document["events"]),
+        "",
+    ])
+
+
 def export_raw_journal(log_path: Path) -> bytes:
     """Serialize all retained raw events once, without UI transformations.
 
