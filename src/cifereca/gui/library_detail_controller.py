@@ -8,6 +8,27 @@ from __future__ import annotations
 from .local_book_detail_sections import local_book_detail_sections
 
 
+def possession_usage_label(possession, provider_name: str) -> str:
+    """Describe one *attested* entitlement, never infer kind from provider.
+
+    Provider ids and catalogue flags cannot establish an owned right or a
+    loan. Archived/unknown records do not become active merely because they
+    share a title, identity or physical local placement.
+    """
+    kind = possession.get("kind") if type(possession) is dict else None
+    state = possession.get("state") if type(possession) is dict else None
+    if kind == "owned" and state == "active":
+        return f"Achat possédé en ligne : {provider_name}"
+    if kind == "owned" and state == "archived":
+        return f"Achat archivé : {provider_name}"
+    if kind == "loan" and state == "active":
+        return f"Prêt de bibliothèque actif : {provider_name}"
+    if kind == "loan" and state in {"expired", "returned", "inactive"}:
+        return f"Prêt de bibliothèque non actif : {provider_name}"
+    # A missing or contradictory state is not a positive purchase/loan.
+    return f"Droit distant non qualifié : {provider_name}" if kind in {"owned", "loan"} else f"Droit distant : {provider_name}"
+
+
 def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
     # Selection signals can arrive while widgets are being disposed.
     if getattr(window, "_closed", False):
@@ -72,7 +93,7 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         identity_ref = window.service.identity_by_id(iid) if iid else None
         owner = identity_ref.label if identity_ref else (iid or 'Compte')
         provider_name = window.service.provider_display_name(str(possession.get('provider_id') or ''))
-        presence_rows.append((owner, f"Droit distant : {provider_name}"))
+        presence_rows.append((owner, possession_usage_label(possession, provider_name)))
     unique_presence = list(dict.fromkeys(presence_rows))
     if len(unique_presence) > 1:
         detail.add_group('Présence / Bibliothèques / Sources', unique_presence)
