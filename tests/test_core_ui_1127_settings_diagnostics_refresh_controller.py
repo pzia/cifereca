@@ -297,3 +297,44 @@ def test_no_plugin_activation_or_background_job_in_refresh_path():
     host.runner = NS(submit=lambda *_: (_ for _ in ()).throw(AssertionError("task")))
     refresh_settings_diagnostics(host, **args)
     assert [event[0] for event in calls] == ["status", "project", "journal"]
+
+
+def test_settings_preview_reads_single_physical_journal_without_memory(
+    tmp_path, monkeypatch,
+):
+    from cifereca.brokers import DiagnosticsBrokerImpl as RealBroker
+
+    journal = tmp_path / "cifereca.log"
+    journal.write_text(
+        '2026-10-25 13:20:00,123 INFO cifereca [MainThread] DIAG_JSON '
+        '{"schema_version":1,"category":"LOAN","operation":"import_acsm",'
+        '"status":"error","message":"import failed","detail":'
+        '{"login":"alice@example.org","password":"VISIBLE",'
+        '"token":"KEEP","path":"/home/alice/book.epub"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "DiagnosticsBrokerImpl", RealBroker)
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: journal)
+    host, args, _calls, report = make_context()
+    refresh_settings_diagnostics(host, **args)
+    assert '"operation": "import_acsm"' in report.text
+    for value in (
+        "alice@example.org", "VISIBLE", "KEEP", "/home/alice/book.epub",
+    ):
+        assert value in report.text
+    assert '"event_id":' in report.text
+
+
+def test_settings_preview_reports_journal_failure_without_memory_fallback(monkeypatch):
+    class FailedBroker:
+        def __init__(self, service):
+            self.service = service
+
+        def snapshot(self):
+            raise OSError("private path should not be displayed")
+
+    monkeypatch.setattr(controller, "DiagnosticsBrokerImpl", FailedBroker)
+    host, args, _calls, report = make_context()
+    refresh_settings_diagnostics(host, **args)
+    assert "Lecture du journal indisponible : OSError" in report.text
+    assert "private path should not be displayed" not in report.text
