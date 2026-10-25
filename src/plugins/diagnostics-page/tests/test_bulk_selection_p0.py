@@ -8,8 +8,13 @@ from pathlib import Path
 import pytest
 
 from diagnostics_selection import (
-    MAX_SCAN_PAGES, collect_filtered_selection, page_selection_ids,
+    MAX_SCAN_PAGES, collect_filtered_selection as canonical_selection, page_selection_ids,
 )
+
+
+def collect_filtered_selection(broker, **filters):
+    """These pre-journal fixtures intentionally exercise explicit legacy feeds."""
+    return canonical_selection(broker, source=filters.pop("source", "all"), **filters)
 
 
 @pytest.fixture(autouse=True)
