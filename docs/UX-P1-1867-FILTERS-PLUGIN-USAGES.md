@@ -32,9 +32,10 @@ credentials du compte privé, ni au service technique Kobo.
 - Test unitaire de la projection et des routes, y compris source publique
   absente, ajoutée puis désactivée au changement de profil, service Kobo
   unique, sélection du compte privé préservée au retour du catalogue public.
-- Banc GTK existant 1366/1600 : vraie instance `QueryControls`, source
-  publique sélectionnée puis retirée, conservation de la sélection privée,
-  contrôle d'allocation et capture avant retrait.
+- Banc GTK existant 1366/1600 : véritable sélecteur `MultiSelect` GTK
+  instancié sans modifier la fenêtre principale ; source publique sélectionnée
+  puis retirée, sélection privée conservée. Les allocations et captures
+  de l'Accueil restent vérifiées séparément par la recette existante.
 - Aucune requête réseau, lecture de credentials, activation ou téléchargement
   provoqué par le simple rendu.
 
