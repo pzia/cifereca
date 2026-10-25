@@ -22,7 +22,7 @@ from packaging.version import InvalidVersion, Version
 
 from . import updater
 from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, SMOKE_FAILURE_CODES
-from .update_child import PROGRESS_ENV
+from .update_child import PROGRESS_ENV, ChildOutputError, run_plugin_child
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -42,6 +42,11 @@ SMOKE_FAILURE_REASONS = frozenset({
     "missing_broker", "plugin_api", "unknown",
 })
 MAX_SMOKE_FAILURE_DETAILS = 8
+
+# A single plugin may require several pip dry-runs when the existing 168-hour
+# wheel admission policy rejects a candidate. 120 seconds was too short and
+# could kill the CLI while its pip descendant continued running.
+PLUGIN_INSTALL_TIMEOUT_SECONDS = 900
 
 
 class DevUpdateError(RuntimeError):
@@ -220,10 +225,18 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
     command = [str(cli), "plugin", "install", str(archive), "--replace"]
     if not activate:
         command.append("--no-activate")
-    proc = updater._run_bounded_process(
-        command,
-        text=True, capture_output=True, timeout=120, check=False,
-    )
+    # Use the process-group-aware child runner: subprocess.run(timeout=...)
+    # killed only the CLI and could leave pip writing into orphaned pipes while
+    # rollback restored the venv and plugin store.
+    try:
+        proc = run_plugin_child(
+            command, timeout=PLUGIN_INSTALL_TIMEOUT_SECONDS,
+            on_line=lambda _line: None,  # no arbitrary pip/CLI stderr escapes
+        )
+    except TimeoutError:
+        raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None
+    except (OSError, ChildOutputError):
+        raise DevUpdateError("installation plugin dev échouée") from None
     if proc.returncode != 0:
         raise DevUpdateError("installation plugin dev échouée")
 
