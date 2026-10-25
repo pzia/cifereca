@@ -28,6 +28,20 @@ PROVIDER_REASONS = frozenset({
     'ambiguous_loans', 'unexpected_content', 'invalid_dom', 'html_limit',
     'scope_mismatch',
 })
+# Explicit read-before-transfer failures, intentionally distinct from the
+# token GET errors. Finite allowlist: never publish arbitrary provider text.
+ACTIVITY_REASONS = frozenset({
+    'activity_access_denied', 'activity_auth_required', 'activity_rate_limited',
+    'activity_http_unavailable', 'activity_transport_unavailable',
+    'activity_operation_timeout', 'activity_url_refused',
+    'activity_redirect_invalid', 'activity_redirect_limit',
+    'activity_unexpected_content', 'activity_html_limit',
+    'activity_invalid_dom', 'activity_dom_limit',
+    'activity_unrecognized_loans', 'activity_ambiguous_loans',
+    'activity_invalid_activity_page', 'activity_scope_mismatch',
+    'activity_unavailable',
+})
+PROVIDER_REASONS |= ACTIVITY_REASONS
 STAGE_CODES |= frozenset('bnf_' + reason for reason in PROVIDER_REASONS)
 IMPORT_CODES = frozenset({'complete', 'unchanged', 'adept_profile_required',
                          'adept_profile_ambiguous', 'bnf_loan_scope_unproven',

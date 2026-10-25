@@ -50,6 +50,21 @@ _PUBLIC_CODES = frozenset({
 })
 
 
+# A failed *fresh inventory read* is not a failed ACSM GET. Preserve an
+# explicit, finite phase-qualified reason without exposing response details.
+# The unprefixed codes remain the token GET/validation reasons for v0.3.3
+# compatibility. Do not prefix loan_not_observed: it already says the GET was
+# blocked by a negative fresh observation.
+_ACTIVITY_ERRORS = frozenset({
+    'access_denied', 'auth_required', 'rate_limited', 'http_unavailable',
+    'transport_unavailable', 'operation_timeout', 'url_refused',
+    'redirect_invalid', 'redirect_limit', 'unexpected_content',
+    'html_limit', 'invalid_dom', 'dom_limit', 'unrecognized_loans',
+    'ambiguous_loans', 'invalid_activity_page', 'scope_mismatch',
+})
+_PUBLIC_CODES = _PUBLIC_CODES | frozenset('activity_' + code for code in _ACTIVITY_ERRORS) | {'activity_unavailable'}
+
+
 def _public_code(error):
     code = str(error)
     return code if code in _PUBLIC_CODES else 'bnf_reader_failed'
@@ -164,7 +179,21 @@ class BnfProviderSession(ProviderSession):
             try:
                 # No stale loan can trigger the GET: re-read the exact Web
                 # account and demand the same loan/resource pair right now.
-                fresh = self._snapshot(self.client.activity())
+                try:
+                    fresh = self._snapshot(self.client.activity())
+                except (ReaderHTTPError, WebParseError) as error:
+                    # Do not conflate a failed fresh inventory read with an
+                    # ACSM transfer: the token endpoint has NOT been called.
+                    code = _public_code(error)
+                    raise ReaderHTTPError(
+                        'activity_' + code if code in _ACTIVITY_ERRORS
+                        else 'activity_unavailable'
+                    ) from None
+                # close() revokes the epoch before acquiring _lock. In
+                # particular, it may run while activity() is in flight.
+                # Invalidate BEFORE the token GET, not only after it.
+                if self._closed or epoch != self._epoch or not self.connected:
+                    raise ReaderHTTPError('session_closed')
                 if not any(row.loan_id == loan.id and row.resource_id == loan.record_id
                            for row in fresh.loans):
                     raise ReaderHTTPError('loan_not_observed')

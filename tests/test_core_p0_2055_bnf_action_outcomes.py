@@ -71,6 +71,47 @@ def test_http_refusal_preserves_only_closed_provider_reason(connected_core,tmp_p
     assert not service.storage.entitlements() and not service.storage.acquisitions()
 
 
+@pytest.mark.parametrize('status,code',[
+    (401,'activity_auth_required'),
+    (403,'activity_access_denied'),
+    (429,'activity_rate_limited'),
+    (500,'activity_http_unavailable'),
+])
+def test_activity_refusal_is_distinct_from_token_get(connected_core,tmp_path,status,code):
+    service,session,account,loan,state,downloaded=connected_core
+    original=session.client.http._transport.handler
+    rereads=[]
+    def handler(request):
+        if request.url.path == '/my_profile/activity':
+            rereads.append(request)
+            return httpx.Response(status,content=b'PRIVATE activity',headers={'content-type':'text/html'})
+        return original(request)
+    session.client.http._transport.handler=handler
+    with pytest.raises(BnfLoanActionError) as caught:
+        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+    assert caught.value.code == 'bnf_'+code
+    row,=events(service,tmp_path)
+    assert row['detail']['phase']=='provider_delivery'
+    assert row['detail']['reason_code']=='bnf_'+code
+    assert row['detail']['status']=='failed'
+    assert len(rereads)==1 and not downloaded
+    assert not service.storage.acquisitions() and not service.storage.entitlements()
+    assert 'PRIVATE' not in json.dumps(row)
+
+
+def test_unknown_activity_failure_is_generic_and_private_safe(connected_core,tmp_path):
+    from cifereca_bnf_pret_http import ReaderHTTPError
+    service,session,account,loan,state,downloaded=connected_core
+    def bad_activity():
+        raise ReaderHTTPError('PRIVATE html cookie=synthetic')
+    session.client.activity=bad_activity
+    with pytest.raises(BnfLoanActionError) as caught:
+        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+    assert caught.value.code == 'bnf_activity_unavailable'
+    row,=events(service,tmp_path)
+    assert row['detail']['reason_code']=='bnf_activity_unavailable'
+    assert not downloaded and 'PRIVATE' not in json.dumps(row)
+
 def test_missing_live_loan_is_not_mistaken_for_failed_acsm_get(connected_core,tmp_path):
     service,session,account,loan,state,downloaded=connected_core
     state['activity']='<section class="active-loans"></section>'
