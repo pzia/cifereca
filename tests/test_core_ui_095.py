@@ -100,23 +100,42 @@ class Shell(unittest.TestCase):
     def test_invalid_factory_ignored(self): self.assertEqual(resolve_pages([UiPageContribution('x','X')]),[])
 
 
-class Redaction(unittest.TestCase):
-    def test_nested_secret(self): self.assertEqual(redact({'nested':[{'token':'secret'}]})['nested'][0]['token'],'<redacted>')
-    def test_signed_url_in_error(self): self.assertNotIn('SECRET',redact_text('Failure https://server.test/file.acsm?auth=SECRET'))
-    def test_pnb_path_token(self): self.assertNotIn('SECRET',redact_text('https://pnb.test/v3/LOAN/SECRET/123.do'))
-    def test_bearer_in_text(self): self.assertNotIn('SECRET',redact_text('Authorization: Bearer SECRET'))
-    def test_url_credentials(self): self.assertNotIn('SECRET',redact_text('https://user:SECRET@host.test/file'))
+class DiagnosticRawCompatibility(unittest.TestCase):
+    def test_nested_values_preserved(self):
+        original = {'nested': [{'token': 'original'}, {'password': 'unmasked'}]}
+        self.assertIs(redact(original), original)
+
+    def test_signed_url_in_error_preserved(self):
+        text = 'Failure https://server.test/file.acsm?auth=SECRET'
+        self.assertEqual(redact_text(text), text)
+
+    def test_pnb_path_token_preserved(self):
+        text = 'https://pnb.test/v3/LOAN/SECRET/123.do'
+        self.assertEqual(redact_text(text), text)
+
+    def test_bearer_in_text_preserved(self):
+        self.assertEqual(redact_text('Authorization: Bearer SECRET'),
+                         'Authorization: Bearer SECRET')
+
+    def test_url_credentials_preserved(self):
+        url = 'https://user:SECRET@host.test/file'
+        self.assertEqual(redact_text(url), url)
+
     def test_levels(self):
         d=Diagnostics(level='verbose');d.add('x','normal');d.add('x','detail',level='detailed');d.add('x','trace',level='trace')
         self.assertEqual(len(d.snapshot()),2)
         d=Diagnostics(level='trace');d.add('x','trace',level='trace');self.assertEqual(len(d.snapshot()),1)
+
     def test_log_filter(self):
         record=logging.LogRecord('test',20,'',1,'Failed %s',('https://x.test/foo?token=SECRET',),None)
         RedactionFilter().filter(record);self.assertIn('SECRET',record.getMessage())
+
     def test_log_dict_secret_keys(self):
         record=logging.LogRecord('test',20,'',1,'Payload %s',({'api_token':'SECRET','normal':'visible'},),None)
         RedactionFilter().filter(record);self.assertIn('SECRET',record.getMessage())
-    def test_normal_url_preserved(self): self.assertEqual(redact_text('https://host.test/book'),'https://host.test/book')
+
+    def test_normal_url_preserved(self):
+        self.assertEqual(redact_text('https://host.test/book'),'https://host.test/book')
 
 
 class CoreCompatibility(unittest.TestCase):
