@@ -1467,7 +1467,6 @@ class DiagnosticsBrokerImpl:
 
     def inventory(self) -> tuple[dict[str, Any], ...]:
         """Return the versions and states of the plugin manifests actually loaded."""
-        from .diagnostics import redact
         manager = getattr(self.service, "plugin_manager", None) or getattr(self.service, "_plugin_manager", None)
         if manager is None:
             return ()
@@ -1490,12 +1489,11 @@ class DiagnosticsBrokerImpl:
                 "reason_code": str(raw.get("reason_code") or ""),
                 "capabilities": tuple(str(value) for value in (raw.get("capabilities") or ())),
             }
-            rows.append(redact(row))
+            rows.append(row)
         return tuple(rows)
 
     def runtime_diagnostic(self, plugin_id: str) -> dict[str, Any]:
-        """Expose only bounded process metadata, never raw runtime streams or IDs."""
-        from .diagnostics import redact, redact_text
+        """Expose bounded process metadata without changing its original values."""
         getter = getattr(self.service, "runtime_diagnostic", None)
         if not callable(getter):
             return {}
@@ -1513,10 +1511,10 @@ class DiagnosticsBrokerImpl:
                 continue
             value = raw[key]
             if isinstance(value, str):
-                bounded[key] = redact_text(value)[:240]
+                bounded[key] = value[:240]
             elif isinstance(value, (int, float, bool)) or value is None:
                 bounded[key] = value
-        return dict(redact(bounded))
+        return bounded
 
     def active_checks(self) -> tuple[HealthCheckResult, ...]:
         from .diagnostics import redact, redact_text
