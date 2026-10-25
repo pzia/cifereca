@@ -131,7 +131,7 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
     copy.connect("clicked", copy_text)
     export.connect("clicked", export_text)
     level_drop.connect("notify::selected", persist_diagnostics)
-    diag_switch.connect("notify::active", persist_diagnostics)
+    # The collector is always on; severity is the sole user-facing control.
     clear.connect("clicked", clear_diagnostics)
     refresh_text()
     return refresh_text
