@@ -12,6 +12,7 @@ import pytest
 from diagnostics_explorer import (
     sanitized_rows, linked_operation_groups, export_selected_events,
     published_connection_attempt, published_operation_reference,
+    connection_provenance_label,
 )
 from diagnostics_selection import (
     collect_filtered_selection, _redacted_page_fingerprint,
@@ -84,6 +85,8 @@ def test_exact_six_phases_cross_two_channels_export_one_request_not_six_connecti
     assert all(x["connection_status"] in {"unknown", "success"}
                for x in exported["events"])
     assert "network_auth" in exported["events"][0]
+    assert "Demande Core : " + REF_A in connection_provenance_label(rows[0])
+    assert "Phase :" in connection_provenance_label(rows[0])
     assert "task_ref ou operation_ref" in exported["notice"]
     assert "authentifications réseau inconnues" in exported["notice"]
     assert "scope_ref" not in json.dumps(exported)
@@ -168,6 +171,7 @@ def test_operation_export_requires_companion_attestation_not_just_hex_ref():
         {**base, "message": "unrelated"},
     ):
         assert published_operation_reference(candidate) is None
+        assert connection_provenance_label(candidate) == ""
         exported = _export([candidate])
         assert "operation_ref" not in exported["events"][0]
 
