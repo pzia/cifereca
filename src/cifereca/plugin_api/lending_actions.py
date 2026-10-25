@@ -29,7 +29,7 @@ _REASON_CODES = frozenset({
     "loan_not_active", "loan_unverified", "operation_unavailable",
     "cancelled", "provider_refused", "provider_unavailable",
     "provider_response_unverified", "provider_confirmation_unavailable",
-    "provider_confirmed", "provider_submitted", "unknown",
+    "provider_confirmed", "provider_submitted", "admission_ready", "unknown",
 })
 
 
@@ -155,7 +155,7 @@ def assess_lending_action(
         return decision("blocked", "loan_unverified")
     if permission_attested is not True:
         return decision("blocked", "permission_unverified")
-    return decision("admitted", "provider_submitted")
+    return decision("admitted", "admission_ready")
 
 
 @dataclass(frozen=True, slots=True)
