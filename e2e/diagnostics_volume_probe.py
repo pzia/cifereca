@@ -186,6 +186,17 @@ def main():
             try:
                 callback()
             except Exception as exc:
+                # The fixture contains synthetic, local data only. Emit a
+                # fixed source position and exception class for CI diagnosis,
+                # never the GTK text or the raw exception message.
+                location = None
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        location = trace.tb_lineno
+                    trace = trace.tb_next
+                print(f"CIFERECA_DIAG_VOLUME_FAIL line={location} type={type(exc).__name__}",
+                      file=sys.stderr, flush=True)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, cb)
