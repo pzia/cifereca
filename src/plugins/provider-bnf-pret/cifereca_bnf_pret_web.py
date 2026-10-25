@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 ORIGIN = "https://pret.bnf.fr"
 MAX_HTML_BYTES = 512 * 1024
@@ -255,6 +255,70 @@ class ProfileScope:
             raise WebParseError("invalid_scope")
 
 
+
+def _public_cover_url(value: str) -> str | None:
+    """A query-free public image URL, never a private loan or SSO endpoint.
+
+    The page's image URL is not proof that it is this loan's cover:
+    _loan_cover additionally requires an image nested in the exact resource
+    link inside an observed loan card. No network request is made here.
+    """
+    if (not isinstance(value, str) or not 0 < len(value) <= 2048
+            or any(ord(char) <= 32 or ord(char) > 126 or char == '\\' for char in value)
+            or not (value.startswith('https://') or
+                    (value.startswith('/') and not value.startswith('//')))):
+        return None
+    try:
+        # Reject traversal *before* urljoin normalizes dot segments.
+        raw_path = urlsplit(value).path
+        if any(segment in {'.', '..', ''} for segment in raw_path.split('/')[1:]):
+            return None
+        url = urljoin(ORIGIN + '/', value)
+        parts = urlsplit(url)
+        if (parts.scheme != 'https' or parts.netloc not in
+                {'pret.bnf.fr', 'imagedelivery.net'}
+                or parts.username or parts.password or parts.query or parts.fragment
+                or not re.fullmatch(r'/[A-Za-z0-9_./-]+', parts.path)
+                or any(segment in {'.', '..', ''} for segment in parts.path.split('/')[1:])):
+            return None
+        if parts.netloc == 'pret.bnf.fr':
+            if not re.fullmatch(
+                r'/(?:assets|images?|covers?|media|uploads|sites|files|static)/'
+                r'[A-Za-z0-9_./-]+\.(?:png|jpg|jpeg|webp)', parts.path,
+                flags=re.IGNORECASE,
+            ):
+                return None
+        elif not re.fullmatch(
+            r'/[A-Za-z0-9_-]{8,128}/[A-Za-z0-9_-]{8,128}/'
+            r'(?:public|thumbnail|cover|small|medium|large)', parts.path,
+        ):
+            return None
+    except ValueError:
+        return None
+    return url
+
+
+def _loan_cover(card: _Node, resource_id: str) -> str | None:
+    """Only the exact resource link in this loan card can attest an image.
+
+    A global image, profile avatar, homonymous catalogue image, or second
+    conflicting cover stays unknown. Never use a title/ISBN fallback.
+    """
+    sources = []
+    for anchor in card.walk():
+        if anchor.tag != 'a' or _id(anchor.attrs.get('href', ''), 'resources') != resource_id:
+            continue
+        for node in anchor.walk():
+            if node.tag == 'img':
+                sources.append(node.attrs.get('data-src') or node.attrs.get('src') or '')
+    if not sources or len(sources) > 3:
+        return None
+    images = [_public_cover_url(value) for value in sources]
+    if any(value is None for value in images) or len(set(images)) != 1:
+        return None
+    return images[0]
+
+
 @dataclass(frozen=True)
 class LoanRecord:
     loan_id: str = field(repr=False)
@@ -263,6 +327,7 @@ class LoanRecord:
     # Only Book/loan-card microdata can attest a public bibliographic author.
     # Do not use headers, linked catalogue names or unrelated book scopes.
     authors: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    thumbnail_url: str | None = field(default=None, repr=False, compare=False)
     # Raw dates intentionally absent: no date selector has been qualified.
 
 
@@ -307,11 +372,22 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         if len(author_values) > 8:
             partial = True
             author_values = ()
-        loan = LoanRecord(next(iter(lids)), next(iter(rids)),
+        resource_id = next(iter(rids))
+        loan = LoanRecord(next(iter(lids)), resource_id,
                           next(iter(titles)) if len(titles) == 1 else "",
-                          tuple(author_values))
-        if loan.loan_id in loans and loans[loan.loan_id] != loan:
-            raise WebParseError("ambiguous_loans")
+                          tuple(author_values), _loan_cover(card, resource_id))
+        if loan.loan_id in loans:
+            previous = loans[loan.loan_id]
+            if previous.resource_id != loan.resource_id:
+                raise WebParseError("ambiguous_loans")
+            if previous.thumbnail_url != loan.thumbnail_url:
+                # Duplicate cards with conflicting evidence must not choose
+                # a cover arbitrarily; keep the positive loan but no image.
+                partial = True
+                loan = LoanRecord(previous.loan_id, previous.resource_id,
+                                  previous.title, previous.authors)
+            else:
+                loan = previous
         loans[loan.loan_id] = loan
     # Empty section may mean pagination, incomplete HTML or loading state.
     return LoanSnapshot(expected, tuple(loans.values()), "partial" if partial or not loans else "observed")

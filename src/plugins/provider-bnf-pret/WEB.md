@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.2.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.3.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -48,7 +48,7 @@ Limites : 512 Kio décompressés/document, 12 redirections/appel, 8 étapes de
 formulaire, timeout HTTP de 15 s et budget global connexion de 60 s.
 Les cookies restent dans le client du credential ; fermeture et échec de
 connexion les révoquent. Les erreurs publiques n'exposent que des codes fermés. Le fournisseur publie
-également ces codes dans Diagnostics avec la seule phase `login`, `loans`, `search` ou `detail`,
+également ces codes dans Diagnostics avec la seule phase `login`, `loans`, `search`, `detail` ou `download`,
 car le Core affiche une erreur générique à la connexion. Aucun identifiant,
 URL, cookie, formulaire ou texte de réponse n'est ajouté au diagnostic ; une
 panne du collecteur n'altère pas le résultat de l'opération.
@@ -84,8 +84,7 @@ champ inconnu sans effacer le prêt.
 Cette règle de lecture est testée sur HTML synthétique ; la présence réelle
 de `itemprop=author` dans l'activité privée n'est **pas encore attestée**.
 En l'absence d'un sélecteur fiable et de la valeur d'échéance rattachée au
-prêt du compte, `due_at` reste inconnu. Sans preuve de l'URL de couverture
-de la **ressource exacte** et de son hôte autorisé, `thumbnail_url` reste vide.
+prêt du compte, `due_at` reste inconnu. La version 0.3.3 accepte une couverture **uniquement** si une image publique unique est incluse dans l’ancre `/resources/{id}` de la carte exacte du prêt : origine `pret.bnf.fr` avec chemin image borné, ou variante publique structurée `imagedelivery.net`, sans requête, fragment ni URL signée. Une image ambiguë, non liée ou sur un hôte tiers laisse `thumbnail_url` vide. Aucun GET supplémentaire n’est effectué par le plugin. La présence réelle de ce balisage dans la page privée reste à qualifier.
 La fiche publique de certains livres propose une image sur
 `imagedelivery.net` ; cela ne qualifie pas les images des cartes de prêt.
 Ce travail n'ajoute aucun achat, droit, URL de téléchargement ni mutation.
@@ -125,6 +124,25 @@ ACSM d'achat ou du XML à entités au seul motif que le fournisseur l'a proposé
 Restent à recetter sur compte réel : réponse effective de `/loans/{id}`,
 rattachement/validité du jeton, profil ADEPT d'origine et résultat EPUB/PDF.
 Ne pas déduire de cette UI que l'obtention BnF est opérationnelle en réel.
+
+## Recette terrain du jeton ACSM (après #3131)
+
+Depuis **Mes emprunts**, sélectionner un prêt BnF actif, choisir « Récupérer le jeton
+ACSM BnF… », puis confirmer cette action. Si un candidat valide est reçu, une
+**deuxième confirmation distincte** propose l'import ADEPT, qui reste manuel.
+Cette procédure ne crée pas de nouveau droit ; ne pas utiliser d'import
+automatique ni annoncer un EPUB/PDF avant résultat ADEPT effectivement attesté.
+
+En cas d'échec, ouvrir Diagnostics et filtrer sur `bnf-pret` ou
+`loan_download`. Le Core distingue désormais les actions terminales
+`stage_loan_token` et `import_acsm`, avec `phase`, `status` et
+`reason_code` fermés, ainsi que la référence de tâche uniquement si elle
+existe réellement. La phase `provider_delivery` comprend la **relecture**
+du prêt : elle ne prouve pas à elle seule qu'un GET ACSM a eu lieu.
+Recueillir seulement l'action et le motif sûr, **jamais** l'URL du prêt,
+le XML ACSM, les cookies, les credentials, le HTML privé ou les chemins locaux.
+Ces nouveaux événements ne permettent pas de déterminer rétrospectivement
+la cause des deux échecs du 25 octobre 2026.
 
 ## Catalogue et fiches en lecture seule
 

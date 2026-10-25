@@ -130,6 +130,7 @@ class BnfProviderSession(ProviderSession):
             return [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
                          record_id=row.resource_id, title=row.title or 'Prêt BnF',
                          author=', '.join(row.authors) or None,
+                         thumbnail_url=row.thumbnail_url,
                          document_type='Prêt numérique',
                          source_provider=self.provider_id, source_credential=self.credential_id,
                          source_account_id=account.unique_id, identity_id=account.identity_id,
