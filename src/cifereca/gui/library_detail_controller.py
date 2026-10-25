@@ -23,10 +23,10 @@ def possession_usage_label(possession, provider_name: str) -> str:
         return f"Achat archivé : {provider_name}"
     if kind == "loan" and state == "active":
         return f"Prêt de bibliothèque actif : {provider_name}"
-    if kind == "loan" and state in {"expired", "returned", "inactive"}:
+    if kind == "loan" and state in ("expired", "returned", "inactive"):
         return f"Prêt de bibliothèque non actif : {provider_name}"
     # A missing or contradictory state is not a positive purchase/loan.
-    return f"Droit distant non qualifié : {provider_name}" if kind in {"owned", "loan"} else f"Droit distant : {provider_name}"
+    return f"Droit distant non qualifié : {provider_name}" if kind in ("owned", "loan") else f"Droit distant : {provider_name}"
 
 
 def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
