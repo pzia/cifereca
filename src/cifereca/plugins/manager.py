@@ -860,7 +860,9 @@ class PluginManager:
         return self.python_dependencies.diagnostic(manifests)
 
     def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
-        manifest = self.installer.inspect(Path(archive))
+        from cifereca.update_progress import update_phase
+        with update_phase("plugin_inspect"):
+            manifest = self.installer.inspect(Path(archive))
         package_id = manifest.package.id
         if package_id in _RETIRED_YOUTH_SOURCE_PACKAGES:
             raise ValueError("This retired youth provider can no longer be installed")
@@ -883,17 +885,20 @@ class PluginManager:
         try:
             # Do not make a new package active before its Python dependencies are
             # resolved. This keeps discovery manifest-first and entrypoint-free.
-            installed = self.installer.install(archive, activate=False, replace=replace)
+            with update_phase("plugin_unpack"):
+                installed = self.installer.install(archive, activate=False, replace=replace)
             if activate:
                 manifests, roots = self._active_manifests_with(installed)
-                transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
+                with update_phase("plugin_dependencies"):
+                    transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
                 self.packages.set_active(package_id, version)
             if transaction is not None:
                 # Dependency resolution itself is transactional. Plugin activation
                 # errors remain isolated statuses, preserving the existing manager
                 # contract for third-party plugins.
                 transaction.commit()
-            self.activate()
+            with update_phase("plugin_enable"):
+                self.activate()
             return installed
         except Exception:
             if transaction is not None:
