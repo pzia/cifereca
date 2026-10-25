@@ -178,9 +178,16 @@ class Diagnostics:
             detail: dict[str, Any] | None = None, level: str = "normal") -> None:
         if not self.enabled:
             return
-        if self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
-            return
-        if self.level == "errors" and type(status) is str and status == "ok":
+        # The errors-only level must not discard an actual failure merely
+        # because its producer normally reports at the "normal" level.
+        # This is a severity filter, not a switch disabling error capture.
+        if self.level == "errors":
+            if status not in {
+                "error", "failed", "warning", "attention_required",
+                "retryable_error", "blocked", "cancelled", "timeout",
+            }:
+                return
+        elif self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
             return
         # The generic collector is optional. Malformed plugin data must not
         # crash a workflow or gain a printable representation of a private
