@@ -53,7 +53,7 @@ def test_broker_provider_filter_reads_only_physical_events(application_log, monk
             "detail": {"email": "PRIVATE@example.invalid"},
         })
     )
-    application_log.write_text("\\n".join(records) + "\\n", encoding="utf-8")
+    application_log.write_text("\n".join(records) + "\n", encoding="utf-8")
     monkeypatch.setattr("cifereca.paths.log_file", lambda: application_log)
 
     class ForbiddenMemory:
