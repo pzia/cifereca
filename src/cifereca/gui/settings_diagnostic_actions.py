@@ -91,7 +91,7 @@ def build_settings_diagnostic_callbacks(
 
 
     def export_text(_button=None) -> None:
-        """Enregistrer la copie brute affichée, sans toucher au journal."""
+        """Enregistrer le texte affiché avec les pseudonymes GTK, pas l’export brut."""
         if not page_lifetime.alive:
             return
         refresh_text()
@@ -99,7 +99,7 @@ def build_settings_diagnostic_callbacks(
         start, end = buffer.get_bounds()
         content = buffer.get_text(start, end, True)
         chooser = Gtk.FileChooserNative.new(
-            "Exporter le diagnostic BRUT (identifiants et mots de passe possibles)",
+            "Exporter l’affichage (autres données sensibles possibles)",
             self,
             Gtk.FileChooserAction.SAVE,
             "Exporter",
@@ -120,7 +120,7 @@ def build_settings_diagnostic_callbacks(
                 path = selected.get_path() if selected is not None else None
                 if not path:
                     raise RuntimeError("destination locale indisponible")
-                # The displayed Settings preview is deliberately unmasked.
+                # The Settings preview preserves other values but pseudonymizes login/password.
                 # Do not create a world-readable copy or follow a symlink.
                 flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
                 flags |= getattr(os, "O_CLOEXEC", 0)
