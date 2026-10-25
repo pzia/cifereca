@@ -163,6 +163,7 @@ def test_stage_error_explains_safe_code_without_starting_adept():
     Dialog.shown[0].respond('get')
     message,title=w.show_error.call_args.args
     assert 'BnF a refusé' in message and 'Code : bnf_access_denied' in message
+    assert '\n' not in message  # Keep the shared activity banner on one paragraph.
     assert title=='Téléchargement BnF'
     w.service.import_bnf_loan_acsm.assert_not_called()
     assert len(Dialog.shown)==1

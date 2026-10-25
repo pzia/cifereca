@@ -35,7 +35,7 @@ def bnf_action_error_message(error, *, importing=False):
         message = "L'import ADEPT a échoué ; le jeton est conservé pour une reprise. Consultez le motif dans Diagnostics."
     else:
         message = "La récupération du jeton BnF a échoué avant l'import ADEPT. Consultez le motif dans Diagnostics."
-    return message + '\nCode : ' + code
+    return message + ' Code : ' + code
 
 
 def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
