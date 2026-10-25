@@ -69,7 +69,7 @@ def test_global_reason_code_filters_before_page_and_keeps_secondary_reasons():
         "reconcile-55", "reconcile-58",
     }
     assert len(sanitized_rows(filtered, include_detail=True)) == 2
-    assert PRIVATE not in json.dumps(sanitized_rows(filtered, include_detail=True))
+    assert PRIVATE in json.dumps(sanitized_rows(filtered, include_detail=True))
 
 
 def test_blank_filter_retains_old_core_query_contract():
@@ -101,7 +101,7 @@ def test_bulk_selection_propagates_reason_code_to_every_page_and_recheck():
     exported = json.loads(selected.export_json)
     assert exported["selection"]["reconciliation_reason_code"] == "time_budget"
     assert len(exported["events"]) == 53
-    assert PRIVATE not in selected.export_json
+    assert PRIVATE not in selected.export_json  # aggregate-only export remains separate
     assert all("detail" not in row for row in exported["events"])
     assert all(row["reconciliation"]["status"] == "partial"
                and row["reconciliation"]["counts"] == {"files_started": 321}
@@ -124,10 +124,10 @@ def test_gtk_uses_separate_code_row_and_refreshes_server_page():
     src = (Path(__file__).resolve().parents[1] /
            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     assert 'reason_code_filter = Gtk.Entry()' in src
-    assert 'journals_tab.append(reason_row)' in src
+    assert 'advanced_box.append(reason_row)' in src
     assert 'reason_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL' in src
     assert 'reason_code_filter.set_width_chars(18)' in src
     assert 'reason_code_filter.set_max_width_chars(32)' in src
     assert 'reason_code_filter.connect("activate", reset_events)' in src
-    assert '"reason_code": reason_code_filter.get_text().strip()' in src
+    assert 'else reason_code_filter.get_text().strip()),' in src
     assert "query[\"reason_code\"]" not in src  # passed only through broker

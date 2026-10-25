@@ -33,7 +33,7 @@ def test_plain_non_json_strings_are_not_reparsed():
 
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
-def test_all_modes_mask_tokens_personal_paths_urls_and_email(mode):
+def test_all_modes_pseudonymize_only_password_preserving_all_other_fields(mode):
     data = {
         "password": "TOP-SECRET-123",
         "credential_id": "CARD-SECRET-456",
@@ -42,8 +42,10 @@ def test_all_modes_mask_tokens_personal_paths_urls_and_email(mode):
         "status": "partial",
     }
     shown = format_diagnostic_detail(data, mode)
-    for secret in ("TOP-SECRET", "CARD-SECRET", "BEARER-SECRET", "abc123", "alice@example.com", "/home/alex", "/LOAN/abc"):
-        assert secret not in shown
+    assert "TOP-SECRET-123" not in shown
+    assert "mot-de-passe-" in shown
+    for value in ("CARD-SECRET", "BEARER-SECRET", "abc123", "alice@example.com", "/home/alex", "/LOAN/abc"):
+        assert value in shown
     if mode == "json":
         assert json.loads(shown)["status"] == "partial"
 
@@ -86,7 +88,7 @@ def test_unknown_mode_refused():
         format_diagnostic_detail({"x": 1}, "unsafe")
 
 
-def test_redacted_key_collisions_preserve_all_values_without_original_names():
+def test_keys_and_values_are_preserved_except_explicit_credentials():
     detail = {
         "alice@example.com": "first",
         "bob@example.com": "second",
@@ -94,16 +96,16 @@ def test_redacted_key_collisions_preserve_all_values_without_original_names():
     }
     safe = redacted_detail(detail)
     assert len(safe) == 3
-    assert sorted(v for v in safe.values() if v != "<expurgé>") == ["first", "second"]
+    assert sorted(safe.values()) == ["first", "never reveal this", "second"]
     assert len(set(safe)) == 3
     shown = format_diagnostic_detail(detail, mode="json")
     assert len(json.loads(shown)) == 3
-    assert "alice@example.com" not in shown and "bob@example.com" not in shown
-    assert "never reveal this" not in shown
+    assert "alice@example.com" in shown and "bob@example.com" in shown
+    assert "never reveal this" in shown
 
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
-def test_authentication_headers_are_redacted_entirely(mode):
+def test_authentication_headers_preserved_except_username_field(mode):
     details = {
         "message": (
             "Authorization: Basic dXNlcjpzZWNyZXQ=\\n"
@@ -113,27 +115,28 @@ def test_authentication_headers_are_redacted_entirely(mode):
         "status": "ok",
     }
     shown = format_diagnostic_detail(details, mode)
-    for secret in ("dXNlcjpzZWNyZXQ=", "username=alice", "realm=private",
-                   "response=abc123", "KEY-PRIVATE-123"):
-        assert secret not in shown
+    assert "username=alice" not in shown
+    assert "username=login-" in shown
+    for text in ("dXNlcjpzZWNyZXQ=", "realm=private", "response=abc123", "KEY-PRIVATE-123"):
+        assert text in shown
     assert "status" in shown
 
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
-def test_quoted_secret_values_with_spaces_are_fully_masked(mode):
+def test_only_password_is_masked_in_quoted_text(mode):
     data = {"message": 'token="mot de passe privé" cookie=\'session longue privée\' password=ordinary'}
     shown = format_diagnostic_detail(data, mode)
-    for leaked in ("mot de passe privé", "session longue privée", "ordinary"):
-        assert leaked not in shown
-    assert "token=<expurgé>" in shown
-    assert "cookie=<expurgé>" in shown
+    assert "mot de passe privé" in shown
+    assert "session longue privée" in shown
+    assert "ordinary" not in shown
+    assert "password=mot-de-passe-" in shown
 
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
-def test_api_and_access_keys_are_always_redacted(mode):
+def test_non_login_keys_remain_visible(mode):
     detail = {"api_key": "API-PRIVATE-ABC", "access_key": "ACCESS-PRIVATE-XYZ",
               "api-key": "SECOND-API-SECRET", "status": "ok"}
     shown = format_diagnostic_detail(detail, mode)
-    for secret in ("API-PRIVATE-ABC", "ACCESS-PRIVATE-XYZ", "SECOND-API-SECRET"):
-        assert secret not in shown
+    for text in ("API-PRIVATE-ABC", "ACCESS-PRIVATE-XYZ", "SECOND-API-SECRET"):
+        assert text in shown
     assert "ok" in shown

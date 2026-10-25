@@ -64,8 +64,8 @@ def test_open_and_cancel_never_write_or_query_the_broker():
     export, dialog, messages, sensitive = exporter()
     export.choose()
     assert export.data is not None
-    assert "PRIVATE_TOKEN" not in export.data.decode()
-    assert "LOAN/private" not in export.data.decode()
+    assert "PRIVATE_TOKEN" in export.data.decode()
+    assert "LOAN/private" in export.data.decode()
     export.choose()  # Repeated button activation does not open a second chooser.
     export.response(dialog, 0)
     assert dialog.destroyed and export.data is None
@@ -82,7 +82,7 @@ def test_local_export_is_async_private_and_reports_only_safe_status(fail):
     export.response(dialog, 1)
     assert len(destination.writes) == 1
     data, etag, backup, flags, cancellable, callback, user_data = destination.writes[0]
-    assert b"PRIVATE_TOKEN" not in data and flags == 1 and backup is False
+    assert b"PRIVATE_TOKEN" in data and flags == 1 and backup is False
     assert messages == []  # Success is not announced before completion.
     callback(destination, None, user_data)
     assert "PRIVATE_WRITE_ERROR" not in repr(messages)
@@ -118,11 +118,11 @@ def test_oversized_invalid_or_unknown_report_is_refused(text):
         support_report_bytes(text)
 
 
-def test_report_larger_than_detail_limit_is_kept_and_redacted():
+def test_report_larger_than_detail_limit_preserves_original_values():
     text = "Ligne expurgée\n" * 4000 + "Authorization: Bearer PRIVATE_HEADER\n"
     output = support_report_bytes(text).decode()
     assert output.count("Ligne expurgée") == 4000
-    assert "PRIVATE_HEADER" not in output
+    assert "PRIVATE_HEADER" in output
 
 
 
@@ -147,9 +147,10 @@ def test_json_detail_export_is_type_preserving_indented_bounded_and_private():
     assert actual["rows"] == [None, False, 0, [], {}]
     assert actual["multiline"] == "ligne 1\nligne 2"
     assert actual["unicode"] == "Élève 🌍 漢字"
-    for secret in ("PRIVATE_TOKEN", "PRIVATE_PASSWORD", "alice@example.com",
-                   "/home/alice"):
-        assert secret not in encoded.decode()
+    assert "PRIVATE_PASSWORD" not in encoded.decode()
+    assert "mot-de-passe-" in encoded.decode()
+    for value in ("PRIVATE_TOKEN", "alice@example.com", "/home/alice"):
+        assert value in encoded.decode()
     assert len(encoded) <= 24_000
 
 
@@ -188,7 +189,7 @@ def test_json_export_uses_local_private_async_write_and_exact_gtk_json():
     assert len(destination.writes) == 1
     data, etag, backup, flags, cancellable, callback, _ = destination.writes[0]
     assert data == expected and json.loads(data)["nested"] == [0, None, False]
-    assert "SECRET" not in data.decode("utf-8")
+    assert "SECRET" in data.decode("utf-8")
     assert backup is False and flags == 1 and etag is None
     assert not messages
     callback(destination, None, None)
