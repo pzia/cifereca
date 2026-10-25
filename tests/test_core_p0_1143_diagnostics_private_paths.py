@@ -1,9 +1,4 @@
-"""P0 #1143: last-resort free-text diagnostic redaction covers private paths.
-
-The origin of an HTTPS link is retained for backwards compatibility; path,
-query, fragment, embedded credentials, local filesystem paths and emails are
-not. Provider-specific consumers should prefer closed error codes.
-"""
+"""#3133: compatibility helpers preserve paths, URLs and credentials outside GTK."""
 from __future__ import annotations
 
 import json
@@ -30,28 +25,22 @@ from cifereca.logging_utils import RedactionFilter
     ("Bearer PRIVATE_AUTH_TOKEN", "PRIVATE_AUTH_TOKEN"),
     ("token=PRIVATE_AUTH_TOKEN", "PRIVATE_AUTH_TOKEN"),
 ])
-def test_private_information_is_never_forwarded_from_diagnostic_text(
+def test_legacy_text_helper_retains_original_information(
     input_text, secret,
 ):
     output = redact_text(input_text)
-    assert secret not in output
-    assert len(output) < len(input_text) + 30
+    assert output == input_text
+    assert secret in output
 
 
-def test_unsigned_catalog_url_path_is_redacted_but_public_origin_remains():
-    assert redact_text("https://catalog.example.test/public/reader/123") == (
-        "https://catalog.example.test/<redacted>"
-    )
-    assert redact_text("https://catalog.example.test/") == (
-        "https://catalog.example.test/"
-    )
-    # Public non-sensitive paths remain visible by the historical contract.
-    assert redact_text("https://catalog.example.test/book") == (
-        "https://catalog.example.test/book"
-    )
-    assert redact_text("https://catalog.example.test/cover?auth=SECRET_VALUE") == (
-        "https://catalog.example.test/<redacted>"
-    )
+def test_catalog_url_and_signed_query_are_kept():
+    for value in (
+        "https://catalog.example.test/public/reader/123",
+        "https://catalog.example.test/",
+        "https://catalog.example.test/book",
+        "https://catalog.example.test/cover?auth=SECRET_VALUE",
+    ):
+        assert redact_text(value) == value
 
 
 def test_nested_detail_and_export_redact_without_altering_structured_counters():

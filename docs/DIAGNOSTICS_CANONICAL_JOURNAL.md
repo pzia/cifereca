@@ -102,6 +102,12 @@ physiques** en NDJSON lisible dans un éditeur, précédé d'un en-tête de vers
 et d'indications de couverture/rotations. La limite de l'export brut est
 conservée. **Aucune expurgation** des login, mots de passe, cookies, jetons,
 URLs, titres ou chemins n'est appliquée à ce texte ; l'export est local et
-explicite. Le support-report historique et `Diagnostics.text()` constituent
-encore des voies distinctes à migrer ; leur présence n'est pas assimilée à la
-fermeture de #3133.
+explicite. Le rapport de support (`build_support_report`), les contrôles de santé et
+`Diagnostics.text()` conservent aussi les valeurs brutes depuis #3172/#3173.
+Les helpers historiques `redact()` / `redact_text()` deviennent des identités
+avec #3181 ; seule la page GTK Diagnostics pseudonymise au rendu les valeurs
+explicites login/mot de passe.
+
+Les sources legacy `all`, `core_events`, `app_log` et le cache mémoire
+`Diagnostics._items` restent des mécanismes transitoires. Les retirer après
+migration de leurs consommateurs reste nécessaire avant de fermer #3133.
