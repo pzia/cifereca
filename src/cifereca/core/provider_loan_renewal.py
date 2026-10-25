@@ -189,7 +189,9 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         accepted = (
             type(response) is dict
             and (response.get("Renewed") is True
-                 or response.get("success") is True)
+                 or ("Renewed" not in response
+                     and response.get("success") is True))
+            and response.get("success") is not False
         )
     except Exception:
         # An exception does not prove that the POST was not accepted remotely.
@@ -206,10 +208,12 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         status = "submitted"
         reason = "renewal_provider_submitted"
     try:
-        self.storage.loan_renewal_finish(
+        persisted = self.storage.loan_renewal_finish(
             key, operation_id, status=status, accepted=accepted,
         )
     except Exception:
+        persisted = None
+    if persisted is None:
         return _public(
             "verification_unavailable", "renewal_checkpoint_unavailable",
         )
