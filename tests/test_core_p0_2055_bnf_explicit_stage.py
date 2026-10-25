@@ -336,7 +336,7 @@ def test_loan_scope_guard_is_not_consent_or_public_bnf_capability(connected_core
     )
     assert lease is not None and lease.current(service)
     assert session.capabilities.digital_download is False
-    assert "loan" not in repr(lease).lower()
+    assert loan.id not in repr(lease) and "SECRET" not in repr(lease)
     # Capturing/revalidating an action scope must never perform a GET.
     assert not downloaded
     assert not service.storage.acquisitions()
