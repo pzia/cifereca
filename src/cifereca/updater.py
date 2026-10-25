@@ -39,6 +39,10 @@ DEV_COMMAND = "cifereca-update-dev"
 DEFAULT_GITHUB_REPOSITORY = "pzia/cifereca"
 TRANSACTION_FILE = ".cifereca-transaction.json"
 TRANSACTION_SCHEMA = 1
+# Sequential plugin installs have a separate 300s cap *per* package. 21
+# installs cannot share a 300s parent deadline; cap the overall release
+# child as well and keep strict failure-before-rollback semantics.
+RELEASE_PLUGIN_SNAPSHOT_TIMEOUT_SECONDS = 3600
 
 
 class UpdateError(RuntimeError):
@@ -874,7 +878,7 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     try:
         proc = run_plugin_child(
             [str(command), str(snapshot), "--json"],
-            timeout=300, on_line=child_progress_receiver(),
+            timeout=RELEASE_PLUGIN_SNAPSHOT_TIMEOUT_SECONDS, on_line=child_progress_receiver(),
         )
     except TimeoutError:
         raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None

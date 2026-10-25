@@ -21,8 +21,8 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
-from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, SMOKE_FAILURE_CODES
-from .update_child import PROGRESS_ENV
+from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, child_progress_receiver, SMOKE_FAILURE_CODES
+from .update_child import PROGRESS_ENV, ChildOutputError, run_plugin_child
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -42,6 +42,9 @@ SMOKE_FAILURE_REASONS = frozenset({
     "missing_broker", "plugin_api", "unknown",
 })
 MAX_SMOKE_FAILURE_DETAILS = 8
+# Per-package watchdog. The release orchestrator has its own, longer deadline
+# for sequential packages; progress never resets either deadline.
+PLUGIN_INSTALL_TIMEOUT_SECONDS = 300
 
 
 class DevUpdateError(RuntimeError):
@@ -220,10 +223,18 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
     command = [str(cli), "plugin", "install", str(archive), "--replace"]
     if not activate:
         command.append("--no-activate")
-    proc = updater._run_bounded_process(
-        command,
-        text=True, capture_output=True, timeout=120, check=False,
-    )
+    # A single installer can invoke pip and activation subprocesses. Stream
+    # bounded typed phase records and terminate the whole process group on
+    # timeout or Ctrl-C BEFORE restoring package directories. Never forward
+    # arbitrary stdout/stderr/argv from the installer.
+    try:
+        proc = run_plugin_child(
+            command, timeout=PLUGIN_INSTALL_TIMEOUT_SECONDS, on_line=child_progress_receiver(),
+        )
+    except TimeoutError:
+        raise TimeoutError("Délai installation plugin dépassé") from None
+    except (OSError, UnicodeError, ChildOutputError):
+        raise DevUpdateError("sous-processus plugin indisponible") from None
     if proc.returncode != 0:
         raise DevUpdateError("installation plugin dev échouée")
 
@@ -683,6 +694,8 @@ def apply_snapshot(
                 with update_phase(
                     "plugin_install", plugin_index=plugin_index,
                     plugin_total=plugin_total,
+                    package_id=package_ids[plugin_index - 1],
+                    package_version=strict_packages[plugin_index - 1][1],
                 ):
                     _install_plugin_replace(plugin_zip, activate=activate)
             if require_plugins_only:
