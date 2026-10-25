@@ -208,6 +208,7 @@ class Diagnostics:
             if type(status) is str and status not in {
                 "error", "failed", "warning", "attention_required",
                 "retryable_error", "blocked", "cancelled", "timeout",
+                "partial",
             }:
                 return
         elif self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
@@ -247,7 +248,10 @@ class Diagnostics:
             }
             payload = json.dumps(raw, ensure_ascii=False, allow_nan=False)
             severity = logging.ERROR if status in {"error", "failed", "timeout"} else (
-                logging.WARNING if status in {"warning", "cancelled", "attention_required", "retryable_error"} else logging.INFO
+                logging.WARNING if status in {
+                    "warning", "cancelled", "attention_required", "retryable_error",
+                    "blocked", "partial",
+                } else logging.INFO
             ) if type(status) is str else logging.WARNING
             logging.getLogger("cifereca").log(severity, "DIAG_JSON %s", payload)
         except Exception:
