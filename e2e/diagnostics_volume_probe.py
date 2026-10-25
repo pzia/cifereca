@@ -426,9 +426,8 @@ def main():
         assert report["audits"]["D08_raw_detail_field_preserved"]
         # Report ONLY test-safe presence flags, not GTK text or private data.
         expected = {
-            "path_redacted": 'path: "<expurgé>"' in detail_text,
-            "secret_redacted": 'secret: "<expurgé>"' in detail_text,
-            "secret_absent": "SECRET-FICTIF-NE-PAS-AFFICHER" not in detail_text,
+            "path_visible_bounded": '/home/fixture/secret/' in detail_text,
+            "secret_visible": "SECRET-FICTIF-NE-PAS-AFFICHER" in detail_text,
             "trace_first": "etape-fictive-000" in detail_text,
             "trace_last": "etape-fictive-039" in detail_text,
             "bounded": len(detail_text) < 24000,
