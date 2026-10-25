@@ -22,6 +22,7 @@ class ApplicationInterfaceWidgets:
 def build_settings_application_interface(
     *, diagnostic_section: Any, interface_section: Any,
     config: Any, Gtk: Any, Adw: Any,
+    effective_diagnostics_level: str | None = None,
 ) -> ApplicationInterfaceWidgets:
     """Build the original controls and parent hierarchy without side effects."""
     config_group = Adw.PreferencesGroup()
@@ -60,7 +61,11 @@ def build_settings_application_interface(
     level_row.set_subtitle("Appliqué et enregistré dès modification")
     levels = ["errors", "normal", "verbose", "trace"]
     level_drop = Gtk.DropDown.new_from_strings(levels)
-    diagnostic_level = str(config.get("diagnostics.level", "normal"))
+    diagnostic_level = str(
+        effective_diagnostics_level
+        if effective_diagnostics_level is not None
+        else config.get("diagnostics.level", "normal")
+    )
     try:
         level_drop.set_selected(levels.index(
             {"detailed": "verbose"}.get(diagnostic_level, diagnostic_level)
