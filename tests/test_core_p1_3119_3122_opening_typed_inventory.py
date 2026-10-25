@@ -160,7 +160,7 @@ def test_opening_failed_or_cancelled_typed_read_cannot_commit_or_cache(
 
 @pytest.mark.parametrize("fault", [
     "epoch", "session_swapped", "source_disabled", "account_replaced",
-    "scope_wrong", "session_closed",
+    "scope_wrong", "session_closed", "credential_mutated", "borrower_revoked",
 ])
 def test_opening_typed_reader_change_during_network_discards_positive_batch(
     tmp_path, fault,
@@ -189,6 +189,10 @@ def test_opening_typed_reader_change_during_network_discards_positive_batch(
                 service.accounts = [replace(a)]
             elif fault == "session_closed":
                 session.connected = False
+            elif fault == "credential_mutated":
+                session.credential_id = "unbound"
+            elif fault == "borrower_revoked":
+                session.accounts = []
             elif fault == "scope_wrong":
                 wrong = replace(a, credential_id="other")
                 return snapshot(wrong, [loan(wrong)])
