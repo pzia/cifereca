@@ -715,5 +715,5 @@ def test_journal_mode_hides_unsupported_legacy_filters():
     source = module.read_text(encoding="utf-8")
     assert "source_selector.set_selected(3 if journal_available else 0)" in source
     for row in ("source_selector", "domain_row", "reason_row"):
-        assert ("if not journal_available:\\n"
+        assert ("if not journal_available:\n"
                 f"            advanced_box.append({row})") in source
