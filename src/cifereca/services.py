@@ -2144,17 +2144,33 @@ class LibraryService:
         )
 
     def can_direct_download(self, item: SearchResult) -> bool:
-        """Whether Paris can execute an acquisition with the published contracts."""
+        """Can this *exact* remote offer show a consented direct-download action?
+
+        An unauthenticated Kobo catalogue owned=True flag is not a purchase.
+        Require active, identity/credential/item-bound Core rights before
+        inspecting the provider's executable acquisition capabilities.
+        This read-only check never refreshes, downloads or writes rights.
+        """
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             return False
         try:
+            if item.source_provider == "kobo":
+                identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
+                if (type(identity_id) is not str or not identity_id
+                        or type(item.source_credential) is not str
+                        or not item.source_credential
+                        or item.source_credential == "__public__"
+                        or type(item.record_id) is not str or not item.record_id
+                        or item.owned is not True or item.downloadable is False):
+                    return False
+                if (self.kobo_personal_right_states(identity_id).get(
+                    (item.source_credential, item.record_id)
+                ) != "active"):
+                    return False
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
-                # Kobo catalogue entries that are not owned must never expose a
-                # local download action.  Execution is possible only through the
-                # published Vault acquisition + Adept v8+ interface.
-                if not item.owned or item.downloadable is False:
-                    return False
+                # A verified right still needs an explicit Vault offer and a
+                # working Adept runtime; a local file is never implied.
                 if not hasattr(session, "resolve_acquisition"):
                     return False
                 state = self.kobo_adept_state()
