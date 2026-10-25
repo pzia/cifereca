@@ -48,7 +48,7 @@ Limites : 512 Kio décompressés/document, 12 redirections/appel, 8 étapes de
 formulaire, timeout HTTP de 15 s et budget global connexion de 60 s.
 Les cookies restent dans le client du credential ; fermeture et échec de
 connexion les révoquent. Les erreurs publiques n'exposent que des codes fermés. Le fournisseur publie
-également ces codes dans Diagnostics avec la seule phase `login`, `loans`, `search` ou `detail`,
+également ces codes dans Diagnostics avec la seule phase `login`, `loans`, `search`, `detail` ou `download`,
 car le Core affiche une erreur générique à la connexion. Aucun identifiant,
 URL, cookie, formulaire ou texte de réponse n'est ajouté au diagnostic ; une
 panne du collecteur n'altère pas le résultat de l'opération.
@@ -124,6 +124,25 @@ ACSM d'achat ou du XML à entités au seul motif que le fournisseur l'a proposé
 Restent à recetter sur compte réel : réponse effective de `/loans/{id}`,
 rattachement/validité du jeton, profil ADEPT d'origine et résultat EPUB/PDF.
 Ne pas déduire de cette UI que l'obtention BnF est opérationnelle en réel.
+
+## Recette terrain du jeton ACSM (après #3131)
+
+Depuis **Mes emprunts**, sélectionner un prêt BnF actif, choisir « Récupérer le jeton
+ACSM BnF… », puis confirmer cette action. Si un candidat valide est reçu, une
+**deuxième confirmation distincte** propose l'import ADEPT, qui reste manuel.
+Cette procédure ne crée pas de nouveau droit ; ne pas utiliser d'import
+automatique ni annoncer un EPUB/PDF avant résultat ADEPT effectivement attesté.
+
+En cas d'échec, ouvrir Diagnostics et filtrer sur `bnf-pret` ou
+`loan_download`. Le Core distingue désormais les actions terminales
+`stage_loan_token` et `import_acsm`, avec `phase`, `status` et
+`reason_code` fermés, ainsi que la référence de tâche uniquement si elle
+existe réellement. La phase `provider_delivery` comprend la **relecture**
+du prêt : elle ne prouve pas à elle seule qu'un GET ACSM a eu lieu.
+Recueillir seulement l'action et le motif sûr, **jamais** l'URL du prêt,
+le XML ACSM, les cookies, les credentials, le HTML privé ou les chemins locaux.
+Ces nouveaux événements ne permettent pas de déterminer rétrospectivement
+la cause des deux échecs du 25 octobre 2026.
 
 ## Catalogue et fiches en lecture seule
 
