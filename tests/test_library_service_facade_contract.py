@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.services import LibraryService
 
 CONTRACTS = json.loads((Path(__file__).parent / 'fixtures/library_service_facade.json').read_text())
@@ -69,6 +70,7 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
             return {'status': outcomes[loan.id], 'loan_id': loan.id}
 
         monkeypatch.setattr(service, '_acquire_active_loan_automatically', acquire)
+        enable_synthetic_paris_opening(service)
         first = service.opening_sync()
         alice = next(row for row in first['identities'] if row['identity_id'] == 'alice')
         assert alice['status'] == 'partial'
@@ -77,6 +79,7 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
         assert service.current_identity.identity_id == 'bob'
         assert service.storage.latest_sync_run('alice')['status'] == 'partial'
         outcomes['first'] = 'complete'
+        enable_synthetic_paris_opening(service)
         second = service.opening_sync()
         alice = next(row for row in second['identities'] if row['identity_id'] == 'alice')
         assert alice['status'] == 'success' and alice['new_acquisitions'] == 2
