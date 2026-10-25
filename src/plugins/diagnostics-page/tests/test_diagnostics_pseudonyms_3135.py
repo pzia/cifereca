@@ -67,3 +67,13 @@ def test_global_search_goes_to_core_before_pagination():
     assert broker.query['source'] == 'journal'
     assert broker.query['offset'] == 450
     assert broker.query['since'] is None
+
+
+def test_settings_and_diagnostics_plugin_reuse_same_gtk_session_mapping():
+    from cifereca.gui.diagnostics_pseudonyms import DISPLAY_PSEUDONYMS as shared
+    from diagnostics_pseudonyms import DISPLAY_PSEUDONYMS as plugin
+    assert shared is plugin
+    visible = shared.text("login=alice@example.org password=visible")
+    assert "login=login-" in visible
+    assert "password=mot-de-passe-" in visible
+    assert plugin.text("login=alice@example.org password=visible") == visible

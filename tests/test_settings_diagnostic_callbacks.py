@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 from types import SimpleNamespace as NS
@@ -14,8 +15,9 @@ from cifereca.gui.settings_lifetime import SettingsPageLifetime
 
 
 def _harness():
-    text = ["rapport synthétique expurgé"]
-    buffer = NS(get_bounds=lambda: (0, len(text[0])), get_text=lambda *args: text[0])
+    text = ["rapport affiché"]
+    buffer = NS(get_bounds=lambda: (0, len(text[0])), get_text=lambda *args: text[0],
+                set_text=lambda value: text.__setitem__(0, value))
     clipboard = NS(set_content=Mock(return_value=True), read_text_async=Mock())
     display = NS(get_clipboard=lambda: clipboard)
     gdk = NS(
@@ -97,7 +99,8 @@ def test_export_native_response_keeps_snapshot_and_always_destroys_dialog(tmp_pa
         h.lifetime.dispose()
     callback(h.chooser, 0 if outcome == "cancel" else 7)
     if outcome == "accept":
-        assert destination.read_text(encoding="utf-8") == "rapport synthétique expurgé"
+        assert destination.read_text(encoding="utf-8") == "rapport affiché"
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o600
         h.host.toast.assert_called_once_with("Diagnostic exporté")
     else:
         assert not destination.exists()
@@ -198,7 +201,7 @@ def test_diagnostic_export_never_records_sensitive_local_filename(tmp_path):
     h.export()
     callback = h.chooser.connect.call_args.args[1]
     callback(h.chooser, h.gtk.ResponseType.ACCEPT)
-    assert path.read_text("utf-8") == "rapport synthétique expurgé"
+    assert path.read_text("utf-8") == "rapport affiché"
     h.host.diagnostics.add.assert_called_once_with(
         "UI", "diagnostic export", "ok",
         detail={"code": "export_completed"}, level="detailed",
@@ -235,3 +238,52 @@ def test_preferences_save_failure_never_exposes_private_service_exception():
         "Impossible d’enregistrer le niveau de diagnostic",
     )
     assert PRIVATE not in str(h.host.show_error.call_args)
+
+
+def test_clear_action_only_clears_presentation_not_persistent_events():
+    h = _harness()
+    h.clear()
+    assert h.text[0] == ""
+    h.host.diagnostics.clear.assert_not_called()
+    h.refresh.assert_not_called()
+    h.host.toast.assert_called_once_with(
+        "Affichage effacé ; journal local conservé"
+    )
+
+
+def test_raw_settings_export_renews_private_permissions_on_existing_file(tmp_path):
+    h = _harness()
+    destination = tmp_path / "old-report.txt"
+    destination.write_text("long previous content" * 20)
+    os.chmod(destination, 0o644)
+    h.chooser.get_file.return_value = NS(get_path=lambda: str(destination))
+    h.export()
+    callback = h.chooser.connect.call_args.args[1]
+    callback(h.chooser, h.gtk.ResponseType.ACCEPT)
+    assert destination.read_text() == "rapport affiché"
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="requires O_NOFOLLOW")
+def test_raw_settings_export_rejects_symlink_without_touching_target(tmp_path):
+    h = _harness()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do not alter")
+    alias = tmp_path / "report.txt"
+    alias.symlink_to(outside)
+    h.chooser.get_file.return_value = NS(get_path=lambda: str(alias))
+    h.export()
+    callback = h.chooser.connect.call_args.args[1]
+    callback(h.chooser, h.gtk.ResponseType.ACCEPT)
+    assert outside.read_text() == "do not alter"
+    assert alias.is_symlink()
+    h.host.show_error.assert_called_once_with(
+        "Impossible d’exporter le diagnostic", "Export impossible"
+    )
+
+
+def test_raw_export_chooser_warns_before_explicit_user_save():
+    h = _harness()
+    h.export()
+    args = h.gtk.FileChooserNative.new.call_args.args
+    assert "affichage" in args[0] and "sensibles" in args[0]

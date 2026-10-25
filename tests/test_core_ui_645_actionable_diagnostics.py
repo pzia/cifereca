@@ -57,7 +57,7 @@ def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
     assert 'open_diagnostic_plugin(button, pid)' in refresh
     assert 'focus(plugin_id)' in source
     assert 'Copier dans le presse-papiers' in section
-    assert 'Exporter le diagnostic' in section
+    assert 'Exporter l’affichage' in section
     actions = gui_source_text(ROOT / "src/cifereca/gui/settings_diagnostic_actions.py")
     assert 'build_settings_diagnostic_callbacks(' in source
     assert 'Gtk.FileChooserAction.SAVE' in actions

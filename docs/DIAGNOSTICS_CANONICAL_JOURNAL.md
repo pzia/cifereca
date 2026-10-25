@@ -67,6 +67,24 @@ Un échec Numilog et une décision Kobo `error`/ `partial` sont respectivement
 émis en `ERROR`/`WARNING` plutôt qu'en `INFO` afin de ne pas disparaître
 du journal quand le niveau effectif est `errors`.
 
+## Paramètres → Diagnostic système (aperçu de compatibilité)
+
+Le panneau Paramètres ne lit plus `Diagnostics._items` ni
+`Diagnostics.text()`. Il affiche au maximum 100 dernières observations
+**structurées** du broker canonique, plus les faits locaux de présentation.
+Ce n'est pas l'ensemble des logs : la recherche, les rotations et l'export
+complet sont accessibles dans la page Diagnostics.
+
+Le panneau Paramètres utilise les **mêmes pseudonymes de session GTK**
+que la page Diagnostics, exclusivement sur les valeurs explicites
+login/mot de passe. Tokens, URLs, titres, chemins et autres champs restent
+visibles. La copie et « Exporter l'affichage » reprennent exactement ce
+texte présenté. Cet export volontaire se fait en `0600` (même à
+l'écrasement) et sans suivre de lien symbolique. L'**export brut du journal**
+reste disponible, sans aucune transformation, depuis la page Diagnostics.
+« Effacer l'affichage » ne supprime ni ne réécrit le journal et n'efface
+plus un cache mémoire trompeur.
+
 ## Points restant à consolider
 
 Les autres producteurs spécialisés et intégrations de plugins doivent être

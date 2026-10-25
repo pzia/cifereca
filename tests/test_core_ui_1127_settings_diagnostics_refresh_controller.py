@@ -5,7 +5,18 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import pytest
+from cifereca.gui import settings_diagnostics_refresh_controller as controller
+
 from cifereca.gui.settings_diagnostics_refresh_controller import refresh_settings_diagnostics
+
+
+@pytest.fixture(autouse=True)
+def _fake_canonical_broker(monkeypatch):
+    monkeypatch.setattr(
+        controller, "DiagnosticsBrokerImpl",
+        lambda service: NS(snapshot=service._journal_snapshot),
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
@@ -99,15 +110,23 @@ def make_context(*, ready=1, attention=0, rows=(), selected=0, paris_url=True):
     host = NS(
         _closed=False,
         plugin_manager=object(),
-        diagnostics=NS(text=lambda version, facts: (
-            calls.append(("report", version, facts)), "texte expurgé"
-        )[1]),
+        diagnostics=NS(text=lambda *_: (_ for _ in ()).throw(
+            AssertionError("legacy Diagnostics.text() must not be used")
+        )),
         config=config,
         covers=NS(stats=lambda: {"covers": 2}),
         history_cover_resolver=NS(stats=lambda: {"history": 3}),
         ui_perf=NS(snapshot=lambda: {"perf": 4}),
         service=NS(provider_diagnostic_state=lambda: {"source": "ready"}),
     )
+    host.service._journal_snapshot = lambda: (
+        calls.append(("journal", host.service)),
+        ({
+            "source": "journal", "event_id": "physical-1",
+            "module": "TEST", "operation": "refresh",
+            "detail": {"login": "reader@example.invalid", "path": "/tmp/book.epub"},
+        },),
+    )[1]
     args = {
         "page_lifetime": lifetime,
         "diag_summary": summary,
@@ -172,8 +191,10 @@ def test_empty_attention_filter_reports_clear_state_without_leaking_sources():
     empty = args["diag_issues_box"].children[0]
     assert empty.label == "Aucune anomalie à examiner."
     assert "success" in empty.classes
-    assert report.text == "texte expurgé"
-    assert [x[0] for x in calls] == ["status", "project", "report"]
+    assert "Source: journal canonique local" in report.text
+    assert "reader@example.invalid" not in report.text
+    assert '"login": "login-' in report.text
+    assert [x[0] for x in calls] == ["status", "project", "journal"]
 
 
 def test_attention_priority_summary_and_filter_selected():
@@ -247,25 +268,27 @@ def test_refresh_replaces_old_plugin_widgets_instead_of_duplication():
 def test_report_preserves_existing_provenance_performance_and_provider_state():
     host, args, calls, report = make_context()
     refresh_settings_diagnostics(host, **args)
-    _, version, facts = next(event for event in calls if event[0] == "report")
-    assert version == "test-version"
-    assert facts == {
-        "transport": "httpx local direct",
-        "base_url": "https://paris.example.invalid",
-        "ui": "GTK4/libadwaita",
-        "cover_pipeline": {"covers": 2},
-        "history_cover_search": {"history": 3},
-        "ui_performance": {"perf": 4},
-        "providers": {"source": "ready"},
-    }
-    assert report.text == "texte expurgé"
+    assert report.text.startswith("cifereca vtest-version")
+    for snippet in (
+        'transport: "httpx local direct"',
+        'base_url: "https://paris.example.invalid"',
+        'ui: "GTK4/libadwaita"',
+        'cover_pipeline: {"covers": 2}',
+        'history_cover_search: {"history": 3}',
+        'ui_performance: {"perf": 4}',
+        'providers: {"source": "ready"}',
+        '"event_id": "physical-1"',
+        '"login": "login-',
+        '"path": "/tmp/book.epub"',
+    ):
+        assert snippet in report.text
+    assert [event[0] for event in calls] == ["status", "project", "journal"]
 
 
 def test_report_falls_back_to_config_base_url_without_paris_helper():
-    host, args, calls, _ = make_context(paris_url=False)
+    host, args, calls, report = make_context(paris_url=False)
     refresh_settings_diagnostics(host, **args)
-    facts = next(event[2] for event in calls if event[0] == "report")
-    assert facts["base_url"] == "https://config.example.invalid"
+    assert 'base_url: "https://config.example.invalid"' in report.text
 
 
 def test_no_plugin_activation_or_background_job_in_refresh_path():
@@ -274,4 +297,52 @@ def test_no_plugin_activation_or_background_job_in_refresh_path():
     host.reconnect_sources = lambda: (_ for _ in ()).throw(AssertionError("reconnect"))
     host.runner = NS(submit=lambda *_: (_ for _ in ()).throw(AssertionError("task")))
     refresh_settings_diagnostics(host, **args)
-    assert [event[0] for event in calls] == ["status", "project", "report"]
+    assert [event[0] for event in calls] == ["status", "project", "journal"]
+
+
+def test_settings_preview_reads_single_physical_journal_without_memory(
+    tmp_path, monkeypatch,
+):
+    from cifereca.brokers import DiagnosticsBrokerImpl as RealBroker
+
+    journal = tmp_path / "cifereca.log"
+    journal.write_text(
+        '2026-10-25 13:20:00,123 INFO cifereca [MainThread] DIAG_JSON '
+        '{"schema_version":1,"category":"LOAN","operation":"import_acsm",'
+        '"status":"error","message":"import failed","detail":'
+        '{"login":"alice@example.org","password":"VISIBLE",'
+        '"token":"KEEP","path":"/home/alice/book.epub"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "DiagnosticsBrokerImpl", RealBroker)
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: journal)
+    host, args, _calls, report = make_context()
+    refresh_settings_diagnostics(host, **args)
+    assert '"operation": "import_acsm"' in report.text
+    assert "alice@example.org" not in report.text
+    assert '"password": "mot-de-passe-' in report.text
+    assert '"login": "login-' in report.text
+    for value in ("KEEP", "/home/alice/book.epub"):
+        assert value in report.text
+    assert '"event_id":' in report.text
+
+    # The physical source remains unchanged; only the GTK rendering differs.
+    from cifereca.core.diagnostic_journal import query_journal
+    physical, = query_journal(journal)["events"]
+    assert physical["detail"]["login"] == "alice@example.org"
+    assert physical["detail"]["password"] == "VISIBLE"
+
+
+def test_settings_preview_reports_journal_failure_without_memory_fallback(monkeypatch):
+    class FailedBroker:
+        def __init__(self, service):
+            self.service = service
+
+        def snapshot(self):
+            raise OSError("private path should not be displayed")
+
+    monkeypatch.setattr(controller, "DiagnosticsBrokerImpl", FailedBroker)
+    host, args, _calls, report = make_context()
+    refresh_settings_diagnostics(host, **args)
+    assert "Lecture du journal indisponible : OSError" in report.text
+    assert "private path should not be displayed" not in report.text
