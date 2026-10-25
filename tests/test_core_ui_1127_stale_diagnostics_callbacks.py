@@ -6,6 +6,8 @@ No actual GTK, clipboard, network or user file is required for stale tests.
 from __future__ import annotations
 
 import ast
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -81,7 +83,7 @@ def test_stale_chooser_response_destroys_dialog_without_writing(tmp_path):
     callback = _callback("chosen", dict(
         page_lifetime=lifetime, self=window, content="expurgé",
         Gtk=SimpleNamespace(ResponseType=SimpleNamespace(ACCEPT=1)),
-        Path=Path,
+        os=os, stat=stat,
     ))
     callback(dialog, 1)
     assert not file.exists()
@@ -92,7 +94,7 @@ def test_stale_chooser_response_destroys_dialog_without_writing(tmp_path):
     window.show_error.assert_not_called()
 
 
-def test_active_chooser_preserves_expurgated_file_export(tmp_path):
+def test_active_chooser_preserves_private_unmasked_file_export(tmp_path):
     file = tmp_path / "report.txt"
     dialog = SimpleNamespace(
         get_file=lambda: SimpleNamespace(get_path=lambda: str(file)),
@@ -103,11 +105,12 @@ def test_active_chooser_preserves_expurgated_file_export(tmp_path):
     )
     _callback("chosen", dict(
         page_lifetime=SettingsPageLifetime(), self=window,
-        content="rapport expurgé",
+        content="rapport brut",
         Gtk=SimpleNamespace(ResponseType=SimpleNamespace(ACCEPT=1)),
-        Path=Path,
+        os=os, stat=stat,
     ))(dialog, 1)
-    assert file.read_text(encoding="utf-8") == "rapport expurgé"
+    assert file.read_text(encoding="utf-8") == "rapport brut"
+    assert stat.S_IMODE(file.stat().st_mode) == 0o600
     window.show_error.assert_not_called()
     window.toast.assert_called_once_with("Diagnostic exporté")
     dialog.destroy.assert_called_once_with()
