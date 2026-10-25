@@ -463,6 +463,16 @@ def _registered_typed_loan_scope_current(
                 account.provider_id, account.credential_id,
             )) is session
             and getattr(session, "connected", None) is True
+            and getattr(session, "provider_id", None) == scope[1]
+            and getattr(session, "credential_id", None) == scope[2]
+            and getattr(getattr(session, "capabilities", None), "loans", None) is True
+            and any(
+                type(reader) is Account and (
+                    reader.identity_id, reader.provider_id,
+                    reader.credential_id, reader.unique_id,
+                ) == scope[:4]
+                for reader in session.accounts
+            )
             and self.sync_source_enabled(account)
         )
     except Exception:
