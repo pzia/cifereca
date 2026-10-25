@@ -110,6 +110,51 @@ def test_ai_structured_journal_opt_in_retains_source_not_another_channel():
     assert "ref-physical" in preview["prompt"]
 
 
+def test_opt_in_snapshot_deduplicates_only_identical_physical_journal_ids():
+    class CanonicalSnapshot(FakeBroker):
+        def snapshot(self):
+            baseline = {
+                "source": "journal",
+                "timestamp": "2026-10-11T05:20:00+00:00",
+                "operation": "provider_connect",
+                "status": "error", "severity": "error",
+                "detail": {"phase": "fetch"},
+            }
+            return [
+                {**baseline, "event_id": "ref-shared"},
+                {**baseline, "event_id": "ref-independent"},
+                # Reused text and timestamp do not imply the same occurrence.
+                # Legacy source with a colliding ID remains distinct.
+                {**baseline, "source": "core_events", "event_id": "ref-shared"},
+            ]
+
+    broker = CanonicalSnapshot([{
+        **event("BNF error 403", "ref-shared"), "source": "journal",
+    }])
+    preview = prepare_analysis(FakeLLM(), broker, include_snapshot=True)
+    assert preview["count"] == 1
+    assert preview["structured_count"] == 2
+    assert preview["prompt"].count('"event_id": "ref-shared"') == 1
+    assert '"event_id": "ref-independent"' in preview["prompt"]
+    assert '"source": "core_events"' in preview["prompt"]
+
+
+def test_invalid_structured_journal_event_id_is_not_attested():
+    class MalformedSnapshot(FakeBroker):
+        def snapshot(self):
+            return [{
+                "source": "journal",
+                "timestamp": "2026-10-11T05:20:00+00:00",
+                "event_id": "PRIVATE VALUE WITH WHITESPACE",
+                "status": "error",
+            }]
+    preview = prepare_analysis(
+        FakeLLM(), MalformedSnapshot([]), include_snapshot=True,
+    )
+    assert preview["structured_count"] == 1
+    assert "PRIVATE VALUE WITH WHITESPACE" not in preview["prompt"]
+
+
 def test_disabled_llm_never_queries_events_or_network():
     broker = FakeBroker([event()])
     with pytest.raises(ValueError, match="llm_disabled"):
