@@ -187,8 +187,13 @@ class StartupTrace:
                 "error" if fields["status"] in {"failed", "partial"}
                 else "warning" if fields["status"] == "blocked" else "ok"
             )
-            _LOG.info(
-                "%s%s", _LOG_PREFIX, serialized,
+            _severity = (
+                logging.ERROR if fields["status"] == "failed"
+                else logging.WARNING if fields["status"] in {"partial", "blocked"}
+                else logging.INFO
+            )
+            _LOG.log(
+                _severity, "%s%s", _LOG_PREFIX, serialized,
                 extra=_core_journal_record(
                     "NUMILOG", "startup_materialization",
                     public_status, message, fields,
