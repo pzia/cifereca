@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 import hashlib
 import json
+import logging
 from contextlib import ExitStack
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
@@ -858,10 +859,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         kobo_decision["interval_minutes"],
     )
     _decision_severity = (
-        40 if kobo_decision["status"] == "error"
-        else 30 if kobo_decision["status"] == "partial"
-        else 20
-    )  # logging.ERROR / WARNING / INFO; never discard a failed opening.
+        logging.ERROR if kobo_decision["status"] == "error"
+        else logging.WARNING if kobo_decision["status"] == "partial"
+        else logging.INFO
+    )  # Never discard a failed opening in errors-only mode.
     logger.log(
         _decision_severity, _decision_format, *_decision_args,
         extra=_core_journal_record(
