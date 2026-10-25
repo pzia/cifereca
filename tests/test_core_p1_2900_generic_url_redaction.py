@@ -1,62 +1,47 @@
-"""P1 #2900: a generic diagnostic never publishes complete URL-like strings."""
+"""Generic diagnostics retain raw URL and metadata evidence (#3133)."""
 from __future__ import annotations
 
 from cifereca.diagnostics import Diagnostics, redact_text
 
 
-def test_generic_diagnostic_masks_full_urls_even_without_queries():
-    private = "PRIVATE_ACCOUNT_72"
-    link = "https://bibliotheques.paris.fr/notice/" + private
+def test_generic_diagnostic_preserves_complete_urls_and_nested_content():
+    link = "https://bibliotheques.paris.fr/notice/PRIVATE_ACCOUNT_72"
     deep = "https://example.test/books/PRIVATE_BOOK_LINK"
     d = Diagnostics(level="normal")
-    d.add(
-        "PNB " + link, "open " + link, status="failed",
-        detail={
-            "site": link,
-            "description": "visit " + deep + " and " + link,
-            "nested": [{"external_site": deep}, "download " + link],
-            "attempts": 1, "available": True,
-        },
-    )
-    snap = d.snapshot()
-    assert len(snap) == 1
-    row = snap[0]
-    assert "<redacted-url>" in row["operation"]
-    # The legacy redactor may already have replaced a private path suffix;
-    # the generic URL scrub masks the remaining URL without undoing it.
-    assert row["detail"]["site"].startswith("<redacted-url>")
+    d.add("PNB " + link, "open " + link, status="failed", detail={
+        "site": link, "description": "visit " + deep + " and " + link,
+        "nested": [{"external_site": deep}, "download " + link],
+        "attempts": 1, "available": True,
+    })
+    row, = d.snapshot()
+    assert row["category"] == "PNB " + link
+    assert row["operation"] == "open " + link
+    assert row["detail"]["site"] == link
+    assert row["detail"]["nested"] == [{"external_site": deep}, "download " + link]
     assert row["detail"]["attempts"] == 1
     assert row["detail"]["available"] is True
     support = d.text("test")
-    assert "<redacted-url>" in support
-    for secret in (private, "PRIVATE_BOOK_LINK", link, deep):
-        assert secret not in repr(snap)
-        assert secret not in support
-    assert "https://" not in repr(snap)
-    assert "https://" not in support
+    assert link in support and deep in support
 
 
-def test_generic_scrub_does_not_change_public_url_helper_or_verified_sources():
+def test_generic_collector_keeps_original_fields_and_public_urls():
     public = "https://www.gutenberg.org/ebooks/12345"
     assert redact_text(public) == public
     d = Diagnostics(level="normal")
-    d.add("PLUGIN", "public site", detail={"homepage": public})
-    assert d.snapshot()[0]["detail"]["homepage"] == "<redacted-url>"
-    assert "provider_id" not in d.snapshot()[0]["detail"]
+    d.add("PLUGIN", "public site", detail={"homepage": public, "provider_id": "paris"})
+    assert d.snapshot()[0]["detail"] == {"homepage": public, "provider_id": "paris"}
 
 
 def test_generic_diagnostic_does_not_invoke_user_stringify_hooks():
     class Hostile:
         def __str__(self):
-            raise AssertionError("PRIVATE_SECRET")
-
+            raise AssertionError("never stringify foreign objects")
         def __repr__(self):
-            raise AssertionError("PRIVATE_SECRET")
-
+            raise AssertionError("never repr foreign objects")
     d = Diagnostics(level="normal")
     d.add(Hostile(), Hostile(), detail={"url": Hostile(), "nested": [Hostile()]})
-    entry = d.snapshot()[0]
+    entry, = d.snapshot()
     assert entry["category"] == "DIAGNOSTICS"
-    assert entry["operation"] == "[opération masquée]"
-    assert entry["detail"]["url"] == "<redacted>"
-    assert entry["detail"]["nested"] == ["<redacted>"]
+    assert entry["operation"] == "[opération invalide]"
+    assert entry["detail"]["url"] is None
+    assert entry["detail"]["nested"] == [None]
