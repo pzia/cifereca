@@ -685,6 +685,39 @@ def _path_from_identity(value: Any) -> Path | None:
     return Path(str(value["path"]))
 
 
+def _verify_restored_transaction_state(root: Path, transaction: dict[str, Any]) -> None:
+    """Read-only proof after rollback: both Core links and every managed package.
+
+    A successful copy or CLI smoke does not prove that absent packages stayed
+    absent, nor that Core symlinks still target their pre-update releases.
+    Consume only the transaction's own pre-mutation identities. No writes,
+    network calls, plugin activation or untrusted fields in public failures.
+    """
+    core = transaction.get("core")
+    packages = transaction.get("packages")
+    if type(core) is not dict or type(packages) is not dict:
+        raise UpdateError("rollback_evidence_unavailable")
+    for link, key in (("current", "before_current"), ("previous", "before_previous")):
+        expected = _path_from_identity(core.get(key))
+        actual = _symlink_target(root / link)
+        if ((expected is None) != (actual is None)
+                or (expected is not None and (
+                    not expected.is_dir() or actual is None
+                    or actual.resolve() != expected.resolve()
+                ))):
+            raise UpdateError("rollback_core_state_mismatch")
+    for package_id, row in sorted(packages.items()):
+        before = row.get("before") if type(row) is dict else None
+        if type(before) is not dict:
+            raise UpdateError("rollback_evidence_unavailable")
+        try:
+            after = _package_identity(package_id)
+        except Exception:
+            raise UpdateError("rollback_package_state_unavailable") from None
+        if after != before:
+            raise UpdateError("rollback_package_state_mismatch")
+
+
 def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str, Any], state: str) -> None:
     """Idempotently complete a failed update or an interrupted voluntary rollback."""
     _save_transaction(path, transaction, state)
@@ -710,6 +743,13 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
                 (bin_dir() / command).unlink(missing_ok=True)
     except Exception as exc:
         errors.append("core")
+    if not errors:
+        try:
+            _verify_restored_transaction_state(root, transaction)
+        except Exception:
+            # Never mark an unproven restore successful. Preserve the
+            # transaction for a safe later reconciliation; do not leak paths.
+            errors.append("verification")
     if errors:
         transaction["restoration_errors"] = errors
         _save_transaction(path, transaction, "restoration_incomplete")
