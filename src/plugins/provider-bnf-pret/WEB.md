@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.3.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.4.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -143,6 +143,28 @@ Recueillir seulement l'action et le motif sûr, **jamais** l'URL du prêt,
 le XML ACSM, les cookies, les credentials, le HTML privé ou les chemins locaux.
 Ces nouveaux événements ne permettent pas de déterminer rétrospectivement
 la cause des deux échecs du 25 octobre 2026.
+
+### BnF-Prêt 0.3.4 — localiser le refus avant le GET ACSM (#2055)
+
+Le parcours sous double consentement conserve ses garanties précédentes. Le
+fournisseur distingue maintenant les échecs de **relecture d'activité**
+(`activity_http_unavailable`, `activity_access_denied`,
+`activity_unrecognized_loans`, etc.) des échecs au **GET du jeton ACSM**
+(`http_unavailable`, `access_denied`, `invalid_loan_token`, etc.).
+Le Core publie les mêmes raisons fermées avec le préfixe `bnf_` dans
+`reason_code`. Une raison `bnf_activity_*` prouve que le GET ACSM **n'a pas
+été déclenché par cette tentative**. `provider_delivery` reste la phase
+englobante : ce seul libellé n'atteste pas le GET. Le cas de prêt disparu
+demeure `bnf_loan_not_observed`, lui aussi **avant** le GET.
+
+La révocation de session durant la relecture est désormais vérifiée **avant**
+la requête de téléchargement ; cela refuse le GET et ne produit ni jeton
+ni import. Aucune nouvelle requête, aucune réponse privée ni URL n'entre
+dans les événements. Les anciens plugins 0.3.3 restent compatibles : leur
+code `bnf_http_unavailable` en `provider_delivery` ne permet toujours pas
+de déduire quelle requête a échoué. Cette distinction n'est vérifiée qu'en
+tests HTTPX synthétiques ; la réponse réelle du serveur et ADEPT restent à
+qualifier sur un prêt choisi manuellement.
 
 ## Catalogue et fiches en lecture seule
 
