@@ -1424,7 +1424,7 @@ class DiagnosticsBrokerImpl:
         return tuple(self.service.diagnostics.snapshot())
 
     def events(
-        self, *, source: str = "all", module: str = "", severity: str = "",
+        self, *, source: str = "journal", module: str = "", severity: str = "",
         provider_id: str = "", domain: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
