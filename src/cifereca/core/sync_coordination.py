@@ -857,8 +857,13 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         kobo_decision["connected_kobo"], kobo_decision["eligible_kobo"],
         kobo_decision["interval_minutes"],
     )
-    logger.info(
-        _decision_format, *_decision_args,
+    _decision_severity = (
+        40 if kobo_decision["status"] == "error"
+        else 30 if kobo_decision["status"] == "partial"
+        else 20
+    )  # logging.ERROR / WARNING / INFO; never discard a failed opening.
+    logger.log(
+        _decision_severity, _decision_format, *_decision_args,
         extra=_core_journal_record(
             "KOBO", "automatic backup decision",
             "warning" if kobo_decision["status"] in {"partial", "error"} else "ok",
