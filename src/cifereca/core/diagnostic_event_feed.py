@@ -38,6 +38,11 @@ from .diagnostic_loan_download import (
     public_fields as public_loan_download_fields,
     public_log_fields as public_loan_download_log,
 )
+from .diagnostic_bnf_loan_action import (
+    public_fields as public_bnf_action_fields,
+    public_log_fields as public_bnf_action_log,
+    public_message as public_bnf_action_message,
+)
 from .diagnostic_source_sync import (
     public_fields as public_source_sync_fields,
     public_log_fields as public_source_sync_log,
@@ -240,6 +245,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_loan_download_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
+            bnf_action_detail = (
+                public_bnf_action_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
             adept_detail = (
                 public_adept_log(match["body"]) if match["logger"] == "cifereca" else {}
             )
@@ -267,6 +276,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 audit_detail = {}
             if connect_attempt_detail:
                 message = "connexion fournisseur · " + connect_attempt_detail["phase"]
+            elif bnf_action_detail:
+                message = public_bnf_action_message(bnf_action_detail)
             elif loan_download_detail:
                 message = "Téléchargement du prêt · " + loan_download_detail["status"] + " · " + loan_download_detail["code"]
             elif audit_detail:
@@ -331,7 +342,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "NUMILOG" if numilog_detail or numilog_session_detail else
                 "SYNC" if source_sync_detail else
                 "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
-                "LOAN" if loan_download_detail else
+                "LOAN" if loan_download_detail or bnf_action_detail else
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail or connection_success_detail or connect_attempt_detail else
                 "LIBRARY" if audit_detail else None
@@ -346,6 +357,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 or connection_success_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
                 or loan_download_detail.get("provider_id")
+                or bnf_action_detail.get("provider_id")
                 or ("kobo" if kobo_detail else None)
                 or ("numilog" if numilog_detail else None)
             )
@@ -374,6 +386,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                    if source_sync_detail else {}),
                 **({"detail": loan_download_detail, "status": loan_download_detail["status"]}
                    if loan_download_detail else {}),
+                **({"detail": bnf_action_detail, "status": bnf_action_detail["status"],
+                    **({"task_ref": bnf_action_detail["task_ref"]}
+                       if "task_ref" in bnf_action_detail else {})}
+                   if bnf_action_detail else {}),
                 **({"detail": adept_detail, "status": adept_detail["status"]} if adept_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
@@ -535,6 +551,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                             else "warning")
         source_sync_detail = {}
         loan_download_detail = {}
+        bnf_action_detail = {}
         adept_detail = {}
         if (category == "ADEPT" and operation == "kobo adept"
                 and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
@@ -569,6 +586,17 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 severity = ("info" if candidate["status"] == "success"
                             else "error" if candidate["status"] == "failed"
                             else "warning")
+        if (category == 'LOAN' and operation == 'bnf_loan_action'
+                and type(diagnostics) is Diagnostics
+                and row.get('verified_bnf_loan_action') is True):
+            candidate = public_bnf_action_fields(row.get('detail'))
+            if candidate and status == ('ok' if candidate['status']=='success' else candidate['status']):
+                bnf_action_detail = candidate
+                public_detail = candidate
+                business_domain = 'loan_download'
+                message = public_bnf_action_message(candidate)
+                severity = ('info' if candidate['status']=='success' else
+                            'error' if candidate['status']=='failed' else 'warning')
         if category == "NUMILOG":
             # Startup facts must originate from the dedicated Core emitter.
             # A generic plugin/diagnostics.add with a correctly shaped
@@ -594,7 +622,9 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         # Only typed observations with Core provenance attest this identity.
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.
         attested_provider_id = None
-        if loan_download_detail:
+        if bnf_action_detail:
+            attested_provider_id = 'bnf-pret'
+        elif loan_download_detail:
             attested_provider_id = loan_download_detail["provider_id"]
         elif source_sync_detail:
             attested_provider_id = source_sync_detail["provider_id"]
@@ -643,7 +673,9 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            "status": loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
+            **({"task_ref": bnf_action_detail['task_ref']}
+               if 'task_ref' in bnf_action_detail else {}),
+            "status": bnf_action_detail['status'] if bnf_action_detail else loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
                 else "unknown"),

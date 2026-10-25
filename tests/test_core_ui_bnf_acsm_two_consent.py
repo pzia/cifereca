@@ -31,7 +31,7 @@ def window():
         stage_bnf_loan_acsm=Mock(return_value={
             "status": "candidate_acsm", "path": "/private/staged.acsm",
         }),
-        import_acsm=Mock(return_value={"status": "complete"}),
+        import_bnf_loan_acsm=Mock(return_value={"status": "complete"}),
     )
     w = NS(
         service=service, _closed=False, _identity_context_generation=1,
@@ -65,7 +65,7 @@ def test_cancel_retrieval_never_starts_http_or_adept():
     assert len(Dialog.shown) == 1
     Dialog.shown[0].respond("cancel")
     w.service.stage_bnf_loan_acsm.assert_not_called()
-    w.service.import_acsm.assert_not_called()
+    w.service.import_bnf_loan_acsm.assert_not_called()
     assert actions == []
 
 
@@ -76,9 +76,9 @@ def test_retrieval_does_not_automatically_import_without_second_consent():
     w.service.stage_bnf_loan_acsm.assert_called_once_with(
         loan, confirmed=True, expected_identity_id="default")
     assert len(Dialog.shown) == 2
-    w.service.import_acsm.assert_not_called()
+    w.service.import_bnf_loan_acsm.assert_not_called()
     Dialog.shown[1].respond("cancel")
-    w.service.import_acsm.assert_not_called()
+    w.service.import_bnf_loan_acsm.assert_not_called()
     assert actions == [("Récupération du jeton BnF…", "loan-acquisition")]
 
 
@@ -87,10 +87,10 @@ def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
     start(w)
     Dialog.shown[0].respond("get")
     Dialog.shown[1].respond("import")
-    kwargs = w.service.import_acsm.call_args
+    kwargs = w.service.import_bnf_loan_acsm.call_args
     assert kwargs.args[0].name == "staged.acsm"
     assert kwargs.kwargs == {
-        "identity_id":"default", "provider_id":"manual", "title":"Fiction",
+        "expected_identity_id":"default", "title":"Fiction",
     }
     assert actions == [
         ("Récupération du jeton BnF…", "loan-acquisition"),
@@ -110,7 +110,7 @@ def test_switching_identity_revokes_pending_first_and_second_consent():
     Dialog.shown[0].respond("get")
     w._identity_context_generation += 1
     Dialog.shown[1].respond("import")
-    w.service.import_acsm.assert_not_called()
+    w.service.import_bnf_loan_acsm.assert_not_called()
 
 
 def test_refuse_wrong_active_identity_before_presenting_action():
@@ -136,7 +136,7 @@ def test_confirmation_is_bound_to_original_loan_even_after_mutable_list_refresh(
     assert submitted.args[0].id == "loan-a"
     assert submitted.args[0].record_id == "book-a"
     Dialog.shown[1].respond("import")
-    assert w.service.import_acsm.call_args.kwargs["title"] == "Fiction"
+    assert w.service.import_bnf_loan_acsm.call_args.kwargs["title"] == "Fiction"
 
 
 def test_both_dialogs_reject_replayed_positive_responses():
@@ -148,8 +148,48 @@ def test_both_dialogs_reject_replayed_positive_responses():
     assert len(Dialog.shown) == 2
     Dialog.shown[1].respond("import")
     Dialog.shown[1].respond("import")
-    assert w.service.import_acsm.call_count == 1
+    assert w.service.import_bnf_loan_acsm.call_count == 1
     assert actions == [
         ("Récupération du jeton BnF…", "loan-acquisition"),
         ("Import ADEPT du prêt BnF…", "acsm-import"),
     ]
+
+
+def test_stage_error_explains_safe_code_without_starting_adept():
+    from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+    w,_=window()
+    w.service.stage_bnf_loan_acsm.side_effect=BnfLoanActionError('bnf_access_denied')
+    start(w)
+    Dialog.shown[0].respond('get')
+    message,title=w.show_error.call_args.args
+    assert 'BnF a refusé' in message and 'Code : bnf_access_denied' in message
+    assert '\n' not in message  # Keep the shared activity banner on one paragraph.
+    assert title=='Téléchargement BnF'
+    w.service.import_bnf_loan_acsm.assert_not_called()
+    assert len(Dialog.shown)==1
+
+
+def test_import_error_is_distinct_and_never_formats_private_exception():
+    from cifereca.gui.bnf_acsm_action_controller import bnf_action_error_message
+    w,_=window()
+    w.service.import_bnf_loan_acsm.side_effect=RuntimeError('SECRET token=private')
+    start(w)
+    Dialog.shown[0].respond('get')
+    Dialog.shown[1].respond('import')
+    message,title=w.show_error.call_args.args
+    assert 'ADEPT a échoué' in message and 'jeton est conservé' in message
+    assert 'SECRET' not in message and title=='Import BnF'
+    class Hostile:
+        def __str__(self):raise AssertionError('private exception must not be formatted')
+    assert 'Code : bnf_action_failed' in bnf_action_error_message(Hostile())
+
+
+def test_late_failure_does_not_pop_up_in_another_identity():
+    w,_=window()
+    pending=[]
+    w.runner=NS(submit=lambda *args,**kwargs:pending.append(args))
+    start(w)
+    Dialog.shown[0].respond('get')
+    w._identity_context_generation+=1
+    pending[0][3](RuntimeError('private error'))
+    w.show_error.assert_not_called()

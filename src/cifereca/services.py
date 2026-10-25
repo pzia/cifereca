@@ -271,13 +271,60 @@ class LibraryService:
         No entitlement, acquisition, ADEPT or borrowed-state mutation.
         """
         from .core.bnf_explicit_acsm import stage_bnf_loan_acsm
-        return stage_bnf_loan_acsm(
-            self, loan, confirmed=confirmed,
-            expected_identity_id=expected_identity_id,
-            interprocess_lock=InterProcessLock,
-            lock_path=acquisition_lock_file, busy_error=LockBusyError,
-            inspect_artifact=inspect_artifact,
-        )
+        from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
+        observation = ActionObservation(self, 'stage_loan_token')
+        try:
+            result = stage_bnf_loan_acsm(
+                self, loan, confirmed=confirmed,
+                expected_identity_id=expected_identity_id,
+                interprocess_lock=InterProcessLock,
+                lock_path=acquisition_lock_file, busy_error=LockBusyError,
+                inspect_artifact=inspect_artifact, observe_phase=observation.at,
+            )
+        except BnfLoanActionError as exc:
+            observation.emit('failed', exc.code)
+            raise
+        except Exception as exc:
+            code = 'bnf_local_staging_failed' if isinstance(exc, OSError) else 'bnf_action_failed'
+            observation.emit('failed', code)
+            raise BnfLoanActionError(code) from None
+        observation.emit('success', 'candidate_acsm')
+        return result
+
+    def import_bnf_loan_acsm(
+        self, source: Path, *, expected_identity_id: str, title: str | None = None,
+    ) -> dict[str, Any]:
+        """Separate consented ADEPT action; its result remains a manual import.
+
+        Diagnostic attribution to the BnF action never changes acquisition
+        provenance, establishes a BnF right, or selects another Adobe profile.
+        """
+        from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
+        observation = ActionObservation(self, 'import_acsm')
+        try:
+            if (type(expected_identity_id) is not str or not expected_identity_id
+                    or self.current_identity is None
+                    or self.current_identity.identity_id != expected_identity_id):
+                raise BnfLoanActionError('bnf_loan_scope_unproven')
+            observation.at('adept_import')
+            result = self.import_acsm(source, identity_id=expected_identity_id,
+                                      provider_id='manual', title=title)
+        except BnfLoanActionError as exc:
+            observation.emit('failed', exc.code)
+            raise
+        except Exception:
+            observation.emit('failed', 'bnf_import_failed')
+            raise BnfLoanActionError('bnf_import_failed') from None
+        status = result.get('status') if type(result) is dict else None
+        if status in {'complete', 'unchanged'}:
+            observation.emit('success', status)
+        elif status == 'attention_required' and type(result.get('code')) is str and result['code'] in {
+            'adept_profile_required', 'adept_profile_ambiguous',
+        }:
+            observation.emit('attention_required', result['code'])
+        else:
+            observation.emit('failed', 'bnf_import_unconfirmed')
+        return result
 
     def save_configuration(self, data: dict[str, Any]) -> dict[str, Any]:
         """Apply staged settings and journal directory changes before publishing them."""

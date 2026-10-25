@@ -162,6 +162,7 @@ class DiagnosticEntry:
     verified_browser_recorder: bool = False
     verified_reconciliation: bool = False
     verified_loan_download: bool = False
+    verified_bnf_loan_action: bool = False
 
 
 class Diagnostics:
@@ -199,6 +200,29 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+
+    def add_core_bnf_loan_action(self, event: object) -> None:
+        """Core-attested terminal fact, never a generic plugin diagnostic."""
+        from .core.diagnostic_bnf_loan_action import public_fields, log_message
+        fields = public_fields(event)
+        if not fields:
+            return
+        status = fields['status']
+        if self.enabled and (self.level != 'errors' or status != 'success'):
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
+                category='LOAN', operation='bnf_loan_action',
+                status='ok' if status == 'success' else status,
+                duration_ms=fields['duration_ms'], detail=fields,
+                verified_bnf_loan_action=True,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            severity = logging.INFO if status == 'success' else logging.ERROR if status == 'failed' else logging.WARNING
+            logging.getLogger('cifereca').log(severity, '%s', log_message(fields))
+        except Exception:
+            pass
 
     def add_core_loan_download(self, event: object) -> None:
         """Core-only terminal result for ONE explicitly requested recovery.

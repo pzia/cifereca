@@ -10,12 +10,13 @@ from xml.etree import ElementTree
 
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
+from .diagnostic_bnf_loan_action import BnfLoanActionError, provider_reason
 
 _MAX_BYTES = 2 * 1024 * 1024
 
 
 def _refuse(code: str):
-    raise ProviderConfigurationError(code)
+    raise BnfLoanActionError(code) from None
 
 
 def _valid_loan_token(path: Path, inspect_artifact) -> bool:
@@ -68,6 +69,7 @@ def _discard_invalid_candidate(path: object, destination: Path) -> None:
 def stage_bnf_loan_acsm(
     service, loan: Loan, *, confirmed: bool, expected_identity_id: str,
     interprocess_lock, lock_path, busy_error, inspect_artifact,
+    observe_phase=lambda _phase: None,
 ) -> dict[str, str]:
     """Stage an ACSM candidate only after caller's affirmative consent."""
     if confirmed is not True:
@@ -89,6 +91,7 @@ def stage_bnf_loan_acsm(
                 and service.storage.identity_for_connection(
                     loan.source_provider, loan.source_credential) == expected_identity_id)
 
+    observe_phase('source_scope')
     if not active_identity():
         _refuse("bnf_loan_scope_unproven")
     try:
@@ -115,15 +118,18 @@ def stage_bnf_loan_acsm(
             # No provider download capability override. The BnF-specific
             # explicit gate is required; generic download_digital(loan,...)
             # remains refused, including during opening_sync.
+            observe_phase('local_staging')
             destination = service._acquisition_work_dir(
                 expected_identity_id, "bnf-pret", loan.id)
+            observe_phase('provider_delivery')
             try:
                 artifact, url = session.download_digital(
                     loan, account, destination, explicit_user_action=True)
-            except Exception:
+            except Exception as exc:
                 # Do not surface supplier exception text: even a parser may
                 # accidentally include private URLs or SAML in that text.
-                _refuse("bnf_loan_token_unavailable")
+                _refuse(provider_reason(exc))
+            observe_phase('artifact_validation')
             try:
                 if not isinstance(artifact, Path) or type(url) is not str or url:
                     _refuse("bnf_loan_token_invalid")
@@ -148,6 +154,7 @@ def stage_bnf_loan_acsm(
                 raise
             # The borrower/session may have been replaced during HTTP.
             # A valid ACSM from a stale session must never be handed to ADEPT.
+            observe_phase('source_revalidation')
             try:
                 still_bound = (
                     active_identity()
