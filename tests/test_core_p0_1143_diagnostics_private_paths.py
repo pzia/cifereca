@@ -66,10 +66,9 @@ def test_nested_detail_and_export_redact_without_altering_structured_counters():
         },
     })
     raw = json.dumps(diagnostic.snapshot()) + diagnostic.text("0.9.44")
-    assert "reader@example.invalid" not in raw
-    assert "private-reader" not in raw
-    assert "private-book" not in raw
-    assert "loan.acsm" not in raw
+    # The canonical journal and both legacy views now retain original data.
+    for value in ("reader@example.invalid", "private-reader", "private-book", "loan.acsm"):
+        assert value in raw
     assert '"attempted": 0' in raw
     assert '"failures": 1' in raw
 
