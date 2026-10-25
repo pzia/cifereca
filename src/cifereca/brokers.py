@@ -1517,8 +1517,6 @@ class DiagnosticsBrokerImpl:
         return bounded
 
     def active_checks(self) -> tuple[HealthCheckResult, ...]:
-        from .diagnostics import redact, redact_text
-
         rows: list[HealthCheckResult] = []
         try:
             sources = SynchronizationBrokerImpl(self.service).sources()
@@ -1541,14 +1539,14 @@ class DiagnosticsBrokerImpl:
                     str(source.provider_id or "sync"),
                     status,
                     "Source " + str(source.label or source.provider_id or "configurée"),
-                    redact({
+                    {
                         "provider_id": source.provider_id,
                         "connected": connected,
                         "sync_capable": capable,
                         "enabled": bool(source.enabled),
                         "last_success": source.last_success,
                         "error": error[:240] if error else "",
-                    }),
+                    },
                     "core",
                 ))
         except Exception:
@@ -1635,11 +1633,11 @@ class DiagnosticsBrokerImpl:
                     continue
                 status = item.status if item.status in allowed_status else "unknown"
                 rows.append(HealthCheckResult(
-                    redact_text(str(item.check_id or resolved.plugin_id))[:160],
-                    redact_text(str(item.component or resolved.plugin_id))[:160],
+                    str(item.check_id or resolved.plugin_id)[:160],
+                    str(item.component or resolved.plugin_id)[:160],
                     status,
-                    redact_text(str(item.message or item.component or resolved.plugin_id))[:300],
-                    redact(dict(item.detail or {})),
+                    str(item.message or item.component or resolved.plugin_id)[:300],
+                    dict(item.detail or {}),
                     str(item.scope or "plugin")[:80],
                 ))
         return tuple(rows)
