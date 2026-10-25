@@ -245,6 +245,30 @@ def _records(db):
     return result
 
 
+def has_active_declared_link(storage, *, identity_id, provider_id,
+                             credential_id, account_id, item_id):
+    """Read-only anti-duplicate guard, NOT a local presence attestation.
+
+    An active user statement may describe a moved/changed/missing file. It
+    must be reviewed rather than ignored to download another copy. Revoked
+    statements do not block. Callers own live account admission and repeat
+    this check under the acquisition lock immediately before provider I/O.
+    No current GUI identity, filesystem scan, receipt or new right is used.
+    """
+    scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
+                                    account_id, item_id)))
+    _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
+             and provider_id in _PROVIDERS, 'invalid_scope')
+    try:
+        with _transaction(storage, False) as db:
+            return any(record['state'] == 'active' and record['scope'] == scope
+                       for record in _records(db))
+    except DeclarationRejected:
+        raise
+    except (sqlite3.Error, OSError):
+        raise DeclarationRejected('local_storage_unavailable') from None
+
+
 def _context(db, scope):
     connections = _rows(db, 'SELECT connection_id,identity_id,provider_id,credential_id,enabled '
                         'FROM provider_connections '
