@@ -90,10 +90,10 @@ def test_diagnostic_entry_and_core_fallback_preserve_controls():
     assert [row[0] for row in calls] == [
         "Ouvrir Diagnostics",
         "Démarrer la capture détaillée", "Exporter les mesures JSON",
-        "Actualiser", "Copier dans le presse-papiers", "Exporter le diagnostic", "Effacer",
+        "Actualiser", "Copier dans le presse-papiers", "Exporter le diagnostic", "Effacer l’affichage",
     ]
     assert calls[4][2] == {"suggested": True}
-    assert ui.export.tooltip.startswith("Enregistrer le rapport de diagnostic expurgé")
+    assert ui.export.tooltip.startswith("Export local brut")
 
 
 def test_long_report_keeps_readonly_scroll_and_original_margins():
@@ -118,7 +118,7 @@ def test_builder_never_attaches_signals_or_accesses_diagnostic_backend():
     assert ui.details_toggle.label == "Afficher les détails techniques"
 
 
-def test_host_and_action_adapter_keep_expurgation_copy_export_navigation_and_refresh():
+def test_host_and_action_adapter_keep_canonical_copy_export_navigation_and_refresh():
     source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py").read_text("utf-8")
     rendered = ast.unparse(ast.parse(settings_source_text()))
     assert "build_settings_diagnostics_section(" in rendered
@@ -126,7 +126,7 @@ def test_host_and_action_adapter_keep_expurgation_copy_export_navigation_and_ref
     owner = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_diagnostics_refresh_controller.py"
     owner_source = ast.unparse(ast.parse(owner.read_text("utf-8")))
     assert "diagnostic_plugin_rows(data, attention_only=attention_only)" in owner_source
-    assert "window.diagnostics.text(" in owner_source
+    assert "_canonical_settings_report(window.service, version" in owner_source
     assert "self.navigate('plugins')" in rendered
     assert "diag_scroll.set_visible(visible)" in rendered
     assert "build_settings_diagnostic_callbacks(" in rendered
