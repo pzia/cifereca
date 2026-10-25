@@ -1428,10 +1428,22 @@ class DiagnosticsBrokerImpl:
         provider_id: str = "", domain: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
+        search: str = "",
     ) -> dict[str, Any]:
-        """Read-only, bounded public feed; filesystem paths are Core-owned."""
-        from .core.diagnostic_event_feed import query_diagnostic_events
+        """Read-only events from the new canonical journal or legacy facade."""
         from .paths import log_file
+        if source == "journal":
+            from .core.diagnostic_journal import query_journal
+            if reason_code or domain:
+                raise ValueError("legacy closed-schema filters unavailable on raw journal")
+            return query_journal(
+                log_file(), search=search, module=module, severity=severity,
+                provider_id=provider_id, since=since, until=until,
+                limit=limit, offset=offset,
+            )
+        if search:
+            raise ValueError("global text search requires source='journal'")
+        from .core.diagnostic_event_feed import query_diagnostic_events
         return query_diagnostic_events(
             self.service.diagnostics, log_path=log_file(),
             source=source, module=module, severity=severity,
@@ -1439,6 +1451,12 @@ class DiagnosticsBrokerImpl:
             since=since, until=until, limit=limit, offset=offset,
             reason_code=reason_code,
         )
+
+    def export_raw_journal(self) -> bytes:
+        """Explicit local export; no provider interaction, no GUI masking."""
+        from .core.diagnostic_journal import export_raw_journal
+        from .paths import log_file
+        return export_raw_journal(log_file())
 
     def system_status(self):
         from .system_status import system_status

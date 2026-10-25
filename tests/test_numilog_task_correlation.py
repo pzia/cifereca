@@ -48,7 +48,7 @@ def test_failed_real_broker_task_links_provider_event_to_public_worker_outcome(t
         assert f'task_ref={ref}' in delivery['message']
         assert f'task_ref={ref}' in diag.text('test')
         assert 'PRIVATE' not in json.dumps(payload)
-        assert 'PRIVATE' not in path.read_text()
+        assert "PRIVATE" in path.read_text()  # raw journal is intentionally unmasked
     finally:
         broker.close()
         logger.removeHandler(handler)
@@ -191,7 +191,7 @@ def test_cooperative_cancellation_has_its_own_terminal_outcome(caplog):
             with pytest.raises(Cancelled):
                 pool.submit(0, cancelled).result(timeout=2)
         assert 'status=cancelled' in caplog.text
-        assert 'PRIVATE' not in caplog.text
+        assert "PRIVATE" in caplog.text  # diagnostic JSON is retained verbatim
     finally:
         pool.shutdown(wait=True)
 
@@ -217,6 +217,6 @@ def test_headless_taskrunner_uses_same_real_worker_scope(caplog):
         assert f'task_ref={ref} status=failed' in caplog.text
         assert errors and isinstance(errors[0], RuntimeError)
         assert any(row[0]=='finished' and row[1][3] is False for row in displayed)
-        assert 'PRIVATE' not in caplog.text
+        assert "PRIVATE" in caplog.text  # diagnostic JSON is retained verbatim
     finally:
         runner.close()
