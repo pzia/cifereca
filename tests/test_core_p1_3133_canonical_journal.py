@@ -193,3 +193,145 @@ def test_attested_browser_recorder_event_survives_restart_in_one_journal_line(
     assert event["detail"]["operation"] == operation
     assert event["detail"]["code"] == code
     assert event["detail"]["domain"] == "browser_recorder"
+
+
+def _canonical_writer(path):
+    handler = _writer(path)
+    handler.setFormatter(logging_utils.CanonicalEventFormatter(
+        "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
+    ))
+    return handler
+
+
+def test_attested_connection_producer_is_one_canonical_record(tmp_path, monkeypatch):
+    """One Core fact, one physical occurrence, with legacy callbacks intact."""
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    old_level = logger.level
+    handler = _canonical_writer(path)
+    observed = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            observed.append(record)
+
+    capture = Capture()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    logger.addHandler(capture)
+    try:
+        diag = Diagnostics(enabled=False)
+        diag.add_core_provider_connect_failure("provider.test")
+    finally:
+        logger.removeHandler(handler)
+        logger.removeHandler(capture)
+        logger.setLevel(old_level)
+        handler.close()
+
+    result = query_journal(path, provider_id="provider.test")
+    assert result["total"] == 1
+    event, = result["events"]
+    assert event["module"] == "PLUGIN"
+    assert event["operation"] == "provider connect"
+    assert event["status"] == "error"
+    assert event["detail"] == {
+        "provider_id": "provider.test", "code": "provider_connect_failed",
+    }
+    assert path.read_text().count("DIAG_JSON ") == 1
+    assert len(observed) == 1
+    assert "provider connection failure" in observed[0].getMessage()
+    assert "DIAG_JSON" not in observed[0].getMessage()
+    assert diag.snapshot() == []
+
+
+def test_bnf_failure_preserves_typed_context_as_single_journal_event(tmp_path, monkeypatch):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    handler = _canonical_writer(path)
+    logger.addHandler(handler)
+    try:
+        diag = Diagnostics(enabled=False)
+        diag.add_core_bnf_loan_action({
+            "schema_version": 1, "provider_id": "bnf-pret",
+            "action": "stage_loan_token", "phase": "provider_delivery",
+            "status": "failed", "reason_code": "bnf_access_denied",
+            "duration_ms": 10, "task_ref": "abcdef123456",
+        })
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        handler.close()
+
+    result = query_journal(path, search="bnf_access_denied")
+    assert result["total"] == 1
+    event, = result["events"]
+    assert event["module"] == "LOAN"
+    assert event["operation"] == "bnf_loan_action"
+    assert event["detail"]["provider_id"] == "bnf-pret"
+    assert event["detail"]["reason_code"] == "bnf_access_denied"
+    assert event["task_ref"] == "abcdef123456"
+    assert query_journal(path, provider_id="bnf-pret")["total"] == 1
+    assert path.read_text().count("DIAG_JSON ") == 1
+
+
+def test_attested_sync_failure_retains_fields_before_and_after_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    handler = _canonical_writer(path)
+    logger.addHandler(handler)
+    try:
+        Diagnostics(enabled=False).add_core_source_sync(
+            "provider.test", phase="completed", status="failed",
+            code="source_sync_failed", duration_ms=123,
+            counts={"loans": 2, "library": 7},
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        handler.close()
+
+    result = query_journal(path, search="source_sync_failed")
+    assert result["total"] == 1
+    event, = result["events"]
+    assert event["module"] == "SYNC"
+    assert event["operation"] == "source sync"
+    assert event["detail"]["provider_id"] == "provider.test"
+    assert event["detail"]["duration_ms"] == 123
+    assert event["detail"]["loans"] == 2
+    assert event["detail"]["library"] == 7
+    assert query_journal(path, provider_id="provider.test")["total"] == 1
+
+
+def test_canonical_formatter_preserves_original_raw_unstructured_and_invalid_extra():
+    template = "%(levelname)s %(message)s"
+    formatter = logging_utils.CanonicalEventFormatter(template)
+    record = logging.LogRecord(
+        "cifereca", logging.ERROR, __file__, 1,
+        "import ACSM 403 password=visible token=untouched", (), None,
+    )
+    assert formatter.format(record) == (
+        "ERROR import ACSM 403 password=visible token=untouched"
+    )
+    record._cifereca_journal_payload = {"unsupported": object()}
+    assert formatter.format(record) == (
+        "ERROR import ACSM 403 password=visible token=untouched"
+    )
+    del record._cifereca_journal_payload
+    record._cifereca_journal_payload = {
+        "schema_version": 1, "category": "LOAN",
+        "operation": "import_acsm", "status": "failed",
+        "message": "import ACSM 403 password=visible token=untouched",
+        "detail": {"password": "visible", "token": "untouched"},
+    }
+    canonical = formatter.format(record)
+    assert canonical.startswith("ERROR DIAG_JSON ")
+    assert "password" in canonical and "untouched" in canonical
+    # The same record can be consumed by legacy handlers unchanged.
+    assert record.getMessage() == "import ACSM 403 password=visible token=untouched"
