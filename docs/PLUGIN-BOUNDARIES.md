@@ -14,7 +14,7 @@ Le Core est responsable des primitives communes :
 - inspection d'artefacts ;
 - publication atomique d'artefacts ;
 - cache, TTL et single-flight ;
-- diagnostics, health checks et redaction ;
+- journalisation intégrale, diagnostics et health checks ; pseudonymisation **login/mot de passe dans l'IHM uniquement** ([contrat](LOGGING-CONTRACT.md)) ;
 - `TaskBroker`, progression et annulation ;
 - transport générique et contrats communs ;
 - stockage et ledger ;
@@ -67,7 +67,7 @@ Le runtime ADEPT reste séparé du Core : le Core orchestre, le runtime spécial
 
 ### Diagnostics
 
-La redaction commune est une primitive publique. Les messages et contextes métier restent du ressort du provider.
+**[Contrat impératif](LOGGING-CONTRACT.md) — 25/10/2026.** Le Core porte le journal commun, les niveaux, la recherche et l'API Diagnostics ; les plugins émettent les événements complets, y compris messages libres, statuts HTTP, URLs et contextes métier réellement observés, **sans pré-masquage**. Le broker, le terminal et les exports bruts conservent les valeurs originales. **Seul le rendu IHM** pseudonymise les **valeurs du login et du mot de passe** ; les autres valeurs, même sensibles, restent visibles. Une copie du texte affiché reste pseudonymisée, l'export brut non. Aucun transfert automatique de journaux bruts.
 
 ## Décision pour une nouvelle fonctionnalité
 
