@@ -75,3 +75,13 @@ reconstruire de lien par heuristique temporelle). Le collecteur structuré
 facultatif provient du même journal dans les Core compatibles. L'IA demeure
 **strictement sur consentement préalable** : aucun appel réseau ni modèle
 au chargement de la page.
+
+
+## Pas de double preuve issue du journal unique
+
+Lorsque l'utilisateur ajoute explicitement le contexte structuré, l'aperçu IA
+écarte les occurrences déjà présentes dans les événements filtrés **uniquement**
+si la source canonique `journal` et l'`event_id` physique attesté sont
+identiques. Ni la date, ni le message, ni le fournisseur ne suffisent à déduire
+un doublon. Les autres sources restent des preuves distinctes de compatibilité.
+Les occurrences structurées nouvelles conservent leurs `event_id` valides.
