@@ -165,10 +165,10 @@ class NativeChooserLifecycle(unittest.TestCase):
         self.window.show_error.assert_called_once();self.host.manager.inspect_archive.assert_not_called()
 
 class SyncIssues(unittest.TestCase):
-    def test_four_errors_show_four_titles_and_redact_secret(self):
+    def test_four_errors_show_four_titles_and_raw_causes(self):
         report={'detail':{'acquisition_errors':[{'title':f'Sapiens {i}','status':'retryable_error','error':'Failed https://example.test/file?token=SECRET'} for i in range(1,5)]}}
         text=sync_issues_text(report)
-        self.assertEqual(text.count('Sapiens'),4);self.assertNotIn('SECRET',text)
+        self.assertEqual(text.count('Sapiens'),4);self.assertEqual(text.count('SECRET'),4)
     def test_old_runs_explain_absent_details(self):self.assertIn('ancienne synchronisation',sync_issues_text({}))
 
 class ModernChooserLifecycle(unittest.TestCase):
@@ -188,7 +188,7 @@ class ModernChooserLifecycle(unittest.TestCase):
         review.assert_not_called();host.window.show_error.assert_not_called();self.assertIsNone(host.window._plugin_archive_chooser)
 
 class PersistedAcquisitionErrors(unittest.TestCase):
-    def test_sync_counter_has_one_redacted_cause_per_failed_loan(self):
+    def test_sync_counter_has_one_original_cause_per_failed_loan(self):
         from cifereca.models import Account,Loan
         with tempfile.TemporaryDirectory() as tmp:
             service=_service(tmp)
@@ -202,5 +202,5 @@ class PersistedAcquisitionErrors(unittest.TestCase):
                 service.opening_sync()
                 saved=service.storage.latest_sync_run('default')
                 self.assertEqual(saved['errors'],4);self.assertEqual(len(saved['detail']['acquisition_errors']),4)
-                self.assertNotIn('SECRET',sync_issues_text(saved))
+                self.assertEqual(sync_issues_text(saved).count('SECRET'),4)
             finally:service.close()
