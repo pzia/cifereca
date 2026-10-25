@@ -90,6 +90,7 @@ def test_exact_six_phases_cross_two_channels_export_one_request_not_six_connecti
     assert "task_ref ou operation_ref" in exported["notice"]
     assert "authentifications réseau inconnues" in exported["notice"]
     assert "scope_ref" not in json.dumps(exported)
+    assert "connection_provider_id" not in json.dumps(exported)
 
 
 def test_two_requests_same_timestamp_are_not_fused_with_historical_success():
@@ -167,6 +168,7 @@ def test_operation_export_requires_companion_attestation_not_just_hex_ref():
         {**base, "caller_category": SECRET},
         {**base, "network_auth": "true"},
         {**base, "provider_id": "another"},
+        {**base, "connection_provider_id": "another"},
         {**base, "operation_ref": SECRET},
         {**base, "message": "unrelated"},
     ):
