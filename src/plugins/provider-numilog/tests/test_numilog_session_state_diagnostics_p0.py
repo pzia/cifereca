@@ -110,3 +110,11 @@ def test_diagnostics_and_log_handlers_cannot_break_session_state(monkeypatch, ca
         assert session.connected is False and not session.credentials
     finally:
         session.close()
+
+
+def test_numilog_module_logger_propagates_to_the_single_core_journal():
+    from cifereca_numilog import _LOG
+
+    assert _LOG.name == "cifereca.plugin.provider.numilog"
+    assert _LOG.propagate is True
+    assert not _LOG.handlers  # Core owns the one journal handler.
