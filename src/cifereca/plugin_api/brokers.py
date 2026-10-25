@@ -140,7 +140,7 @@ class TaskBroker(Protocol):
 class DiagnosticsBroker(Protocol):
     def snapshot(self) -> tuple[Mapping[str, Any], ...]: ...
     def events(
-        self, *, source: str = "all", module: str = "", severity: str = "",
+        self, *, source: str = "journal", module: str = "", severity: str = "",
         provider_id: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
