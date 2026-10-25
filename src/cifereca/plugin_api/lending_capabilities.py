@@ -131,4 +131,93 @@ def assess_lending_operation(
                                 implemented, ready, action)
 
 
-__all__ = ["LendingAvailability", "LendingOperationFact", "assess_lending_operation"]
+LendingPublicationStatus = Literal[
+    "declared", "absent", "legacy_unmapped", "conflict", "unverified",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class LendingPublicationFact:
+    """Static manifest/descriptor/class agreement, NOT action authorization."""
+    operation: str
+    publication_status: LendingPublicationStatus
+    reason_code: str
+    manifest_declared: bool
+    descriptor_declared: bool
+    method_implemented: bool
+
+    @property
+    def publishable(self) -> bool:
+        """The static contract is consistent; runtime permission is unchecked."""
+        return self.publication_status == "declared"
+
+
+def validate_lending_publication(
+    *,
+    manifest_capabilities: tuple[str, ...] | list[str] | None,
+    descriptor: ProviderDescriptor,
+    session_type: type[ProviderSession],
+) -> tuple[LendingPublicationFact, ...]:
+    """Audit every canonical lending operation without constructing a session.
+
+    Intended for packaging/static conformance. Does NOT call providers,
+    sessions or network services, and never authorizes a CoreUI button.
+    Optional legacy capabilities remain unmapped rather than silently
+    promoting an internal method to a public lending operation.
+    """
+    from inspect import getattr_static
+
+    manifest_ok = (
+        type(manifest_capabilities) in (tuple, list)
+        and len(manifest_capabilities) <= 128
+        and all(type(cap) is str for cap in manifest_capabilities)
+        and len(set(manifest_capabilities)) == len(manifest_capabilities)
+    )
+    descriptor_ok = type(descriptor) is ProviderDescriptor
+    class_ok = (
+        isinstance(session_type, type)
+        and issubclass(session_type, ProviderSession)
+    )
+    output: list[LendingPublicationFact] = []
+    for operation, (manifest_name, capability_name, method_name) in (
+        _OPERATION_REQUIREMENTS.items()
+    ):
+        declared = bool(manifest_ok and manifest_name in manifest_capabilities)
+        descriptor_claim = False
+        implemented = False
+        if manifest_ok and descriptor_ok and class_ok:
+            raw_claim = getattr(descriptor.capabilities, capability_name, None)
+            if type(raw_claim) is not bool:
+                status, reason = "unverified", "invalid_declaration"
+            else:
+                descriptor_claim = raw_claim
+                # Reading a function object on a class via getattr_static
+                # cannot run a descriptor or the provider's networking code.
+                current = getattr_static(session_type, method_name, None)
+                base = getattr_static(ProviderSession, method_name, None)
+                implemented = callable(current) and current is not base
+                if declared and not descriptor_claim:
+                    status, reason = "conflict", "manifest_descriptor_conflict"
+                elif descriptor_claim and not declared:
+                    status, reason = "legacy_unmapped", "legacy_capability_unmapped"
+                elif not declared:
+                    status, reason = "absent", "not_declared"
+                elif not implemented:
+                    status, reason = "conflict", "method_unimplemented"
+                elif descriptor.state != "ready":
+                    status, reason = "unverified", "plugin_not_ready"
+                else:
+                    status, reason = "declared", "publication_consistent"
+        else:
+            status = "unverified"
+            reason = "manifest_unverified" if not manifest_ok else "invalid_declaration"
+        output.append(LendingPublicationFact(
+            operation, status, reason, declared, descriptor_claim, implemented,
+        ))
+    return tuple(output)
+
+
+__all__ = [
+    "LendingAvailability", "LendingOperationFact", "assess_lending_operation",
+    "LendingPublicationStatus", "LendingPublicationFact", "validate_lending_publication",
+]
