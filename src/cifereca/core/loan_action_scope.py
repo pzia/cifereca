@@ -57,14 +57,20 @@ class LoanActionScopeLease:
                 account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id,
             )
-            if exact != self._account_fields or _exact_loan_fields(loan) != self._loan_fields:
+            loan_fields = _exact_loan_fields(loan)
+            # Provider models remain mutable and may be malformed. Check
+            # primitive field types before equality/hash on untrusted objects.
+            if (any(type(value) is not str for value in exact)
+                    or any(type(value) is not str for value in loan_fields)
+                    or any(len(value) > 1024 or chr(0) in value
+                           for value in (*exact, *loan_fields))
+                    or exact != self._account_fields
+                    or loan_fields != self._loan_fields):
                 return False
             identity_id, provider, credential, borrower = exact
-            if (type(identity_id) is not str or not identity_id
+            if (not identity_id or not provider or not credential
                     or identity_id != self._expected_identity_id
-                    or type(provider) is not str or not provider
-                    or type(credential) is not str or not credential
-                    or type(borrower) is not str):
+                    or not loan.id or not loan.record_id):
                 return False
             allowed_borrowers = {borrower}
             if provider == "paris" and account.is_primary is True and borrower == "":
