@@ -1,5 +1,7 @@
 # Cifereca — guide des agents
 
+**Contrat impératif de logs (25/10/2026)** : [docs/LOGGING-CONTRACT.md](docs/LOGGING-CONTRACT.md). Core et plugins journalisent tout ce qui est effectivement émis, sans expurgation du journal, de la console, du broker ou des exports bruts. **Seul le rendu dans l'IHM** pseudonymise **uniquement login et mot de passe** ; tout le reste est visible. Cette décision prévaut sur toute consigne historique contraire. Aucun transfert automatique des journaux bruts, qui peuvent contenir des secrets.
+
 Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontières et le mode de collaboration. Les profils sous [.agents/roles/](.agents/roles/README.md) et les AGENTS.md locaux précisent les règles par répertoire. En cas de divergence documentaire, vérifier le code et les contrats actifs avant d'agir.
 
 ## Priorités : une seule file
@@ -134,6 +136,6 @@ Le plan opérationnel et les tests de sélection sont suivis dans [#856](https:/
 - Une PR = un changement cohérent et réversible, avec tests et critères d'acceptation. Corriger un blocage dans le rôle propriétaire ; sinon transmettre une issue ciblée.
 - **cicd** vérifie la CI, les reviews, les conflits et les risques avant merge. **Il tente de résoudre les conflits de PR**, de préférence par rebase Git natif si nécessaire et autorisé : résolution mécanique conservant les changements pertinents, diff revu, tests/gates à nouveau vérifiés sur le nouveau SHA, puis merge. Les arbitrages métier ou architecturaux reviennent au rôle propriétaire avec un diagnostic concret ; ne pas se contenter de déclarer un conflit bloquant sans tentative réalisable. Un test réellement échoué n'est pas un simple check indisponible. Ne pas rebaser une PR uniquement parce qu'elle est derrière main ; actualiser seulement en cas de nécessité réelle. Voir [le profil cicd](.agents/roles/cicd.md#responsabilité-active-de-résolution-des-conflits).
 - **Aucune release implicite** : un merge, un « next », une PR ou une demande de préparation ne valent pas autorisation de publier.
-- Utiliser les skills locaux de .agents/skills/ : cifereca-plugin, cifereca-tests, cifereca-simulation et cifereca-release.
+- Utiliser les skills locaux de .agents/skills/ : **cifereca-logging** (Core et plugins), cifereca-plugin, cifereca-tests, cifereca-simulation et cifereca-release.
 
 Les consignes spécialisées et détaillées restent dans .agents/roles/ ; ce guide évite de les dupliquer.
