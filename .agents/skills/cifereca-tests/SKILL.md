@@ -5,6 +5,8 @@ description: Concevoir, placer, exécuter ou réorganiser les tests Cifereca en 
 
 # Tests Cifereca
 
+**Tests de journalisation :** appliquer [cifereca-logging](../cifereca-logging/SKILL.md) et [le contrat](../../../docs/LOGGING-CONTRACT.md) : conservation des détails dans les journaux/brokers/exports bruts, pseudonymisation **uniquement login et mot de passe dans l'IHM**, recherche et niveau `--trace` unifiés. Utiliser uniquement des valeurs de test synthétiques ; les assertions de redaction historiques ne définissent plus la cible.
+
 Utiliser ce skill lorsqu'une tâche ajoute des tests, corrige une régression, modifie la stratégie de validation ou déplace des tests.
 
 ## Choisir l'emplacement par responsabilité
