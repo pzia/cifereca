@@ -15,7 +15,7 @@ from cifereca.gui.settings_lifetime import SettingsPageLifetime
 
 
 def _harness():
-    text = ["rapport local brut"]
+    text = ["rapport affiché"]
     buffer = NS(get_bounds=lambda: (0, len(text[0])), get_text=lambda *args: text[0],
                 set_text=lambda value: text.__setitem__(0, value))
     clipboard = NS(set_content=Mock(return_value=True), read_text_async=Mock())
@@ -99,7 +99,7 @@ def test_export_native_response_keeps_snapshot_and_always_destroys_dialog(tmp_pa
         h.lifetime.dispose()
     callback(h.chooser, 0 if outcome == "cancel" else 7)
     if outcome == "accept":
-        assert destination.read_text(encoding="utf-8") == "rapport local brut"
+        assert destination.read_text(encoding="utf-8") == "rapport affiché"
         assert stat.S_IMODE(destination.stat().st_mode) == 0o600
         h.host.toast.assert_called_once_with("Diagnostic exporté")
     else:
@@ -201,7 +201,7 @@ def test_diagnostic_export_never_records_sensitive_local_filename(tmp_path):
     h.export()
     callback = h.chooser.connect.call_args.args[1]
     callback(h.chooser, h.gtk.ResponseType.ACCEPT)
-    assert path.read_text("utf-8") == "rapport local brut"
+    assert path.read_text("utf-8") == "rapport affiché"
     h.host.diagnostics.add.assert_called_once_with(
         "UI", "diagnostic export", "ok",
         detail={"code": "export_completed"}, level="detailed",
@@ -260,7 +260,7 @@ def test_raw_settings_export_renews_private_permissions_on_existing_file(tmp_pat
     h.export()
     callback = h.chooser.connect.call_args.args[1]
     callback(h.chooser, h.gtk.ResponseType.ACCEPT)
-    assert destination.read_text() == "rapport local brut"
+    assert destination.read_text() == "rapport affiché"
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
 
 
@@ -286,4 +286,4 @@ def test_raw_export_chooser_warns_before_explicit_user_save():
     h = _harness()
     h.export()
     args = h.gtk.FileChooserNative.new.call_args.args
-    assert "BRUT" in args[0] and "mots de passe" in args[0]
+    assert "affichage" in args[0] and "sensibles" in args[0]
