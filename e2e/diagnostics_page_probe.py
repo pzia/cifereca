@@ -769,7 +769,7 @@ def main():
         obj = json.loads(payload)
         assert obj
         assert "EXEMPLE-PRIVE-UX" in payload
-        assert "SECRET-UX-TEST" in payload
+        assert "SECRET-UX-TEST" not in payload  # separate snapshot event, not this system-status detail
         report["checks"]["json_structured_and_redacted"] = True
         screenshot("02-structured-json")
         detail_pane = view.get_parent()
@@ -809,7 +809,7 @@ def main():
                     actual = clipboard.read_text_finish(task)
                     assert actual == expected, "Presse-papiers différent du JSON affiché"
                     assert "EXEMPLE-PRIVE-UX" in actual
-                    assert "SECRET-UX-TEST" in actual
+                    assert "SECRET-UX-TEST" not in actual  # copy reflects selected system-status detail
                     report["checks"]["clipboard_exact_redacted_json"] = True
                     later(next_page)
                 except Exception as exc:
