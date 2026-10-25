@@ -205,6 +205,8 @@ def main():
         GLib.timeout_add(ms, cb)
 
     def until(predicate, then, seconds=8):
+        # Source-reviewed call site only; never publish GTK text/predicates.
+        report["wait_line"] = sys._getframe(1).f_lineno
         deadline = monotonic() + seconds
         def poll():
             if predicate():
