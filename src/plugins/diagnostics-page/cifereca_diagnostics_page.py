@@ -588,7 +588,8 @@ class DiagnosticsPagePlugin:
         )
         period_selector.set_selected(0 if journal_available else 2)
         period_selector.set_tooltip_text("Période de la consultation")
-        advanced_box.append(source_selector)
+        if not journal_available:
+            advanced_box.append(source_selector)
         filters_top.append(severity_selector)
         filters_top.append(period_selector)
         journals_tab.append(filters_top)
@@ -623,7 +624,8 @@ class DiagnosticsPagePlugin:
         )
         domain_row.append(domain_caption)
         domain_row.append(domain_filter)
-        advanced_box.append(domain_row)
+        if not journal_available:
+            advanced_box.append(domain_row)
 
         # Separate from the module prefix and from the event-source channel.
         # The Core filter is exact and runs before pagination.
@@ -662,7 +664,8 @@ class DiagnosticsPagePlugin:
         reason_code_filter.set_hexpand(True)
         reason_row.append(reason_caption)
         reason_row.append(reason_code_filter)
-        advanced_box.append(reason_row)
+        if not journal_available:
+            advanced_box.append(reason_row)
 
         operation_grouping = Gtk.CheckButton(label="Regrouper par tâche liée (cette page)")
         operation_grouping.set_tooltip_text(
