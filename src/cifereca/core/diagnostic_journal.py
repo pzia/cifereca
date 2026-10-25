@@ -153,20 +153,26 @@ def _events(log_path: Path):
         if state != "available":
             gaps.append(f"rotation_{rotation}_{state}")
             continue
+        current = None  # Never attach a new file's orphan to the prior rotation.
         for offset, line in lines:
             m = _LOG_LINE.match(line)
             if m:
+                current = None
                 try:
-                    events.append(_make_event(m, identity, offset))
+                    current = _make_event(m, identity, offset)
+                    events.append(current)
                 except (ValueError, OverflowError):
                     gaps.append("timestamp_invalid")
-            elif events and line:
-                # Traceback/stack lines belong to their original occurrence;
-                # never turn them into synthetic events or throw them away.
-                current = events[-1]
+            elif line:
+                # Tracebacks can continue across lines, but a rotation cannot
+                # attest that its orphan prefix belongs to the previous inode.
+                if current is None:
+                    if "orphan_log_line" not in gaps:
+                        gaps.append("orphan_log_line")
+                    continue
                 if len(current["message"]) + len(line) + 1 <= _MAX_EVENT_BYTES:
                     current["message"] += "\n" + line
-                else:
+                elif "event_text_exceeded" not in gaps:
                     gaps.append("event_text_exceeded")
     return events, gaps, active_missing
 

@@ -322,6 +322,29 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+        # This Core-attested Browser Recorder outcome previously existed only
+        # in the volatile snapshot. Publish it once in the same physical
+        # journal consumed by Diagnostics; never infer a provider or task ref.
+        try:
+            payload = {
+                "schema_version": 1,
+                "category": "PLUGIN",
+                "operation": fields["operation"],
+                "status": status,
+                "message": OPERATIONS[fields["operation"]],
+                "detail": {"domain": "browser_recorder", **fields},
+            }
+            severity = (
+                logging.ERROR if status == "error" else
+                logging.WARNING if status == "warning" else logging.INFO
+            )
+            logging.getLogger("cifereca").log(
+                severity, "DIAG_JSON %s",
+                json.dumps(payload, ensure_ascii=False, allow_nan=False),
+            )
+        except Exception:
+            # Diagnostics must never alter the plugin operation's result.
+            pass
 
     def add_core_provider_connection_attempt(self, event: object) -> None:
         """P0 #3101: a single Core request emits attested phase records.

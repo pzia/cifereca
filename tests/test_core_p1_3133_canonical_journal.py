@@ -133,3 +133,63 @@ def test_raw_export_preserves_values_without_visual_pseudonyms(tmp_path):
     assert "token=untouched" in body
     assert "signature=visible" in body
     assert payload["atomic"] is False
+
+
+def test_orphan_after_rotation_never_rewrites_previous_event(tmp_path):
+    older = tmp_path / "cifereca.log.1"
+    current = tmp_path / "cifereca.log"
+    older.write_text(
+        "2026-10-25 08:00:00,100 ERROR cifereca [MainThread] older failure\n"
+        "older traceback belongs only to older file\n",
+        encoding="utf-8",
+    )
+    current.write_text(
+        "ORPHAN=must-not-cross-inodes\n"
+        "2026-10-25 08:01:00,100 WARNING cifereca [MainThread] newer warning\n"
+        "newer traceback belongs only to newer file\n",
+        encoding="utf-8",
+    )
+    result = query_journal(current)
+    assert result["status"] == "partial"
+    assert result["sources"][0]["reason"] == "rotation_or_read_gap"
+    assert result["total"] == 2
+    older_event, newer_event = result["events"]
+    assert "older traceback" in older_event["message"]
+    assert "newer traceback" not in older_event["message"]
+    assert "ORPHAN=" not in older_event["message"]
+    assert "newer traceback" in newer_event["message"]
+    assert "ORPHAN=" not in newer_event["message"]
+
+
+@pytest.mark.parametrize(("operation", "code", "level"), [
+    ("chromium_probe", "chromium_missing", "warning"),
+    ("http_capture", "capture_failed", "error"),
+    ("chromium_install", "ready", "info"),
+])
+def test_attested_browser_recorder_event_survives_restart_in_one_journal_line(
+    tmp_path, monkeypatch, operation, code, level,
+):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "trace")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    old_level = logger.level
+    handler = _writer(path)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    try:
+        diagnostics = Diagnostics(level="trace")
+        diagnostics.add_core_browser_recorder_result(operation, code)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        handler.close()
+    journal = query_journal(path, search=code)
+    assert journal["total"] == 1
+    event, = journal["events"]
+    assert event["source"] == "journal"
+    assert event["severity"] == level
+    assert event["module"] == "PLUGIN"
+    assert event["operation"] == operation
+    assert event["detail"]["operation"] == operation
+    assert event["detail"]["code"] == code
+    assert event["detail"]["domain"] == "browser_recorder"
