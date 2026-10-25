@@ -129,12 +129,14 @@ def check_home_summary(window, *, later, capture, report, done):
         native_store_filters()
 
     def native_store_filters():
-        """Render the real GTK source selector with synthetic provider facts.
+        """Validate the actual GTK source selector without reparenting the UI.
 
-        This reuses the production widget and source projection, without
-        installing, connecting, enabling or querying any provider.
+        A detached temporary QueryControls previously altered the visible
+        Accueil geometry during the MainWindow baseline recipe. MultiSelect
+        is the same native widget used by that controller; exercising it
+        detached avoids changing focus, navigation or asynchronous tasks.
         """
-        from cifereca.gui.query_controls import QueryControls
+        from cifereca.gui.query_controls import MultiSelect
         from cifereca.gui.query_widget_factory_controller import _provider_choices
 
         live = [
@@ -146,44 +148,33 @@ def check_home_summary(window, *, later, capture, report, done):
         ))
         choices = _provider_choices(source)
         assert set(dict(choices)) == {"kobo", "numilog", "numilog-catalog", "local"}
-        controls = QueryControls(choices, lambda: None, lambda: None, library=False)
-        outer = page.get_child()
-        outer.prepend(controls)
-        controls.provider.set_values(("numilog-catalog",))
+        selection_changes = []
+        selector = MultiSelect("Source", choices, lambda: selection_changes.append(True))
+        options = selector.buttons
+        assert options["numilog"].get_label() == "Numilog — Mes achats (compte)"
+        assert options["numilog-catalog"].get_label() == "Numilog — Catalogue public"
+        assert options["kobo"].get_label() == "Kobo — Catalogue et compte"
 
-        def verify_native():
-            assert controls.get_mapped() and controls.get_width() > 0
-            assert controls.get_width() <= page.get_width() + 1
-            options = controls.provider.buttons
-            assert options["numilog"].get_label() == "Numilog — Mes achats (compte)"
-            assert options["numilog-catalog"].get_label() == "Numilog — Catalogue public"
-            assert options["kobo"].get_label() == "Kobo — Catalogue et compte"
-            assert controls.state().providers == ("numilog-catalog",)
-            capture("00-store-source-filter-public")
+        selector.set_values(("numilog-catalog",))
+        assert selector.values() == ("numilog-catalog",)
+        live[:] = [("kobo", "Kobo"), ("numilog", "Numilog")]
+        selector.set_choices(_provider_choices(source))
+        assert "numilog-catalog" not in selector.buttons
+        assert selector.values() == ()
+        selector.set_values(("numilog",))
+        assert selector.values() == ("numilog",)
+        live.append(("numilog-catalog", "Numilog — Catalogue public"))
+        selector.set_choices(_provider_choices(source))
+        assert selector.values() == ("numilog",)
+        assert not selector.buttons["numilog-catalog"].get_active()
+        assert selection_changes
+        report["checks"]["P1_1867_native_store_filter_roles_and_opt_in"] = True
 
-            # Switching identity or disabling a public source is represented
-            # by its absence from Core discovery, not by UI permission guesses.
-            live[:] = [("kobo", "Kobo"), ("numilog", "Numilog")]
-            controls.set_provider_choices(_provider_choices(source))
-            assert "numilog-catalog" not in controls.provider.buttons
-            assert controls.state().providers == ()
-            controls.provider.set_values(("numilog",))
-            assert controls.state().providers == ("numilog",)
-            live.append(("numilog-catalog", "Numilog — Catalogue public"))
-            controls.set_provider_choices(_provider_choices(source))
-            assert controls.state().providers == ("numilog",)
-            assert not controls.provider.buttons["numilog-catalog"].get_active()
-            report["checks"]["P1_1867_native_store_filter_roles_and_opt_in"] = True
-            report["store_source_filter_width"] = controls.get_width()
-
-            outer.remove(controls)
-            window.view_stack.set_visible_child_name(previous)
-            window.view_stack.remove(page)
-            for controller in controllers:
-                controller.close()
-            assert not subscriptions
-            later(250, done)
-
-        later(250, verify_native)
+        window.view_stack.set_visible_child_name(previous)
+        window.view_stack.remove(page)
+        for controller in controllers:
+            controller.close()
+        assert not subscriptions
+        later(250, done)
 
     render_next()
