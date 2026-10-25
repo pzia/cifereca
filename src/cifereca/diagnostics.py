@@ -158,8 +158,9 @@ def _core_journal_record(category: str, operation: str, status: str,
     }
     if type(fields.get("task_ref")) is str:
         payload["task_ref"] = fields["task_ref"]
-    if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000:
-        payload["duration_ms"] = duration_ms
+    measured_ms = duration_ms if duration_ms is not None else fields.get("duration_ms")
+    if type(measured_ms) is int and 0 <= measured_ms <= 86_400_000:
+        payload["duration_ms"] = measured_ms
     return {"_cifereca_journal_payload": payload}
 
 
@@ -241,6 +242,7 @@ class Diagnostics:
                 "status": status if type(status) is str else "unknown",
                 "message": operation if type(operation) is str else "diagnostic",
                 "detail": journal_payload(detail) if type(detail) is dict else {},
+                **({"duration_ms": entry.duration_ms} if entry.duration_ms is not None else {}),
                 **({"task_ref": entry.task_ref} if entry.task_ref else {}),
             }
             payload = json.dumps(raw, ensure_ascii=False, allow_nan=False)
@@ -370,6 +372,7 @@ class Diagnostics:
                 "status": status,
                 "message": OPERATIONS[fields["operation"]],
                 "detail": {"domain": "browser_recorder", **fields},
+                **({"duration_ms": fields["duration_ms"]} if "duration_ms" in fields else {}),
             }
             severity = (
                 logging.ERROR if status == "error" else
