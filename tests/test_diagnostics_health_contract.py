@@ -83,7 +83,7 @@ def test_diagnostics_check_contract_is_structural():
     assert check_service_contract("diagnostics.check", CheckProvider()).ok
 
 
-def test_diagnostics_broker_aggregates_and_redacts_plugin_checks():
+def test_diagnostics_broker_aggregates_unmasked_plugin_checks():
     rows = DiagnosticsBrokerImpl(Service()).active_checks()
 
     source = next(row for row in rows if row.message == "Source Paris Alice")
@@ -94,8 +94,8 @@ def test_diagnostics_broker_aggregates_and_redacts_plugin_checks():
     assert providers.detail["count"] == 2
 
     plugin = next(row for row in rows if row.check_id == "runtime.test")
-    assert plugin.detail["authorization"] == "<redacted>"
-    assert plugin.detail["url"] == "https://example.test/<redacted>"
+    assert plugin.detail["authorization"] == "Bearer secret-value"
+    assert plugin.detail["url"] == "https://example.test/download?token=secret"
     assert plugin.detail["resolved_executable"] is True
 
     failed = next(row for row in rows if row.component == "diagnostics.fail")

@@ -42,7 +42,7 @@ class Service:
         return []
 
 
-def test_support_report_is_redacted_and_checks_schema(tmp_path, monkeypatch):
+def test_support_report_preserves_values_and_checks_schema(tmp_path, monkeypatch):
     db = tmp_path / "library.sqlite3"
     with sqlite3.connect(db) as conn:
         conn.execute("create table metadata(key text primary key, value text not null)")
@@ -59,8 +59,9 @@ def test_support_report_is_redacted_and_checks_schema(tmp_path, monkeypatch):
     assert report["database"]["schema"] == support_diagnostic.CURRENT_SCHEMA_VERSION
     assert report["plugins"]["attention"] == 1
     assert report["result"] == "warning"
-    assert "supersecret" not in text
-    assert "<redacted>" in text
+    assert "token=supersecret" in text
+    assert report["plugins"]["plugins"][0]["error"] == "token=supersecret"
+    assert "<redacted>" not in text
     assert "plugin.test" in text
 
 
@@ -107,3 +108,27 @@ def test_passive_support_report_does_not_call_active_checks(monkeypatch):
 def test_support_report_rejects_non_bool_checks_option_before_collection():
     with __import__("pytest").raises(ValueError, match="invalid_support_checks_scope"):
         support_diagnostic.build_support_report(Service(), include_checks="no")
+
+
+def test_support_report_preserves_check_detail_and_message(monkeypatch):
+    from cifereca.brokers import DiagnosticsBrokerImpl
+
+    monkeypatch.setattr(DiagnosticsBrokerImpl, "active_checks", lambda self: (
+        SimpleNamespace(
+            check_id="check.one", component="core", status="warning",
+            message="https://example.test/book?token=KEEP",
+            detail={"login": "reader@example.test", "book_title": "Titre original",
+                    "path": "/home/reader/book.epub"}, scope="core",
+        ),
+    ))
+    monkeypatch.setattr(support_diagnostic, "_release_metadata", lambda: {})
+    monkeypatch.setattr(support_diagnostic, "_runtime_state", lambda: {"status": "ok"})
+    monkeypatch.setattr(support_diagnostic, "_database_state", lambda: {"status": "ok"})
+    monkeypatch.setattr(support_diagnostic, "_config_state", lambda: {"status": "ok"})
+    report = support_diagnostic.build_support_report(Service())
+    check, = report["checks"]
+    assert check["message"] == "https://example.test/book?token=KEEP"
+    assert check["detail"] == {
+        "login": "reader@example.test", "book_title": "Titre original",
+        "path": "/home/reader/book.epub",
+    }
