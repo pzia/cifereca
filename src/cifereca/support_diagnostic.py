@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .diagnostics import redact
 from .paths import config_file, database_file
 from .storage import CURRENT_SCHEMA_VERSION
 
@@ -129,7 +128,7 @@ def _plugin_state(manager: Any, *, verbose: bool) -> dict[str, Any]:
             item["requires"] = row.get("requires") or []
             item["requires_contracts"] = row.get("requires_contracts") or []
             item["error"] = row.get("error") or ""
-        compact.append(redact(item))
+        compact.append(item)
     return {
         "status": "warning" if attention else "ok",
         "count": len(compact),
@@ -141,7 +140,7 @@ def _plugin_state(manager: Any, *, verbose: bool) -> dict[str, Any]:
 def build_support_report(
     service: Any, *, verbose: bool = False, include_checks: bool = True,
 ) -> dict[str, Any]:
-    """Assemble a public support report; active checks are explicit.
+    """Assemble a local, unmasked support report; active checks are explicit.
 
     Normal support exports retain their existing checks. A Diagnostics IA
     preview opts out: no active_checks broker call is made, even indirectly.
@@ -160,14 +159,14 @@ def build_support_report(
         try:
             from .brokers import DiagnosticsBrokerImpl
             for item in DiagnosticsBrokerImpl(service).active_checks():
-                checks.append(redact({
+                checks.append({
                     "check_id": getattr(item, "check_id", ""),
                     "component": getattr(item, "component", ""),
                     "status": getattr(item, "status", "unknown"),
                     "message": getattr(item, "message", ""),
                     "detail": dict(getattr(item, "detail", {}) or {}),
                     "scope": getattr(item, "scope", ""),
-                }))
+                })
         except Exception as exc:
             checks.append({
                 "check_id": "core.active_checks", "status": "error",
@@ -205,7 +204,7 @@ def build_support_report(
         "checks_executed": include_checks,
         "checks": checks,
     }
-    return redact(report)
+    return report
 
 
 def support_report_text(service: Any, *, verbose: bool = False) -> str:
