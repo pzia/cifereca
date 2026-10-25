@@ -80,3 +80,42 @@ def test_library_rows_preserve_duplicate_keys_and_single_pass_inputs():
 def test_library_rows_do_not_fetch_or_mutate_when_empty():
     rows, objects, calls = _project(iter(()))
     assert rows == [] and objects == {} and calls == []
+
+
+
+def test_store_purchase_expiry_never_becomes_a_library_return_deadline():
+    entries = [
+        {"key": "numilog", "provider_id": "numilog", "state": "remote_owned",
+         "entitlement_type": "owned", "source": "entitlement",
+         "due_at": "2026-11-10"},
+        {"key": "kobo", "provider_id": "kobo", "state": "remote_entitled",
+         "entitlement_type": "owned", "source": "entitlement",
+         "due_at": "2026-11-11"},
+        {"key": "public", "provider_id": "numilog-catalog",
+         "state": "remote_catalog", "source": "catalog",
+         "due_at": "2026-11-12"},
+        {"key": "paris", "provider_id": "paris",
+         "state": "remote_loan_active", "entitlement_type": "loan",
+         "source": "entitlement", "due_at": "2026-11-13"},
+    ]
+    rows, objects, calls = _project(entries)
+    assert [row[3] for row in rows] == ["", "", "", "retour 12/10/2026"]
+    assert [value for kind, value in calls if kind == "date"] == ["2026-11-13"]
+    assert list(objects.values()) == entries
+
+
+def test_loan_due_date_kept_when_local_copy_exists_and_purchase_source_is_mixed():
+    entries = [
+        {"key": "mixed-loan", "provider_id": "paris",
+         "providers": ["paris", "numilog"], "local": True,
+         "state": "local", "entitlement_type": "loan", "due_at": "2026-12-01"},
+        {"key": "local-purchase", "provider_id": "kobo", "local": True,
+         "state": "local", "entitlement_type": "owned", "due_at": "2026-12-02"},
+        {"key": "legacy-loan", "provider_id": "paris", "state": "borrowed",
+         "due_at": "2026-12-03"},
+    ]
+    rows, _, calls = _project(entries)
+    assert "retour" in rows[0][3]
+    assert "retour" not in rows[1][3]
+    assert "retour" in rows[2][3]
+    assert [v for k, v in calls if k == "date"] == ["2026-12-01", "2026-12-03"]
