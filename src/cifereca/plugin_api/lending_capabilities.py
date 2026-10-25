@@ -216,7 +216,10 @@ def validate_lending_publication(
         and all(type(cap) is str for cap in manifest_capabilities)
         and len(set(manifest_capabilities)) == len(manifest_capabilities)
     )
-    descriptor_ok = type(descriptor) is ProviderDescriptor
+    descriptor_ok = (
+        type(descriptor) is ProviderDescriptor
+        and type(descriptor.capabilities) is ProviderCapabilities
+    )
     class_ok = (
         isinstance(session_type, type)
         and issubclass(session_type, ProviderSession)
@@ -229,7 +232,7 @@ def validate_lending_publication(
         descriptor_claim = False
         implemented = False
         if manifest_ok and descriptor_ok and class_ok:
-            raw_claim = getattr(descriptor.capabilities, capability_name, None)
+            raw_claim = vars(descriptor.capabilities).get(capability_name)
             if type(raw_claim) is not bool:
                 status, reason = "unverified", "invalid_declaration"
             else:
