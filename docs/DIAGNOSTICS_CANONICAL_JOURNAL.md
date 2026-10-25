@@ -50,7 +50,10 @@ restent provisoirement acceptés par le **broker public** comme alias stricts
 de `journal`. Ils renvoient exactement les mêmes événements physiques et
 identifiants, sans lecture supplémentaire, duplication ni cache mémoire.
 Les filtres `domain`/`reason_code` des projections héritées sont refusés :
-ils ne sauraient être attestés à partir des journaux bruts. L'ancien module
+ils ne sauraient être attestés à partir des journaux bruts. Un `provider_id`
+explicitement présent dans le `detail` structuré est également exposé au
+premier niveau pour le filtrage exact et l'UI ; il n'est jamais inféré du
+message ni du nom du logger. L'ancien module
 `core.diagnostic_event_feed` subsiste uniquement pour les tests/consommateurs
 historiques à retirer séparément.
 
