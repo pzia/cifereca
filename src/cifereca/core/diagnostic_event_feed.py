@@ -704,6 +704,7 @@ def query_diagnostic_events(
     provider_id: str = "", domain: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
+    search: str = "",
 ) -> dict[str, Any]:
     """A bounded/paginated snapshot with explicit source states.
 
@@ -712,6 +713,8 @@ def query_diagnostic_events(
     """
     if not isinstance(source, str) or source not in {"all", "core_events", "app_log"}:
         raise ValueError("unknown diagnostic source")
+    if type(search) is not str or len(search) > 500:
+        raise ValueError("invalid diagnostic search")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
     if type(domain) is not str or domain not in (
@@ -750,6 +753,14 @@ def query_diagnostic_events(
         rows, state = _source_logs(log_path)
         events.extend(rows)
         states.append(state)
+    if search:
+        needle = search.casefold()
+        events = [row for row in events if needle in " ".join(
+            str(row.get(key, "")) for key in (
+                "timestamp", "source", "module", "severity", "message",
+                "status", "provider_id", "task_ref", "event_id",
+            )
+        ).casefold()]
     if module:
         # "module" is the logger on app_log, but the Core producer category on
         # core_events. A KOBO/NUMILOG business filter must not discard a
