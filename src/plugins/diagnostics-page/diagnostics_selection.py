@@ -62,7 +62,7 @@ def page_selection_ids(rows: list[dict], previous: set[str], action: str) -> set
 _EXPORTED_EVENT_FIELDS = (
     "timestamp", "source", "module", "severity", "message", "status", "event_id",
     "operation_ref", "phase", "caller_category", "source_kind",
-    "connection_status", "network_auth", "task_ref",
+    "connection_status", "network_auth", "connection_provider_id", "task_ref",
 )
 
 
