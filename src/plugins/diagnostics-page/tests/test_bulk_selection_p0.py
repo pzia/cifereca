@@ -269,3 +269,19 @@ def test_gtk_label_and_failure_handling_disclose_boundaries():
     assert "50 événements / 24 Ko" in src
     assert '"diagnostic selection exceeds 200 events"' in src
     assert '"diagnostic selection exceeds 96 KB"' in src
+
+
+def test_unqualified_selection_reads_only_canonical_journal():
+    row = {**event(1, "error"), "source": "journal"}
+
+    class JournalOnlyBroker(FakeBroker):
+        def events(self, **filters):
+            assert filters["source"] == "journal"
+            response = super().events(**filters)
+            response["sources"] = [{"source": "journal", "status": "available"}]
+            return response
+
+    broker = JournalOnlyBroker([row])
+    selected = canonical_selection(broker, mode="errors", period="all")
+    assert selected.event_ids == frozenset({"diag-1"})
+    assert json.loads(selected.export_json)["selection"]["source_filter"] == "journal"
