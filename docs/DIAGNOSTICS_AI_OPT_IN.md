@@ -64,3 +64,14 @@ Limitations conservées : la liste des événements est un extrait borné, pas
 une archive exhaustive ; le service LLM Core existant peut terminer un
 appel distant déjà émis malgré l'annulation de l'interface. Aucun
 nouveau service LLM, collecte réseau, journal de prompts ni workflow CI.
+
+
+## Journal physique et références IA (#3133)
+
+La prévisualisation IA des Diagnostics utilise `source="journal"` par
+défaut, comme l'explorateur. Les `event_id`, horodatages et `source`
+authentiques du journal restent présents dans la preuve filtrée (sans
+reconstruire de lien par heuristique temporelle). Le collecteur structuré
+facultatif provient du même journal dans les Core compatibles. L'IA demeure
+**strictement sur consentement préalable** : aucun appel réseau ni modèle
+au chargement de la page.

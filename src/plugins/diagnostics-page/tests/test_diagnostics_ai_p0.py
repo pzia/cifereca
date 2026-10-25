@@ -59,6 +59,57 @@ def event(message="TRACE sync status=partial", ref="event-1"):
     }
 
 
+def test_journal_ai_preview_retains_physical_event_provenance():
+    """The default GTK source must be accepted, with its attested event ID."""
+    class Citing(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible", model="qa-llm",
+                text="Hypothèse sur ref-journal-3133 uniquement.",
+            )
+
+    model = Citing()
+    row = {**event("BNF ACSM error 403", "ref-journal-3133"), "source": "journal"}
+    broker = FakeBroker([row])
+    preview = prepare_analysis(model, broker)
+    assert broker.filters[0]["source"] == "journal"
+    assert preview["scope"]["source"] == "journal"
+    assert '"source": "journal"' in preview["prompt"]
+    assert '"event_id": "ref-journal-3133"' in preview["prompt"]
+    assert preview["source_states"] == [{"source": "app_log", "status": "partial", "reason": ""}]
+    assert model.calls == 0
+
+    response = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert response["references_matched"] == [{
+        "event_id": "ref-journal-3133",
+        "timestamp": "2026-10-11T05:20:00+00:00",
+        "source": "journal",
+    }]
+    assert response["references_unknown"] == []
+
+
+def test_ai_structured_journal_opt_in_retains_source_not_another_channel():
+    class SnapshotBroker(FakeBroker):
+        def snapshot(self):
+            return [{
+                "event_id": "ref-journal", "source": "journal",
+                "timestamp": "2026-10-11T05:21:00+00:00",
+                "category": "LOAN", "operation": "provider_connect",
+                "status": "error", "severity": "error",
+                "detail": {"code": "provider_connect_failed"},
+            }]
+
+    preview = prepare_analysis(
+        FakeLLM(), SnapshotBroker([{
+            **event("BNF error", "ref-physical"), "source": "journal",
+        }]), source="journal", include_snapshot=True,
+    )
+    assert preview["structured_count"] == 1
+    assert '"source": "journal"' in preview["prompt"]
+    assert "ref-physical" in preview["prompt"]
+
+
 def test_disabled_llm_never_queries_events_or_network():
     broker = FakeBroker([event()])
     with pytest.raises(ValueError, match="llm_disabled"):
@@ -983,7 +1034,7 @@ def test_ai_free_text_filter_is_redacted_in_llm_prompt_but_query_is_preserved(mo
 
     # The Core's exact query and fingerprint still describe the user's choice.
     assert broker.filters == [{
-        "source": "all", "module": module, "severity": "", "since": None,
+        "source": "journal", "module": module, "severity": "", "since": None,
         "until": None, "limit": 24, "offset": 0,
     }]
     assert preview["scope"]["module"] == module
