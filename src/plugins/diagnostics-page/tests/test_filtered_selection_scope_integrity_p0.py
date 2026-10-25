@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from diagnostics_selection import collect_filtered_selection
+from diagnostics_selection import collect_filtered_selection as canonical_selection
+
+
+def collect_filtered_selection(broker, **filters):
+    """Legacy synthetic app_log/core_events coverage opts in explicitly."""
+    return canonical_selection(broker, source=filters.pop("source", "all"), **filters)
 
 
 @pytest.fixture(autouse=True)

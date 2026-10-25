@@ -8,9 +8,18 @@ from pathlib import Path
 import pytest
 
 from diagnostics_explorer import (
-    fetch_explorer_page, sanitized_rows, export_selected_events,
+    fetch_explorer_page as canonical_explorer_page, sanitized_rows, export_selected_events,
 )
-from diagnostics_selection import collect_filtered_selection
+from diagnostics_selection import collect_filtered_selection as canonical_selection
+
+
+# #3133: provider compatibility fixtures opt into historical sources.
+def fetch_explorer_page(broker, **filters):
+    return canonical_explorer_page(broker, source=filters.pop("source", "all"), **filters)
+
+
+def collect_filtered_selection(broker, **filters):
+    return canonical_selection(broker, source=filters.pop("source", "all"), **filters)
 
 
 def event(idx, provider="paris"):

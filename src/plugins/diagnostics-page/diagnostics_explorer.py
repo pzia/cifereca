@@ -160,7 +160,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 
 def fetch_explorer_page(
-    broker: Any, *, source: str = "all", module: str = "",
+    broker: Any, *, source: str = "journal", module: str = "",
     provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",

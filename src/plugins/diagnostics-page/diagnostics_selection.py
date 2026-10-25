@@ -163,7 +163,7 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None,
 
 
 def collect_filtered_selection(
-    broker, *, source="all", module="", severity="", period="day", search="",
+    broker, *, source="journal", module="", severity="", period="day", search="",
     provider_id="", reason_code="", domain="", mode="errors",
     cancelled: Callable[[], bool] | None = None,
     max_pages=MAX_SCAN_PAGES,
