@@ -215,3 +215,43 @@ def test_forged_or_hostile_provider_output_fails_closed_without_its_text():
     assert failed.status == "failed"
     assert failed.reason_code == "read_failed"
     assert "PRIVATE" not in repr(failed)
+
+
+def test_session_disconnected_during_legacy_read_discards_positive_result():
+    a = account()
+    s, calls = session(a)
+
+    def interrupted(_):
+        s.connected = False
+        return [loan(a)]
+
+    s.loans = interrupted
+    result = read_loan_inventory(s, a)
+    assert result.status == "failed"
+    assert result.reason_code == "scope_changed"
+    assert result.loans == ()
+    assert calls == []
+
+
+def test_identity_or_credential_switch_during_typed_read_discards_all_results():
+    for change in ("identity", "credential"):
+        a = account()
+        s, _ = session(a)
+
+        def mutated(_):
+            result = LoanInventorySnapshot(
+                scope=LoanInventoryScope.for_account(a),
+                loans=(loan(a),), status="success",
+                branches=(branch(complete=True),),
+            )
+            if change == "identity":
+                a.identity_id = "bob"
+            else:
+                s.credential_id = "p2"
+            return result
+
+        s.loan_inventory_snapshot = mutated
+        result = read_loan_inventory(s, a)
+        assert result.status == "failed"
+        assert result.reason_code == "scope_changed"
+        assert result.loans == ()
