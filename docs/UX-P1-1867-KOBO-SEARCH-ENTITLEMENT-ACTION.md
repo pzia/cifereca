@@ -36,6 +36,12 @@ Recherche montre :
 
 La fiche Recherche affiche le même état à partir de la projection
 Core SQLite, sans requête Vault ou découverte supplémentaire.
+Le libellé **Disponibilité** du Core suit la même preuve : il ne dit
+plus « Dans ma bibliothèque Kobo » si une notice publique porte
+`owned=True` mais qu'aucun droit actif n'est attesté pour ce profil.
+Il indique « Catalogue Kobo · aucun achat attesté » ou « Achat Kobo
+archivé » ; un droit actif est « Mes achats Kobo », avec la sauvegarde
+seulement si tous les gardes opérationnels l'autorisent.
 Un cache hors ligne reste une notice non actualisée.
 
 La liste lit le ledger au plus une fois par rendu ; l'admission est
