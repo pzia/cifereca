@@ -405,3 +405,33 @@ def test_renewal_state_never_interferes_with_return_checkpoint_namespace(tmp_pat
         assert service.storage.loan_renewal_state(_source_key(ui)) is not None
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("moment", ["read", "post"])
+def test_mutating_original_selected_loan_cannot_retarget_consent(tmp_path, moment):
+    service, a, ui, session = setup(tmp_path)
+    original = ui.id
+
+    def retarget():
+        ui.id = "different-private-loan"
+
+    if moment == "read":
+        session.during_read = retarget
+    else:
+        session.during_post = retarget
+    try:
+        outcome = service.renew(ui, confirmed=True)
+        if moment == "read":
+            assert outcome["status"] == "blocked"
+            assert session.posts == []
+            assert service.storage.loan_renewal_state(
+                _source_key(replace(ui, id=original))
+            ) is None
+        else:
+            assert outcome["status"] == "verification_unavailable"
+            assert len(session.posts) == 1
+            # The mutation cannot authorize a POST for the new loan ID.
+            assert session.posts[0][0] == original
+    finally:
+        ui.id = original
+        service.close()
