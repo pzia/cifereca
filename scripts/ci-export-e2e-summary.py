@@ -56,6 +56,7 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         "diagnostics-large-1600": "diagnostics_page_probe.py",
         "diagnostics-states-1366": "diagnostics_states_probe.py",
         "diagnostics-structured-1366": "diagnostics_structured_probe.py",
+        "diagnostics-volume-1366": "diagnostics_volume_probe.py",
     }
     if scenario not in probes:
         return {}
