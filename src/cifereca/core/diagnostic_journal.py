@@ -104,6 +104,7 @@ def _make_event(match, identity, offset):
     operation = ""
     status = "unknown"
     task_ref = None
+    duration_ms = None
     if message.startswith(_DIAGNOSTIC_PREFIX):
         try:
             document = json.loads(message[len(_DIAGNOSTIC_PREFIX):])
@@ -116,6 +117,9 @@ def _make_event(match, identity, offset):
             status = document.get("status") if type(document.get("status")) is str else "unknown"
             detail = document.get("detail") if type(document.get("detail")) is dict else {}
             task_ref = document.get("task_ref") if type(document.get("task_ref")) is str else None
+            value_ms = document.get("duration_ms")
+            if type(value_ms) is int and 0 <= value_ms <= 86_400_000:
+                duration_ms = value_ms
     # A physical occurrence is identified by inode + offset, not a timestamp
     # or textual hash. Identical messages and rotation renames remain distinct.
     id_bytes = f"{identity[0]}:{identity[1]}:{offset}".encode("ascii")
@@ -136,6 +140,8 @@ def _make_event(match, identity, offset):
         event["detail"] = detail
     if task_ref:
         event["task_ref"] = task_ref
+    if duration_ms is not None:
+        event["duration_ms"] = duration_ms
     return event
 
 
