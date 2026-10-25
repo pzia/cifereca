@@ -1,5 +1,8 @@
 # Profils de rôles agents
 
+> **Règle impérative commune Core/Plugins :** [skill journalisation](../skills/cifereca-logging/SKILL.md) et [contrat canonique](../../docs/LOGGING-CONTRACT.md). Tout journaliser tel qu'émis, aucun masquage hors IHM, uniquement login et mot de passe pseudonymisés à l'affichage. Les consignes historiques de listes blanches ne prévalent pas.
+
+
 Le guide canonique est [AGENTS.md](../../AGENTS.md). La politique de réalisation asynchrone, preuves, fusion et clôture est [docs/AGENT-DELIVERY-POLICY.md](../../docs/AGENT-DELIVERY-POLICY.md).
 
 - `backlog` : triage, priorités, critères d'acceptation et handoffs.
