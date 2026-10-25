@@ -22,7 +22,7 @@ from packaging.version import InvalidVersion, Version
 
 from . import updater
 from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, child_progress_receiver, SMOKE_FAILURE_CODES
-from .update_child import PROGRESS_ENV, run_plugin_child
+from .update_child import PROGRESS_ENV, ChildOutputError, run_plugin_child
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -42,6 +42,9 @@ SMOKE_FAILURE_REASONS = frozenset({
     "missing_broker", "plugin_api", "unknown",
 })
 MAX_SMOKE_FAILURE_DETAILS = 8
+# Per-package watchdog. The release orchestrator has its own, longer deadline
+# for sequential packages; progress never resets either deadline.
+PLUGIN_INSTALL_TIMEOUT_SECONDS = 300
 
 
 class DevUpdateError(RuntimeError):
@@ -226,13 +229,11 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
     # arbitrary stdout/stderr/argv from the installer.
     try:
         proc = run_plugin_child(
-            command, timeout=300, on_line=child_progress_receiver(),
+            command, timeout=PLUGIN_INSTALL_TIMEOUT_SECONDS, on_line=child_progress_receiver(),
         )
     except TimeoutError:
-        raise TimeoutError("Délai plugin dépassé (300 s)") from None
-    except (OSError, UnicodeError) as exc:
-        raise DevUpdateError("sous-processus plugin indisponible") from None
-    except updater.UpdateError:
+        raise TimeoutError("Délai installation plugin dépassé") from None
+    except (OSError, UnicodeError, ChildOutputError):
         raise DevUpdateError("sous-processus plugin indisponible") from None
     if proc.returncode != 0:
         raise DevUpdateError("installation plugin dev échouée")
