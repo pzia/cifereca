@@ -872,9 +872,11 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     if not command.is_file():
         raise UpdateError("cifereca-update-dev absent du nouveau runtime")
     try:
+        # The snapshot installs up to 21 plugins. Its aggregate deadline must
+        # exceed a single plugin's bounded dependency resolution window.
         proc = run_plugin_child(
             [str(command), str(snapshot), "--json"],
-            timeout=300, on_line=child_progress_receiver(),
+            timeout=3600, on_line=child_progress_receiver(),
         )
     except TimeoutError:
         raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None
