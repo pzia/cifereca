@@ -686,6 +686,7 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
+        usage = _commercial_search_usage(item)
         freshness_rows = [
             ("Recherche en ligne", "Indisponible"),
         ] if stale_known else []
@@ -697,8 +698,7 @@ class DetailPanel(Gtk.Box):
             section_rows=[
                 ("Essentiel", [
                     ("Source", source),
-                    *([("Usage", _commercial_search_usage(item))]
-                      if _commercial_search_usage(item) else []),
+                    *([("Usage", usage)] if usage else []),
                     ("Format", fmt),
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
@@ -827,6 +827,7 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
+        usage = _commercial_search_usage(item)
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
@@ -835,8 +836,7 @@ class DetailPanel(Gtk.Box):
             section_rows=[
                 ("Essentiel", [
                     ("Source", source),
-                    *([("Usage", _commercial_search_usage(item))]
-                      if _commercial_search_usage(item) else []),
+                    *([("Usage", usage)] if usage else []),
                     ("Format", fmt),
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
