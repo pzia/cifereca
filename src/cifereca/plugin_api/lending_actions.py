@@ -214,8 +214,13 @@ class LendingActionOutcome:
                 (self.evidence != "provider_verified"
                  or self.operation == "loan.download_token")):
             raise ValueError("unverified_loan_action_confirmation")
-        if (self.status == "submitted" and self.evidence != "provider_accepted"):
+        if (self.status == "submitted"
+                and (self.evidence != "provider_accepted"
+                     or self.operation == "loan.download_token")):
             raise ValueError("unverified_loan_action_submission")
+        if (self.status == "verification_unavailable"
+                and self.evidence == "provider_verified"):
+            raise ValueError("contradictory_loan_action_verification")
         if (self.status in {"unsupported", "blocked", "cancelled", "failed"}
                 and self.evidence != "none"):
             raise ValueError("invalid_loan_action_evidence")
