@@ -429,6 +429,21 @@ def published_operation_reference(row: Mapping[str, Any]) -> str | None:
     return ref
 
 
+def connection_provenance_label(row: Mapping[str, Any]) -> str:
+    """Short GTK-only caption from a Core-validated connection request.
+
+    A bare hexadecimal-looking reference is never enough to reach the view.
+    """
+    reference = published_operation_reference(row)
+    if reference is None:
+        return ""
+    return (
+        f" · Demande Core : {reference}"
+        f" · Phase : {row['phase']}"
+        f" · Déclencheur : {row['caller_category']}"
+    )
+
+
 def linked_operation_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group this page by explicit worker scope, not by apparent causality.
 
