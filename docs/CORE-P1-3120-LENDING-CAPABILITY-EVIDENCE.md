@@ -50,3 +50,32 @@ compte/prêt, valider capabilities manifests au packaging et à l'activation,
 introduire consentements/gardes #3121 et tests de conformité #3122.
 La présence d'une capacité `supported` ne doit jamais directement
 activer un bouton sans ces autres validations.
+
+
+## Tranche 2 — audit statique avant session (P1 #3120)
+
+`validate_lending_publication(manifest_capabilities, descriptor, session_type)`
+examine les cinq opérations canoniques de prêt **sans construire de session**,
+sans requête réseau et sans déclencher de méthode du fournisseur. Le contrôle
+porte sur les capabilities exactes du manifeste, les booléens du descripteur
+et l'override réel de la méthode de `ProviderSession`, inspecté statiquement.
+Les retours sont des `LendingPublicationFact` immuables :
+
+- `declared` : publication statique cohérente, **pas une autorisation** ;
+- `absent` : capability non annoncée ;
+- `legacy_unmapped` : implémentation ou capacité legacy sans annonce
+  canonique correspondante, jamais promue automatiquement ;
+- `conflict` : déclaration contradictoire ou méthode non implémentée ;
+- `unverified` : manifeste/descripteur/type invalide ou plugin non prêt.
+
+`publishable` ne veut dire que « déclaré statiquement sans contradiction ».
+Il ne vérifie **ni session courante, ni compte, ni prêt, ni permission,
+ni consentement, ni effet distant**. Le Core ne doit utiliser un résultat
+`declared` pour déclencher ou afficher une action avant admission métier.
+
+La matrice de tests lit les manifestes Paris/BnF réellement versionnés :
+Paris conserve retour/prolongation non mappés et BnF conserve son jeton
+interne non publiable. Les fixtures détectent les contradictions sans
+construire de client HTTP. L'intégration éventuelle de ce validateur au
+packaging/runtime doit être traitée séparément et ne peut transformer
+automatiquement un avertissement de contrat legacy en échec d'installation.
