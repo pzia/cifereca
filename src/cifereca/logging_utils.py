@@ -1,7 +1,9 @@
 from __future__ import annotations
+import errno
 import json
 import logging
 import os
+import stat
 import sys
 from logging.handlers import RotatingFileHandler
 from .paths import log_file
@@ -105,10 +107,46 @@ class CanonicalEventFormatter(logging.Formatter):
 
 class PrivateRotatingFileHandler(RotatingFileHandler):
     """Create and rotate a local raw journal readable only by its owner."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self._secure_retained_rotations()
+        except BaseException:
+            self.close()
+            raise
+
+    def _secure_retained_rotations(self):
+        """Tighten legacy backups, including copies created before raw logs.
+
+        Never follow a symbolic link: a retained filename may point outside
+        Cifereca's state directory and must not affect that other file.
+        """
+        if not hasattr(os, "O_NOFOLLOW"):
+            return
+        for index in range(1, self.backupCount + 1):
+            name = f"{self.baseFilename}.{index}"
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    continue  # Do not change an external symlink target.
+                raise
+            try:
+                if stat.S_ISREG(os.fstat(fd).st_mode):
+                    os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
+
     def _open(self):
         # Creating with a mode argument avoids a transient world-readable
         # file on common umasks. Tighten existing files as well.
-        fd = os.open(self.baseFilename, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+        flags = os.O_CREAT | os.O_APPEND | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(self.baseFilename, flags, 0o600)
         try:
             os.fchmod(fd, 0o600)
             return os.fdopen(fd, self.mode, encoding=self.encoding, errors=self.errors)
