@@ -451,21 +451,30 @@ class ParisProviderSession(ProviderSession):
         absence. Consequently even an all-successful read claims UNKNOWN
         completeness, never proof that a missing loan was returned.
         """
-        if (not self.connected or type(account) is not Account
-                or account.provider_id != self.provider_id
-                or account.credential_id != self.credential_id
-                or not any(
+        def still_bound() -> bool:
+            return (
+                self.connected is True
+                and type(account) is Account
+                and account.provider_id == self.provider_id
+                and account.credential_id == self.credential_id
+                and any(
                     type(active) is Account
                     and active.unique_id == account.unique_id
                     and active.identity_id == account.identity_id
                     and active.provider_id == account.provider_id
                     and active.credential_id == account.credential_id
                     for active in self._accounts
-                )):
+                )
+            )
+
+        if not still_bound():
             raise ProviderConfigurationError("account_scope_mismatch")
         rows = self.loans(account)
-        if not self.connected:
-            raise ProviderConfigurationError("session_closed")
+        # One upstream response can race with an explicit disconnect,
+        # a changed credential or linked-reader removal. Never publish that
+        # batch under the former account's typed inventory envelope.
+        if not still_bound():
+            raise ProviderConfigurationError("account_scope_mismatch")
         # Historical Paris Loan producers do not always carry the local
         # Core identity. The authenticated account argument is the only
         # authorized scope for this read. Never overwrite a contradictory
