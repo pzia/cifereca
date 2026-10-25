@@ -215,6 +215,11 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 or match["logger"].startswith("cifereca.")
             ):
                 continue
+            # During migration, DIAG_JSON belongs exclusively to the
+            # canonical physical journal; the legacy dual-channel facade
+            # must not count this additional emission a second time.
+            if match["body"].startswith("DIAG_JSON "):
+                continue
             # Raw log messages may contain arbitrary PII or ACSM/licence URLs.
             # Export only known machine-generated TRACE categories and small
             # allowlisted status fields. Everything else remains private.

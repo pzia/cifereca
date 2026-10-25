@@ -207,6 +207,29 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+        # The new canonical consumer reads exactly one physical log entry.
+        # Preserve original JSON-compatible input; legacy in-memory snapshots
+        # remain available for plugins not yet migrated to source='journal'.
+        try:
+            from .core.diagnostic_journal import journal_payload
+            raw = {
+                "schema_version": 1,
+                "category": category if type(category) is str else "DIAGNOSTICS",
+                "operation": operation if type(operation) is str else "",
+                "status": status if type(status) is str else "unknown",
+                "message": operation if type(operation) is str else "diagnostic",
+                "detail": journal_payload(detail) if type(detail) is dict else {},
+                **({"task_ref": entry.task_ref} if entry.task_ref else {}),
+            }
+            payload = json.dumps(raw, ensure_ascii=False, allow_nan=False)
+            severity = logging.ERROR if status in {"error", "failed", "timeout"} else (
+                logging.WARNING if status in {"warning", "cancelled", "attention_required", "retryable_error"} else logging.INFO
+            ) if type(status) is str else logging.WARNING
+            logging.getLogger("cifereca").log(severity, "DIAG_JSON %s", payload)
+        except Exception:
+            # The persistent write can fail independently, but must never
+            # change the provider/business result or stringify hostile data.
+            pass
 
     def add_core_bnf_loan_action(self, event: object) -> None:
         """Core-attested terminal fact, never a generic plugin diagnostic."""
