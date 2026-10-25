@@ -35,7 +35,10 @@ Le fournisseur historique conserve `ProviderSession.loans(account) -> list[Loan]
 La fonction `read_loan_inventory(session, account)` ne s'exécute **que sur
 appel explicite** ; elle vérifie la connexion, la capability `loans`, le
 couple provider/credential, puis utilise la méthode optionnelle ou l'adaptateur
-legacy. **Aucun GET n'est lancé par simple import ou introspection du contrat.**
+legacy. Elle revalide compte/session **après** la lecture et écarte les résultats
+si leur portée a changé ; une future intégration Core doit en plus confirmer
+la génération et l'identité de la session enregistrée par le registre.
+**Aucun GET n'est lancé par simple import ou introspection du contrat.**
 En cas d'exception, ni son message ni l'état du compte ne sont publiés.
 
 **Important :** la présence de méthodes Python ou de branches déclarées ne
