@@ -269,6 +269,10 @@ def _public_cover_url(value: str) -> str | None:
                     (value.startswith('/') and not value.startswith('//')))):
         return None
     try:
+        # Reject traversal *before* urljoin normalizes dot segments.
+        raw_path = urlsplit(value).path
+        if any(segment in {'.', '..', ''} for segment in raw_path.split('/')[1:]):
+            return None
         url = urljoin(ORIGIN + '/', value)
         parts = urlsplit(url)
         if (parts.scheme != 'https' or parts.netloc not in
