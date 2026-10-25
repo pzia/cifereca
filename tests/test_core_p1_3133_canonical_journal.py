@@ -436,3 +436,78 @@ def test_numilog_terminal_failure_retained_in_errors_only_mode(tmp_path, monkeyp
     assert event["severity"] == "error"
     assert event["status"] == "error"
     assert event["detail"]["code"] == "manifest_failed"
+
+
+@pytest.mark.parametrize(("status", "expected_severity"), [
+    ("blocked", "warning"),
+    ("partial", "warning"),
+    ("retryable_error", "warning"),
+    ("attention_required", "warning"),
+    ("cancelled", "warning"),
+    ("warning", "warning"),
+    ("timeout", "error"),
+    ("failed", "error"),
+    ("error", "error"),
+    ("ok", None),
+    ("success", None),
+])
+def test_generic_non_success_facts_survive_errors_only_journal(
+    tmp_path, monkeypatch, status, expected_severity,
+):
+    """Severity filtering cannot silently lose a Core-reported warning."""
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "errors")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    previous = logger.level
+    handler = _canonical_writer(path)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        collector = Diagnostics(level="errors")
+        collector.add(
+            "PLUGIN", "loan import", status,
+            detail={"code": "provider_result", "token": "keep-original"},
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        handler.close()
+
+    response = query_journal(path)
+    assert response["total"] == (0 if expected_severity is None else 1)
+    if expected_severity:
+        event, = response["events"]
+        assert event["severity"] == expected_severity
+        assert event["status"] == status
+        assert event["operation"] == "loan import"
+        assert event["detail"]["token"] == "keep-original"
+
+
+def test_partial_source_sync_is_a_warning_in_errors_only_mode(tmp_path, monkeypatch):
+    """An incomplete sync is not a successful/noisy INFO observation."""
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "errors")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    previous = logger.level
+    handler = _canonical_writer(path)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        Diagnostics(level="errors").add_core_source_sync(
+            "provider.test", phase="completed", status="partial",
+            code="source_sync_partial", duration_ms=321,
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        handler.close()
+
+    report = query_journal(path, search="source_sync_partial")
+    assert report["total"] == 1
+    event, = report["events"]
+    assert event["severity"] == "warning"
+    assert event["status"] == "partial"
+    assert event["module"] == "SYNC"
+    assert event["detail"]["code"] == "source_sync_partial"
+    assert event["duration_ms"] == 321
+    assert path.read_text().count("DIAG_JSON ") == 1
