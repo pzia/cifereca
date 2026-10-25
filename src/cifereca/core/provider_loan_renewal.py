@@ -56,6 +56,9 @@ def _same_positive_loan(candidate: Any, selected: Loan, account: Any) -> bool:
     )
     if (any(type(value) is not str or not value or len(value) > 1024
             or chr(0) in value for value in keys)
+            or not (candidate.identity_id is None
+                    or (type(candidate.identity_id) is str
+                        and candidate.identity_id == account.identity_id))
             or candidate.id != selected.id
             or candidate.record_id != selected.record_id
             or candidate.provider != selected.provider
@@ -63,7 +66,6 @@ def _same_positive_loan(candidate: Any, selected: Loan, account: Any) -> bool:
             or candidate.source_provider != selected.source_provider
             or candidate.source_credential != selected.source_credential
             or candidate.source_account_id != selected.source_account_id
-            or candidate.identity_id not in (None, account.identity_id)
             or candidate.renewable is not True):
         return False
     # Paris's RenewLoans POST sends loan.raw, not the public Loan DTO.
@@ -90,6 +92,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
     if (key is None
             or type(loan.identity_id) is not str or not loan.identity_id
             or type(loan.record_id) is not str or not loan.record_id
+            or type(loan.medium) is not str
             or loan.medium not in {"digital", "physical"}
             or (loan.state is not None and
                 (type(loan.state) is not str
@@ -98,6 +101,13 @@ def renew(self, loan: Loan) -> dict[str, Any]:
                 }))):
         return _public("blocked", "loan_scope_unverified")
 
+    # The selected Loan can be mutated by a GUI refresh while this worker
+    # reads Paris. Bind consent to its exact scalar identity, not its object.
+    selected_scope = (
+        loan.identity_id, loan.source_provider, loan.source_credential,
+        loan.source_account_id, loan.id, loan.record_id, loan.provider,
+        loan.medium,
+    )
     previous = self.storage.loan_renewal_state(key)
     if previous is not None:
         if previous["status"] == "submitted":
@@ -139,7 +149,12 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         fresh = session.loans(account)
     except Exception:
         return _public("blocked", "loan_read_unavailable")
-    if not lease.current(self) or type(fresh) is not list:
+    if (not lease.current(self) or type(fresh) is not list
+            or (
+                loan.identity_id, loan.source_provider, loan.source_credential,
+                loan.source_account_id, loan.id, loan.record_id, loan.provider,
+                loan.medium,
+            ) != selected_scope):
         return _public("blocked", "loan_scope_changed")
     positives = [row for row in fresh if _same_positive_loan(row, loan, account)]
     # A borrowed ID can occur on multiple upstream branches. An ambiguous
@@ -177,7 +192,12 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         return _public(
             "verification_unavailable", "renewal_previous_attempt_unverified",
         )
-    if not lease.current(self) or not verified.current(self):
+    if (not lease.current(self) or not verified.current(self)
+            or (
+                loan.identity_id, loan.source_provider, loan.source_credential,
+                loan.source_account_id, loan.id, loan.record_id, loan.provider,
+                loan.medium,
+            ) != selected_scope):
         self.storage.loan_renewal_finish(
             key, operation_id, status="blocked", accepted=False,
         )
@@ -197,7 +217,14 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         # An exception does not prove that the POST was not accepted remotely.
         pass
 
-    still_bound = lease.current(self) and verified.current(self)
+    still_bound = (
+        lease.current(self) and verified.current(self)
+        and (
+            loan.identity_id, loan.source_provider, loan.source_credential,
+            loan.source_account_id, loan.id, loan.record_id, loan.provider,
+            loan.medium,
+        ) == selected_scope
+    )
     if not still_bound or not accepted:
         status = "verification_unavailable"
         reason = (
