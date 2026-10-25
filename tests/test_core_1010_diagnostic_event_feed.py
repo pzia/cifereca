@@ -39,7 +39,7 @@ def test_broker_defaults_to_physical_journal_not_memory_union(tmp_path, monkeypa
     log_path = tmp_path / "cifereca.log"
     log_path.write_text(
         "2026-10-25 10:00:00,000 ERROR cifereca [MainThread] "
-        "BNF import failure 403\\n"
+        "BNF import failure 403\n"
     )
     monkeypatch.setattr("cifereca.paths.log_file", lambda: log_path)
 
