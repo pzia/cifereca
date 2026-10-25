@@ -27,6 +27,23 @@ def _ensure_trace_console(logger: logging.Logger, *, force: bool = False) -> Non
     logger.addHandler(console)
 
 
+
+def _share_canonical_handlers(core: logging.Logger) -> None:
+    """Route independent Numilog module logs to the SAME handler objects.
+
+    Numilog's historical module logger is 'cifereca_numilog', not a child
+    of 'cifereca', so Python logger propagation otherwise loses its records.
+    Reusing the exact file/console handlers retains a single rotation lock,
+    physical journal and console mirror without a second writer.
+    """
+    numilog = logging.getLogger("cifereca_numilog")
+    numilog.setLevel(core.level)
+    numilog.propagate = False
+    for handler in core.handlers:
+        if handler not in numilog.handlers:
+            numilog.addHandler(handler)
+
+
 def set_diagnostics_level(level):
     """Switch the effective file/console logger verbosity without restart."""
     global _diagnostic_level
@@ -38,6 +55,7 @@ def set_diagnostics_level(level):
     logger.setLevel(logging.DEBUG if level in {"verbose", "trace"} else logging.INFO)
     if level == "trace" and logger.handlers:
         _ensure_trace_console(logger)
+    _share_canonical_handlers(logger)
 
 
 class RedactionFilter(logging.Filter):
@@ -80,6 +98,7 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
         if verbose:
             logger.setLevel(logging.DEBUG)
             _ensure_trace_console(logger, force=True)
+        _share_canonical_handlers(logger)
         return logger
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     handler = PrivateRotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
@@ -88,4 +107,5 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
     logger.addHandler(handler)
     if verbose:
         _ensure_trace_console(logger, force=True)
+    _share_canonical_handlers(logger)
     return logger
