@@ -1,9 +1,4 @@
-"""P0 #1143: last-resort free-text diagnostic redaction covers private paths.
-
-The origin of an HTTPS link is retained for backwards compatibility; path,
-query, fragment, embedded credentials, local filesystem paths and emails are
-not. Provider-specific consumers should prefer closed error codes.
-"""
+"""The one raw diagnostics journal and legacy helpers never mask data (#3133)."""
 from __future__ import annotations
 
 import json
@@ -15,63 +10,41 @@ from cifereca.diagnostics import Diagnostics, redact, redact_text
 from cifereca.logging_utils import RedactionFilter
 
 
-@pytest.mark.parametrize(("input_text", "secret"), [
-    ("https://catalog.example.test/reader/private-access.epub", "private-access.epub"),
-    ("https://catalog.example.test/LOAN/private-123/borrow", "private-123"),
-    ("file:///home/private-user/ebook.epub", "private-user"),
-    ("Lecture /home/private-user/books/secret.acsm impossible", "private-user"),
-    ("Echec /tmp/account-448/receipt.json", "account-448"),
-    ("Fichier /Users/private-user/Books/private-book.epub", "private-user"),
-    ("Fichier /mnt/data/private-user/secret.epub", "private-user"),
-    ("Dossier C:\\Users\\private-user\\Books\\secret.epub", "private-user"),
-    ("Dossier D:/Users/private-user/Books/secret.epub", "private-user"),
-    ("Adresse reader.private@example.invalid indisponible", "reader.private@example.invalid"),
-    ("Contact reader+private@books.example.org refusé", "reader+private@books.example.org"),
-    ("Bearer PRIVATE_AUTH_TOKEN", "PRIVATE_AUTH_TOKEN"),
-    ("token=PRIVATE_AUTH_TOKEN", "PRIVATE_AUTH_TOKEN"),
+@pytest.mark.parametrize("input_text", [
+    "https://catalog.example.test/reader/private-access.epub",
+    "https://catalog.example.test/LOAN/private-123/borrow",
+    "https://catalog.example.test/cover?auth=SECRET_VALUE",
+    "file:///home/private-user/ebook.epub",
+    "Lecture /home/private-user/books/secret.acsm impossible",
+    "Echec /tmp/account-448/receipt.json",
+    "Fichier /Users/private-user/Books/private-book.epub",
+    "Fichier /mnt/data/private-user/secret.epub",
+    "Adresse reader.private@example.invalid indisponible",
+    "Contact reader+private@books.example.org refusé",
+    "Bearer PRIVATE_AUTH_TOKEN",
+    "token=PRIVATE_AUTH_TOKEN",
 ])
-def test_private_information_is_never_forwarded_from_diagnostic_text(
-    input_text, secret,
-):
-    output = redact_text(input_text)
-    assert secret not in output
-    assert len(output) < len(input_text) + 30
+def test_legacy_text_helper_does_not_mask_original_evidence(input_text):
+    assert redact_text(input_text) == input_text
 
 
-def test_unsigned_catalog_url_path_is_redacted_but_public_origin_remains():
-    assert redact_text("https://catalog.example.test/public/reader/123") == (
-        "https://catalog.example.test/<redacted>"
-    )
-    assert redact_text("https://catalog.example.test/") == (
-        "https://catalog.example.test/"
-    )
-    # Public non-sensitive paths remain visible by the historical contract.
-    assert redact_text("https://catalog.example.test/book") == (
-        "https://catalog.example.test/book"
-    )
-    assert redact_text("https://catalog.example.test/cover?auth=SECRET_VALUE") == (
-        "https://catalog.example.test/<redacted>"
-    )
-
-
-def test_nested_detail_and_export_redact_without_altering_structured_counters():
+def test_nested_diagnostic_detail_and_text_export_are_unmasked():
     diagnostic = Diagnostics(enabled=True, level="trace")
-    diagnostic.add("PLUGIN", "provider failed", "error", detail={
+    detail = {
         "account": "reader@example.invalid",
         "detail": {
             "file": "/home/private-reader/book.epub",
             "url": "https://catalog.example.test/private-book/123",
-            "windows": "C:\\Users\\private-reader\\Documents\\loan.acsm",
+            "windows": r"C:\\Users\\private-reader\\Documents\\loan.acsm",
             "attempted": 0, "failures": 1,
         },
-    })
+    }
+    diagnostic.add("PLUGIN", "provider failed", "error", detail=detail)
+    assert diagnostic.snapshot()[0]["detail"] == detail
     raw = json.dumps(diagnostic.snapshot()) + diagnostic.text("0.9.44")
-    assert "reader@example.invalid" not in raw
-    assert "private-reader" not in raw
-    assert "private-book" not in raw
-    assert "loan.acsm" not in raw
-    assert '"attempted": 0' in raw
-    assert '"failures": 1' in raw
+    for original in ("reader@example.invalid", "private-reader", "private-book",
+                     "loan.acsm", '"attempted": 0', '"failures": 1'):
+        assert original in raw
 
 
 def test_log_filter_keeps_paths_and_email_in_raw_journal_and_exception():
@@ -93,10 +66,11 @@ def test_log_filter_keeps_paths_and_email_in_raw_journal_and_exception():
     assert "RuntimeError" in rendered
 
 
-def test_diagnostic_redaction_remains_idempotent_for_public_codes():
-    text = "provider_connect_failed code=provider_connect_failed count=2"
-    assert redact_text(text) == text
-    assert redact_text(redact_text(text)) == text
-    assert redact({"code": "provider_connect_failed", "attempted": 0}) == {
-        "code": "provider_connect_failed", "attempted": 0,
+def test_legacy_redact_retains_original_codes_keys_and_values():
+    original = {
+        "token": "AUTH_VALUE", "password": "PASSWORD_VALUE",
+        "nested": [{"title": "Book", "url": "https://example.test/?token=KEEP"}],
     }
+    assert redact(original) is original
+    text = "provider_connect_failed code=provider_connect_failed count=2"
+    assert redact_text(redact_text(text)) == text
