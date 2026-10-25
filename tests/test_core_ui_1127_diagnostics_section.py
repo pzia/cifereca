@@ -90,10 +90,10 @@ def test_diagnostic_entry_and_core_fallback_preserve_controls():
     assert [row[0] for row in calls] == [
         "Ouvrir Diagnostics",
         "Démarrer la capture détaillée", "Exporter les mesures JSON",
-        "Actualiser", "Copier dans le presse-papiers", "Exporter le diagnostic", "Effacer l’affichage",
+        "Actualiser", "Copier dans le presse-papiers", "Exporter l’affichage", "Effacer l’affichage",
     ]
     assert calls[4][2] == {"suggested": True}
-    assert ui.export.tooltip.startswith("Export local brut")
+    assert ui.export.tooltip.startswith("Sauvegarde locale de la vue")
 
 
 def test_long_report_keeps_readonly_scroll_and_original_margins():
