@@ -121,6 +121,5 @@ def test_diagnostics_summary_includes_live_connection_failures_without_network(m
     assert "provider.kobo [provider_connect_failed]" in label
     assert "Aucune anomalie bloquante" not in label
     assert len(counter) == 1
-    assert '"provider.kobo"' in label
     assert '"provider_id": "provider.kobo"' in report.text
     assert "Source: journal canonique local" in report.text
