@@ -570,9 +570,10 @@ class DiagnosticsPagePlugin:
 
         advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         filters_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        source_selector = Gtk.DropDown.new_from_strings(
-            ["Toutes les sources (ancien)", "Événements Core", "Journal applicatif", "Journal unifié"]
-        )
+        source_labels = ["Toutes les sources (ancien)", "Événements Core", "Journal applicatif"]
+        if journal_available:
+            source_labels.append("Journal unifié")
+        source_selector = Gtk.DropDown.new_from_strings(source_labels)
         source_selector.set_selected(3 if journal_available else 0)
         source_selector.set_tooltip_text(
             "Journal canonique ; anciennes sources accessibles en mode avancé"
