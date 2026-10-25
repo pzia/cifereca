@@ -89,7 +89,7 @@ def test_stale_live_activity_never_stages_even_if_old_right_remains(connected_co
     service._persist_active_loans("default", [loan], reconcile_missing=False)
     before = service.storage.entitlements()
     state["activity"] = '<section class="active-loans"></section>'
-    with pytest.raises(ProviderConfigurationError, match="bnf_loan_token_unavailable"):
+    with pytest.raises(ProviderConfigurationError, match="bnf_loan_not_observed"):
         service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert before == service.storage.entitlements()
     assert not downloaded and not service.storage.acquisitions()

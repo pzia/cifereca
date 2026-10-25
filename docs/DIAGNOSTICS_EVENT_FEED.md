@@ -176,3 +176,38 @@ la raison fixe `delivery_login_form_detected` conserve ensuite la suspension
 `connected=False`, y compris via la trace de log strictement validée. Le code
 historique `session_expired_confirmed` reste lisible pour les anciens exports.
 Aucune URL, donnée de cookie ou réponse HTML n'est ajoutée au contrat.
+
+### Actions ACSM BnF explicites (#2055)
+
+Le Core publie un résultat terminal `LOAN / bnf_loan_action` par action
+réellement exécutée : `stage_loan_token` (récupérer le candidat), puis
+`import_acsm` seulement après une **seconde confirmation**. Le domaine
+`loan_download` et le fournisseur `bnf-pret` permettent de retrouver ces faits
+avec les filtres existants. Le succès du premier signifie **candidat ACSM
+validé**, jamais EPUB/PDF obtenu ou droit BnF créé. L'import reste une
+acquisition **manuelle**, même si son action est attribuée à BnF dans Diagnostics.
+
+Le schéma fermé contient `schema_version=1`, `provider_id`, `action`, `phase`,
+`status`, `reason_code`, `duration_ms` et, uniquement dans un véritable contexte
+de tâche, `task_ref`. Les phases distinguent admission, compte/session,
+staging local, livraison fournisseur, validation d'artefact, revalidation de
+source et import ADEPT. **`provider_delivery` ne prouve pas qu'un GET ACSM a
+été envoyé** : la relecture d'activité peut refuser le prêt avant ce GET.
+
+Les motifs fournisseur sont acceptés par égalité exacte avec une liste fermée
+(ex. `bnf_access_denied`, `bnf_loan_not_observed`,
+`bnf_download_redirect_refused`, `bnf_invalid_loan_token`). Une exception libre
+reste `bnf_loan_token_unavailable` ou `bnf_import_failed`. L'absence/ambiguïté
+connue d'un profil donne `adept_profile_required|adept_profile_ambiguous`.
+Ni texte d'exception, URL/HTML/XML, cookie, compte, prêt, titre, chemin ou profil
+ne sont publiés. Aucune corrélation n'est fabriquée hors worker ou par date.
+
+Seul l'émetteur Core typé pose le marqueur d'attestation ; un `Diagnostics.add`
+générique ne peut entrer dans le domaine privilégié. Le logger exact
+`cifereca` expose aussi un événement JSON canonique `EVENT bnf loan action` ;
+le lecteur `app_log` valide entièrement ce schéma et rejette les suffixes ou
+champs supplémentaires. Les messages GTK proposent une action adaptée et le
+même code sûr, sans supposer la cause des tentatives historiques non tracées.
+
+Les tests utilisent HTTPX MockTransport, SQLite et GTK/XTEST sur données
+synthétiques. Ils ne valident pas un GET BnF réel ni le fulfillment Adobe réel.

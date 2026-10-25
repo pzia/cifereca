@@ -6,6 +6,36 @@ identity and loan during the GET; this controller never sees cookies or XML.
 from __future__ import annotations
 from pathlib import Path
 from copy import copy
+from ..core.diagnostic_bnf_loan_action import BnfLoanActionError, STAGE_CODES, IMPORT_CODES
+
+
+def bnf_action_error_message(error, *, importing=False):
+    """Only closed Core codes reach GTK; never format a provider exception."""
+    code = error.code if type(error) is BnfLoanActionError else None
+    allowed = IMPORT_CODES if importing else STAGE_CODES
+    if type(code) is not str or code not in allowed:
+        code = 'bnf_import_failed' if importing else 'bnf_action_failed'
+    if code in {'bnf_loan_scope_unproven', 'bnf_loan_not_observed'}:
+        message = "Actualisez les prêts du compte BnF de cette identité, puis sélectionnez de nouveau le prêt."
+    elif code in {'bnf_auth_required', 'bnf_session_closed'}:
+        message = "Reconnectez le compte BnF de cette identité puis actualisez ses prêts. Aucun import ADEPT n'a été lancé."
+    elif code == 'bnf_download_redirect_refused':
+        message = "Le téléchargement BnF a été redirigé. Vérifiez la session et l'accès à ce prêt sur le portail. Aucun import ADEPT n'a été lancé."
+    elif code == 'bnf_access_denied':
+        message = "BnF a refusé l'accès au jeton de ce prêt. Vérifiez son accès sur le portail BnF."
+    elif code == 'bnf_rate_limited':
+        message = "BnF limite temporairement les requêtes. Réessayez plus tard ; aucun import ADEPT n'a été lancé."
+    elif code in {'bnf_invalid_loan_token', 'bnf_loan_token_invalid', 'bnf_token_limit', 'bnf_unexpected_content'}:
+        message = "La réponse BnF n'est pas un jeton ACSM de prêt valide. Elle n'a pas été transmise à ADEPT."
+    elif code in {'bnf_download_storage_failed', 'bnf_local_staging_failed'}:
+        message = "Impossible d'enregistrer le jeton dans l'espace privé. Vérifiez l'espace disque et les permissions."
+    elif code == 'bnf_acquisition_busy':
+        message = "Une acquisition est déjà en cours. Attendez sa fin avant de récupérer le jeton."
+    elif importing:
+        message = "L'import ADEPT a échoué ; le jeton est conservé pour une reprise. Consultez le motif dans Diagnostics."
+    else:
+        message = "La récupération du jeton BnF a échoué avant l'import ADEPT. Consultez le motif dans Diagnostics."
+    return message + '\nCode : ' + code
 
 
 def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
@@ -64,8 +94,8 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
                     return {"status": "cancelled"}
                 # Classify the resulting artifact as a deliberate *manual*
                 # ADEPT import, NOT an automatically proven BnF acquisition.
-                return window.service.import_acsm(
-                    Path(path), identity_id=identity_id, provider_id="manual",
+                return window.service.import_bnf_loan_acsm(
+                    Path(path), expected_identity_id=identity_id,
                     title=loan.title,
                 )
 
@@ -94,9 +124,8 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
 
             window.runner.submit(
                 "Import ADEPT du prêt BnF…", import_work, imported,
-                lambda _exc: window.show_error(
-                    "Import ADEPT impossible ; jeton conservé pour une reprise.",
-                    "Import BnF"),
+                lambda exc: current() and window.show_error(
+                    bnf_action_error_message(exc, importing=True), "Import BnF"),
                 priority=TaskPriority.USER_ACTION, kind="acsm-import",
             )
 
@@ -125,9 +154,8 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
 
         window.runner.submit(
             "Récupération du jeton BnF…", work, staged,
-            lambda _exc: window.show_error(
-                "Récupération impossible : vérifiez la connexion et actualisez vos prêts.",
-                "Téléchargement BnF"),
+            lambda exc: current() and window.show_error(
+                bnf_action_error_message(exc), "Téléchargement BnF"),
             control=control, priority=TaskPriority.USER_ACTION, kind="loan-acquisition",
         )
 
