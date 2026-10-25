@@ -46,6 +46,15 @@ def acquire_numilog_direct(
                 )
 
             stage = "acquisition_local_conflict"
+            from .library_declared_links import has_active_declared_link
+            if has_active_declared_link(
+                service.storage, identity_id=identity.identity_id,
+                provider_id='numilog', credential_id=item.source_credential,
+                account_id=pinned_account_id, item_id=item.record_id,
+            ):
+                raise ProviderConfigurationError(
+                    "Numilog : association locale déclarée ; vérifier le fichier avant de télécharger"
+                )
             if service.storage.numilog_purchase_has_local_conflict(
                 credential_id=item.source_credential,
                 item_id=item.record_id,
