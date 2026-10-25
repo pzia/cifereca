@@ -58,11 +58,8 @@ from .diagnostic_reconciliation import (
     public_reconciliation_log_fields,
 )
 
-_LOG_LINE = re.compile(
-    r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
-    r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) "
-    r"(?P<logger>[\w.-]{1,90}) (?:\[[^\]]{0,80}\] )?(?P<body>.*)$"
-)
+from .diagnostic_log_line import _LOG_LINE
+
 _TASK_CORRELATION = re.compile(
     r"TRACE task correlation task_ref=([0-9a-f]{12}) status=(success|failed|cancelled)"
 )

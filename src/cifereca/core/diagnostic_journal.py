@@ -16,7 +16,7 @@ import stat
 import unicodedata
 from typing import Any
 
-from .diagnostic_event_feed import _LOG_LINE
+from .diagnostic_log_line import _LOG_LINE
 
 _MAX_FILE_BYTES = 2_000_000
 _MAX_EVENT_BYTES = 256_000
