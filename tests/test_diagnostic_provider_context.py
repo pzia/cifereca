@@ -47,21 +47,21 @@ def test_broker_exact_provider_filter_both_channels_before_pagination(applicatio
                               connect_configured=forbidden)
     monkeypatch.setattr("cifereca.paths.log_file", lambda: application_log)
     broker = DiagnosticsBrokerImpl(service)
-    full = broker.events(provider_id="paris", severity="error", limit=100)
+    full = broker.events(source="all", provider_id="paris", severity="error", limit=100)
     assert full["total"] == 4
     assert {e["source"] for e in full["events"]} == {"app_log", "core_events"}
     assert {e["module"] for e in full["events"]} == {"cifereca", "PLUGIN", "SYNC"}
     assert all(e["provider_id"] == e["detail"]["provider_id"] == "paris"
                for e in full["events"])
     assert "PRIVATE" not in json.dumps(full)
-    pages = [broker.events(provider_id="paris", limit=1, offset=i) for i in range(4)]
+    pages = [broker.events(source="all", provider_id="paris", limit=1, offset=i) for i in range(4)]
     assert all(p["total"] == 4 for p in pages)
     assert [p["events"][0]["event_id"] for p in pages] == [e["event_id"] for e in full["events"]]
     assert pages[-1]["next_offset"] is None
-    assert broker.events(provider_id="paris", module="SYNC")["total"] == 2
-    assert broker.events(provider_id="paris.catalog")["total"] == 4
-    assert broker.events(provider_id="provider")["total"] == 0
-    unknown = broker.events(provider_id="provider.absent")
+    assert broker.events(source="all", provider_id="paris", module="SYNC")["total"] == 2
+    assert broker.events(source="all", provider_id="paris.catalog")["total"] == 4
+    assert broker.events(source="all", provider_id="provider")["total"] == 0
+    unknown = broker.events(source="all", provider_id="provider.absent")
     assert unknown["events"] == [] and unknown["status"] == "empty"
     assert unknown["sources"] == full["sources"]
 

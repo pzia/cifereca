@@ -26,13 +26,35 @@ def test_missing_sources_are_explicit_and_offline(tmp_path, monkeypatch):
     monkeypatch.setattr("cifereca.paths.log_file", lambda: tmp_path / "cifereca.log")
     broker = DiagnosticsBrokerImpl(service)
     assert isinstance(broker, DiagnosticsBroker)
-    result = broker.events()
+    result = broker.events(source="all")  # Explicit temporary legacy facade.
     assert result["events"] == []
     assert result["status"] == "unavailable"
     assert [(x["source"], x["status"]) for x in result["sources"]] == [
         ("core_events", "disabled"), ("app_log", "unavailable"),
     ]
     assert result["read_only"] and result["bounded"]
+
+
+def test_broker_defaults_to_physical_journal_not_memory_union(tmp_path, monkeypatch):
+    log_path = tmp_path / "cifereca.log"
+    log_path.write_text(
+        "2026-10-25 10:00:00,000 ERROR cifereca [MainThread] "
+        "BNF import failure 403\n"
+    )
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: log_path)
+
+    class ForbiddenMemory:
+        enabled = True
+        def snapshot(self):
+            raise AssertionError("canonical query must not access memory")
+
+    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=ForbiddenMemory()))
+    default = broker.events(search="BNF import failure")
+    explicit = broker.events(source="journal", search="BNF import failure")
+    assert default == explicit
+    assert default["total"] == 1
+    assert default["events"][0]["severity"] == "error"
+    assert default["sources"][0]["source"] == "journal"
 
 
 def test_structured_events_do_not_expose_personal_info_or_details(tmp_path):
