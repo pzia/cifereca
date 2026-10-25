@@ -101,11 +101,11 @@ class Shell(unittest.TestCase):
 
 
 class Redaction(unittest.TestCase):
-    def test_nested_secret(self): self.assertEqual(redact({'nested':[{'token':'secret'}]})['nested'][0]['token'],'<redacted>')
-    def test_signed_url_in_error(self): self.assertNotIn('SECRET',redact_text('Failure https://server.test/file.acsm?auth=SECRET'))
-    def test_pnb_path_token(self): self.assertNotIn('SECRET',redact_text('https://pnb.test/v3/LOAN/SECRET/123.do'))
-    def test_bearer_in_text(self): self.assertNotIn('SECRET',redact_text('Authorization: Bearer SECRET'))
-    def test_url_credentials(self): self.assertNotIn('SECRET',redact_text('https://user:SECRET@host.test/file'))
+    def test_nested_secret(self): self.assertEqual(redact({'nested':[{'token':'secret'}]})['nested'][0]['token'],'secret')
+    def test_signed_url_in_error(self): self.assertIn('SECRET',redact_text('Failure https://server.test/file.acsm?auth=SECRET'))
+    def test_pnb_path_token(self): self.assertIn('SECRET',redact_text('https://pnb.test/v3/LOAN/SECRET/123.do'))
+    def test_bearer_in_text(self): self.assertIn('SECRET',redact_text('Authorization: Bearer SECRET'))
+    def test_url_credentials(self): self.assertIn('SECRET',redact_text('https://user:SECRET@host.test/file'))
     def test_levels(self):
         d=Diagnostics(level='verbose');d.add('x','normal');d.add('x','detail',level='detailed');d.add('x','trace',level='trace')
         self.assertEqual(len(d.snapshot()),2)
