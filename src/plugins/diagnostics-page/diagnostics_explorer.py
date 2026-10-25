@@ -257,6 +257,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         reference = published_task_reference(raw)
         if reference is not None:
             safe["task_ref"] = reference
+        connection = published_connection_attempt(raw)
+        if connection is not None:
+            safe.update(connection)
         # Full text search is explicitly local to this 50-item broker page.
         searchable = " ".join(
             safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
@@ -308,6 +311,124 @@ def published_task_reference(row: Mapping[str, Any]) -> str | None:
     return values[0] if all(value == values[0] for value in values) else None
 
 
+# The broker's `provider_connect` projection is the ONLY source of these
+# fields. Revalidate the complete Core schema and the physical log/source
+# envelope: a generic PLUGIN row containing "operation_ref" proves nothing.
+_CONNECTION_FIELDS = frozenset({
+    "provider_id", "operation_ref", "phase", "status", "reason_code",
+    "caller_category", "source_kind", "network_auth", "duration_ms",
+})
+_CONNECTION_CALLERS = frozenset({
+    "startup/connect_configured", "opening_sync", "explicit_refresh",
+    "profile_change", "plugin_activation", "other",
+})
+_CONNECTION_SOURCES = frozenset({"configured", "singleton_public", "preview", "virtual"})
+_CONNECTION_PHASES = {
+    "requested": ({"unknown"}, {"requested"}),
+    "connect_invoked": ({"unknown"}, {"connect_invoked"}),
+    "session_reused": ({"success"}, {"session_reused"}),
+    "terminal": (
+        {"success", "failed", "skipped", "cancelled"},
+        {"connected", "connect_failed", "session_invalid", "plugin_missing",
+         "plugin_not_ready", "interactive_auth_required", "cancelled"},
+    ),
+}
+_CONNECTION_TERMINAL = {
+    "success": {"connected"},
+    "failed": {"connect_failed", "session_invalid"},
+    "skipped": {"plugin_missing", "plugin_not_ready", "interactive_auth_required"},
+    "cancelled": {"cancelled"},
+}
+_CONNECTION_PUBLIC_STATUS = {
+    "unknown": "unknown", "success": "ok", "failed": "error",
+    "skipped": "warning", "cancelled": "warning",
+}
+
+
+def _connection_envelope_valid(row: Mapping[str, Any], phase: str,
+                               status: str, provider: str) -> bool:
+    source, module = row.get("source"), row.get("module")
+    if ((source, module) not in {("core_events", "PLUGIN"), ("app_log", "cifereca")}
+            or row.get("provider_id") != provider or public_provider_id(provider) is None
+            or row.get("message") != "connexion fournisseur · " + phase
+            or row.get("status") != _CONNECTION_PUBLIC_STATUS.get(status)):
+        return False
+    return True
+
+
+def published_connection_attempt(row: Mapping[str, Any]) -> dict[str, str] | None:
+    """Read only an exact Core-attested connection observation.
+
+    This is intentionally separate from task_ref: one connection request can
+    have three phases and two physical channels, but proves zero HTTP auths.
+    Never read a reference from generic row text, timestamps or event IDs.
+    """
+    if not isinstance(row, Mapping) or "operation_ref" in row:
+        return None
+    detail = row.get("detail")
+    if type(detail) is not dict or set(detail) not in (
+        _CONNECTION_FIELDS, _CONNECTION_FIELDS | {"scope_ref", "scope_kind"},
+    ):
+        return None
+    phase, status, reason = (detail.get("phase"), detail.get("status"),
+                             detail.get("reason_code"))
+    if (type(phase) is not str or phase not in _CONNECTION_PHASES
+            or type(status) is not str or type(reason) is not str
+            or status not in _CONNECTION_PHASES[phase][0]
+            or reason not in _CONNECTION_PHASES[phase][1]
+            or (phase == "terminal" and reason not in _CONNECTION_TERMINAL[status])):
+        return None
+    operation = detail.get("operation_ref")
+    provider = detail.get("provider_id")
+    if (type(operation) is not str or re.fullmatch(r"[0-9a-f]{24}", operation) is None
+            or type(provider) is not str
+            or type(detail.get("caller_category")) is not str
+            or detail["caller_category"] not in _CONNECTION_CALLERS
+            or type(detail.get("source_kind")) is not str
+            or detail["source_kind"] not in _CONNECTION_SOURCES
+            or detail.get("network_auth") != "unknown"
+            or type(detail.get("duration_ms")) is not int
+            or not 0 <= detail["duration_ms"] <= 600000
+            or not _connection_envelope_valid(row, phase, status, provider)):
+        return None
+    if "scope_ref" in detail and (
+        type(detail["scope_ref"]) is not str
+        or re.fullmatch(r"[0-9a-f]{24}", detail["scope_ref"]) is None
+        or detail.get("scope_kind") != "connection"
+    ):
+        return None
+    # Do not retain/export scope_ref, credential or anything beyond enums.
+    return {
+        "operation_ref": operation, "phase": phase,
+        "caller_category": detail["caller_category"],
+        "source_kind": detail["source_kind"],
+        "network_auth": "unknown", "connection_status": status,
+    }
+
+
+def published_operation_reference(row: Mapping[str, Any]) -> str | None:
+    """Validate the normalized, closed UI observation before grouping/export.
+
+    It never trusts an arbitrary operation_ref alone; sanitized_rows is the
+    only producer of these exact companion fields from a Core broker event.
+    """
+    if not isinstance(row, Mapping):
+        return None
+    ref, phase, status = (row.get("operation_ref"), row.get("phase"),
+                          row.get("connection_status"))
+    if (type(ref) is not str or re.fullmatch(r"[0-9a-f]{24}", ref) is None
+            or type(phase) is not str or phase not in _CONNECTION_PHASES
+            or type(status) is not str or status not in _CONNECTION_PHASES[phase][0]
+            or type(row.get("caller_category")) is not str
+            or row["caller_category"] not in _CONNECTION_CALLERS
+            or type(row.get("source_kind")) is not str
+            or row["source_kind"] not in _CONNECTION_SOURCES
+            or row.get("network_auth") != "unknown"
+            or not _connection_envelope_valid(row, phase, status, row.get("provider_id"))):
+        return None
+    return ref
+
+
 def linked_operation_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group this page by explicit worker scope, not by apparent causality.
 
@@ -321,17 +442,28 @@ def linked_operation_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         # sanitized_rows has already resolved/rejected contradictory origins.
         # Do not reconsider retained display detail and revive a rejected ref.
-        reference = published_task_reference({
+        operation = published_operation_reference(row)
+        task = published_task_reference({
             "source": row.get("source"), "task_ref": row.get("task_ref"),
         })
-        group = by_reference.get(reference) if reference is not None else None
+        # Namespaces prevent a task and a connect operation from colliding.
+        # A connection request is not a worker task or a network invocation.
+        key = ("connection", operation) if operation else (
+            ("task", task) if task else None
+        )
+        group = by_reference.get(key) if key is not None else None
         if group is None:
-            group = {"task_ref": reference, "events": [],
-                     "label": (f"Tâche {reference} · référence Core publiée"
-                               if reference else "Corrélation non disponible")}
+            group = {
+                "task_ref": task if operation is None else None,
+                "operation_ref": operation, "events": [],
+                "label": (f"Connexion {operation} · demande Core attestée"
+                          if operation else
+                          f"Tâche {task} · référence Core publiée" if task
+                          else "Corrélation non disponible"),
+            }
             groups.append(group)
-            if reference is not None:
-                by_reference[reference] = group
+            if key is not None:
+                by_reference[key] = group
         group["events"].append(row)
     for group in groups:
         levels = {row.get("severity") for row in group["events"]}
@@ -602,6 +734,12 @@ def export_selected_events(
         })
         if reference is not None:
             item["task_ref"] = reference
+        if published_operation_reference(row) is not None:
+            for field in (
+                "operation_ref", "phase", "caller_category", "source_kind",
+                "network_auth", "connection_status",
+            ):
+                item[field] = row[field]
         aggregate = sanitized_reconciliation_export(row)
         if aggregate is not None:
             item["reconciliation"] = aggregate
