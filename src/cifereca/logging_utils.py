@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from .paths import log_file
@@ -58,6 +59,20 @@ class RedactionFilter(logging.Filter):
         return True
 
 
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """Create and rotate a local raw journal readable only by its owner."""
+    def _open(self):
+        # Creating with a mode argument avoids a transient world-readable
+        # file on common umasks. Tighten existing files as well.
+        fd = os.open(self.baseFilename, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            return os.fdopen(fd, self.mode, encoding=self.encoding, errors=self.errors)
+        except BaseException:
+            os.close(fd)
+            raise
+
+
 def configure_logging(*, verbose: bool = False) -> logging.Logger:
     if verbose: set_diagnostics_level("trace")
     logger = logging.getLogger("cifereca")
@@ -67,7 +82,7 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
             _ensure_trace_console(logger, force=True)
         return logger
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
-    handler = RotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    handler = PrivateRotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"))
     handler.addFilter(RedactionFilter())
     logger.addHandler(handler)
