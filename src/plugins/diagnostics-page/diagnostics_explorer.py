@@ -36,7 +36,7 @@ def local_timestamp_label(value: object) -> str:
         return "Horodatage indisponible"
 
 
-SOURCES = ("all", "core_events", "app_log")
+SOURCES = ("all", "core_events", "app_log", "journal")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
@@ -108,6 +108,7 @@ _LEVELS = ("critical", "error", "warning", "info", "debug")
 # and titles that regex redaction cannot reliably recognise.
 PUBLIC_SOURCE_REASONS = {
     "app_log": frozenset({"", "log_tail_bounded", "log_source_incomplete", "no_matching_events"}),
+    "journal": frozenset({"", "rotation_or_read_gap", "active_log_missing", "no_recorded_events"}),
     "core_events": frozenset({
         "", "diagnostics_disabled", "snapshot_unavailable", "no_recorded_events",
         "snapshot_records_incomplete",
@@ -163,6 +164,7 @@ def fetch_explorer_page(
     provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
+    search: str = "",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -177,13 +179,20 @@ def fetch_explorer_page(
     if (type(reason_code) is not str
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)):
         raise ValueError("invalid reconciliation reason code")
-    if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
+    if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 1000000:
         raise ValueError("invalid diagnostics offset")
     query = {
         "source": source, "module": module.strip()[:90],
         "severity": severity, "since": explorer_since(period, now=reference_time),
         "until": None, "limit": PAGE_SIZE, "offset": offset,
     }
+    if type(search) is not str or len(search) > 500:
+        raise ValueError("invalid diagnostics search")
+    if source == "journal":
+        if reason_code or verified_domain:
+            raise ValueError("raw journal does not attest a domain or reason code")
+        # Only the canonical journal has a Core-side pre-pagination text search.
+        query["search"] = search
     # Older Core versions can still serve the unfiltered page. Require the
     # optional new broker keyword ONLY for an explicitly selected code;
     # never silently downgrade a global filter to local 50-item search.
@@ -284,7 +293,7 @@ def published_task_reference(row: Mapping[str, Any]) -> str | None:
     provider events. Contradictory or malformed references fail closed.
     """
     source = row.get("source")
-    if type(source) is not str or source not in ("core_events", "app_log"):
+    if type(source) is not str or source not in ("core_events", "app_log", "journal"):
         return None
     values = []
     if "task_ref" in row:
@@ -406,11 +415,14 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 
 
 _CHANNEL_LABELS = {
+    "journal": "Journal local unifié",
     "core_events": "Événements Core (mémoire)",
     "app_log": "Journal applicatif (lecture bornée)",
     "inconnue": "Canal non identifié",
 }
 _CHANNEL_REASON_LABELS = {
+    "rotation_or_read_gap": "Une ou plusieurs rotations sont illisibles ou incomplètes",
+    "active_log_missing": "Fichier principal absent ; anciens fragments seulement",
     "log_tail_bounded": "Lecture volontairement bornée : lignes anciennes possibles hors extrait",
     "log_source_incomplete": "Journal incomplet ou partiellement inaccessible",
     "no_matching_events": "Aucune ligne technique admissible dans cet extrait",
@@ -467,9 +479,9 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
         # The broker contract uses numeric counts. Do not call __int__
         # on arbitrary objects supplied by a malformed broker response.
         if type(value) is int:
-            return min(10000, max(0, value))
+            return min(1000000, max(0, value))
         if type(value) is str and len(value) <= 6 and value.isdecimal():
-            return min(10000, int(value))
+            return min(1000000, int(value))
         return 0
 
     total = bounded_count(payload.get("total"))
@@ -530,7 +542,7 @@ def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int 
     total = payload.get("total")
     if type(total) is not int or total < 0:
         return None
-    if current_offset < following <= min(10000, current_offset + PAGE_SIZE) and following < total:
+    if current_offset < following <= min(1000000, current_offset + PAGE_SIZE) and following < total:
         return following
     return None
 

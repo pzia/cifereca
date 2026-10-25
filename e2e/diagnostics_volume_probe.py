@@ -186,11 +186,27 @@ def main():
             try:
                 callback()
             except Exception as exc:
+                # The fixture contains synthetic, local data only. Emit a
+                # fixed source position and exception class for CI diagnosis,
+                # never the GTK text or the raw exception message.
+                location = None
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        location = trace.tb_lineno
+                    trace = trace.tb_next
+                # Published CI summary accepts source-reviewed assert/raise
+                # lines only. The raw fixture report remains runner-local.
+                report["failure_line"] = location
+                print(f"CIFERECA_DIAG_VOLUME_FAIL line={location} type={type(exc).__name__}",
+                      file=sys.stderr, flush=True)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, cb)
 
     def until(predicate, then, seconds=8):
+        # Source-reviewed call site only; never publish GTK text/predicates.
+        report["wait_line"] = sys._getframe(1).f_lineno
         deadline = monotonic() + seconds
         def poll():
             if predicate():
@@ -426,9 +442,8 @@ def main():
         assert report["audits"]["D08_raw_detail_field_preserved"]
         # Report ONLY test-safe presence flags, not GTK text or private data.
         expected = {
-            "path_redacted": 'path: "<expurgé>"' in detail_text,
-            "secret_redacted": 'secret: "<expurgé>"' in detail_text,
-            "secret_absent": "SECRET-FICTIF-NE-PAS-AFFICHER" not in detail_text,
+            "path_visible_bounded": '/home/fixture/secret/' in detail_text,
+            "secret_visible": "SECRET-FICTIF-NE-PAS-AFFICHER" in detail_text,
             "trace_first": "etape-fictive-000" in detail_text,
             "trace_last": "etape-fictive-039" in detail_text,
             "bounded": len(detail_text) < 24000,

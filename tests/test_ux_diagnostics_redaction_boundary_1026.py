@@ -1,30 +1,24 @@
-"""UX security regression for #1026: redaction before display truncation.
+"""#3135: display bounding must never be confused with broad redaction.
 
-No account, network or GTK required. Run against the plugin's pure formatter.
-These are now positive regression tests: an XPASS marker would hide a leak.
+Only explicit login/password values are pseudonymized; paths, headers, URLs,
+emails, tokens and other source information are preserved when visible.
 """
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 
 import pytest
 
-
-PLUGIN = (
-    Path(__file__).resolve().parents[1]
-    / "src/plugins/diagnostics-page/cifereca_diagnostics_page.py"
-)
+PLUGIN = Path(__file__).resolve().parents[1] / "src/plugins/diagnostics-page/cifereca_diagnostics_page.py"
 
 
 def _module():
-    """Import only the locally shipped plugin; no GTK window is opened."""
     spec = importlib.util.spec_from_file_location("diagnostics_redaction_boundary", PLUGIN)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    # The page imports its peer diagnostics_explorer module since #1031.
-    # Test the actual page without requiring an installed plugin package.
     sys.path.insert(0, str(PLUGIN.parent))
     try:
         spec.loader.exec_module(module)
@@ -35,42 +29,52 @@ def _module():
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
 @pytest.mark.parametrize("start", [789, 790, 791, 792])
-def test_partial_email_at_truncation_boundary_never_reaches_output(mode, start):
-    formatter = _module().format_diagnostic_detail
-    # Cut before '.com', so matching the email regex on the sliced text fails.
-    payload = "x" * start + "alice@example.com"
-    displayed = formatter({"message": payload}, mode=mode)
-    assert "alice@" not in displayed
-    assert "example" not in displayed
+def test_email_at_preview_boundary_remains_visible_up_to_limit(mode, start):
+    value = "x" * start + "alice@example.com"
+    rendered = _module().format_diagnostic_detail({"message": value}, mode=mode)
+    # The GUI shows the original prefix, then an explicit finite-preview notice.
+    assert "alice@" in rendered
+    assert "[tronqué]" in rendered
+    assert len(rendered) < 950
 
 
-def test_json_exportable_detail_redacts_email_before_cutting():
-    import json
+def test_json_preview_keeps_non_login_email_field_value():
+    obj = {"message": "z" * 791 + "camille@example.com"}
+    shown = json.loads(_module().format_diagnostic_detail(obj, mode="json"))
+    assert "camille@" in shown["message"]
+    assert "[tronqué]" in shown["message"]
 
-    formatter = _module().format_diagnostic_detail
-    displayed = formatter({"message": "z" * 791 + "camille@example.com"}, mode="json")
-    assert json.loads(displayed)["message"].find("camille@") == -1
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
-@pytest.mark.parametrize("sensitive", [
+@pytest.mark.parametrize("value", [
     "Bearer VERY_SECRET_CREDENTIAL",
     "token=VERY_SECRET_CREDENTIAL",
     "https://licenses.example/fulfill?token=VERY_SECRET_CREDENTIAL",
     "/home/alexandre/private/VERY_SECRET_CREDENTIAL",
 ])
-def test_other_secrets_crossing_preview_boundary_are_redacted(mode, sensitive):
-    fmt = _module().format_diagnostic_detail
-    rendered = fmt({"message": " " * 795 + sensitive}, mode=mode)
-    assert "VERY_SECRET_CREDENTIAL" not in rendered
-    assert "/home/alexandre/" not in rendered
-    assert "https://licenses.example" not in rendered
+def test_other_technical_values_are_not_expurgated(mode, value):
+    result = _module().format_diagnostic_detail({"message": value}, mode=mode)
+    assert value in result
 
 
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
-def test_oversized_text_is_suppressed_before_any_regex_or_clipboard(mode):
-    rendered = _module().format_diagnostic_detail(
+def test_oversized_text_is_bounded_not_wholesale_suppressed(mode):
+    result = _module().format_diagnostic_detail(
         {"message": "x" * 24_001 + "alice@example.com"}, mode=mode
     )
-    assert "alice" not in rendered
-    assert "x" * 80 not in rendered
-    assert "contenu masqué" in rendered
+    assert "x" * 80 in result
+    assert "alice" not in result  # beyond 800-character preview window
+    assert "[tronqué]" in result
+    assert len(result) < 1000
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_login_password_are_pseudonymized_but_other_secrets_are_not(mode):
+    raw = {"login": "reader@example.invalid", "password": "ABC123",
+           "token": "ABC123", "url": "https://books.test/path?token=ABC123"}
+    shown = _module().format_diagnostic_detail(raw, mode=mode)
+    assert "reader@example.invalid" not in shown
+    # Identical data in a non-password field remains visible.
+    assert "ABC123" in shown
+    assert "https://books.test/path?token=ABC123" in shown
+    assert "login-" in shown and "mot-de-passe-" in shown

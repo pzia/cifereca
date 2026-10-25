@@ -8,12 +8,12 @@ PAGE = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
 def test_journals_explorer_is_inside_existing_diagnostics_page():
     source = PAGE.read_text(encoding="utf-8")
     assert 'route="diagnostics"' in source
-    assert 'Gtk.Label(label="Journaux par composant"' in source
-    assert '["Toutes les sources", "Événements Core", "Journal applicatif"]' in source
+    assert '"Journaux par composant"' in source and '"Journal des événements"' in source
+    assert '"Journal unifié"' in source and '"Événements Core"' in source
     assert '["Tous niveaux", "Debug", "Info", "Avertissements", "Erreurs", "Critiques"]' in source
     assert '["Toutes périodes", "Dernière heure", "24 heures", "7 jours", "30 jours"]' in source
     assert "module_filter.connect(\"activate\", reset_events)" in source
-    assert 'search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))' in source
+    assert 'search_filter.connect("changed", on_search_change)' in source
     assert "sort_latest.connect(\"toggled\", lambda *_: display_events())" in source
 
 
@@ -26,7 +26,9 @@ def test_query_runs_through_tasks_broker_and_result_renders_on_gtk_idle():
     assert "query = {" in source
     assert "module_filter.get_text()" in source
     assert 'self._event_handle.cancel()' in source
-    assert "open(" not in source
+    assert 'def export_raw_journal_clicked(_button):' in source
+    assert 'os.open(destination, flags, 0o600)' in source
+    assert 'if not raw_export_armed:' in source
     assert "cifereca.paths" not in source
     assert "cifereca.core" not in source
     assert "subprocess" not in source

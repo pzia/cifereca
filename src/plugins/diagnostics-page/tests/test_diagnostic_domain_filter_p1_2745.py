@@ -140,7 +140,7 @@ def test_gtk_domain_ui_is_separate_and_affects_query_and_selection():
     code = (Path(__file__).resolve().parents[1] /
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     assert 'domain_filter = Gtk.Entry()' in code
-    assert 'journals_tab.append(domain_row)' in code
+    assert 'advanced_box.append(domain_row)' in code
     assert 'domain_filter.connect("activate", reset_events)' in code
     assert code.count('"domain": domain_filter.get_text().strip(),') == 2
     assert 'domain_filter.connect("changed", lambda *_: invalidate_selection())' in code

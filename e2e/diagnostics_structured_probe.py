@@ -236,7 +236,7 @@ def main():
         assert "empty_array:" in body and "empty_object:" in body
         assert "multiline:" in body and "Ligne A\\nLigne B" in body
         assert "absent:" not in body, "Champ absent inventé dans le détail"
-        assert SECRET not in body
+        assert SECRET in body
         report["checks"]["D07_readable_preserves_false_zero_null_empty_and_unicode"] = True
         screenshot("00-structure-lisible")
         choose_mode_keyboard(
@@ -257,10 +257,10 @@ def main():
         assert data["empty_object"] == {}
         assert data["unicode"] == "Élève 🌍 漢字"
         assert data["nested"]["items"] == [None, False, 0, [], {}]
-        assert data["nested"]["token"] == "<expurgé>"
+        assert data["nested"]["token"] == SECRET
         assert data["multiline"] == "Ligne A\nLigne B"
         assert "absent" not in data, "Clé absente ajoutée au JSON"
-        assert SECRET not in body
+        assert SECRET in body
         assert "\n  " in body
         report["checks"]["D07_json_indented_typed_and_redacted"] = True
         report["checks"]["D07_json_mode_selected_by_real_keyboard_xtest"] = True
@@ -280,7 +280,7 @@ def main():
         parsed = json.loads(body)
         assert parsed["null"] is None and parsed["false"] is False
         assert parsed["empty_array"] == []
-        assert SECRET not in body
+        assert SECRET in body
         assert "Élève 🌍 漢字" in body
         assert parsed["multiline"] == "Ligne A\nLigne B"
         assert "absent" not in parsed
@@ -300,7 +300,7 @@ def main():
         assert selector.get_selected() == 1
         expected = text(view)
         assert json.loads(expected)["multiline"] == "Ligne A\nLigne B"
-        assert SECRET not in expected
+        assert SECRET in expected
         Gdk.Display.get_default().get_clipboard().set("D07-before-copy-sentinel")
         assert button.grab_focus() is not False
 
@@ -322,7 +322,7 @@ def main():
             assert copied != "D07-before-copy-sentinel"
             assert json.loads(copied)["nested"]["items"] == [None, False, 0, [], {}]
             assert "absent" not in json.loads(copied)
-            assert SECRET not in copied
+            assert SECRET in copied
             assert len(broker.event_queries) == 1 and broker.checks == 0
             report["checks"]["D07_json_copy_button_keyboard_xtest_exact"] = True
             report["audits"]["D07_json_copy_sha256_matches_visible"] = (
@@ -413,7 +413,7 @@ def main():
         assert data["nested"]["items"] == [None, False, 0, [], {}]
         assert data["unicode"] == "Élève 🌍 漢字"
         assert data["multiline"] == "Ligne A\nLigne B"
-        assert "absent" not in data and SECRET.encode() not in raw
+        assert "absent" not in data and SECRET.encode() in raw
         assert len(broker.event_queries) == 1 and broker.checks == 0 and plugin.llm is None
         assert "Détail JSON expurgé enregistré" in host.toasts
         report["checks"]["D07_json_file_export_exact_redacted_via_gtk"] = True
@@ -433,7 +433,7 @@ def main():
         buf.select_range(buf.get_end_iter(), buf.get_start_iter())
         assert buf.get_has_selection()
         selected = text(view)
-        assert SECRET not in selected
+        assert SECRET in selected
         assert view.grab_focus() is not False
         until(lambda: view.has_focus(), lambda: send_ctrl_c(view, selected))
 
@@ -461,7 +461,7 @@ def main():
                 "Ctrl+C TextView doit copier la sélection expurgée",
                 repr((actual or "")[:100]),
             )
-            assert SECRET not in actual
+            assert SECRET in actual
             report["checks"]["D13_ctrl_c_selection_expurgated"] = True
             screenshot("03-selection-copie-ctrl-c")
             assert broker.checks == 0
