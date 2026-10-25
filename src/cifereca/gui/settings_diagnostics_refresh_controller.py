@@ -11,14 +11,15 @@ import json
 from ..brokers import DiagnosticsBrokerImpl
 from ..core.diagnostic_journal import journal_payload
 from .connection_failure_summary import connection_failure_summary
+from .diagnostics_pseudonyms import DISPLAY_PSEUDONYMS
 
 
 def _canonical_settings_report(service, version: str, extra: dict) -> str:
     """Short local compatibility preview of the SAME persistent journal.
 
     This Settings section is not another event collector or independent
-    export source. Keep original JSON values; only the dedicated Diagnostics
-    GTK view pseudonymizes explicit login/password fields.
+    export source. It applies the same GTK-only session pseudonyms as the
+    Diagnostics plugin to explicit login/password fields, nothing else.
     """
     lines = [
         f"cifereca v{version}",
@@ -26,9 +27,9 @@ def _canonical_settings_report(service, version: str, extra: dict) -> str:
         "Pour tous les logs, leurs rotations et l'export brut : ouvrir Diagnostics.",
     ]
     for key, value in extra.items():
-        lines.append(f"{key}: " + json.dumps(
+        lines.append(f"{key}: " + DISPLAY_PSEUDONYMS.text(json.dumps(
             journal_payload(value), ensure_ascii=False, allow_nan=False,
-        ))
+        )))
     lines.append("")
     try:
         events = DiagnosticsBrokerImpl(service).snapshot()
@@ -38,9 +39,9 @@ def _canonical_settings_report(service, version: str, extra: dict) -> str:
     if not events:
         lines.append("Aucune observation structurée dans la rétention accessible.")
     for event in events[-100:]:
-        lines.append(json.dumps(
+        lines.append(DISPLAY_PSEUDONYMS.text(json.dumps(
             journal_payload(event), ensure_ascii=False, allow_nan=False,
-        ))
+        )))
     return "\n".join(lines) + "\n"
 
 
