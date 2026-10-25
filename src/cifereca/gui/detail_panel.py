@@ -29,6 +29,17 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
+def _commercial_search_usage(item: SearchResult) -> str:
+    """Read-only source usage; public notices must not acquire owned status."""
+    if item.source_provider == "numilog-catalog":
+        return "Catalogue commercial public · aucun achat attesté"
+    if item.source_provider == "numilog":
+        if result_row(item)["state"] == "remote_owned":
+            return "Mes achats Numilog · fichier local non présumé"
+        return "Notice Numilog · aucun droit d'achat attesté"
+    return ""
+
+
 class DetailPanel(Gtk.Box):
     def __init__(self, window: "MainWindow"):
         super().__init__()
@@ -686,6 +697,8 @@ class DetailPanel(Gtk.Box):
             section_rows=[
                 ("Essentiel", [
                     ("Source", source),
+                    *([("Usage", _commercial_search_usage(item))]
+                      if _commercial_search_usage(item) else []),
                     ("Format", fmt),
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
@@ -708,7 +721,8 @@ class DetailPanel(Gtk.Box):
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
         # list and a failed availability lookup must never hide the download.
-        self._direct_download_action(item)
+        if item.source_provider != "numilog-catalog":
+            self._direct_download_action(item)
         availability = Adw.PreferencesGroup()
         availability.set_title("Disponibilités")
         row = Adw.ActionRow()
@@ -821,6 +835,8 @@ class DetailPanel(Gtk.Box):
             section_rows=[
                 ("Essentiel", [
                     ("Source", source),
+                    *([("Usage", _commercial_search_usage(item))]
+                      if _commercial_search_usage(item) else []),
                     ("Format", fmt),
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
@@ -836,7 +852,8 @@ class DetailPanel(Gtk.Box):
             links=document_links(result_row(item)),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
-        direct_download = self.window.service.can_direct_download(item)
+        direct_download = (False if item.source_provider == "numilog-catalog"
+                           else self.window.service.can_direct_download(item))
         if direct_download:
             self._direct_download_action(item)
         elif item.medium == "digital" and availability == "Empruntable":
@@ -856,8 +873,13 @@ class DetailPanel(Gtk.Box):
             action = Adw.PreferencesGroup()
             action.set_title("Acquisition locale")
             row = Adw.ActionRow()
-            row.set_title("Livre possédé · acquisition locale")
-            row.set_subtitle("Le bouton Sauvegarder apparaît lorsque Kobo-Adept est disponible et que Kobo-Vault marque ce titre téléchargeable.")
+            # A raw Kobo catalogue owned=True cannot attest an entitlement.
+            # The search list checks the Core identity-scoped rights ledger.
+            row.set_title("Sauvegarde Kobo non disponible")
+            row.set_subtitle(
+                "La propriété et le téléchargement doivent être attestés "
+                "pour ce compte avant de proposer une sauvegarde locale."
+            )
             action.add(row)
             self._append_content(action)
         self._decorate(item)
