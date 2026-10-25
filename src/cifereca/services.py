@@ -2174,6 +2174,20 @@ class LibraryService:
                 from .core.numilog_manifest_rights import _scoped_record_id
                 if _scoped_record_id(item.record_id, item.source_credential) is None:
                     return False
+                # A private notice from another family member's credentials
+                # must not show a download on the selected profile, even when
+                # the old query is still loaded during a profile transition.
+                identity = getattr(getattr(self, "current_identity", None), "identity_id", None)
+                if type(identity) is not str or not identity:
+                    return False
+                matching_accounts = [
+                    account for account in self.accounts
+                    if getattr(account, "provider_id", None) == "numilog"
+                    and getattr(account, "credential_id", None) == item.source_credential
+                ]
+                if (len(matching_accounts) != 1
+                        or matching_accounts[0].identity_id != identity):
+                    return False
                 # This is only a read-only visibility hint; the locked
                 # acquisition still re-attests the exact account and edition.
             if item.source_provider == "kobo":
