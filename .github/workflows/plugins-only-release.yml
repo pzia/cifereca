@@ -11,6 +11,7 @@ on:
     paths:
       - ".github/plugins-only-release-request.json"
       - ".github/workflows/plugins-only-release.yml"
+      - "scripts/prepare-admitted-wheelhouse.py"
       - "scripts/ci-plugins-only-runtime-gate.sh"
       - "scripts/ci-plugins-only-historical-core-gate.sh"
       - "scripts/ci_plugins_release_target.py"
@@ -109,6 +110,17 @@ jobs:
           python -m scripts.package_partial_plugins --verify "$archive"
           (cd dist && sha256sum -c "$tag.zip.sha256")
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      # The strict Core updater refuses a source checkout without an
+      # attested offline wheelhouse (#2770). Build the same admitted wheel
+      # inventory already exercised by the full Core installation gate;
+      # never bypass the provenance check or install from unverified PyPI.
+      # The preview snapshot is already frozen above, so producer files do
+      # not change the ZIP under test.
+      - name: Prepare attested Core wheels for PR runtime gates
+        env:
+          PYTHONPATH: src
+        run: python scripts/prepare-admitted-wheelhouse.py
 
       - name: Exercise the real plugins-only runtime gate
         shell: bash
