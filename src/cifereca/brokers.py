@@ -1421,7 +1421,10 @@ class DiagnosticsBrokerImpl:
     service: Any
 
     def snapshot(self):
-        return tuple(self.service.diagnostics.snapshot())
+        """Recent structured events from the one persistent journal."""
+        from .core.diagnostic_journal import recent_diagnostics_snapshot
+        from .paths import log_file
+        return recent_diagnostics_snapshot(log_file())
 
     def events(
         self, *, source: str = "journal", module: str = "", severity: str = "",
@@ -1644,8 +1647,11 @@ class DiagnosticsBrokerImpl:
         return tuple(rows)
 
     def export_text(self) -> str:
+        """Legacy text endpoint, backed by the unmodified persistent journal."""
         from . import __version__
-        return self.service.diagnostics.text(__version__, {"plugins": len(getattr(getattr(self.service, "plugin_manager", None), "statuses", lambda: [])())})
+        from .core.diagnostic_journal import journal_text_export
+        from .paths import log_file
+        return journal_text_export(log_file(), version=__version__)
 
     def support_report(
         self, *, verbose: bool = False, include_checks: bool = True,
