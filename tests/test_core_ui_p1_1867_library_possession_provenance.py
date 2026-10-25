@@ -75,7 +75,7 @@ def test_library_multi_identity_detail_keeps_loan_purchase_archive_local_separat
     }
     window, events, projected, loans, call = _context(item)
     call(NS(key="edition-1"))
-    groups = [(name, values) for event, name, values in events if event == "group"]
+    groups = [(row[1], row[2]) for row in events if row[0] == "group"]
     assert groups == [(
         "Présence / Bibliothèques / Sources",
         [
