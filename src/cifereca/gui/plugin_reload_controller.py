@@ -43,7 +43,15 @@ def plugins_changed(window) -> None:
     if getattr(window, "_source_inventory_startup_connection_seen", False):
         reconnect = getattr(window, "_connect_sources_if_open", None)
         if callable(reconnect):
-            reconnect()
+            # The plugin reload callback is the audited consumer. Capture its
+            # origin synchronously while the GTK coordinator submits work;
+            # never leave it set for a later unrelated/manual reconnect.
+            previous_caller = getattr(window, "_provider_connect_caller_hint", None)
+            window._provider_connect_caller_hint = "plugin_activation"
+            try:
+                reconnect()
+            finally:
+                window._provider_connect_caller_hint = previous_caller
 
 
 def subscribe_cached_book_details(window, *, idle_add, subscribe_cached_book_detail_changes) -> None:
