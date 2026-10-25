@@ -74,3 +74,57 @@ def test_errors_level_never_silences_a_genuine_generic_failure():
     assert [(row["operation"], row["status"]) for row in diagnostic.snapshot()] == [
         ("téléchargement", "failed"), ("ACSM", "error"),
     ]
+
+
+def test_legacy_rotations_are_tightened_without_rewriting_raw_contents(tmp_path):
+    """Private raw retention covers backups from older Cifereca versions."""
+    path = tmp_path / "cifereca.log"
+    path.write_text("login=visible password=visible\n", encoding="utf-8")
+    backups = []
+    for index in range(1, 4):
+        previous = tmp_path / f"cifereca.log.{index}"
+        previous.write_text(f"URL https://example.invalid/{index}?token=raw\n",
+                            encoding="utf-8")
+        os.chmod(previous, 0o644)
+        backups.append(previous)
+    handler = logging_utils.PrivateRotatingFileHandler(
+        path, maxBytes=1_000_000, backupCount=3, encoding="utf-8",
+    )
+    handler.close()
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert all(stat.S_IMODE(item.stat().st_mode) == 0o600 for item in backups)
+    assert "password=visible" in path.read_text()
+    assert all("token=raw" in item.read_text() for item in backups)
+
+
+def test_legacy_rotation_symlink_does_not_change_external_target(tmp_path):
+    """Historical backups must never chmod other users' symlink targets."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        return
+    outside = tmp_path / "external-existing.txt"
+    outside.write_text("non-cifereca-content", encoding="utf-8")
+    os.chmod(outside, 0o644)
+    (tmp_path / "cifereca.log.1").symlink_to(outside)
+    handler = logging_utils.PrivateRotatingFileHandler(
+        tmp_path / "cifereca.log", maxBytes=1000, backupCount=1,
+    )
+    handler.close()
+    assert outside.read_text() == "non-cifereca-content"
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o644
+
+
+def test_active_log_symlink_is_rejected_instead_of_followed(tmp_path):
+    """Never append password-bearing journal records to a symlink target."""
+    import pytest
+
+    if not hasattr(os, "O_NOFOLLOW"):
+        return
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text("untouched", encoding="utf-8")
+    (tmp_path / "cifereca.log").symlink_to(outside)
+    with pytest.raises(OSError):
+        logging_utils.PrivateRotatingFileHandler(
+            tmp_path / "cifereca.log", maxBytes=1000, backupCount=2,
+        )
+    assert outside.read_text() == "untouched"
