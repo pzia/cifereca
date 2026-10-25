@@ -85,6 +85,7 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         diagnostic_section=sections["diagnostic"],
         interface_section=sections["interface"],
         config=self.config, Gtk=Gtk, Adw=Adw,
+        effective_diagnostics_level=self.diagnostics.level,
     )
     application_ui.plugins_button.connect(
         "clicked", lambda _b: self.navigate("plugins"),

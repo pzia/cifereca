@@ -147,7 +147,7 @@ def build_settings_diagnostic_callbacks(
         if not 0 <= selected < len(levels):
             return
         try:
-            self.service.save_diagnostic_preferences(enabled=diag_switch.get_active(), level=levels[selected])
+            self.service.save_diagnostic_preferences(enabled=True, level=levels[selected])
             refresh_text()
         except Exception:
             self.show_error("Impossible d’enregistrer le niveau de diagnostic")

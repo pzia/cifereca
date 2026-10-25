@@ -223,11 +223,11 @@ class LibraryService:
         if level not in {"errors", "normal", "verbose", "trace"}:
             raise ValueError("Niveau de diagnostic inconnu")
         draft = deepcopy(self.config)
-        draft.set("diagnostics.enabled", bool(enabled))
+        draft.set("diagnostics.enabled", True)
         draft.set("diagnostics.level", level)
         draft.save()
         self.config.data = draft.data
-        self.diagnostics.enabled = bool(enabled)
+        self.diagnostics.enabled = True
         self.diagnostics.level = level
         set_diagnostics_level(level)
 

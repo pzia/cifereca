@@ -144,7 +144,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             'command': command, 'post_download_command': post_command,
         }
         draft.set_provider_settings(provider_id, settings)
-    draft.set('diagnostics.enabled', values['diagnostics_enabled'])
+    draft.set('diagnostics.enabled', True)
     draft.set('diagnostics.level', values['levels'][values['diagnostics_level_index']])
     draft.set('experimental_actions', values['experimental_actions'])
     ai_restart_required = False

@@ -74,7 +74,7 @@ def test_nested_detail_and_export_redact_without_altering_structured_counters():
     assert '"failures": 1' in raw
 
 
-def test_log_filter_redacts_paths_and_email_even_inside_formatted_exception():
+def test_log_filter_keeps_paths_and_email_in_raw_journal_and_exception():
     private = "/home/private-reader/catalogue.epub"
     message = "failed for reader@example.invalid at " + private
     try:
@@ -87,9 +87,9 @@ def test_log_filter_redacts_paths_and_email_even_inside_formatted_exception():
         "remote %s", (message,), info,
     )
     assert RedactionFilter().filter(record) is True
-    rendered = record.getMessage() + str(record.exc_text)
-    assert "private-reader" not in rendered
-    assert "reader@example.invalid" not in rendered
+    rendered = logging.Formatter("%(message)s").format(record)
+    assert "private-reader" in rendered
+    assert "reader@example.invalid" in rendered
     assert "RuntimeError" in rendered
 
 

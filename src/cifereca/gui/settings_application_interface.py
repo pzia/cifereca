@@ -12,7 +12,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ApplicationInterfaceWidgets:
-    diagnostics_switch: Any
+    diagnostics_switch: Any | None
     experimental_switch: Any
     level_dropdown: Any
     levels: list[str]
@@ -22,24 +22,12 @@ class ApplicationInterfaceWidgets:
 def build_settings_application_interface(
     *, diagnostic_section: Any, interface_section: Any,
     config: Any, Gtk: Any, Adw: Any,
+    effective_diagnostics_level: str | None = None,
 ) -> ApplicationInterfaceWidgets:
     """Build the original controls and parent hierarchy without side effects."""
     config_group = Adw.PreferencesGroup()
     config_group.set_title("Application")
     diagnostic_section.append(config_group)
-
-    diag_row = Adw.ActionRow()
-    diag_row.set_title("Collecte des événements de diagnostic")
-    diag_row.set_subtitle(
-        "Active ou désactive le collecteur Core. Les logs essentiels et les " 
-        "mesures UI passives restent actifs ; la capture de performance détaillée " 
-        "est désactivée par défaut."
-    )
-    diag_switch = Gtk.Switch()
-    diag_switch.set_active(bool(config.get("diagnostics.enabled", True)))
-    diag_switch.set_valign(Gtk.Align.CENTER)
-    diag_row.add_suffix(diag_switch)
-    config_group.add(diag_row)
 
     exp_row = Adw.ActionRow()
     exp_row.set_title("Actions expérimentales")
@@ -60,7 +48,11 @@ def build_settings_application_interface(
     level_row.set_subtitle("Appliqué et enregistré dès modification")
     levels = ["errors", "normal", "verbose", "trace"]
     level_drop = Gtk.DropDown.new_from_strings(levels)
-    diagnostic_level = str(config.get("diagnostics.level", "normal"))
+    diagnostic_level = str(
+        effective_diagnostics_level
+        if effective_diagnostics_level is not None
+        else config.get("diagnostics.level", "normal")
+    )
     try:
         level_drop.set_selected(levels.index(
             {"detailed": "verbose"}.get(diagnostic_level, diagnostic_level)
@@ -71,7 +63,7 @@ def build_settings_application_interface(
     config_group.add(level_row)
 
     return ApplicationInterfaceWidgets(
-        diagnostics_switch=diag_switch,
+        diagnostics_switch=None,
         experimental_switch=exp_switch,
         level_dropdown=level_drop,
         levels=levels,
