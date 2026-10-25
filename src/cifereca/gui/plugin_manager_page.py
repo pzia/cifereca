@@ -1173,8 +1173,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
     def _diagnostic(self, plugin_id: str) -> None:
         row = self.manager.diagnostic(plugin_id)[0]
-        from ..diagnostics import redact
-        body = json.dumps(redact(row), ensure_ascii=False, indent=2)
+        body = json.dumps(row, ensure_ascii=False, indent=2)
         dialog = Adw.MessageDialog.new(self.window, row["display_name"], body)
         dialog.add_response("close", "Fermer"); dialog.present()
 
