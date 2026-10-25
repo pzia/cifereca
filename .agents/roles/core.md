@@ -1,5 +1,7 @@
 # Rôle : core
 
+**Skill obligatoire pour les traces et diagnostics :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) et [contrat canonique](../../docs/LOGGING-CONTRACT.md). Core émet, stocke et expose les événements **sans masquage préalable** ; **l'IHM seule** pseudonymise **login/mot de passe**, jamais les autres champs. Rechercher et corréler toutes les sources, synchroniser `--trace` et le niveau IHM. Ne pas présumer le code historique déjà conforme.
+
 ## Mission
 Traiter le Core applicatif et le Core UI, dans cet ordre de priorité.
 
