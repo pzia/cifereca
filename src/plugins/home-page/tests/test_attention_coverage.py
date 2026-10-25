@@ -119,10 +119,6 @@ class CompactDashboardTests(unittest.TestCase):
         self.assertEqual(items[0]['action_label'],'Réessayer')
         self.assertNotIn('loans-stale',[item['key'] for item in items])
 
-if __name__=="__main__":
-    unittest.main()
-
-
 class StoreVsCatalogueProjectionTests(unittest.TestCase):
     def test_numilog_public_is_not_a_private_login_or_owned_book(self):
         row={
@@ -194,3 +190,6 @@ class StoreVsCatalogueProjectionTests(unittest.TestCase):
         self.assertIn('0 livre(s) d’origine',text)
         self.assertIn('sans achat attesté',text)
         self.assertNotIn('Mes achats',text)
+
+if __name__=="__main__":
+    unittest.main()
