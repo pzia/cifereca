@@ -36,7 +36,7 @@ class DropDown(Widget):
         return widget
 
 
-def _build(values=None):
+def _build(values=None, *, effective_level=None):
     config = SimpleNamespace(get=lambda key, default=None: (values or {}).get(key, default))
     gtk = SimpleNamespace(Switch=Widget, DropDown=DropDown, Button=Widget,
                           Align=SimpleNamespace(CENTER="center"))
@@ -45,6 +45,7 @@ def _build(values=None):
     view = build_settings_application_interface(
         diagnostic_section=diagnostic, interface_section=interface,
         config=config, Gtk=gtk, Adw=adw,
+        effective_diagnostics_level=effective_level,
     )
     return view, diagnostic, interface
 
@@ -102,3 +103,11 @@ def test_diagnostic_switch_explains_passive_metrics_and_essential_logs():
     assert "mesures UI passives restent actifs" in row.subtitle
     assert "désactivée par défaut" in row.subtitle
     assert view.diagnostics_switch.active is False
+
+
+def test_effective_runtime_trace_overrides_saved_preference_in_dropdown():
+    view, _, _ = _build({"diagnostics.level": "normal"}, effective_level="trace")
+    assert view.level_dropdown.selected == 3
+    # A CLI override changes the live presentation, not persistent config.
+    view, _, _ = _build({"diagnostics.level": "normal"})
+    assert view.level_dropdown.selected == 1
