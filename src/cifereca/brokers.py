@@ -1441,15 +1441,13 @@ class DiagnosticsBrokerImpl:
                 provider_id=provider_id, since=since, until=until,
                 limit=limit, offset=offset,
             )
-        if search:
-            raise ValueError("global text search requires source='journal'")
         from .core.diagnostic_event_feed import query_diagnostic_events
         return query_diagnostic_events(
             self.service.diagnostics, log_path=log_file(),
             source=source, module=module, severity=severity,
             provider_id=provider_id, domain=domain,
             since=since, until=until, limit=limit, offset=offset,
-            reason_code=reason_code,
+            reason_code=reason_code, search=search,
         )
 
     def export_raw_journal(self) -> bytes:
