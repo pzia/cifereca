@@ -42,6 +42,7 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         _settings_standalone_lifetime=SettingsPageLifetime(),
         _settings_tabs=object(), _diag_refresh=object(),
         service=NS(provider_descriptors=lambda: []), config={},
+        diagnostics=NS(level='normal'),
         navigate=Mock(), action_button=Mock(),
     )
     previous_main, previous_standalone = host._settings_main_lifetime, host._settings_standalone_lifetime
