@@ -142,7 +142,8 @@ def redact(value: Any, key: str = "") -> Any:
 
 
 def _core_journal_record(category: str, operation: str, status: str,
-                         message: str, fields: dict[str, Any]) -> dict[str, Any]:
+                         message: str, fields: dict[str, Any], *,
+                         duration_ms: int | None = None) -> dict[str, Any]:
     """Carry an attested Core event on its existing logger call, once.
 
     The Core-owned file/console formatter serializes this extra metadata as
@@ -157,6 +158,8 @@ def _core_journal_record(category: str, operation: str, status: str,
     }
     if type(fields.get("task_ref")) is str:
         payload["task_ref"] = fields["task_ref"]
+    if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000:
+        payload["duration_ms"] = duration_ms
     return {"_cifereca_journal_payload": payload}
 
 
@@ -457,9 +460,9 @@ class Diagnostics:
         if not fields:
             return
         logger = logging.getLogger("cifereca")
+        time_ms = (duration_ms if type(duration_ms) is int
+                   and 0 <= duration_ms <= 600000 else None)
         if self.enabled:
-            time_ms = (duration_ms if type(duration_ms) is int
-                       and 0 <= duration_ms <= 600000 else None)
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 category="PLUGIN",
@@ -478,7 +481,7 @@ class Diagnostics:
                     extra=_core_journal_record(
                         "PLUGIN",
                         "public provider connect" if singleton else "provider connect",
-                        "error", message, fields,
+                        "error", message, fields, duration_ms=time_ms,
                     ),
                 )
         except Exception:
@@ -533,6 +536,7 @@ class Diagnostics:
                         "PLUGIN",
                         "public provider connected" if singleton else "provider connected",
                         "ok", message, fields,
+                        duration_ms=duration_ms,
                     ),
                 )
         except Exception:
