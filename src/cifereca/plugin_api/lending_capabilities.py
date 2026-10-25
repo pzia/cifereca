@@ -120,14 +120,17 @@ def assess_lending_operation(
         account_valid = (
             type(account) is Account
             and all(type(value) is str and len(value) <= 1024
+                    and chr(0) not in value
                     for value in (
                         account.provider_id, account.credential_id,
                         account.identity_id, account.unique_id,
                     ))
             and bool(account.identity_id)
         )
-        exact_session = (
-            provider == descriptor.id
+        exact_session = bool(
+            type(provider) is str and type(credential) is str
+            and type(descriptor.id) is str and bool(descriptor.id)
+            and provider == descriptor.id
             and account_valid
             and account.provider_id == descriptor.id
             and account.credential_id == credential
@@ -140,6 +143,10 @@ def assess_lending_operation(
             and exact_session
             and any(
                 type(row) is Account
+                and all(type(value) is str for value in (
+                    row.identity_id, row.provider_id,
+                    row.credential_id, row.unique_id,
+                ))
                 and row.identity_id == account.identity_id
                 and row.provider_id == account.provider_id
                 and row.credential_id == account.credential_id
