@@ -6,6 +6,8 @@ importable without PyGObject and to preserve the optional widget service.
 """
 from __future__ import annotations
 
+from .store_usage_labels import store_search_source_label
+
 
 def _provider_choices(window, *, library=False):
     """Only live sources belong to Search; Library can filter historical books."""
@@ -15,7 +17,15 @@ def _provider_choices(window, *, library=False):
         for row in window.service.catalog_entries():
             provider = str(row.get("provider_id") or "local")
             providers.setdefault(provider, window.service.provider_display_name(provider))
-    return sorted(providers.items(), key=lambda pair: pair[1])
+    # The source filter is a *route selector* (stable provider ID), not a
+    # purchase/loan filter. Relabel known stores after discovery: do not
+    # manufacture a second Kobo provider or display a disabled Numilog
+    # public plugin as selectable.
+    choices = [
+        (provider_id, store_search_source_label(provider_id, label))
+        for provider_id, label in providers.items()
+    ]
+    return sorted(choices, key=lambda pair: pair[1].casefold())
 
 
 def _paris_search_notice(window):
