@@ -1383,19 +1383,39 @@ class LibraryService:
         self.storage.cache_put("holdings", key, asdict(detail), ttl)
         return detail
 
-    def renew(self, loan: Loan) -> dict[str, Any]:
-        # Mutations must follow the borrower carried by the loan, not whichever
-        # account happens to be selected in the GUI when the user clicks.
-        account = self._account_for_loan(loan)
-        session = self._session_for_source(loan.source_provider, loan.source_credential)
-        # Les objets bruts Syracuse ne sont volontairement pas persistés dans le cache.
-        # Recharge donc le prêt depuis le bon compte si nécessaire.
-        if not loan.raw and session.capabilities.loans:
-            fresh = session.loans(account)
-            loan = next((x for x in fresh if x.id == loan.id), loan)
-        result = session.renew(loan, account)
-        self.storage.cache_delete_namespace("account")
-        return result
+    def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
+        """Manual Paris renewal; at-most-once remote POST per exact loan.
+
+        A GUI button, a cached CanRenew flag or a truthy confirmation is not
+        sufficient. Preserve the existing cross-process loan mutation lock
+        shared with provider/ADEPT return; no operation is retried on timeout.
+        """
+        if confirmed is not True:
+            return {
+                "status": "blocked", "code": "renewal_confirmation_required",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
+        if (type(loan) is not Loan
+                or type(loan.source_provider) is not str
+                or type(loan.id) is not str or not loan.id
+                or type(loan.source_credential) is not str
+                or type(loan.source_account_id) is not str):
+            return {
+                "status": "blocked", "code": "loan_scope_unverified",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
+        from .core.provider_loan_renewal import renew as scoped_renew
+        try:
+            with InterProcessLock(self._return_operation_lock_file(loan)):
+                return scoped_renew(self, loan)
+        except LockBusyError:
+            return {
+                "status": "blocked", "code": "loan_action_busy",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
 
     def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
         """Require *exact* Paris borrower provenance before mutating anything."""

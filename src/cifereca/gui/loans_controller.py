@@ -6,6 +6,7 @@ runner, current-identity and UI-thread semantics. Do not import MainWindow here.
 from __future__ import annotations
 
 from typing import Any
+from copy import copy
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -20,6 +21,7 @@ from .master_detail import MasterDetailPage
 from .query_controls import MultiSelect
 from .task_runner import TaskPriority
 from .return_feedback import loan_return_feedback
+from .loan_renewal_feedback import loan_renewal_feedback
 from .detail_model import fr_date
 
 
@@ -175,17 +177,56 @@ def _loans_refreshed(self, rows):
 
 
 def confirm_renew(self, loan: Loan, control: Gtk.Widget) -> None:
-    dialog = Adw.MessageDialog.new(self, "Prolonger ce prêt ?", loan.title)
-    dialog.add_response("cancel", "Annuler"); dialog.add_response("ok", "Prolonger")
+    # Consent applies to the loan *selected when the dialog opens*, not a
+    # mutable DTO reused by a later refresh or identity switch.
+    selected = copy(loan)
+    owner = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    generation = getattr(self.service, "_account_context_epoch", None)
+    dialog = Adw.MessageDialog.new(
+        self, "Prolonger ce prêt ?",
+        "Une demande sera envoyée au fournisseur pour ce compte et ce prêt. "
+        "La réponse ne garantit pas encore la nouvelle date d'échéance.",
+    )
+    dialog.add_response("cancel", "Annuler")
+    dialog.add_response("ok", "Demander la prolongation")
     dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-    dialog.connect("response", lambda _d, response: self._renew(loan, control) if response == "ok" else None)
+
+    def on_response(_dialog, response):
+        if response != "ok":
+            return
+        current = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+        if (current != owner or owner != selected.identity_id
+                or getattr(self.service, "_account_context_epoch", None) != generation):
+            self.show_attention(
+                "Le compte a changé : sélectionnez de nouveau le prêt.",
+                code="loan_scope_changed",
+            )
+            return
+        self._renew(selected, control)
+
+    dialog.connect("response", on_response)
     dialog.present()
+
+
+def _renew_result(self, result: Any) -> None:
+    kind, message, code = loan_renewal_feedback(result)
+    # A fresh inventory can display the new due date but cannot rewrite the
+    # durable remote-attempt receipt or auto-submit a second RenewLoans POST.
+    if kind == "submitted":
+        self.toast(message, 6)
+        self.refresh_loans(True)
+    else:
+        self.show_attention(message, code=code)
+        if type(result) is dict and result.get("status") == "verification_unavailable":
+            self.refresh_loans(True)
 
 
 def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
     self.runner.submit(
-        "Prolongation du prêt…", lambda: self.service.renew(loan), lambda _r: self.refresh_loans(True),
-        control=control, success_toast="Prêt prolongé", priority=TaskPriority.USER_ACTION, kind="loan-renew",
+        "Demande de prolongation…",
+        lambda: self.service.renew(loan, confirmed=True),
+        self._renew_result,
+        control=control, priority=TaskPriority.USER_ACTION, kind="loan-renew",
     )
 
 
