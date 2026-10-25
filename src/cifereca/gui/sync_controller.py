@@ -285,6 +285,8 @@ def _refresh_sync_page(self) -> None:
             # a catalogue in this read-only section.
             row.set_title(
                 "Bibliothèques de Paris" if item.provider_id == "paris"
+                else "Kobo — Catalogue" if item.provider_id == "kobo"
+                else "Numilog — Catalogue public" if item.provider_id == "numilog-catalog"
                 else item.provider_id
             )
             availability = (

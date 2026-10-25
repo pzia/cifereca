@@ -1699,7 +1699,14 @@ class MainWindow(Adw.ApplicationWindow):
         if state == "local":
             return "Local"
         if state == "remote_owned":
-            return "Possédé sur Kobo · en ligne" if item.get("provider_id") == "kobo" else "Possédé en ligne"
+            # Core library_entries publishes this state only from an active
+            # owned entitlement, never from a catalogue or a local placement.
+            provider = item.get("provider_id")
+            if provider == "kobo":
+                return "Achat Kobo · en ligne"
+            if provider == "numilog":
+                return "Achat Numilog · en ligne"
+            return "Droit de possession · en ligne"
         if state == "remote_archived":
             return "Kobo · archivé · en ligne"
         if state == "remote_loan_active":
@@ -1711,7 +1718,7 @@ class MainWindow(Adw.ApplicationWindow):
         if state == "available_to_buy":
             return "Achetable"
         if state == "remote_catalog":
-            return "Distant"
+            return "Notice de catalogue · sans droit attesté"
         if state == "missing":
             return "Fichier manquant"
         return state.replace("_", " ").strip().capitalize() or "Disponible"

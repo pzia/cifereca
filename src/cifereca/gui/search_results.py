@@ -147,6 +147,13 @@ def _render_search_results(self) -> int:
         source = self.service.provider_display_name(item.source_provider)
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
         extras: list[str] = list(_stale_catalog_provenance(item.metadata)) if stale_known else []
+        if item.source_provider == "numilog-catalog":
+            # An anonymous commercial notice is not an owned ebook, even if
+            # the provider unexpectedly supplies owned/downloadable=True.
+            extras.append("Catalogue public Numilog · aucun achat attesté")
+        elif item.source_provider == "numilog" and result_row(item)["state"] == "remote_owned":
+            # Private inventory, NOT a locally available EPUB/ACSM.
+            extras.append("Mes achats Numilog · fichier local non présumé")
         if item.source_provider == "kobo" and not stale_known:
             right_state = kobo_rights.get((item.source_credential, item.record_id))
             if right_state == "active":
@@ -163,7 +170,11 @@ def _render_search_results(self) -> int:
         placement = None if stale_known else linked.get(
             (item.source_provider, item.source_credential, item.record_id)
         )
-        direct = False if stale_known else self.service.can_direct_download(item)
+        # Public Numilog has neither an authenticated download entitlement
+        # nor an acquisition action. Never consult the direct-download broker
+        # for this source, including malformed remote flags.
+        direct = (False if stale_known or item.source_provider == "numilog-catalog"
+                  else self.service.can_direct_download(item))
         callback = None
         if placement:
             extras.append('Fichier local disponible')

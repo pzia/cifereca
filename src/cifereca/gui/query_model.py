@@ -19,9 +19,26 @@ class QueryState:
 
 
 def result_row(item):
+    """Render ownership only for a private, typed purchase-inventory record.
+
+    A search hit with owned=True is not an entitlement: public Numilog and
+    Kobo catalogue claims may be stale, unscoped or unauthenticated. Actual
+    Kobo ownership is projected separately from Core's identity-scoped ledger.
+    No provider call, disk access or network operation is made here.
+    """
+    meta = item.metadata if type(item.metadata) is dict else {}
+    private_numilog_purchase = (
+        item.source_provider == 'numilog'
+        and type(item.source_credential) is str
+        and item.source_credential not in {'', '__public__'}
+        and item.source_collection == 'library'
+        and item.scenario == 'NUMILOG_LIBRARY'
+        and item.owned is True
+        and meta.get('search_provenance') != 'known_catalog_stale'
+    )
     return {**asdict(item), 'key': item.id, 'item_id': item.record_id,
             'provider_id': item.source_provider, 'media_format': file_format(item.format),
-            'state': 'remote_owned' if item.owned else 'remote_catalog'}
+            'state': 'remote_owned' if private_numilog_purchase else 'remote_catalog'}
 
 
 def online_search(service, state):

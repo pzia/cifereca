@@ -99,7 +99,9 @@ def test_availability_section_name_is_stable_during_async_refresh():
 
 def test_remote_owned_is_not_mislabeled_as_generic_available():
     state = ast.unparse(_method("MainWindow", "_library_state_label"))
-    assert "'Possédé en ligne'" in state
+    assert "'Achat Kobo · en ligne'" in state
+    assert "'Achat Numilog · en ligne'" in state
+    assert "'Notice de catalogue · sans droit attesté'" in state
     assert "remote_owned" in state
 
 
