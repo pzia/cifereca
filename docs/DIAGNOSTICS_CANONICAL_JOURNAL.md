@@ -84,7 +84,10 @@ La source par défaut de `DiagnosticsBroker.events()` et du protocole public
 paramètre `source`, la consultation est persistante et ne consulte pas le
 snapshot mémoire. Les sources `all`, `core_events`, `app_log` restent
 accessibles **seulement par sélection explicite**, pour les anciens clients
-et tests. Leur disparition nécessite une migration distincte des appelants.
+et tests. Les fonctions du plugin Diagnostics `fetch_explorer_page()` et
+`collect_filtered_selection()` utilisent également `journal` par défaut ;
+les tests des canaux historiques déclarent explicitement `source="all"`.
+Leur disparition nécessite une migration distincte des appelants.
 
 
 ## Compatibilité broker : snapshot et export texte (#3133)
