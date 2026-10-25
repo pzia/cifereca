@@ -75,11 +75,15 @@ Le panneau Paramètres ne lit plus `Diagnostics._items` ni
 Ce n'est pas l'ensemble des logs : la recherche, les rotations et l'export
 complet sont accessibles dans la page Diagnostics.
 
-Le texte du panneau Paramètres est **brut, non expurgé**. Sa copie est
-volontaire ; l'enregistrement passe par un sélecteur local avertissant des
-identifiants/mots de passe possibles et impose `0600` (y compris lors d'un
-écrasement). « Effacer l'affichage » ne supprime ni ne réécrit le journal,
-et n'efface plus un cache mémoire trompeur.
+Le panneau Paramètres utilise les **mêmes pseudonymes de session GTK**
+que la page Diagnostics, exclusivement sur les valeurs explicites
+login/mot de passe. Tokens, URLs, titres, chemins et autres champs restent
+visibles. La copie et « Exporter l'affichage » reprennent exactement ce
+texte présenté. Cet export volontaire se fait en `0600` (même à
+l'écrasement) et sans suivre de lien symbolique. L'**export brut du journal**
+reste disponible, sans aucune transformation, depuis la page Diagnostics.
+« Effacer l'affichage » ne supprime ni ne réécrit le journal et n'efface
+plus un cache mémoire trompeur.
 
 ## Points restant à consolider
 
