@@ -144,6 +144,34 @@ def test_timeout_reaps_child_before_returning_to_rollback(tmp_path, monkeypatch)
     assert children[0].poll() is not None
 
 
+def test_orphan_pip_descendant_is_killed_before_rollback(tmp_path, monkeypatch):
+    """The CLI can exit while pip still owns stdout/stderr; reap the group."""
+    if os.name != "posix":
+        pytest.skip("POSIX process groups required")
+    pid_file = tmp_path / "descendant-pid"
+    real_killpg = update_child.os.killpg
+    killed = []
+
+    def record_killpg(pgid, signum):
+        killed.append((pgid, signum))
+        return real_killpg(pgid, signum)
+
+    monkeypatch.setattr(update_child.os, "killpg", record_killpg)
+    with pytest.raises(TimeoutError):
+        _run(tmp_path, f'''
+            import subprocess, sys
+            from pathlib import Path
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                stdout=sys.stdout, stderr=sys.stderr,
+            )
+            Path({str(pid_file)!r}).write_text(str(child.pid))
+            print('{{"ok":true}}', flush=True)
+        ''', timeout=1.5)
+    assert pid_file.is_file()
+    assert killed and killed[-1][1] == update_child.signal.SIGKILL
+
+
 def test_interrupt_reaps_child_and_no_more_events_escape(tmp_path):
     pid = tmp_path / "pid"
     seen = []
