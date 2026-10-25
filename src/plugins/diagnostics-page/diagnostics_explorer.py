@@ -402,6 +402,9 @@ def published_connection_attempt(row: Mapping[str, Any]) -> dict[str, str] | Non
         "operation_ref": operation, "phase": phase,
         "caller_category": detail["caller_category"],
         "source_kind": detail["source_kind"],
+        # Internal anchor from the original validated detail. A later rewrite
+        # of the display provider cannot carry this attestation with it.
+        "connection_provider_id": provider,
         "network_auth": "unknown", "connection_status": status,
     }
 
@@ -424,7 +427,9 @@ def published_operation_reference(row: Mapping[str, Any]) -> str | None:
             or type(row.get("source_kind")) is not str
             or row["source_kind"] not in _CONNECTION_SOURCES
             or row.get("network_auth") != "unknown"
-            or not _connection_envelope_valid(row, phase, status, row.get("provider_id"))):
+            or type(row.get("connection_provider_id")) is not str
+            or row["connection_provider_id"] != row.get("provider_id")
+            or not _connection_envelope_valid(row, phase, status, row["connection_provider_id"])):
         return None
     return ref
 
