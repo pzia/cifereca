@@ -8,6 +8,7 @@ from cifereca.plugin_api import (
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
     ProviderCapabilityError, ProviderError, normalize_language_tag,
+    LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
 )
 from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
@@ -151,6 +152,27 @@ class BnfProviderSession(ProviderSession):
                          source_account_id=account.unique_id, identity_id=account.identity_id,
                          state='active', can_return=False, renewable=False,
                          raw={'inventory_exhaustive': False}) for row in snapshot.loans]
+
+    def loan_inventory_snapshot(self, account):
+        """Optional v1 inventory evidence: BnF HTML never attests completeness.
+
+        Calls exactly one existing scoped loans() read. A successful GET/empty
+        HTML section is still only a partial view of the active-loan corpus.
+        This method never retrieves private loan tokens or starts ADEPT.
+        """
+        rows = self.loans(account)
+        if not self.connected or self._closed:
+            raise ProviderConfigurationError('session_closed')
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account),
+            loans=tuple(rows),
+            status='partial',
+            branches=(LoanBranchCoverage(
+                upstream='bnf_html', medium='digital',
+                completeness='partial', reason_code='inventory_not_exhaustive',
+            ),),
+            reason_code='inventory_not_exhaustive',
+        )
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
                          *, explicit_user_action: bool = False):

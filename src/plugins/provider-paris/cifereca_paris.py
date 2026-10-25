@@ -2,6 +2,7 @@ from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
 
 import logging
+from dataclasses import replace
 import re
 import time
 import unicodedata
@@ -28,6 +29,7 @@ from cifereca.plugin_api import (
     ProviderPlugin,
     ProviderSession,
     ProviderError,
+    LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     inspect_artifact_content,
     publish_artifact_content,
     sanitize_filename_component,
@@ -444,6 +446,69 @@ class ParisProviderSession(ProviderSession):
         for loan in rows:
             loan.source_account_id = account.unique_id or "primary"
         return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+
+    def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
+        """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
+
+        Neither legacy Paris upstream currently attests pagination/exhaustive
+        absence. Consequently even an all-successful read claims UNKNOWN
+        completeness, never proof that a missing loan was returned.
+        """
+        def still_bound() -> bool:
+            return (
+                self.connected is True
+                and type(account) is Account
+                and account.provider_id == self.provider_id
+                and account.credential_id == self.credential_id
+                and any(
+                    type(active) is Account
+                    and active.unique_id == account.unique_id
+                    and active.identity_id == account.identity_id
+                    and active.provider_id == account.provider_id
+                    and active.credential_id == account.credential_id
+                    for active in self._accounts
+                )
+            )
+
+        if not still_bound():
+            raise ProviderConfigurationError("account_scope_mismatch")
+        rows = self.loans(account)
+        # One upstream response can race with an explicit disconnect,
+        # a changed credential or linked-reader removal. Never publish that
+        # batch under the former account's typed inventory envelope.
+        if not still_bound():
+            raise ProviderConfigurationError("account_scope_mismatch")
+        # Historical Paris Loan producers do not always carry the local
+        # Core identity. The authenticated account argument is the only
+        # authorized scope for this read. Never overwrite a contradictory
+        # identity supplied by an upstream row.
+        normalized = tuple(
+            replace(row, identity_id=account.identity_id)
+            if row.identity_id is None else row
+            for row in rows
+        )
+        failed = {
+            row.get("upstream") for row in self.last_loan_errors
+            if isinstance(row, dict)
+            and row.get("upstream") in {"DILICOM", "SYRACUSE"}
+        }
+        branches = tuple(
+            LoanBranchCoverage(
+                upstream=upstream.casefold(), medium=medium,
+                completeness="partial" if upstream in failed else "unknown",
+                reason_code="branch_unavailable" if upstream in failed else None,
+            )
+            for upstream, medium in (
+                ("DILICOM", "digital"), ("SYRACUSE", "physical")
+            )
+        )
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account),
+            loans=normalized,
+            status="partial" if failed else "success",
+            branches=branches,
+            reason_code="branch_unavailable" if failed else None,
+        )
 
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
