@@ -94,7 +94,7 @@ def test_stale_chooser_response_destroys_dialog_without_writing(tmp_path):
     window.show_error.assert_not_called()
 
 
-def test_active_chooser_preserves_private_unmasked_file_export(tmp_path):
+def test_active_chooser_preserves_display_pseudonyms_in_private_file(tmp_path):
     file = tmp_path / "report.txt"
     dialog = SimpleNamespace(
         get_file=lambda: SimpleNamespace(get_path=lambda: str(file)),
@@ -105,11 +105,11 @@ def test_active_chooser_preserves_private_unmasked_file_export(tmp_path):
     )
     _callback("chosen", dict(
         page_lifetime=SettingsPageLifetime(), self=window,
-        content="rapport brut",
+        content="login=login-1 password=mot-de-passe-1 token=KEEP",
         Gtk=SimpleNamespace(ResponseType=SimpleNamespace(ACCEPT=1)),
         os=os, stat=stat,
     ))(dialog, 1)
-    assert file.read_text(encoding="utf-8") == "rapport brut"
+    assert file.read_text(encoding="utf-8") == "login=login-1 password=mot-de-passe-1 token=KEEP"
     assert stat.S_IMODE(file.stat().st_mode) == 0o600
     window.show_error.assert_not_called()
     window.toast.assert_called_once_with("Diagnostic exporté")
