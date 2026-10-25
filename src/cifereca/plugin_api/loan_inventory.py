@@ -190,12 +190,19 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
     reconciliation until #2975 / #3122 prove its consumer invariants.
     """
     scope = LoanInventoryScope.for_account(account)
-    if (
-        getattr(session, "connected", None) is not True
-        or getattr(session, "provider_id", None) != scope.provider_id
-        or getattr(session, "credential_id", None) != scope.credential_id
-        or getattr(getattr(session, "capabilities", None), "loans", None) is not True
-    ):
+
+    def still_bound() -> bool:
+        # This guards in-place session/account changes. Core adoption must
+        # additionally verify that this session is STILL the registered one.
+        return (
+            LoanInventoryScope.for_account(account) == scope
+            and getattr(session, "connected", None) is True
+            and getattr(session, "provider_id", None) == scope.provider_id
+            and getattr(session, "credential_id", None) == scope.credential_id
+            and getattr(getattr(session, "capabilities", None), "loans", None) is True
+        )
+
+    if not still_bound():
         return LoanInventorySnapshot(
             scope=scope, loans=(), status="failed", reason_code="unavailable",
         )
@@ -203,6 +210,10 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
     try:
         if callable(reader):
             result = reader(account)
+            if not still_bound():
+                return LoanInventorySnapshot(
+                    scope=scope, loans=(), status="failed", reason_code="scope_changed",
+                )
             if type(result) is not LoanInventorySnapshot or result.scope != scope:
                 raise ValueError("invalid_snapshot")
             # Revalidate every positive row even if the provider constructed
@@ -212,7 +223,12 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
                 branches=result.branches, observed_at=result.observed_at,
                 reason_code=result.reason_code,
             )
-        return legacy_loan_inventory(account, session.loans(account))
+        rows = session.loans(account)
+        if not still_bound():
+            return LoanInventorySnapshot(
+                scope=scope, loans=(), status="failed", reason_code="scope_changed",
+            )
+        return legacy_loan_inventory(account, rows)
     except Exception:
         return LoanInventorySnapshot(
             scope=scope, loans=(), status="failed", reason_code="read_failed",
