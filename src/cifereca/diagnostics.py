@@ -1,7 +1,6 @@
 from __future__ import annotations
 import json
 import logging
-import re
 import threading
 from collections import deque
 from dataclasses import dataclass, asdict
@@ -9,10 +8,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .diagnostic_task_context import numilog_task_reference
-
-# Public redact()/redact_text() is also used by book/sync UI. Its legacy
-# contract must not mask a book title or a non-sensitive presence boolean.
-SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
 
 _GENERIC_STATUSES = frozenset({
     "ok", "error", "warning", "failed", "success", "partial", "running",
@@ -22,56 +17,16 @@ _GENERIC_STATUSES = frozenset({
 
 
 def redact_text(text: str) -> str:
-    # The redactor is a last-resort guard for free-text coming from providers,
-    # exceptions or plugin logs. It cannot replace typed, closed diagnostics.
-    # Never print signed URLs, private filesystem locations or email addresses.
-    text = re.sub(r"https?://[^\s<>\"']+", lambda m: _redact_url(m.group()), text, flags=re.I)
-    text = re.sub(r"(?i)file://[^\s<>\"']+", "<redacted-path>", text)
-    text = re.sub(
-        r"(?i)(?<![\w:/])/(?:home|users|root|tmp|var|mnt|media|run)/[^\s,;:\"'<>)}\]]+",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)\b[a-z]:[\\/](?:[^\s,;:\"'<>)}\]]+)",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)(?<![\w.+-])[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}(?![\w.-])",
-        "<redacted-email>", text,
-    )
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
-    text = re.sub(r"(?i)\b(password|cookie|token|secret|authorization|session|barcode|readerid)\b\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)
-    text = re.sub(r"(?i)([\"']?(?:password|cookie|token|secret|authorization|session|barcode|readerid)[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;}]+)", r"\1<redacted>", text)
+    """Legacy compatibility API: return source text unchanged.
+
+    Only the GTK Diagnostics view pseudonymizes explicit login/password.
+    No Core, broker, journal or export pathway may mask values (#3133).
+    """
     return text
 
 
-def _redact_url(url):
-    from urllib.parse import urlsplit
-    try:
-        parsed = urlsplit(url)
-        # Preserve non-sensitive public URLs (historical Plugin API contract)
-        # while hiding known borrower/account routes even without a query.
-        private_route = re.search(
-            r"(?i)/(?:LOAN|reader|account|users?|private(?:[-_][^/]+)?|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\.acsm)(?:/|$)",
-            parsed.path,
-        )
-        if parsed.query or parsed.fragment or parsed.username or private_route:
-            return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
-        return url
-    except ValueError:
-        return "<redacted-url>"
-
-
 def redact(value: Any, key: str = "") -> Any:
-    if SENSITIVE_KEYS.search(key):
-        return "<redacted>"
-    if isinstance(value, dict):
-        return {k: redact(v, str(k)) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(v, key) for v in value]
-    if isinstance(value, str):
-        text = redact_text(value)
-        return text[:500] + "…" if len(text) > 500 else text
+    """Legacy compatibility alias, deliberately preserving original values."""
     return value
 
 
