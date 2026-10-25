@@ -138,11 +138,28 @@ def _search_preference_score(self, row: SearchResult) -> int:
 def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
     """Translate provider availability into a user-actionable label."""
     if item.source_provider == "kobo":
-        if item.owned:
-            return "Dans ma bibliothèque Kobo · téléchargeable" if self.can_direct_download(item) else "Dans ma bibliothèque Kobo"
+        # Raw search result owned=True can originate in a public catalogue.
+        # Only Core's exact identity-scoped manifest ledger proves purchase.
+        identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
+        rights = {}
+        if type(identity_id) is str and identity_id:
+            try:
+                reader = getattr(self, "kobo_personal_right_states", None)
+                candidate = reader(identity_id) if callable(reader) else {}
+                if type(candidate) is dict:
+                    rights = candidate
+            except Exception:
+                pass  # Unknown cannot be promoted to a purchase.
+        right_state = rights.get((item.source_credential, item.record_id))
+        if right_state == "active":
+            return ("Mes achats Kobo · sauvegarde possible"
+                    if self.can_direct_download(item)
+                    else "Mes achats Kobo · fichier local non présumé")
+        if right_state == "archived":
+            return "Achat Kobo archivé · sauvegarde non disponible"
         if item.price:
-            return f"Catalogue Kobo · {item.price} {item.currency or ''}".strip()
-        return "Catalogue Kobo"
+            return f"Catalogue Kobo · aucun achat attesté · {item.price} {item.currency or ''}".strip()
+        return "Catalogue Kobo · aucun achat attesté"
     if self.can_direct_download(item):
         return "Téléchargement direct"
     label = str(detail.availability_label or detail.availability_status or "—").strip()
