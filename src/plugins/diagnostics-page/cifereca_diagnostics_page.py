@@ -15,7 +15,7 @@ from diagnostics_explorer import (
     diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation, local_timestamp_label, DOMAIN_LABELS,
-    normalize_diagnostic_domain,
+    normalize_diagnostic_domain, connection_provenance_label,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -1273,6 +1273,7 @@ class DiagnosticsPagePlugin:
                             + (f"· Fournisseur : {row['provider_id']} "
                                if row.get("provider_id") else "")
                             + f"· Référence : {event_id[:16]}"
+                            + connection_provenance_label(row)
                         ),
                         xalign=0,
                     )
