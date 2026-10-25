@@ -378,3 +378,29 @@ def test_publication_and_runtime_validators_ignore_dynamic_method_descriptors():
     static = _publications(d, MethodProperty, capabilities=manifest)
     assert static["loan.borrow"].publication_status == "conflict"
     assert touched == []
+
+
+def test_malformed_capability_descriptor_does_not_execute_custom_getters():
+    a = account()
+    touched = []
+
+    class RemoteCapabilityClaim:
+        def __getattr__(self, name):
+            touched.append(name)
+            raise AssertionError("descriptor property must not run a GET")
+
+    bad_descriptor = replace(
+        descriptor(), capabilities=RemoteCapabilityClaim(),
+    )
+    s = OnlyList(descriptor(), a)
+    runtime = assess_lending_operation(
+        "loan.list", manifest_capabilities=("sync.loans",),
+        descriptor=bad_descriptor, session=s, account=a,
+    )
+    static = validate_lending_publication(
+        manifest_capabilities=("sync.loans",),
+        descriptor=bad_descriptor, session_type=OnlyList,
+    )
+    assert runtime.availability == "unknown" and not runtime.usable
+    assert all(item.publication_status == "unverified" for item in static)
+    assert touched == []
