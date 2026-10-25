@@ -335,3 +335,68 @@ def test_canonical_formatter_preserves_original_raw_unstructured_and_invalid_ext
     assert "password" in canonical and "untouched" in canonical
     # The same record can be consumed by legacy handlers unchanged.
     assert record.getMessage() == "import ACSM 403 password=visible token=untouched"
+
+
+def test_numilog_startup_canonical_record_uses_one_existing_trace(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.numilog_startup_diagnostics import StartupTrace
+
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    handler = _canonical_writer(path)
+    logger.addHandler(handler)
+    try:
+        service = SimpleNamespace(
+            storage=SimpleNamespace(metadata_get=lambda _key: None),
+            diagnostics=Diagnostics(enabled=False),
+        )
+        trace = StartupTrace(service, "numilog")
+        fields = trace.emit("admission", "started", "running")
+        assert fields["phase"] == "admission"
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        handler.close()
+
+    result = query_journal(path, search="startup_materialization")
+    assert result["total"] == 1
+    event, = result["events"]
+    assert event["module"] == "NUMILOG"
+    assert event["operation"] == "startup_materialization"
+    assert event["detail"]["phase"] == "admission"
+    assert event["detail"]["run_ref"] == fields["run_ref"]
+    assert path.read_text().count("DIAG_JSON ") == 1
+
+
+def test_core_formatter_keeps_distinct_concurrent_occurrences(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    path = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    handler = _canonical_writer(path)
+    logger.addHandler(handler)
+    try:
+        diagnostics = Diagnostics(enabled=False)
+
+        def publish(index):
+            diagnostics.add_core_provider_connect_failure(
+                "provider.test", duration_ms=index,
+            )
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(publish, range(20)))
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        handler.close()
+    rows = query_journal(path, limit=100)["events"]
+    assert len(rows) == 20
+    assert len({row["event_id"] for row in rows}) == 20
+    assert all(row["module"] == "PLUGIN" for row in rows)
+    assert path.read_text().count("DIAG_JSON ") == 20
