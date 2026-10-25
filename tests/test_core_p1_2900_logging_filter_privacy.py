@@ -1,4 +1,4 @@
-"""#2900 — local log last-resort privacy, without losing source/book context."""
+"""#3132: journal Core et miroir console fidèles; le masquage est exclusivement IHM."""
 from __future__ import annotations
 
 import logging
@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from cifereca.logging_utils import RedactionFilter, _redact_log_identifiers
+from cifereca import logging_utils
 
 
 @pytest.mark.parametrize("message", [
@@ -14,49 +14,44 @@ from cifereca.logging_utils import RedactionFilter, _redact_log_identifiers
     "account_key: PERSON_PRIVATE provider_id=kobo",
     "account_id='PERSON_PRIVATE' stage=download",
     '{"credential_id": "PERSON_PRIVATE", "provider_id": "paris"}',
-    "{'identity_id': 'PERSON_PRIVATE with spaces', 'book_id': '9782000000000'}",
     "reader_id=PERSON_PRIVATE uid=PERSON_PRIVATE user_id=PERSON_PRIVATE",
     "username=PERSON_PRIVATE profile_id=PERSON_PRIVATE source_account_id=PERSON_PRIVATE",
+    "https://reader.example.invalid/LOAN/abc.acsm?token=PERSON_PRIVATE",
+    "password=PERSON_PRIVATE cookie=PERSON_PRIVATE email=reader@example.test",
 ])
-def test_log_identifier_redaction_preserves_public_trace_context(message):
-    result = _redact_log_identifiers(message)
-    assert "PERSON_PRIVATE" not in result
-    if "provider_id=paris" in message:
-        assert "provider_id=paris" in result
-    if "book_id=9782000000000" in message:
-        assert "book_id=9782000000000" in result
+def test_journal_preserves_original_context(monkeypatch, message):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    record = logging.LogRecord("cifereca", logging.WARNING, __file__, 1, "%s", (message,), None)
+    original = (record.msg, record.args)
+    assert logging_utils.RedactionFilter().filter(record) is True
+    assert record.getMessage() == message
+    assert (record.msg, record.args) == original
+    # A second handler (console) must receive exactly the same record.
+    assert logging_utils.RedactionFilter().filter(record) is True
+    assert record.getMessage() == message
 
 
-def test_private_identity_and_email_cannot_escape_logging_filter():
-    record = logging.LogRecord(
-        name="cifereca", level=logging.WARNING,
-        pathname=__file__, lineno=1,
-        msg=("sync provider_id=paris site=bibliotheques.paris.fr book_id=9782000000000 "
-             "loan_id=loan-PRIVATE account_key=reader-PRIVATE "
-             "email=reader@example.test password=PASSWORD_PRIVATE uid_present=true"),
-        args=(), exc_info=None,
-    )
-    assert RedactionFilter().filter(record) is True
-    output = record.getMessage()
-    assert "provider_id=paris" in output
-    assert "site=bibliotheques.paris.fr" in output
-    assert "book_id=9782000000000" in output
-    assert "uid_present=true" in output
-    for forbidden in ("loan-PRIVATE", "reader-PRIVATE", "reader@example.test", "PASSWORD_PRIVATE"):
-        assert forbidden not in output
-
-
-def test_private_identity_is_removed_from_exception_traceback():
+def test_traceback_and_stack_are_not_sanitized_by_journal_filter(monkeypatch):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
     try:
         raise RuntimeError("loan_id=loan-PRIVATE account_id='account-PRIVATE'")
     except RuntimeError:
         error = sys.exc_info()
-    record = logging.LogRecord(
-        name="cifereca", level=logging.ERROR,
-        pathname=__file__, lineno=1, msg="provider_id=paris failed",
-        args=(), exc_info=error,
-    )
-    assert RedactionFilter().filter(record) is True
-    assert "loan-PRIVATE" not in record.exc_text
-    assert "account-PRIVATE" not in record.exc_text
-    assert "loan_id=<redacted>" in record.exc_text
+    record = logging.LogRecord("cifereca", logging.ERROR, __file__, 1,
+                               "provider_id=paris failed", (), error)
+    record.exc_text = "PRIVATE cached traceback"
+    record.stack_info = "/home/private-user/trace.py password=PRIVATE"
+    assert logging_utils.RedactionFilter().filter(record)
+    assert record.exc_info is error
+    assert record.exc_text == "PRIVATE cached traceback"
+    assert "private-user" in record.stack_info
+
+
+def test_filter_keeps_original_values_but_obeys_trace_level(monkeypatch):
+    record = logging.LogRecord("cifereca", logging.INFO, __file__, 1,
+                               "TRACE arbitrary token=SECRET", (), None)
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    assert not logging_utils.RedactionFilter().filter(record)
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "trace")
+    assert logging_utils.RedactionFilter().filter(record)
+    assert record.getMessage() == "TRACE arbitrary token=SECRET"
