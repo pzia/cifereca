@@ -65,6 +65,27 @@ class HTTPProviderTests(unittest.TestCase):
         s.close()
         with self.assertRaises(ProviderConfigurationError): s.loans(a)
 
+    def test_positive_loan_cover_reaches_core_without_extra_http(self):
+        activity = ('<section class="active-loans">'
+                    '<div class="js-loan">'
+                    '<a href="/resources/book-a">Titre synthétique'
+                    '<img src="/covers/book-a.jpg"></a>'
+                    '<a href="/loans/loan-a">Jeton</a>'
+                    '</div></section>')
+        session, calls, _state = self.make(activity)
+        try:
+            account, = session.connect()
+            account.identity_id = 'profile-a'
+            rows = session.loans(account)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].thumbnail_url,
+                             'https://pret.bnf.fr/covers/book-a.jpg')
+            self.assertIsNone(rows[0].due_at)
+            self.assertFalse(any('/covers/' in path or '/loans/' in path
+                                 for _, _, path in calls))
+        finally:
+            session.close()
+
     def test_two_sessions_and_wrong_account(self):
         first, _, _ = self.make()
         second, _, _ = self.make()
