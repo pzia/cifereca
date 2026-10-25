@@ -21,6 +21,8 @@ Le CLI n'active ce protocole JSONL que si l'updater transmet la capacité intern
 
 ## Limites / prochain diagnostic
 
+La vérification post-rollback \u00ab physical proof \u00bb compare **en lecture seule** les deux pointeurs Core et les identités exactes (fichiers, octets, versions, état d'activation ou absence) de chaque package géré avec l'instantané antérieur conservé dans la transaction. Si un élément diverge, l'état reste `restoration_incomplete` avec `restoration_errors: ["verification"]`, jamais un reçu de restauration réussie. Cette vérification n'est pas une réactivation supplémentaire et ne touche pas aux livres ou aux données utilisateur.
+
 Le correctif distingue l'étape exacte du futur blocage, **pas** la cause interne de pip, du verrou ou de la lenteur de l'activation. Aucun compte fournisseur ni exécution réelle de `--github main` n'a été utilisée pour qualifier l'incident initial. Les étapes restantes dans #3204 sont : approfondissement du suivi pip/lock si la phase problématique le confirme, vérification post-rollback **en lecture seule**, et recette sur les 21 packages. Ne pas fermer #3204 sur cette seule tranche.
 
 ## Vérification
