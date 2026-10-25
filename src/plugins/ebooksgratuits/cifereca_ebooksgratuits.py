@@ -462,22 +462,26 @@ class EbooksSession(ProviderSession):
         opds_item = isinstance(getattr(item,'metadata',None),dict) and item.metadata.get('acquisition_source') == 'opds-calibre'
         if opds_item:
             epub=_safe_opds_link(self.opds_feed_url,item.download_url,'download')
-            detail=_safe_opds_link(self.opds_feed_url,item.friendly_url,'detail') if item.friendly_url else None
+            # A legacy/cached OPDS row may still expose its XML feed as
+            # friendly_url. It is NOT an HTML page, but neither does that
+            # make a separately attested EPUB acquisition invalid. Ignore
+            # the unverified Web link completely: never use it as Referer,
+            # return value or an implicit navigation/download target.
+            detail=(_opds_public_html_link(self.opds_feed_url,item.friendly_url)
+                    if item.friendly_url else None)
         else:
             epub=_safe_catalog_link(self.base_url,item.download_url,'epub')
             detail=_safe_catalog_link(self.base_url,item.friendly_url,'detail') if item.friendly_url else None
         if (epub != item.download_url
-                or (item.friendly_url and detail != item.friendly_url)
-                or (opds_item and item.friendly_url
-                    and _opds_public_html_link(self.opds_feed_url,item.friendly_url)
-                    != item.friendly_url)):
+                or (not opds_item and item.friendly_url
+                    and detail != item.friendly_url)):
             raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_catalog_link')
         if self.transport is None: raise ProviderError('Ebooks libres et gratuits : transport.http indisponible')
         d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
         headers={
             'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2',
             # Never send a historical www-site referer to the OPDS origin.
-            'Referer': (item.friendly_url or self.opds_feed_url)
+            'Referer': (detail or self.opds_feed_url)
                        if opds_item else (item.friendly_url or self.base_url),
         }
         source={
@@ -502,7 +506,7 @@ class EbooksSession(ProviderSession):
         except Exception:
             # Error text can include a private URL, file path or response.
             raise ProviderError('Ebooks libres et gratuits : download_unavailable') from None
-        return dest,(item.friendly_url or item.download_url) if opds_item else (item.friendly_url or self.base_url)
+        return dest,(detail or item.download_url) if opds_item else (item.friendly_url or self.base_url)
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
     def __init__(self): self._sessions=[]; self.context=None; self.transport=None
