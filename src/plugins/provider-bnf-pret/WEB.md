@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.2.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.3.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -84,8 +84,7 @@ champ inconnu sans effacer le prêt.
 Cette règle de lecture est testée sur HTML synthétique ; la présence réelle
 de `itemprop=author` dans l'activité privée n'est **pas encore attestée**.
 En l'absence d'un sélecteur fiable et de la valeur d'échéance rattachée au
-prêt du compte, `due_at` reste inconnu. Sans preuve de l'URL de couverture
-de la **ressource exacte** et de son hôte autorisé, `thumbnail_url` reste vide.
+prêt du compte, `due_at` reste inconnu. La version 0.3.3 accepte une couverture **uniquement** si une image publique unique est incluse dans l’ancre `/resources/{id}` de la carte exacte du prêt : origine `pret.bnf.fr` avec chemin image borné, ou variante publique structurée `imagedelivery.net`, sans requête, fragment ni URL signée. Une image ambiguë, non liée ou sur un hôte tiers laisse `thumbnail_url` vide. Aucun GET supplémentaire n’est effectué par le plugin. La présence réelle de ce balisage dans la page privée reste à qualifier.
 La fiche publique de certains livres propose une image sur
 `imagedelivery.net` ; cela ne qualifie pas les images des cartes de prêt.
 Ce travail n'ajoute aucun achat, droit, URL de téléchargement ni mutation.
