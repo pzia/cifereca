@@ -1003,7 +1003,7 @@ def main():
         assert value["selection"]["scope"] == "all_accessible_filtered_pages"
         assert value["selection"]["pagination_consistency"] == "first_page_rechecked_non_atomic"
         assert value["selection"]["sources_partial_or_unavailable"] is True
-        assert "SECRET-SELECTION" not in payload
+        assert "SECRET-SELECTION" in payload  # valeur token visible, pas un login/password
         assert broker.scan_threads and all(t != broker.ui_thread for t in broker.scan_threads)
         assert any(q.get("severity") == "error" and q["offset"] == 50 for q in broker.event_queries)
         report["checks"]["P0_2140_errors_57_across_pages_keyboard_background_redacted"] = True
