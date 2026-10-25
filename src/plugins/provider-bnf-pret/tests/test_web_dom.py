@@ -233,6 +233,25 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(card))
         self.assertEqual(result.loans[0].thumbnail_url, cdn)
 
+
+    def test_loan_cover_accepts_real_public_cdn_default_variant(self):
+        # BnF public resource pages currently link to Cloudflare Images /default.
+        # The selector remains strictly scoped to the exact resource anchor.
+        cdn = ('https://imagedelivery.net/QDkyDSqaJI1JEO0MqH_3SQ/'
+               'd721a0b0-1425-45f0-6e08-aec9b2755500/default')
+        card = ('<div class="js-loan"><a href="/resources/book-a">'
+                '<img data-src="' + cdn + '" src="data:image/gif;base64,AAAA">'
+                'Livre</a><a href="/loans/loan-a">Jeton</a></div>')
+        row, = self.parse_loans(loans(card)).loans
+        self.assertEqual(row.thumbnail_url, cdn)
+        self.assertEqual(web._public_cover_url(cdn), cdn)
+        self.assertIsNone(web._public_cover_url(cdn + '?token=synthetic'))
+        self.assertIsNone(web._public_cover_url(cdn.replace('/default', '/private')))
+        # An image outside the resource link does not prove it is this book.
+        self.assertIsNone(
+            self.parse_loans(loans('<img src="' + cdn + '">' + loan())).loans[0].thumbnail_url
+        )
+
     def test_loan_cover_rejects_private_and_ambiguous_urls(self):
         bad = (
             'https://evil.test/images/covers/a.jpg',
