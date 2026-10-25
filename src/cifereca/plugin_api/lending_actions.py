@@ -64,21 +64,32 @@ class LendingActionAdmission:
         return self.status == "admitted"
 
 
+def _source_key(value: object, *, allow_empty: bool = False) -> bool:
+    return (
+        type(value) is str and len(value) <= 1024
+        and (allow_empty or bool(value)) and "\\x00" not in value
+    )
+
+
 def _exact_target(operation: str, target: object, account: Account) -> bool:
     if type(account) is not Account:
         return False
-    if (type(account.identity_id) is not str or not account.identity_id
-            or type(account.provider_id) is not str or not account.provider_id
-            or type(account.credential_id) is not str or not account.credential_id
-            or type(account.unique_id) is not str):
+    if not all((
+        _source_key(account.identity_id),
+        _source_key(account.provider_id),
+        _source_key(account.credential_id),
+        _source_key(account.unique_id, allow_empty=True),
+    )):
         return False
     if operation == "loan.borrow":
         # Borrowing has not yet produced a Loan. An exact catalogue notice is
         # necessary but is NEVER proof of an available upstream borrow offer.
         return bool(
             type(target) is SearchResult
-            and type(target.id) is str and target.id
-            and type(target.record_id) is str and target.record_id
+            and _source_key(target.id)
+            and _source_key(target.record_id)
+            and _source_key(target.source_provider)
+            and _source_key(target.source_credential)
             and target.source_provider == account.provider_id
             and target.source_credential == account.credential_id
         )
@@ -89,8 +100,14 @@ def _exact_target(operation: str, target: object, account: Account) -> bool:
             and account.is_primary is True):
         borrowers.add("primary")
     return bool(
-        type(target.id) is str and target.id
-        and type(target.record_id) is str and target.record_id
+        _source_key(target.id)
+        and _source_key(target.record_id)
+        and _source_key(target.source_provider)
+        and _source_key(target.source_credential)
+        and _source_key(target.source_account_id, allow_empty=True)
+        and _source_key(target.identity_id)
+        and type(target.medium) is str
+        and type(target.state) is str
         and target.source_provider == account.provider_id
         and target.source_credential == account.credential_id
         and target.source_account_id in borrowers
@@ -175,17 +192,22 @@ class LendingActionOutcome:
     contract: str = LENDING_ACTION_CONTRACT
 
     def __post_init__(self):
-        if (self.contract != LENDING_ACTION_CONTRACT
+        if (type(self.contract) is not str
+                or self.contract != LENDING_ACTION_CONTRACT
                 or type(self.operation) is not str
                 or self.operation not in _SUPPORTED_ACTIONS
+                or type(self.origin) is not str
                 or self.origin not in ("manual", "opening", "scheduled")
+                or type(self.status) is not str
                 or self.status not in (
                     "unsupported", "blocked", "cancelled", "failed",
                     "submitted", "confirmed", "verification_unavailable",
                 )
+                or type(self.evidence) is not str
                 or self.evidence not in (
                     "none", "provider_accepted", "provider_verified",
                 )
+                or type(self.reason_code) is not str
                 or self.reason_code not in _REASON_CODES):
             raise ValueError("invalid_loan_action_outcome")
         if (self.status == "confirmed" and
