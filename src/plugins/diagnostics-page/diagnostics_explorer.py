@@ -163,6 +163,7 @@ def fetch_explorer_page(
     provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
+    search: str = "",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -187,6 +188,10 @@ def fetch_explorer_page(
     # Older Core versions can still serve the unfiltered page. Require the
     # optional new broker keyword ONLY for an explicitly selected code;
     # never silently downgrade a global filter to local 50-item search.
+    if search:
+        if type(search) is not str or len(search) > 500:
+            raise ValueError("invalid diagnostics search")
+        query["search"] = search
     if reason_code:
         query["reason_code"] = reason_code
     if provider_id:
