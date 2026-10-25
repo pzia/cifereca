@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 import httpx
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.search_failures import is_technical_search_error
 from cifereca.gui.sync_issues import sync_issues_text
 from cifereca.gui.query_model import QueryState,FIELDS
@@ -197,6 +198,7 @@ class PersistedAcquisitionErrors(unittest.TestCase):
                 service._loans_for_account=lambda *a,**kw:loans
                 service._acquire_active_loan_automatically=lambda loan:{'status':'retryable_error','code':'timeout','error':'Failure https://example.test/file?token=SECRET'}
                 service.catalog_scan=lambda:{'scanned':0};service.kobo_backup_enabled=lambda:False
+                enable_synthetic_paris_opening(service)
                 service.opening_sync()
                 saved=service.storage.latest_sync_run('default')
                 self.assertEqual(saved['errors'],4);self.assertEqual(len(saved['detail']['acquisition_errors']),4)

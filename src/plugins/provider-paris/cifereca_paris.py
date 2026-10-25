@@ -53,6 +53,9 @@ DESCRIPTOR = ProviderDescriptor(
         holdings=True,
         borrow=True,
         digital_download=True,
+        # Preserve the existing authorized Paris opening-sync path only.
+        # Newly installed lenders remain default-deny until explicit opt-in.
+        opening_loan_auto_acquisition=True,
         return_loan=True,
         renew_loan=True,
     ),

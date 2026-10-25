@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
@@ -218,6 +219,7 @@ def test_opening_sync_partial_never_invents_success(tmp_path, monkeypatch):
                             lambda _loan: {"status": "attention_required", "loan_id": loan.id})
         monkeypatch.setattr(lib, "catalog_scan", lambda: {"scanned": 0})
         monkeypatch.setattr(lib, "kobo_backup_enabled", lambda: False)
+        enable_synthetic_paris_opening(lib)
         result = lib.opening_sync()
         assert result["identities"][0]["status"] == "partial"
         key = "sync.source.state." + lib.sync_source_id(account)

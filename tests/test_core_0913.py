@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 from cifereca import acsm_cache
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.core import CiferecaCore
 from cifereca.models import Account, Loan
 from cifereca.identities import AdeptProfileResolver, AdeptProfileResolutionError
@@ -186,6 +187,7 @@ class Core0913(unittest.TestCase):
         self.service.catalog_scan=Mock(return_value={'scanned':0})
         self.service.execute_acquisition_request=Mock()
         for _ in range(2):
+            enable_synthetic_paris_opening(self.service)
             summary=self.service.opening_sync()
             row=next(row for row in summary['identities'] if row['identity_id']=='default')
             self.assertEqual(row['attention_required'],1)

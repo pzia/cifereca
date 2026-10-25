@@ -38,6 +38,9 @@ class ProviderCapabilities:
     holdings: bool = False
     borrow: bool = False
     digital_download: bool = False
+    # Explicit legacy-compatible opt-in for acquisition during opening sync.
+    # Presence of loans/digital_download or an ACSM URL alone is not consent.
+    opening_loan_auto_acquisition: bool = False
     direct_download: bool = False
     personal_library: bool = False
     backup: bool = False

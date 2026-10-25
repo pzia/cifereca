@@ -321,16 +321,48 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     }
 
 
-def _opening_loan_acquisition_allowed(loan: Loan) -> bool:
-    """BnF Web loans are NEVER startup download consent (#2055).
+def _opening_loan_acquisition_allowed(loan: Loan, *, session: Any = None) -> bool:
+    """Opening acquisition requires an explicit capability, never a provider-ID exception.
 
-    A positive provider observation may be persisted as a scoped loan by the
-    owning Core contract, but browsing or opening Cifereca cannot trigger its
-    Web download/ACSM fulfillment. That needs a separate explicit user action.
-    Keep existing automatic acquisition decisions for other providers intact.
+    This is a read-only admission check, not a replacement for the detailed
+    ADEPT/identity preflight in _acquire_active_loan_automatically. The
+    connection and the exact borrower must still be live at the moment of
+    dispatch. New providers are default-deny; only legacy Paris opts in.
     """
-    return (type(loan) is Loan and loan.source_provider != "bnf-pret"
-            and loan.medium == "digital" and bool(loan.ebook_url or loan.raw))
+    if (type(loan) is not Loan or loan.medium != "digital"
+            or not bool(loan.ebook_url or loan.raw) or session is None):
+        return False
+    try:
+        caps = session.capabilities
+        if not (
+            getattr(session, "connected", None) is True
+            and getattr(caps, "opening_loan_auto_acquisition", None) is True
+            and getattr(caps, "loans", None) is True
+            and getattr(caps, "digital_download", None) is True
+            and loan.source_provider == session.provider_id
+            and loan.source_credential == session.credential_id
+            and type(loan.identity_id) is str and bool(loan.identity_id)
+            and type(loan.source_account_id) is str
+        ):
+            return False
+        # The primary Paris account can be serialized under its empty
+        # upstream ID or the Core alias "primary", but no other account
+        # may inherit that alias. All other account IDs match exactly.
+        for a in session.accounts:
+            if type(a) is not Account:
+                continue
+            if (a.provider_id != loan.source_provider
+                    or a.credential_id != loan.source_credential
+                    or a.identity_id != loan.identity_id):
+                continue
+            valid_ids = {a.unique_id}
+            if a.is_primary is True and a.unique_id == "":
+                valid_ids.add("primary")
+            if loan.source_account_id in valid_ids:
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool:
@@ -527,7 +559,13 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             all_loans.extend(loans)
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
             for loan in loans:
-                if not _opening_loan_acquisition_allowed(loan):
+                # Re-resolve the currently registered provider session: an
+                # earlier inventory GET may have run before disconnect/swap.
+                # The admission check never invokes a provider method.
+                session = self._sessions.get(
+                    self._session_key(loan.source_provider, loan.source_credential)
+                )
+                if not _opening_loan_acquisition_allowed(loan, session=session):
                     continue
                 result = self._acquire_active_loan_automatically(loan)
                 if result["status"] == "complete":

@@ -32,9 +32,11 @@ def test_bnf_observation_never_authorizes_opening_download(medium, has_url, has_
 
 
 @pytest.mark.parametrize("provider", ["paris", "kobo", "numilog"])
-def test_existing_provider_auto_acquisition_rules_are_unchanged(provider):
-    assert _opening_loan_acquisition_allowed(_loan(provider, ebook_url="fictional")) is True
-    assert _opening_loan_acquisition_allowed(_loan(provider, raw={"fixture": True})) is True
+def test_all_providers_default_deny_without_explicit_live_session(provider):
+    # #3121: the historical name-based exemption is gone. A direct call with
+    # an arbitrary positive loan is no longer permission to auto-acquire.
+    assert _opening_loan_acquisition_allowed(_loan(provider, ebook_url="fictional")) is False
+    assert _opening_loan_acquisition_allowed(_loan(provider, raw={"fixture": True})) is False
     assert _opening_loan_acquisition_allowed(_loan(provider, medium="physical", ebook_url="fictional")) is False
     assert _opening_loan_acquisition_allowed(_loan(provider)) is False
 
