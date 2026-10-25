@@ -64,7 +64,9 @@ def test_real_store_account_remains_first_and_catalogue_does_not_create_purchase
     disclosure = _disclosure(window)
     assert disclosure is not None
     row = disclosure.child.children[0]
-    assert row.title == "kobo"
+    assert row.title == "Kobo — Catalogue"
+    assert disclosure.child.children[1].title == "Numilog — Catalogue public"
+    assert "Catalogue public" in disclosure.child.children[1].subtitle
     assert "Catalogue avec compte" in row.subtitle
     assert row.suffixes == []
     assert window.runner.tasks == []
