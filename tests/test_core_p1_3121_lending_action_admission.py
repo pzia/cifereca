@@ -243,6 +243,8 @@ def test_http_accepted_is_submitted_only_provider_verification_can_confirm():
         ("confirmed", "none", "loan.return"),
         ("confirmed", "provider_verified", "loan.download_token"),
         ("submitted", "none", "loan.borrow"),
+        ("submitted", "provider_accepted", "loan.download_token"),
+        ("verification_unavailable", "provider_verified", "loan.return"),
         ("failed", "provider_verified", "loan.return"),
     ):
         with pytest.raises(ValueError):
@@ -260,3 +262,21 @@ def test_http_accepted_is_submitted_only_provider_verification_can_confirm():
             "loan.return", "manual", "confirmed",
             evidence="provider_verified", reason_code="PRIVATE signed URL",
         )
+
+
+def test_malformed_account_and_loan_fields_fail_without_coercion():
+    a = account()
+    row = loan(a)
+    hostile = object()
+    for bad in (
+        replace(row, source_account_id=hostile),
+        replace(row, source_provider=hostile),
+        replace(row, medium=hostile),
+        replace(row, id="bad" + chr(0) + "id"),
+        replace(row, record_id=""),
+    ):
+        result = decide(
+            "loan.return", a, bad, confirmed=True, permission_attested=True,
+        )
+        assert result.status == "blocked"
+        assert result.reason_code == "scope_unverified"
