@@ -222,7 +222,7 @@ def test_attested_connection_producer_is_one_canonical_record(tmp_path, monkeypa
     logger.addHandler(capture)
     try:
         diag = Diagnostics(enabled=False)
-        diag.add_core_provider_connect_failure("provider.test")
+        diag.add_core_provider_connect_failure("provider.test", duration_ms=157)
     finally:
         logger.removeHandler(handler)
         logger.removeHandler(capture)
@@ -235,6 +235,7 @@ def test_attested_connection_producer_is_one_canonical_record(tmp_path, monkeypa
     assert event["module"] == "PLUGIN"
     assert event["operation"] == "provider connect"
     assert event["status"] == "error"
+    assert event["duration_ms"] == 157
     assert event["detail"] == {
         "provider_id": "provider.test", "code": "provider_connect_failed",
     }
@@ -271,6 +272,7 @@ def test_bnf_failure_preserves_typed_context_as_single_journal_event(tmp_path, m
     event, = result["events"]
     assert event["module"] == "LOAN"
     assert event["operation"] == "bnf_loan_action"
+    assert event["duration_ms"] == 10
     assert event["detail"]["provider_id"] == "bnf-pret"
     assert event["detail"]["reason_code"] == "bnf_access_denied"
     assert event["task_ref"] == "abcdef123456"
@@ -302,6 +304,7 @@ def test_attested_sync_failure_retains_fields_before_and_after_restart(tmp_path,
     event, = result["events"]
     assert event["module"] == "SYNC"
     assert event["operation"] == "source sync"
+    assert event["duration_ms"] == 123
     assert event["detail"]["provider_id"] == "provider.test"
     assert event["detail"]["duration_ms"] == 123
     assert event["detail"]["loans"] == 2
