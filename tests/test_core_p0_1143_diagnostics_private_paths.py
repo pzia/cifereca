@@ -87,7 +87,7 @@ def test_log_filter_keeps_paths_and_email_in_raw_journal_and_exception():
         "remote %s", (message,), info,
     )
     assert RedactionFilter().filter(record) is True
-    rendered = record.getMessage() + str(record.exc_text)
+    rendered = logging.Formatter("%(message)s").format(record)
     assert "private-reader" in rendered
     assert "reader@example.invalid" in rendered
     assert "RuntimeError" in rendered
