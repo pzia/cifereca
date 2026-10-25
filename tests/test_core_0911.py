@@ -27,10 +27,10 @@ class Core0911(unittest.TestCase):
             fresh=CiferecaCore.open(config_path=self.config,database_path=self.root/('db-'+level))
             try:self.assertEqual(fresh.diagnostics.level,level)
             finally:fresh.close()
-    def test_diagnostics_disabled_persists(self):
+    def test_legacy_disabled_preference_cannot_disable_event_collection(self):
         self.service.save_diagnostic_preferences(enabled=False,level='trace')
         fresh=CiferecaCore.open(config_path=self.config,database_path=self.root/'db2')
-        try:self.assertFalse(fresh.diagnostics.enabled);self.assertEqual(fresh.diagnostics.level,'trace')
+        try:self.assertTrue(fresh.diagnostics.enabled);self.assertEqual(fresh.diagnostics.level,'trace')
         finally:fresh.close()
     def test_runtime_override_does_not_overwrite_saved_level(self):
         self.service.save_diagnostic_preferences(enabled=True,level='errors')
