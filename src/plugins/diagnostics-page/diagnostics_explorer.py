@@ -747,8 +747,8 @@ def export_selected_events(
     if len(selected) > max_events:
         raise ValueError("too many selected events for one export")
     result = json.dumps({
-        "notice": "Événements expurgés du Core ; corrélation limitée aux task_ref "
-                  "publiées. Étapes potentiellement "
+        "notice": "Événements Core : corrélation par task_ref ou operation_ref "
+                  "attestées ; authentifications réseau inconnues. Étapes potentiellement "
                   "absentes ; aucune causalité déduite de l'heure ou des messages.",
         "events": selected,
     }, ensure_ascii=False, indent=2, allow_nan=False)
