@@ -319,3 +319,89 @@ def test_gui_renewal_never_proclaims_success_from_unverified_post():
     assert "self.service.renew(loan, confirmed=True)" in block
     assert "success_toast=" not in block
     assert "Prêt prolongé" not in block
+
+
+def test_context_revoked_after_sqlite_claim_never_dispatches_and_cannot_retry(
+    tmp_path, monkeypatch,
+):
+    service, a, ui, session = setup(tmp_path)
+    real_claim = service.storage.loan_renewal_claim_once
+
+    def claim_then_revoke(key, operation_id):
+        claimed, row = real_claim(key, operation_id)
+        if claimed:
+            service._account_context_epoch += 1
+        return claimed, row
+
+    monkeypatch.setattr(
+        service.storage, "loan_renewal_claim_once", claim_then_revoke,
+    )
+    try:
+        result = service.renew(ui, confirmed=True)
+        assert result["status"] == "blocked"
+        assert session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui))["status"] == "blocked"
+        # The persisted claim prevents replay on another process after any
+        # uncertain failure between the SQLite commit and RenewLoans dispatch.
+        assert service.renew(ui, confirmed=True)["status"] == "verification_unavailable"
+        assert session.posts == []
+    finally:
+        service.close()
+
+
+def test_capability_absent_and_wrong_selected_identity_never_renew(tmp_path):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+        session.descriptor = replace(
+            session.descriptor,
+            capabilities=ProviderCapabilities(loans=True, renew_loan=False),
+        )
+        assert service.renew(ui, confirmed=True)["status"] == "blocked"
+        assert session.reads == session.posts == []
+        session.descriptor = replace(
+            session.descriptor,
+            capabilities=ProviderCapabilities(loans=True, renew_loan=True),
+        )
+        service.select_identity("alex")
+        assert service.renew(ui, confirmed=True)["status"] == "blocked"
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui)) is None
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("response", [
+    {"Renewed": False, "success": True},
+    {"Renewed": 1},
+    {"success": 1},
+    {"Renewed": False},
+    {},
+])
+def test_malformed_or_contradictory_post_ack_never_claims_submission(
+    tmp_path, response,
+):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        session.result = response
+        outcome = service.renew(ui, confirmed=True)
+        assert outcome["status"] == "verification_unavailable"
+        assert outcome["provider_verified"] is False
+        assert len(session.posts) == 1
+        assert service.renew(ui, confirmed=True)["status"] == "verification_unavailable"
+        assert len(session.posts) == 1
+    finally:
+        service.close()
+
+
+def test_renewal_state_never_interferes_with_return_checkpoint_namespace(tmp_path):
+    from cifereca.core.loan_return_guard import return_key
+    service, a, ui, session = setup(tmp_path)
+    try:
+        prior_return = return_key("paris", "card", "reader", "loan-1")
+        assert service.storage.loan_return_state(prior_return) is None
+        assert service.renew(ui, confirmed=True)["status"] == "submitted"
+        assert service.storage.loan_return_state(prior_return) is None
+        assert service.storage.loan_renewal_state(_source_key(ui)) is not None
+    finally:
+        service.close()
