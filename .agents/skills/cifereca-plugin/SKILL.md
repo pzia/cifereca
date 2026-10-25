@@ -5,6 +5,8 @@ description: Créer, modifier ou valider un plugin Cifereca en respectant l'API 
 
 # Plugin Cifereca
 
+**À appliquer pour tout provider/runtime** : [skill de journalisation](../cifereca-logging/SKILL.md) et [contrat Core/Plugins](../../../docs/LOGGING-CONTRACT.md). Journaliser intégralement les événements et détails effectivement produits, **sans masquer dans le plugin** ; seuls **login/mot de passe** sont pseudonymisés **dans le rendu de l'IHM Core**, les autres champs restant visibles. Les logs bruts ne doivent pas être publiés automatiquement.
+
 Utiliser ce skill pour toute modification sous `src/plugins/<plugin>/` ou pour créer un nouveau plugin.
 
 ## Principes
