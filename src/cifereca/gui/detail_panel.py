@@ -535,6 +535,12 @@ class DetailPanel(Gtk.Box):
         self._actions(buttons)
 
     def _direct_download_action(self, item: SearchResult) -> None:
+        # The GUI must never turn a public Numilog notice into a download
+        # merely because a mocked/legacy provider reports direct_download.
+        if (item.source_provider == "numilog-catalog"
+                or (item.source_provider == "numilog"
+                    and result_row(item)["state"] != "remote_owned")):
+            return
         if not self.window.service.can_direct_download(item):
             return
         content_type = self.window.service.content_type_for(item)
@@ -876,11 +882,18 @@ class DetailPanel(Gtk.Box):
             links=document_links(result_row(item)),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
-        direct_download = (False if item.source_provider == "numilog-catalog"
-                           else self.window.service.can_direct_download(item))
+        direct_download = (
+            False if (item.source_provider == "numilog-catalog"
+                      or (item.source_provider == "numilog"
+                          and result_row(item)["state"] != "remote_owned"))
+            else self.window.service.can_direct_download(item)
+        )
         if direct_download:
             self._direct_download_action(item)
-        elif item.medium == "digital" and availability == "Empruntable":
+        elif (item.medium == "digital" and availability == "Empruntable"
+              and item.source_provider not in {"numilog", "numilog-catalog", "kobo"}):
+            # Commercial store inventory/catalogues never become loan sources,
+            # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
             action.set_title("Action")
             if self.window.can_borrow_item(item):
