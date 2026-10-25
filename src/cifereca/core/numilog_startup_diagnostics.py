@@ -177,8 +177,23 @@ class StartupTrace:
         # key or arbitrary plugin payload can be appended to this emission.
         # Logging remains independent of collector enablement/retention.
         try:
-            _LOG.info("%s%s", _LOG_PREFIX,
-                      json.dumps(fields, separators=(",", ":"), sort_keys=True))
+            # The original TRACE record remains unchanged for legacy handlers.
+            # The Core formatter writes its validated fields as a structured
+            # occurrence, not as a second event alongside the TRACE.
+            from ..diagnostics import _core_journal_record
+            serialized = json.dumps(fields, separators=(",", ":"), sort_keys=True)
+            message = _LOG_PREFIX + serialized
+            public_status = (
+                "error" if fields["status"] in {"failed", "partial"}
+                else "warning" if fields["status"] == "blocked" else "ok"
+            )
+            _LOG.info(
+                "%s%s", _LOG_PREFIX, serialized,
+                extra=_core_journal_record(
+                    "NUMILOG", "startup_materialization",
+                    public_status, message, fields,
+                ),
+            )
         except Exception:
             pass  # an optional log handler cannot alter acquisition outcomes
         try:
