@@ -152,6 +152,7 @@ def test_rebind_during_declaration_read_discards_preflight(rig, monkeypatch):
 def test_startup_with_unverified_declared_file_is_blocked_not_complete(rig):
     service, account, session, calls, item, book, _, _, broker = rig
     declare(rig)
+    book.unlink()
     _authorize(broker, broker._source_id(account))
     session.library = lambda: [item]
     session.download_direct = lambda *_a: pytest.fail('no duplicate download')
@@ -162,12 +163,15 @@ def test_startup_with_unverified_declared_file_is_blocked_not_complete(rig):
     assert result.facts['source_results'][0]['status'] == 'blocked'
     assert service.storage.acquisitions(provider_id='numilog') == []
     assert service.storage.placements() == []
-    assert book.is_file() and calls == []
+    assert not book.exists() and calls == []
 
 
-def test_declared_file_blocks_only_its_purchase_and_keeps_other_delivery_partial(rig, monkeypatch):
+@pytest.mark.parametrize('changed', [True, False])
+def test_declared_pair_does_not_starve_another_purchase(rig, monkeypatch, changed):
     service, account, session, calls, item, book, _, _, broker = rig
     declare(rig)
+    if changed:
+        book.write_bytes(b'changed since declaration')
     _authorize(broker, broker._source_id(account))
     missing = _row(account.credential_id, 1)
     session.library = lambda: [item, missing]
@@ -180,8 +184,66 @@ def test_declared_file_blocks_only_its_purchase_and_keeps_other_delivery_partial
     monkeypatch.setattr('cifereca.core.numilog_materialization_startup.index_delivered',
                         lambda *_a, **_k: indexed.append(True))
     result = execute(broker, account.identity_id, 'startup')
-    assert not result.ok and result.facts['status'] == 'partial'
-    assert result.facts['blocked'] == result.changed == result.facts['attempted'] == 1
-    assert result.facts['source_results'][0]['status'] == 'partial'
+    assert result.ok is (not changed)
+    assert result.facts['status'] == ('partial' if changed else 'complete')
+    assert result.facts['blocked'] == int(changed)
+    assert result.facts['already_local_declared'] == int(not changed)
+    assert result.changed == result.facts['attempted'] == 1
+    assert result.facts['source_results'][0]['status'] == ('partial' if changed else 'complete')
     assert acquired == [missing.record_id] and indexed == [True]
     assert book.is_file() and calls == []
+
+
+def test_fresh_declared_file_counts_as_local_without_receipt_or_download(rig, monkeypatch):
+    from cifereca.core import numilog_materialization_startup as startup
+    service, account, session, calls, item, book, _, _, broker = rig
+    declare(rig)
+    _authorize(broker, broker._source_id(account))
+    session.library = lambda: [item]
+    original = book.read_bytes()
+    result = execute(broker, account.identity_id, 'startup')
+    assert result.ok and result.facts['status'] == 'complete'
+    assert result.facts['already_local_declared'] == result.facts['skipped'] == 1
+    assert result.changed == result.facts['attempted'] == result.facts['blocked'] == 0
+    assert book.read_bytes() == original and calls == []
+    assert service.storage.acquisitions(provider_id='numilog') == []
+    assert service.storage.placements() == []
+    later = startup.time() + 3601
+    monkeypatch.setattr(startup, 'time', lambda: later)
+    again = execute(broker, account.identity_id, 'startup')
+    assert again.ok and again.changed == again.facts['attempted'] == 0
+    assert again.facts['already_local_declared'] == 1
+    assert book.read_bytes() == original
+    assert service.storage.acquisitions(provider_id='numilog') == []
+    assert service.storage.placements() == []
+
+
+def test_declared_checks_share_one_source_time_budget(rig, monkeypatch):
+    from cifereca.core import library_declared_presence as presence
+    from cifereca.core import numilog_materialization_startup as startup
+    service, account, session, calls, item, book, scope, _, broker = rig
+    declare(rig)
+    second = _row(account.credential_id, 1)
+    _owned(service, account, lid='lid1', variant=second.record_id.rsplit(':', 1)[1])
+    another = book.with_name('second.epub')
+    epub(another, title='Second existing book')
+    observed = next(row for row in scan_identity_roots(
+        {'default': (book.parents[2],)}).files if row.path == str(another))
+    options = dict(observation=observed, **{**scope, 'item_id': second.record_id})
+    plan = declare_local_link(service, **options)
+    declare_local_link(service, **options, confirmation=plan.plan_token)
+    _authorize(broker, broker._source_id(account))
+    session.library = lambda: [item, second]
+    original = presence.verify_declared_presence
+    checked = []
+    def verify(*args, **kwargs):
+        checked.append(kwargs['item_id'])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(presence, 'verify_declared_presence', verify)
+    ticks = iter([100.0, 109.0])
+    monkeypatch.setattr(startup, 'monotonic', lambda: next(ticks))
+    result = execute(broker, account.identity_id, 'startup')
+    assert not result.ok and result.facts['status'] == 'blocked'
+    assert result.facts['already_local_declared'] == result.facts['blocked'] == 1
+    assert result.facts['attempted'] == 0 and checked == [item.record_id]
+    assert book.is_file() and another.is_file() and calls == []
