@@ -67,7 +67,7 @@ class LendingActionAdmission:
 def _source_key(value: object, *, allow_empty: bool = False) -> bool:
     return (
         type(value) is str and len(value) <= 1024
-        and (allow_empty or bool(value)) and "\\x00" not in value
+        and (allow_empty or bool(value)) and chr(0) not in value
     )
 
 
