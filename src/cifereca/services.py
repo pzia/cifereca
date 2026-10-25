@@ -2154,6 +2154,28 @@ class LibraryService:
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             return False
         try:
+            if item.source_provider in {"numilog", "numilog-catalog"}:
+                # A private Numilog session has direct_download=True, but that
+                # capability is NOT a per-notice download offer. Public search
+                # results (including those returned from a logged-in account's
+                # scope=catalog) have no purchase/variant authority.
+                if item.source_provider != "numilog":
+                    return False
+                if (item.source_collection != "library"
+                        or item.scenario != "NUMILOG_LIBRARY"
+                        or item.owned is not True
+                        or item.downloadable is not True
+                        or item.download_url is not None
+                        or item.medium != "digital"
+                        or type(item.source_credential) is not str
+                        or not item.source_credential
+                        or item.source_credential == "__public__"):
+                    return False
+                from .core.numilog_manifest_rights import _scoped_record_id
+                if _scoped_record_id(item.record_id, item.source_credential) is None:
+                    return False
+                # This is only a read-only visibility hint; the locked
+                # acquisition still re-attests the exact account and edition.
             if item.source_provider == "kobo":
                 identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
                 if (type(identity_id) is not str or not identity_id
