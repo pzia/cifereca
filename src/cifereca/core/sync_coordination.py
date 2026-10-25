@@ -90,8 +90,20 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             account.credential_id, account.unique_id,
             self._account_context_epoch,
         )
+        # Adopt the optional atomic inventory envelope only where the plugin
+        # explicitly implements it. Legacy providers retain the established
+        # loans()/cache behavior, without a second network read.
+        typed_inventory = callable(getattr(session, "loan_inventory_snapshot", None))
+        snapshot = None
         with measure("loan_refresh_ms"):
-            loans = self._loans_for_account(account, force=True)
+            if typed_inventory:
+                from ..plugin_api.loan_inventory import read_loan_inventory
+                snapshot = read_loan_inventory(session, account)
+                if snapshot.status in {"failed", "cancelled"}:
+                    raise ProviderConfigurationError("loan_inventory_read_unavailable")
+                loans = list(snapshot.loans)
+            else:
+                loans = self._loans_for_account(account, force=True)
         if not _opening_loans_scoped(account, source_scope[0], loans):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
         matching = [
@@ -109,6 +121,24 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                 or session.connected is not True
                 or not self.sync_source_enabled(account)):
             raise ProviderConfigurationError("loan_source_scope_changed")
+        if control is not None and callable(getattr(control, "check_cancelled", None)):
+            control.check_cancelled()
+        if snapshot is not None:
+            # Publish the same cache payload as the legacy reader, but only
+            # after the Core rechecks its registered session/account epoch.
+            # The snapshot is *positive* evidence, never a negative diff.
+            from dataclasses import asdict
+            from ..services import _loan_cache_key
+            serial = []
+            for loan in loans:
+                item = asdict(loan)
+                item["raw"] = {}
+                serial.append(item)
+            self.storage.cache_put(
+                "account", _loan_cache_key(account), serial,
+                int(self.config.get("cache.dashboard_seconds", 300)),
+            )
+            self._record_loan_statistics(account, loans)
         # An explicit source refresh has the SAME positive-loan semantics as
         # opening sync. Never infer absence, close loans missing from an
         # empty/partial list, expire another account's loans or acquire EPUBs.
@@ -124,10 +154,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # BnF HTML observations are deliberately non-exhaustive even when
         # every request succeeded. Preserve Paris' legacy fail-closed default
         # when its independent upstream error inventory is missing.
-        errors = getattr(session, "last_loan_errors",
-                         None if account.provider_id == "paris" else ())
-        if type(errors) not in (list, tuple) or errors:
-            result["status"] = "partial"
+        if snapshot is not None:
+            if snapshot.status == "partial":
+                result["status"] = "partial"
+        else:
+            errors = getattr(session, "last_loan_errors",
+                             None if account.provider_id == "paris" else ())
+            if type(errors) not in (list, tuple) or errors:
+                result["status"] = "partial"
     if session.capabilities.personal_library:
         # A provider can implement a one-shot iterable: both the entitlement
         # mirror and remote catalog must see the exact same authenticated rows.
