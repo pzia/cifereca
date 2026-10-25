@@ -135,21 +135,39 @@ def test_hostile_timeout_text_never_leaks_from_core_cli(monkeypatch, capsys):
 
 def test_dev_plugin_install_timeout_has_safe_reason_and_does_not_retry(monkeypatch, tmp_path):
     calls = []
-    def fake_run(command, **kwargs):
-        calls.append(command)
-        return _timeout(command, timeout=kwargs["timeout"])
-    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    def fake_run(command, *, timeout, on_line):
+        calls.append((command, timeout, on_line))
+        raise TimeoutError(SECRET)
+    monkeypatch.setattr(dev_updater, "run_plugin_child", fake_run)
     monkeypatch.setattr(dev_updater, "_new_cli", lambda: tmp_path / "cli")
     events = []
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TimeoutError) as failure:
         with update_operation("dev_snapshot", callback=events.append):
             with update_phase("plugin_install"):
                 dev_updater._install_plugin_replace(tmp_path / "plugin.zip", activate=True)
     assert len(calls) == 1
+    assert calls[0][1] == dev_updater.PLUGIN_INSTALL_TIMEOUT_SECONDS == 900
+    assert callable(calls[0][2])
+    assert SECRET not in str(failure.value)
+    assert failure.value.__cause__ is None
     assert events[-1]["outcome"] == "failed"
     assert [e["reason_code"] for e in events if e["status"] == "ERROR"] == [
         "timeout", "timeout",
     ]
+
+
+def test_dev_plugin_install_uses_process_group_runner_and_silences_stderr(monkeypatch, tmp_path):
+    calls = []
+    def fake_run(command, *, timeout, on_line):
+        calls.append((command, timeout))
+        on_line(SECRET.encode("utf-8"))
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}')
+    monkeypatch.setattr(dev_updater, "run_plugin_child", fake_run)
+    monkeypatch.setattr(dev_updater, "_new_cli", lambda: tmp_path / "cli")
+    dev_updater._install_plugin_replace(tmp_path / "plugin.zip", activate=False)
+    assert len(calls) == 1
+    assert calls[0][0][-1] == "--no-activate"
+    assert calls[0][1] == 900
 
 
 def test_dev_cli_timeout_remains_redacted_json(monkeypatch, capsys):
