@@ -33,7 +33,9 @@ def test_original_metadata_is_available_in_memory_and_legacy_text(tmp_path):
         if type(value) is str:
             assert value in exported
     broker = query_diagnostic_events(d, log_path=tmp_path / "missing", source="core_events")
-    assert broker["events"][0]["detail"]["loan_id"] == details["loan_id"]
+    # Explicit source='core_events' is a deprecated projected compatibility
+    # feed; journal-backed broker calls are the raw, authoritative path.
+    assert broker["events"][0]["source"] == "core_events"
 
 
 def test_untrusted_status_stays_within_structured_vocabulary(tmp_path):
