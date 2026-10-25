@@ -305,7 +305,7 @@ def journal_text_export(log_path: Path, *, version: str) -> str:
             raise
         document = {
             "coverage": "empty_or_missing", "rotation_gaps": [],
-            "active_log_missing": not Path(log_path).is_file(), "events": [],
+            "active_log_missing": _lines(Path(log_path))[1] == "missing", "events": [],
         }
     header = [
         f"cifereca v{version}",
