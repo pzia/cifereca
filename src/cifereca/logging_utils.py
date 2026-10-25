@@ -40,10 +40,31 @@ def _redact_local_log_text(value: str) -> str:
     return _redact_log_identifiers(redact_text(_LOG_URL.sub("<redacted-url>", value)))
 
 
+def _ensure_trace_console(logger: logging.Logger, *, force: bool = False) -> None:
+    """Mirror the same filtered records to an attached terminal, at most once."""
+    if any(getattr(handler, "_cifereca_trace_console", False) for handler in logger.handlers):
+        return
+    if not force and not getattr(sys.stderr, "isatty", lambda: False)():
+        return
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(logging.DEBUG)
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s"))
+    console.addFilter(RedactionFilter())
+    console._cifereca_trace_console = True
+    logger.addHandler(console)
+
+
 def set_diagnostics_level(level):
+    """Switch the effective file/console logger verbosity without restart."""
     global _diagnostic_level
+    level = "verbose" if level == "detailed" else level
+    if level not in {"errors", "normal", "verbose", "trace"}:
+        raise ValueError("Niveau de diagnostic inconnu")
     _diagnostic_level = level
-    logging.getLogger("cifereca").setLevel(logging.DEBUG if level in {"verbose", "detailed", "trace"} else logging.INFO)
+    logger = logging.getLogger("cifereca")
+    logger.setLevel(logging.DEBUG if level in {"verbose", "trace"} else logging.INFO)
+    if level == "trace" and logger.handlers:
+        _ensure_trace_console(logger)
 
 
 class RedactionFilter(logging.Filter):
@@ -82,6 +103,7 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
     if logger.handlers:
         if verbose:
             logger.setLevel(logging.DEBUG)
+            _ensure_trace_console(logger, force=True)
         return logger
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     handler = RotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
@@ -89,9 +111,5 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
     handler.addFilter(RedactionFilter())
     logger.addHandler(handler)
     if verbose:
-        console = logging.StreamHandler(sys.stderr)
-        console.setLevel(logging.DEBUG)
-        console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s"))
-        console.addFilter(RedactionFilter())
-        logger.addHandler(console)
+        _ensure_trace_console(logger, force=True)
     return logger
