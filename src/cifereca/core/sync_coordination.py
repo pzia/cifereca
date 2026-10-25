@@ -7,11 +7,12 @@ from __future__ import annotations
 import time
 import hashlib
 import json
+import logging
 from contextlib import ExitStack
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
-from ..diagnostics import redact
+from ..diagnostics import redact, _core_journal_record
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..models import Account, Loan
@@ -957,11 +958,28 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         value = (kobo_summary or {}).get(field)
         if type(value) is int and 0 <= value <= 1_000_000:
             kobo_decision[field] = value
-    logger.info(
-        "TRACE kobo backup decision status=%s enabled=%s connected=%s eligible=%s interval=%s",
+    # One physical log record: the canonical formatter persists the complete
+    # Core decision while existing TRACE listeners keep their original text.
+    _decision_format = (
+        "TRACE kobo backup decision status=%s enabled=%s connected=%s eligible=%s interval=%s"
+    )
+    _decision_args = (
         kobo_decision["status"], kobo_decision["persisted_enabled"],
         kobo_decision["connected_kobo"], kobo_decision["eligible_kobo"],
         kobo_decision["interval_minutes"],
+    )
+    _decision_severity = (
+        logging.ERROR if kobo_decision["status"] == "error"
+        else logging.WARNING if kobo_decision["status"] == "partial"
+        else logging.INFO
+    )  # Never discard a failed opening in errors-only mode.
+    logger.log(
+        _decision_severity, _decision_format, *_decision_args,
+        extra=_core_journal_record(
+            "KOBO", "automatic backup decision",
+            "warning" if kobo_decision["status"] in {"partial", "error"} else "ok",
+            _decision_format % _decision_args, kobo_decision,
+        ),
     )
     # The no-item case has no backup rows or checkpoint. Persist only a
     # minimal, enumerated decision so kobo-sync-errors can explain *why* on a

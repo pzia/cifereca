@@ -141,6 +141,29 @@ def redact(value: Any, key: str = "") -> Any:
     return value
 
 
+def _core_journal_record(category: str, operation: str, status: str,
+                         message: str, fields: dict[str, Any], *,
+                         duration_ms: int | None = None) -> dict[str, Any]:
+    """Carry an attested Core event on its existing logger call, once.
+
+    The Core-owned file/console formatter serializes this extra metadata as
+    DIAG_JSON; legacy handlers receive the original message unchanged.
+    Values are never redacted by this logging path. The optional in-memory
+    snapshot remains a temporary compatibility view, not a second writer.
+    """
+    payload: dict[str, Any] = {
+        "schema_version": 1, "category": category,
+        "operation": operation, "status": status,
+        "message": message, "detail": dict(fields),
+    }
+    if type(fields.get("task_ref")) is str:
+        payload["task_ref"] = fields["task_ref"]
+    measured_ms = duration_ms if duration_ms is not None else fields.get("duration_ms")
+    if type(measured_ms) is int and 0 <= measured_ms <= 86_400_000:
+        payload["duration_ms"] = measured_ms
+    return {"_cifereca_journal_payload": payload}
+
+
 @dataclass
 class DiagnosticEntry:
     timestamp: str
@@ -219,6 +242,7 @@ class Diagnostics:
                 "status": status if type(status) is str else "unknown",
                 "message": operation if type(operation) is str else "diagnostic",
                 "detail": journal_payload(detail) if type(detail) is dict else {},
+                **({"duration_ms": entry.duration_ms} if entry.duration_ms is not None else {}),
                 **({"task_ref": entry.task_ref} if entry.task_ref else {}),
             }
             payload = json.dumps(raw, ensure_ascii=False, allow_nan=False)
@@ -250,7 +274,14 @@ class Diagnostics:
                 self._items.append(entry)
         try:
             severity = logging.INFO if status == 'success' else logging.ERROR if status == 'failed' else logging.WARNING
-            logging.getLogger('cifereca').log(severity, '%s', log_message(fields))
+            message = log_message(fields)
+            logging.getLogger('cifereca').log(
+                severity, '%s', message,
+                extra=_core_journal_record(
+                    'LOAN', 'bnf_loan_action',
+                    'ok' if status == 'success' else status, message, fields,
+                ),
+            )
         except Exception:
             pass
 
@@ -281,7 +312,15 @@ class Diagnostics:
         try:
             logger = logging.getLogger("cifereca")
             if logger.isEnabledFor(severity):
-                logger.log(severity, "%s", log_message(fields))
+                message = log_message(fields)
+                logger.log(
+                    severity, "%s", message,
+                    extra=_core_journal_record(
+                        "PNB" if fields["provider_id"] == "paris" else "LOAN",
+                        "download_loan", "ok" if status == "success" else status,
+                        message, fields,
+                    ),
+                )
         except Exception:
             # Diagnostics are never allowed to alter an acquisition result.
             pass
@@ -333,6 +372,7 @@ class Diagnostics:
                 "status": status,
                 "message": OPERATIONS[fields["operation"]],
                 "detail": {"domain": "browser_recorder", **fields},
+                **({"duration_ms": fields["duration_ms"]} if "duration_ms" in fields else {}),
             }
             severity = (
                 logging.ERROR if status == "error" else
@@ -382,7 +422,16 @@ class Diagnostics:
             message = log_message(fields)
             logger = logging.getLogger("cifereca")
             if message is not None and logger.isEnabledFor(severity):
-                logger.log(severity, "%s", message)
+                logger.log(
+                    severity, "%s", message,
+                    extra=_core_journal_record(
+                        "PLUGIN", "provider_connect",
+                        "error" if fields["status"] == "failed"
+                        else "warning" if fields["status"] in {"skipped", "cancelled"}
+                        else "ok" if fields["status"] == "success" else "unknown",
+                        message, fields,
+                    ),
+                )
         except Exception:
             pass
 
@@ -414,9 +463,9 @@ class Diagnostics:
         if not fields:
             return
         logger = logging.getLogger("cifereca")
+        time_ms = (duration_ms if type(duration_ms) is int
+                   and 0 <= duration_ms <= 600000 else None)
         if self.enabled:
-            time_ms = (duration_ms if type(duration_ms) is int
-                       and 0 <= duration_ms <= 600000 else None)
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 category="PLUGIN",
@@ -429,7 +478,15 @@ class Diagnostics:
                 self._items.append(entry)
         try:
             if logger.isEnabledFor(logging.ERROR):
-                logger.error(public_connection_log_message(fields))
+                message = public_connection_log_message(fields)
+                logger.error(
+                    "%s", message,
+                    extra=_core_journal_record(
+                        "PLUGIN",
+                        "public provider connect" if singleton else "provider connect",
+                        "error", message, fields, duration_ms=time_ms,
+                    ),
+                )
         except Exception:
             # Optional logging is never allowed to turn a connection failure
             # into a different outcome or leak the handler's private message.
@@ -475,7 +532,16 @@ class Diagnostics:
         try:
             logger = logging.getLogger("cifereca")
             if logger.isEnabledFor(logging.INFO):
-                logger.info("%s", public_connection_success_log_message(fields))
+                message = public_connection_success_log_message(fields)
+                logger.info(
+                    "%s", message,
+                    extra=_core_journal_record(
+                        "PLUGIN",
+                        "public provider connected" if singleton else "provider connected",
+                        "ok", message, fields,
+                        duration_ms=duration_ms,
+                    ),
+                )
         except Exception:
             pass
 
@@ -590,7 +656,13 @@ class Diagnostics:
             with self._lock:
                 self._items.append(entry)
         try:
-            logger.log(severity, "%s", log_message(fields))
+            message = log_message(fields)
+            logger.log(
+                severity, "%s", message,
+                extra=_core_journal_record(
+                    "SYNC", "source sync", status, message, fields,
+                ),
+            )
         except Exception:
             pass
 
@@ -623,7 +695,13 @@ class Diagnostics:
             with self._lock:
                 self._items.append(entry)
         try:
-            logger.log(severity, "%s", log_message(fields))
+            message = log_message(fields)
+            logger.log(
+                severity, "%s", message,
+                extra=_core_journal_record(
+                    "ADEPT", "kobo adept", fields["status"], message, fields,
+                ),
+            )
         except Exception:
             pass
 
@@ -663,7 +741,13 @@ class Diagnostics:
                             else logging.WARNING)
                 logger = logging.getLogger("cifereca")
                 if logger.isEnabledFor(severity):
-                    logger.log(severity, "%s", message)
+                    logger.log(
+                        severity, "%s", message,
+                        extra=_core_journal_record(
+                            "LIBRARY", "library_reconciliation_audit",
+                            "ok" if status == "complete" else status, message, fields,
+                        ),
+                    )
         except Exception:
             # Diagnostic persistence cannot alter a read-only audit.
             pass

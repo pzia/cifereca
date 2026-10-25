@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import logging
 import os
 import sys
@@ -21,7 +22,7 @@ def _ensure_trace_console(logger: logging.Logger, *, force: bool = False) -> Non
         return
     console = logging.StreamHandler(sys.stderr)
     console.setLevel(logging.DEBUG)
-    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s"))
+    console.setFormatter(CanonicalEventFormatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s"))
     console.addFilter(RedactionFilter())
     console._cifereca_trace_console = True
     logger.addHandler(console)
@@ -77,6 +78,31 @@ class RedactionFilter(logging.Filter):
         return True
 
 
+class CanonicalEventFormatter(logging.Formatter):
+    """Serialize typed Core facts inside their original log occurrence.
+
+    Core producers attach _cifereca_journal_payload to a LogRecord. File and
+    console share canonical JSON while independent handlers receive the
+    unchanged legacy message. Neither extra emission nor redaction occurs.
+    """
+
+    def format(self, record):
+        payload = getattr(record, "_cifereca_journal_payload", None)
+        if type(payload) is not dict:
+            return super().format(record)
+        try:
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False,
+                              separators=(",", ":"))
+        except (TypeError, ValueError, OverflowError):
+            # Invalid optional metadata must never hide an actual error.
+            return super().format(record)
+        clone = logging.makeLogRecord(record.__dict__.copy())
+        clone.msg = "DIAG_JSON " + body
+        clone.args = ()
+        clone.exc_text = None
+        return super().format(clone)
+
+
 class PrivateRotatingFileHandler(RotatingFileHandler):
     """Create and rotate a local raw journal readable only by its owner."""
     def _open(self):
@@ -102,7 +128,7 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
         return logger
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     handler = PrivateRotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"))
+    handler.setFormatter(CanonicalEventFormatter("%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"))
     handler.addFilter(RedactionFilter())
     logger.addHandler(handler)
     if verbose:
