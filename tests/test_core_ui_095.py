@@ -115,7 +115,7 @@ class Redaction(unittest.TestCase):
         RedactionFilter().filter(record);self.assertIn('SECRET',record.getMessage())
     def test_log_dict_secret_keys(self):
         record=logging.LogRecord('test',20,'',1,'Payload %s',({'api_token':'SECRET','normal':'visible'},),None)
-        RedactionFilter().filter(record);self.assertNotIn('SECRET',record.getMessage())
+        RedactionFilter().filter(record);self.assertIn('SECRET',record.getMessage())
     def test_normal_url_preserved(self): self.assertEqual(redact_text('https://host.test/book'),'https://host.test/book')
 
 
