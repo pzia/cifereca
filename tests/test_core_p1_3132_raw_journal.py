@@ -62,3 +62,15 @@ def test_rotated_files_stay_private_and_keep_raw_values(tmp_path, monkeypatch):
     assert "password=FIRST" in merged
     assert "token=SECOND" in merged
     assert "login=THIRD" in merged
+
+
+def test_errors_level_never_silences_a_genuine_generic_failure():
+    from cifereca.diagnostics import Diagnostics
+
+    diagnostic = Diagnostics(level="errors")
+    diagnostic.add("SYNC", "connexion", "ok", level="normal")
+    diagnostic.add("SYNC", "téléchargement", "failed", level="normal")
+    diagnostic.add("LOAN", "ACSM", "error", level="trace")
+    assert [(row["operation"], row["status"]) for row in diagnostic.snapshot()] == [
+        ("téléchargement", "failed"), ("ACSM", "error"),
+    ]
