@@ -169,6 +169,19 @@ def test_stage_error_explains_safe_code_without_starting_adept():
     assert len(Dialog.shown)==1
 
 
+def test_failed_activity_message_says_no_get_was_attempted():
+    from cifereca.gui.bnf_acsm_action_controller import bnf_action_error_message
+    from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+    for code in ('bnf_activity_auth_required',
+                 'bnf_activity_http_unavailable',
+                 'bnf_activity_unrecognized_loans',
+                 'bnf_activity_unavailable'):
+        message=bnf_action_error_message(BnfLoanActionError(code))
+        assert 'Aucun GET ACSM' in message
+        assert 'Code : '+code in message
+        assert '\\n' not in message
+
+
 def test_import_error_is_distinct_and_never_formats_private_exception():
     from cifereca.gui.bnf_acsm_action_controller import bnf_action_error_message
     w,_=window()
