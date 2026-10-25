@@ -51,10 +51,26 @@ projection, avec ses restrictions, **n'est pas une autre source d'autorité**.
 Elle ignore les nouvelles lignes `DIAG_JSON` pour éviter leur double
 comptage. Les consommateurs doivent migrer vers `source="journal"`.
 
+## Migration des producteurs Core attestés — lot #3155
+
+Les producteurs Core validant eux-mêmes leurs champs attachent désormais une
+projection structurée à **leur LogRecord existant** : BnF Prêt, téléchargement
+de prêt, tentatives/résultats de connexion, synchronisation source, ADEPT,
+réconciliation, démarrage Numilog et décision d'ouverture Kobo. Le formateur
+du handler physique/console encode cette projection en `DIAG_JSON` **à la
+place de la représentation texte de ce même enregistrement** ; il n'émet
+pas une seconde ligne. Les handlers anciens lisent toujours le message
+original. Les champs attestés, le `task_ref` effectivement émis et l'ordre
+des occurrences sont consultables après redémarrage.
+
+Un échec Numilog et une décision Kobo `error`/ `partial` sont respectivement
+émis en `ERROR`/`WARNING` plutôt qu'en `INFO` afin de ne pas disparaître
+du journal quand le niveau effectif est `errors`.
+
 ## Points restant à consolider
 
-Les producteurs Core spécialisés qui n'écrivent encore qu'en mémoire doivent
-être branchés au journal, et les anciennes projections/exports réduits
+Les autres producteurs spécialisés et intégrations de plugins doivent être
+inventoriés et vérifiés, et les anciennes projections/exports réduits
 supprimés après migration de leurs lecteurs et des tests associés.
 Les loggers indépendants de `cifereca` ne sont couverts que s'ils écrivent
 dans le handler de journal configuré. Toute déclaration de couverture
