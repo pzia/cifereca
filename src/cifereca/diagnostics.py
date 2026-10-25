@@ -1,7 +1,6 @@
 from __future__ import annotations
 import json
 import logging
-import re
 import threading
 from collections import deque
 from dataclasses import dataclass, asdict
@@ -10,67 +9,9 @@ from typing import Any
 
 from .diagnostic_task_context import numilog_task_reference
 
-# Public redact()/redact_text() is also used by book/sync UI. Its legacy
-# contract must not mask a book title or a non-sensitive presence boolean.
-SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
-
-# Additional *generic diagnostic collector* guard only. This never modifies
-# the public redaction helper used by Library and Synchronisation views.
-# Generic diagnostic text is NOT a trusted public site field. URL-like
-# strings may carry opaque account/loan identifiers even without a query.
-# Leave redact_text() alone: other views legitimately show public URLs.
-_GENERIC_DIAGNOSTIC_URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\x22']+")
-
-
-def _redact_generic_diagnostic_text(value: str) -> str:
-    return redact_text(_GENERIC_DIAGNOSTIC_URL.sub("<redacted-url>", value))
-
-
-_DIAGNOSTIC_PRIVATE_KEYS = re.compile(
-    r"(?:^|[_-])(?:credential(?:[_-]?id)?|account[_-]?id|identity[_-]?id"
-    r"|profile[_-]?id|loan[_-]?id|source[_-]?item[_-]?id|book[_-]?title"
-    r"|title|filename|file[_-]?path|local[_-]?path|acsm|license|licence"
-    r"|signed[_-]?url|delivery[_-]?url|source[_-]?url|headers?|api[_-]?key)"
-    r"(?:$|[_-])",
-    re.I,
-)
-
-
-def _redact_generic_diagnostic_detail(detail: dict) -> dict:
-    """Fail closed on private values of otherwise well-formed free-form keys.
-
-    This is supplementary to each producer's typed public projection. Pure
-    booleans ending in _present are non-identifying existence observations;
-    preserve these for established ADEPT diagnostics without retaining IDs.
-    """
-    def guard(value, depth=0):
-        if depth > 5:
-            return "<redacted>"
-        if type(value) is dict:
-            result = {}
-            for key, item in list(value.items())[:64]:
-                # A dict key is data as well: never retain a URL, email,
-                # private path or hostile object disguised as a field name.
-                if (type(key) is not str or len(key) > 64 or
-                        re.fullmatch(r"[a-z][a-z0-9_]*", key, re.ASCII) is None):
-                    continue
-                if (_DIAGNOSTIC_PRIVATE_KEYS.search(key)
-                        and not (key.endswith("_present") and type(item) is bool)):
-                    result[key] = "<redacted>"
-                else:
-                    result[key] = guard(item, depth + 1)
-            return result
-        if type(value) is list:
-            return [guard(item, depth + 1) for item in value[:100]]
-        if type(value) is str:
-            return _redact_generic_diagnostic_text(value)
-        if type(value) in (bool, int, float) or value is None:
-            return value
-        return "<redacted>"
-
-    return guard(redact(detail))
-
-
+# Compatibility helpers retained for existing Core and plugin clients.
+# Masking and pseudonymization are exclusively presentation-time concerns of
+# the Diagnostics GTK page, for explicit login/password fields only.
 _GENERIC_STATUSES = frozenset({
     "ok", "error", "warning", "failed", "success", "partial", "running",
     "complete", "completed", "attention_required", "retryable_error",
@@ -78,66 +19,13 @@ _GENERIC_STATUSES = frozenset({
 })
 
 
-def _legacy_text_key(value: object) -> str:
-    """Never render free-form dictionary keys into the support text export."""
-    if (type(value) is str and len(value) <= 64
-            and re.fullmatch(r"[a-z][a-z0-9_]*", value, re.ASCII)):
-        return value
-    return "[champ masqué]"
-
-
-
 def redact_text(text: str) -> str:
-    # The redactor is a last-resort guard for free-text coming from providers,
-    # exceptions or plugin logs. It cannot replace typed, closed diagnostics.
-    # Never print signed URLs, private filesystem locations or email addresses.
-    text = re.sub(r"https?://[^\s<>\"']+", lambda m: _redact_url(m.group()), text, flags=re.I)
-    text = re.sub(r"(?i)file://[^\s<>\"']+", "<redacted-path>", text)
-    text = re.sub(
-        r"(?i)(?<![\w:/])/(?:home|users|root|tmp|var|mnt|media|run)/[^\s,;:\"'<>)}\]]+",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)\b[a-z]:[\\/](?:[^\s,;:\"'<>)}\]]+)",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)(?<![\w.+-])[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}(?![\w.-])",
-        "<redacted-email>", text,
-    )
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
-    text = re.sub(r"(?i)\b(password|cookie|token|secret|authorization|session|barcode|readerid)\b\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)
-    text = re.sub(r"(?i)([\"']?(?:password|cookie|token|secret|authorization|session|barcode|readerid)[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;}]+)", r"\1<redacted>", text)
+    """Legacy API name: return original text, without Core-side masking."""
     return text
 
 
-def _redact_url(url):
-    from urllib.parse import urlsplit
-    try:
-        parsed = urlsplit(url)
-        # Preserve non-sensitive public URLs (historical Plugin API contract)
-        # while hiding known borrower/account routes even without a query.
-        private_route = re.search(
-            r"(?i)/(?:LOAN|reader|account|users?|private(?:[-_][^/]+)?|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\.acsm)(?:/|$)",
-            parsed.path,
-        )
-        if parsed.query or parsed.fragment or parsed.username or private_route:
-            return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
-        return url
-    except ValueError:
-        return "<redacted-url>"
-
-
 def redact(value: Any, key: str = "") -> Any:
-    if SENSITIVE_KEYS.search(key):
-        return "<redacted>"
-    if isinstance(value, dict):
-        return {k: redact(v, str(k)) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(v, key) for v in value]
-    if isinstance(value, str):
-        text = redact_text(value)
-        return text[:500] + "…" if len(text) > 500 else text
+    """Legacy API name: preserve original data for downstream consumers."""
     return value
 
 
@@ -213,17 +101,18 @@ class Diagnostics:
                 return
         elif self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
             return
-        # The generic collector is optional. Malformed plugin data must not
-        # crash a workflow or gain a printable representation of a private
-        # object by way of its __str__/__bool__/__eq__ hooks.
+        # Keep all JSON-compatible event evidence untouched. The canonical
+        # serializer excludes foreign object hooks without censoring values.
+        # Malformed plugin payloads cannot crash a business operation.
+        from .core.diagnostic_journal import journal_payload
         try:
-            safe_detail = _redact_generic_diagnostic_detail(detail) if type(detail) is dict else {}
+            safe_detail = journal_payload(detail) if type(detail) is dict else {}
         except Exception:
             safe_detail = {}
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            category=_redact_generic_diagnostic_text(category)[:160] if type(category) is str else "DIAGNOSTICS",
-            operation=_redact_generic_diagnostic_text(operation)[:160] if type(operation) is str else "[opération masquée]",
+            category=category[:160] if type(category) is str else "DIAGNOSTICS",
+            operation=operation[:160] if type(operation) is str else "[opération invalide]",
             status=status if type(status) is str and status in _GENERIC_STATUSES else "unknown",
             duration_ms=duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000 else None,
             detail=safe_detail,
@@ -785,6 +674,9 @@ class Diagnostics:
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
+        """Legacy text export, keeping the same unmasked journal evidence."""
+        from .core.diagnostic_journal import journal_payload
+
         lines = [
             f"cifereca v{version}",
             f"Generated: {datetime.now(timezone.utc).isoformat(timespec='milliseconds')}",
@@ -792,15 +684,12 @@ class Diagnostics:
         ]
         if type(extra) is dict:
             for key, value in extra.items():
-                safe_key = _legacy_text_key(key)
-                if safe_key == "[champ masqué]":
-                    lines.append("[champ masqué]: <redacted>")
+                if type(key) is not str:
                     continue
-                try:
-                    safe_value = redact(value, safe_key)
-                except Exception:
-                    safe_value = "<redacted>"
-                lines.append(f"{safe_key}: {safe_value}")
+                original = journal_payload(value)
+                rendered = (json.dumps(original, ensure_ascii=False, allow_nan=False)
+                            if type(original) in (dict, list) else str(original))
+                lines.append(f"{key}: {rendered}")
         lines.append("")
         for item in self.snapshot():
             lines.append(f"[{item['timestamp']}] {item['category']} {item['operation']} status={item['status']}")
@@ -809,12 +698,9 @@ class Diagnostics:
             if item.get("duration_ms") is not None:
                 lines.append(f"duration={item['duration_ms']}ms")
             detail = item.get("detail") or {}
-            if detail:
-                for k, v in detail.items():
-                    safe_key = _legacy_text_key(k)
-                    if safe_key == "[champ masqué]":
-                        lines.append("[champ masqué]=<redacted>")
-                        continue
-                    lines.append(f"{safe_key}={json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v}")
+            for key, value in detail.items():
+                rendered = (json.dumps(value, ensure_ascii=False, allow_nan=False)
+                            if type(value) in (dict, list) else str(value))
+                lines.append(f"{key}={rendered}")
             lines.append("")
-        return "\n".join(lines).rstrip() + "\n"
+        return "\\n".join(lines).rstrip() + "\\n"
