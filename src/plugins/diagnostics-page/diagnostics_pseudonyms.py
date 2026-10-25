@@ -4,7 +4,7 @@ The single session mapping lives in cifereca.gui and is reused by the
 Settings Diagnostics preview and the standalone Diagnostics page.
 No Core writer, broker, journal or raw export imports this UI-only map.
 """
-from cifereca.gui.diagnostics_pseudonyms import (
+from cifereca.plugin_api import (
     DiagnosticsPseudonyms, DISPLAY_PSEUDONYMS,
 )
 
