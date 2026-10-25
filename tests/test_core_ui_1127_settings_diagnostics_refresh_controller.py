@@ -5,7 +5,18 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import pytest
+from cifereca.gui import settings_diagnostics_refresh_controller as controller
+
 from cifereca.gui.settings_diagnostics_refresh_controller import refresh_settings_diagnostics
+
+
+@pytest.fixture(autouse=True)
+def _fake_canonical_broker(monkeypatch):
+    monkeypatch.setattr(
+        controller, "DiagnosticsBrokerImpl",
+        lambda service: NS(snapshot=service._journal_snapshot),
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
@@ -99,15 +110,23 @@ def make_context(*, ready=1, attention=0, rows=(), selected=0, paris_url=True):
     host = NS(
         _closed=False,
         plugin_manager=object(),
-        diagnostics=NS(text=lambda version, facts: (
-            calls.append(("report", version, facts)), "texte expurgé"
-        )[1]),
+        diagnostics=NS(text=lambda *_: (_ for _ in ()).throw(
+            AssertionError("legacy Diagnostics.text() must not be used")
+        )),
         config=config,
         covers=NS(stats=lambda: {"covers": 2}),
         history_cover_resolver=NS(stats=lambda: {"history": 3}),
         ui_perf=NS(snapshot=lambda: {"perf": 4}),
         service=NS(provider_diagnostic_state=lambda: {"source": "ready"}),
     )
+    host.service._journal_snapshot = lambda: (
+        calls.append(("journal", host.service)),
+        ({
+            "source": "journal", "event_id": "physical-1",
+            "module": "TEST", "operation": "refresh",
+            "detail": {"login": "reader@example.invalid", "path": "/tmp/book.epub"},
+        },),
+    )[1]
     args = {
         "page_lifetime": lifetime,
         "diag_summary": summary,
@@ -172,8 +191,9 @@ def test_empty_attention_filter_reports_clear_state_without_leaking_sources():
     empty = args["diag_issues_box"].children[0]
     assert empty.label == "Aucune anomalie à examiner."
     assert "success" in empty.classes
-    assert report.text == "texte expurgé"
-    assert [x[0] for x in calls] == ["status", "project", "report"]
+    assert "Source: journal canonique local" in report.text
+    assert "reader@example.invalid" in report.text
+    assert [x[0] for x in calls] == ["status", "project", "journal"]
 
 
 def test_attention_priority_summary_and_filter_selected():
@@ -247,25 +267,27 @@ def test_refresh_replaces_old_plugin_widgets_instead_of_duplication():
 def test_report_preserves_existing_provenance_performance_and_provider_state():
     host, args, calls, report = make_context()
     refresh_settings_diagnostics(host, **args)
-    _, version, facts = next(event for event in calls if event[0] == "report")
-    assert version == "test-version"
-    assert facts == {
-        "transport": "httpx local direct",
-        "base_url": "https://paris.example.invalid",
-        "ui": "GTK4/libadwaita",
-        "cover_pipeline": {"covers": 2},
-        "history_cover_search": {"history": 3},
-        "ui_performance": {"perf": 4},
-        "providers": {"source": "ready"},
-    }
-    assert report.text == "texte expurgé"
+    assert report.text.startswith("cifereca vtest-version")
+    for snippet in (
+        'transport: "httpx local direct"',
+        'base_url: "https://paris.example.invalid"',
+        'ui: "GTK4/libadwaita"',
+        'cover_pipeline: {"covers": 2}',
+        'history_cover_search: {"history": 3}',
+        'ui_performance: {"perf": 4}',
+        'providers: {"source": "ready"}',
+        '"event_id": "physical-1"',
+        '"login": "reader@example.invalid"',
+        '"path": "/tmp/book.epub"',
+    ):
+        assert snippet in report.text
+    assert [event[0] for event in calls] == ["status", "project", "journal"]
 
 
 def test_report_falls_back_to_config_base_url_without_paris_helper():
-    host, args, calls, _ = make_context(paris_url=False)
+    host, args, calls, report = make_context(paris_url=False)
     refresh_settings_diagnostics(host, **args)
-    facts = next(event[2] for event in calls if event[0] == "report")
-    assert facts["base_url"] == "https://config.example.invalid"
+    assert 'base_url: "https://config.example.invalid"' in report.text
 
 
 def test_no_plugin_activation_or_background_job_in_refresh_path():
@@ -274,4 +296,4 @@ def test_no_plugin_activation_or_background_job_in_refresh_path():
     host.reconnect_sources = lambda: (_ for _ in ()).throw(AssertionError("reconnect"))
     host.runner = NS(submit=lambda *_: (_ for _ in ()).throw(AssertionError("task")))
     refresh_settings_diagnostics(host, **args)
-    assert [event[0] for event in calls] == ["status", "project", "report"]
+    assert [event[0] for event in calls] == ["status", "project", "journal"]
