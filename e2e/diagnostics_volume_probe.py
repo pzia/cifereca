@@ -195,6 +195,9 @@ def main():
                     if trace.tb_frame.f_code.co_filename == __file__:
                         location = trace.tb_lineno
                     trace = trace.tb_next
+                # Published CI summary accepts source-reviewed assert/raise
+                # lines only. The raw fixture report remains runner-local.
+                report["failure_line"] = location
                 print(f"CIFERECA_DIAG_VOLUME_FAIL line={location} type={type(exc).__name__}",
                       file=sys.stderr, flush=True)
                 fail(f"{type(exc).__name__}: {exc}")
