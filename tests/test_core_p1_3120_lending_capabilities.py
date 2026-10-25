@@ -9,7 +9,9 @@ import pytest
 
 from cifereca.models import Account
 from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor, ProviderSession
-from cifereca.plugin_api.lending_capabilities import assess_lending_operation
+from cifereca.plugin_api.lending_capabilities import (
+    assess_lending_operation, validate_lending_publication,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -182,3 +184,102 @@ def test_invalid_manifest_unknown_operation_and_missing_account_never_promote_ac
     assert not r.usable
     r = fact("loan.acquire", d, s, a)
     assert r.operation == "unknown" and not r.usable
+
+
+def _publications(d, cls, *, capabilities=None):
+    if capabilities is None:
+        capabilities = manifest(d.id)
+    return {
+        fact.operation: fact
+        for fact in validate_lending_publication(
+            manifest_capabilities=capabilities,
+            descriptor=d, session_type=cls,
+        )
+    }
+
+
+def test_static_paris_publication_audit_distinguishes_legacy_methods():
+    d = descriptor(borrow=True, digital=True, renew=True, ret=True)
+    facts = _publications(d, ParisActions)
+    assert len(facts) == 5
+    for action in ("loan.list", "loan.borrow", "loan.download_token"):
+        assert facts[action].publication_status == "declared"
+        assert facts[action].publishable
+        assert facts[action].reason_code == "publication_consistent"
+    for action in ("loan.renew", "loan.return"):
+        assert facts[action].publication_status == "legacy_unmapped"
+        assert facts[action].method_implemented
+        assert not facts[action].publishable
+
+
+def test_static_bnf_internal_token_is_not_promoted_to_generic_download():
+    facts = _publications(descriptor("bnf-pret"), BnfInternalToken)
+    assert facts["loan.list"].publishable
+    token = facts["loan.download_token"]
+    assert token.publication_status == "absent"
+    assert token.method_implemented
+    assert token.manifest_declared is False
+    assert token.descriptor_declared is False
+    assert not token.publishable
+
+
+def test_static_validator_reports_conflicting_manifest_or_stub_without_io():
+    d = descriptor(loans=True, borrow=True)
+    manifest_claims = ("sync.loans", "acquisition.borrow")
+    missing = _publications(d, OnlyList, capabilities=manifest_claims)
+    assert missing["loan.borrow"].publication_status == "conflict"
+    assert missing["loan.borrow"].reason_code == "method_unimplemented"
+    contradictory = _publications(
+        descriptor(borrow=False), ParisActions, capabilities=manifest_claims,
+    )
+    assert contradictory["loan.borrow"].publication_status == "conflict"
+    assert contradictory["loan.borrow"].reason_code == "manifest_descriptor_conflict"
+
+
+@pytest.mark.parametrize("bad_manifest", [
+    None, 1, ("sync.loans", "sync.loans"), ("sync.loans", object()),
+])
+def test_static_validator_rejects_unverified_manifest_without_action(bad_manifest):
+    facts = _publications(
+        descriptor(), OnlyList, capabilities=bad_manifest
+    ) if bad_manifest is not None else {
+        fact.operation: fact
+        for fact in validate_lending_publication(
+            manifest_capabilities=None, descriptor=descriptor(),
+            session_type=OnlyList,
+        )
+    }
+    assert all(f.publication_status == "unverified" for f in facts.values())
+    assert not any(f.publishable for f in facts.values())
+
+
+def test_static_publication_never_instantiates_or_calls_provider():
+    class ExplodingSession(OnlyList):
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("publication audit must not construct a session")
+
+        def borrow(self, *args):
+            raise AssertionError("publication audit must not borrow")
+
+    d = descriptor(borrow=True)
+    facts = _publications(
+        d, ExplodingSession,
+        capabilities=("sync.loans", "acquisition.borrow"),
+    )
+    assert facts["loan.borrow"].publishable
+    disabled = _publications(
+        replace(d, state="skeleton"), ExplodingSession,
+        capabilities=("sync.loans", "acquisition.borrow"),
+    )
+    assert disabled["loan.borrow"].publication_status == "unverified"
+    assert not disabled["loan.borrow"].publishable
+
+
+def test_static_audit_requires_real_provider_session_subclass():
+    for klass in (object, None, "not a class"):
+        result = validate_lending_publication(
+            manifest_capabilities=("sync.loans",),
+            descriptor=descriptor(), session_type=klass,
+        )
+        assert all(f.publication_status == "unverified" for f in result)
+        assert not any(f.publishable for f in result)
