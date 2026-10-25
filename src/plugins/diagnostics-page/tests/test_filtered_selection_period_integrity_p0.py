@@ -22,7 +22,7 @@ class FixedClock(datetime):
 
 def event(number, *, timestamp="2026-10-18T11:00:00+00:00", severity="error"):
     return {
-        "event_id": f"evt-{number}", "source": "app_log",
+        "event_id": f"evt-{number}", "source": "journal",
         "module": "cifereca.sync", "severity": severity,
         "timestamp": timestamp,
         "message": "public diagnostic", "status": "failed",
@@ -48,7 +48,7 @@ class Broker:
             "offset": offset,
             "next_offset": offset+len(batch)
             if offset+len(batch) < len(rows) else None,
-            "sources": [{"source": "app_log", "status": "available"}],
+            "sources": [{"source": "journal", "status": "available"}],
         }
         if self.mutate is not None:
             self.mutate(self, kwargs, payload)
