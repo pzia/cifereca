@@ -1433,26 +1433,24 @@ class DiagnosticsBrokerImpl:
         limit: int = 50, offset: int = 0, reason_code: str = "",
         search: str = "",
     ) -> dict[str, Any]:
-        """Read-only events from the new canonical journal or legacy facade."""
+        """Read only the canonical physical journal, never the memory cache.
+
+        Historical source spellings are temporary aliases, not distinct feeds
+        and cannot cause another read or duplicate physical occurrences.
+        """
+        from .core.diagnostic_journal import query_journal
         from .paths import log_file
-        if source == "journal":
-            from .core.diagnostic_journal import query_journal
-            if reason_code or domain:
-                raise ValueError("legacy closed-schema filters unavailable on raw journal")
-            return query_journal(
-                log_file(), search=search, module=module, severity=severity,
-                provider_id=provider_id, since=since, until=until,
-                limit=limit, offset=offset,
+
+        if source not in ("journal", "all", "core_events", "app_log"):
+            raise ValueError("unknown diagnostic source")
+        if domain or reason_code:
+            raise ValueError(
+                "legacy domain/reason filters unavailable on canonical journal"
             )
-        if search:
-            raise ValueError("global text search requires source='journal'")
-        from .core.diagnostic_event_feed import query_diagnostic_events
-        return query_diagnostic_events(
-            self.service.diagnostics, log_path=log_file(),
-            source=source, module=module, severity=severity,
-            provider_id=provider_id, domain=domain,
-            since=since, until=until, limit=limit, offset=offset,
-            reason_code=reason_code,
+        return query_journal(
+            log_file(), search=search, module=module, severity=severity,
+            provider_id=provider_id, since=since, until=until,
+            limit=limit, offset=offset,
         )
 
     def export_raw_journal(self) -> bytes:

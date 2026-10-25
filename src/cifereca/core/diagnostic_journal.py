@@ -138,6 +138,12 @@ def _make_event(match, identity, offset):
         event["operation"] = operation
     if detail:
         event["detail"] = detail
+    # Exact structured field, never inferred from an event message or logger.
+    # The UI provider filter and explicit source-scope checks need this same
+    # value at the top level; the full original is retained in detail.
+    provider_id = detail.get("provider_id")
+    if type(provider_id) is str and 0 < len(provider_id) <= 90:
+        event["provider_id"] = provider_id
     if task_ref:
         event["task_ref"] = task_ref
     if duration_ms is not None:

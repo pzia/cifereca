@@ -95,6 +95,7 @@ def test_generic_diagnostic_is_logged_as_structured_event_once(tmp_path, monkeyp
         assert event["operation"] == "import_acsm"
         assert event["detail"]["password"] == "real"
         assert event["detail"]["login"] == "reader@example.invalid"
+        assert event["provider_id"] == "bnf-pret"  # Exact original structured field.
         assert event["detail"]["acsm_url"].endswith("token=real")
         assert query_journal(p, search="reader@example.invalid")["total"] == 1
         assert query_journal(p, provider_id="bnf-pret")["total"] == 1

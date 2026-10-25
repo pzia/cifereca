@@ -45,11 +45,17 @@ sources anormales ; les trous, dépassements ou rotations inaccessibles sont
 signalés `partial`. La lecture n'interroge aucun fournisseur. Un événement
 antérieur aux rotations disponibles ne peut plus être retrouvé.
 
-Le journal historique `source="all" / "core_events" / "app_log"` reste
-temporairement disponible comme façade de compatibilité. Cette ancienne
-projection, avec ses restrictions, **n'est pas une autre source d'autorité**.
-Elle ignore les nouvelles lignes `DIAG_JSON` pour éviter leur double
-comptage. Les consommateurs doivent migrer vers `source="journal"`.
+Les anciens noms `source="all"`, `"core_events"` et `"app_log"`
+restent provisoirement acceptés par le **broker public** comme alias stricts
+de `journal`. Ils renvoient exactement les mêmes événements physiques et
+identifiants, sans lecture supplémentaire, duplication ni cache mémoire.
+Les filtres `domain`/`reason_code` des projections héritées sont refusés :
+ils ne sauraient être attestés à partir des journaux bruts. Un `provider_id`
+explicitement présent dans le `detail` structuré est également exposé au
+premier niveau pour le filtrage exact et l'UI ; il n'est jamais inféré du
+message ni du nom du logger. L'ancien module
+`core.diagnostic_event_feed` subsiste uniquement pour les tests/consommateurs
+historiques à retirer séparément.
 
 ## Migration des producteurs Core attestés — lot #3155
 
@@ -100,9 +106,8 @@ message ; pas de diagnostic réseau implicite.
 La source par défaut de `DiagnosticsBroker.events()` et du protocole public
 `DiagnosticsBroker` est désormais `journal` : même pour les appels sans
 paramètre `source`, la consultation est persistante et ne consulte pas le
-snapshot mémoire. Les sources `all`, `core_events`, `app_log` restent
-accessibles **seulement par sélection explicite**, pour les anciens clients
-et tests. Les fonctions du plugin Diagnostics `fetch_explorer_page()` et
+snapshot mémoire. Les noms `all`, `core_events`, `app_log` sont tolérés
+uniquement comme alias physiques rétrocompatibles, sans requête en mémoire. Les fonctions du plugin Diagnostics `fetch_explorer_page()` et
 `collect_filtered_selection()` utilisent également `journal` par défaut ;
 les tests des canaux historiques déclarent explicitement `source="all"`.
 Leur disparition nécessite une migration distincte des appelants.
@@ -129,6 +134,7 @@ Les helpers historiques `redact()` / `redact_text()` deviennent des identités
 avec #3181 ; seule la page GTK Diagnostics pseudonymise au rendu les valeurs
 explicites login/mot de passe.
 
-Les sources legacy `all`, `core_events`, `app_log` et le cache mémoire
-`Diagnostics._items` restent des mécanismes transitoires. Les retirer après
-migration de leurs consommateurs reste nécessaire avant de fermer #3133.
+Le cache `Diagnostics._items` et la fonction de projection
+`query_diagnostic_events()` restent présents uniquement pour des contrats
+historiques et leurs tests, mais **ne sont plus appelés par le broker public**.
+Leur suppression physique (et celle des alias) est le prochain lot de #3133.
