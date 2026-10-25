@@ -27,8 +27,9 @@ def check_home_summary(window, *, later, capture, report, done):
 
     cases = (
         ("store", ("numilog", "kobo"), 0, 0, 5),
+        ("catalog", ("numilog-catalog",), 0, None, None),
         ("loans", ("paris",), 0, 2, 0),
-        ("mixed", ("paris", "numilog", "kobo"), 2, 1, 3),
+        ("mixed", ("paris", "numilog", "kobo", "numilog-catalog"), 2, 1, 3),
         ("unknown", ("numilog",), 0, None, None),
     )
     snapshot = []
@@ -76,7 +77,7 @@ def check_home_summary(window, *, later, capture, report, done):
         widgets = list(walk(page))
         labels = [node for node in widgets if isinstance(node, Gtk.Label)]
         text = [node.get_text() for node in labels]
-        no_lending_source = name in {"store", "unknown"}
+        no_lending_source = name in {"store", "catalog", "unknown"}
         loan_label = (
             "aucune source de prêt configurée" if no_lending_source
             else f"prêts de bibliothèque connus : {loans if loans is not None else '—'}"
@@ -107,7 +108,16 @@ def check_home_summary(window, *, later, capture, report, done):
             ), (name, text)
             report["checks"]["P1_1867_no_false_loan_alert_" + name] = True
         if "numilog" in providers:
-            assert any(value.startswith("Numilog ·") for value in text), text
+            assert any(value.startswith("Numilog — Mes achats (compte) ·")
+                       for value in text), text
+        if "numilog-catalog" in providers:
+            assert any(value.startswith("Numilog — Catalogue public ·")
+                       and "sans achat attesté" in value for value in text), text
+            # Anonymous offers cannot imply credentials or ownership.
+            assert not any("Numilog — Catalogue public" in value
+                           and ("connectée" in value or "connexion requise" in value)
+                           for value in text), text
+            report["checks"]["P1_1867_public_numilog_not_owned_" + name] = True
         report.setdefault("home_summary_allocations", {})[name] = allocations
         report["checks"]["P1_1867_home_real_gtk_" + name] = True
         capture("00-home-summary-" + name)

@@ -25,13 +25,14 @@ def issues_text(sync):
     if detail.get('error'):lines.append(safe_issue(detail['error']))
     return '\n\n'.join(lines) or 'Ancienne synchronisation sans détail. Relancez-la ou consultez Récents.'
 
-PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue', 'baen', 'ebooksgratuits'}
+PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue', 'baen', 'ebooksgratuits', 'numilog-catalog'}
 LOCAL_PROVIDERS = {'local'}
 SOURCE_NAMES = {
     'local':'Local',
     'paris':'Bibliothèques de Paris',
     'kobo':'Kobo',
     'numilog':'Numilog',
+    'numilog-catalog':'Numilog — Catalogue public',
     'gallica':'Gallica',
     'gutenberg':'Gutenberg',
     'bnf-catalogue':'BnF',
@@ -263,6 +264,14 @@ def compact_source_text(item, *, total_local_books=None):
     kind=item.get('kind')
     count=item.get('count')
     has_count=type(count) is int and count>=0
+    # Explicit provider IDs here describe the source's *usage*, not a
+    # remote entitlement. Never infer purchase, borrow, downloadability or
+    # file presence from the indexed origin count.
+    provider_id=item.get('provider_id')
+    if kind=='authenticated' and provider_id in {'kobo','numilog'}:
+        label=label+' — Mes achats (compte)'
+    elif kind=='public' and provider_id=='numilog-catalog':
+        label=label if 'Catalogue public' in label else label+' — Catalogue public'
     if kind=='local':
         # Local provenance == total local books in the common case; do not
         # repeat the exact same number underneath the main summary.
@@ -270,10 +279,16 @@ def compact_source_text(item, *, total_local_books=None):
                 type(total_local_books) is int and count==total_local_books
                 else f"{count} livre(s) d’origine" if has_count else 'origine locale')
     elif kind=='public':
-        amount=f"{count} livre(s) d’origine" if has_count else 'catalogue public'
+        amount=(f"{count} livre(s) d’origine · notices sans achat attesté"
+                if has_count and provider_id=='numilog-catalog'
+                else f"{count} livre(s) d’origine" if has_count
+                else 'catalogue public · sans achat attesté'
+                if provider_id=='numilog-catalog' else 'catalogue public')
     elif kind=='authenticated':
         status='connectée' if item.get('connected') is True else 'non connectée'
         amount=status+(f" · {count} livre(s) d’origine" if has_count else '')
+        if provider_id in {'kobo','numilog'}:
+            amount+=' · achats non présumés à partir de ce compteur'
     else:
         amount=f"{count} livre(s) d’origine" if has_count else 'origine non classée'
     return label+' · '+amount
