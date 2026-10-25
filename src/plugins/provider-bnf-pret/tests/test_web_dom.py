@@ -131,7 +131,7 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(loan(query="?signature=synthetic-private-marker")))
         self.assertNotIn('synthetic-private-marker', repr(result))
         self.assertEqual(result.loans[0].loan_id, 'synthetic-loan')
-        self.assertEqual(set(vars(result.loans[0])), {'loan_id', 'resource_id', 'title', 'authors'})
+        self.assertEqual(set(vars(result.loans[0])), {'loan_id', 'resource_id', 'title', 'authors', 'thumbnail_url'})
         self.assertEqual(result.loans[0].authors, ())
 
     def test_profile_account_and_session_isolation(self):
@@ -205,6 +205,75 @@ class WebDOMTests(unittest.TestCase):
     def test_duplicate_attributes_refused(self):
         with self.assertRaisesRegex(web.WebParseError, '^invalid_dom$'):
             web.parse_suggestions('<ul class="x" class="search-results__list"></ul>')
+
+    def test_loan_cover_requires_an_exact_resource_link(self):
+        safe = '/images/covers/synthetic-book.jpg'
+        card = ('<div class="js-loan">'
+                '<a href="/resources/synthetic-book">Livre'
+                '<img src="' + safe + '"></a>'
+                '<a href="/loans/synthetic-loan">Télécharger</a></div>')
+        result = self.parse_loans(loans(card))
+        self.assertEqual(len(result.loans), 1)
+        self.assertEqual(result.loans[0].thumbnail_url, web.ORIGIN + safe)
+        self.assertFalse(result.exhaustive)
+        # Neither an unrelated image nor another resource can supply a cover.
+        unrelated = ('<img src="' + safe + '">' + loan())
+        self.assertIsNone(self.parse_loans(loans(unrelated)).loans[0].thumbnail_url)
+        wrong = ('<div class="js-loan">'
+                 '<a href="/resources/synthetic-book">Titre</a>'
+                 '<a href="/resources/other"><img src="' + safe + '"></a>'
+                 '<a href="/loans/synthetic-loan">Télécharger</a></div>')
+        self.assertEqual(self.parse_loans(loans(wrong)).loans, ())
+
+    def test_loan_cover_valid_public_cdn_and_lazy_image(self):
+        cdn = 'https://imagedelivery.net/abcdefghijk/abcdef1234567890/public'
+        card = ('<div class="js-loan"><a href="/resources/book-a">'
+                '<img data-src="' + cdn + '" src="data:image/gif;base64,AAAA">'
+                'Livre</a><a href="/loans/loan-a">Jeton</a></div>')
+        result = self.parse_loans(loans(card))
+        self.assertEqual(result.loans[0].thumbnail_url, cdn)
+
+    def test_loan_cover_rejects_private_and_ambiguous_urls(self):
+        bad = (
+            'https://evil.test/images/covers/a.jpg',
+            '//evil.test/images/covers/a.jpg',
+            'http://pret.bnf.fr/images/covers/a.jpg',
+            'https://pret.bnf.fr@evil.test/images/covers/a.jpg',
+            'https://pret.bnf.fr/images/covers/a.jpg?token=private',
+            'https://pret.bnf.fr/images/covers/a.jpg#fragment',
+            'https://pret.bnf.fr/loans/a.jpg',
+            'https://pret.bnf.fr/sso/saml/cover.jpg',
+            'https://pret.bnf.fr/images/../cover.jpg',
+            'https://pret.bnf.fr/images/%2e%2e/cover.jpg',
+            'https://imagedelivery.net/abcdefghijk/abcdef1234567890/private',
+            'data:image/png;base64,AAAA',
+            'javascript:alert(1)',
+        )
+        for url in bad:
+            with self.subTest(url=url):
+                self.assertIsNone(web._public_cover_url(url))
+        safe = '/covers/a.jpg'
+        card = ('<div class="js-loan"><a href="/resources/synthetic-book">'
+                '<img src="' + safe + '">'
+                '<img src="/covers/b.jpg"></a>'
+                '<a href="/loans/synthetic-loan">Fichier</a></div>')
+        self.assertIsNone(self.parse_loans(loans(card)).loans[0].thumbnail_url)
+
+    def test_duplicate_loan_cover_conflict_is_partial_and_never_guessed(self):
+        def image_card(url):
+            return ('<div class="js-loan"><a href="/resources/book-a">'
+                    '<img src="' + url + '">Livre</a>'
+                    '<a href="/loans/loan-a">Jeton</a></div>')
+        result = self.parse_loans(loans(
+            image_card('/covers/a.jpg') + image_card('/covers/b.jpg')))
+        self.assertEqual(len(result.loans), 1)
+        self.assertIsNone(result.loans[0].thumbnail_url)
+        self.assertEqual(result.status, 'partial')
+        # A later repetition cannot restore the earlier, conflicting cover.
+        result = self.parse_loans(loans(
+            image_card('/covers/a.jpg') + image_card('/covers/b.jpg')
+            + image_card('/covers/a.jpg')))
+        self.assertIsNone(result.loans[0].thumbnail_url)
 
     def test_private_values_are_not_in_repr(self):
         record = web.CatalogRecord('private-id', 'private-title', ('private-author',))
