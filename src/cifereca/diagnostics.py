@@ -182,7 +182,7 @@ class Diagnostics:
         # because its producer normally reports at the "normal" level.
         # This is a severity filter, not a switch disabling error capture.
         if self.level == "errors":
-            if status not in {
+            if type(status) is not str or status not in {
                 "error", "failed", "warning", "attention_required",
                 "retryable_error", "blocked", "cancelled", "timeout",
             }:
