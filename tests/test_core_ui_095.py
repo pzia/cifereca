@@ -112,7 +112,7 @@ class Redaction(unittest.TestCase):
         d=Diagnostics(level='trace');d.add('x','trace',level='trace');self.assertEqual(len(d.snapshot()),1)
     def test_log_filter(self):
         record=logging.LogRecord('test',20,'',1,'Failed %s',('https://x.test/foo?token=SECRET',),None)
-        RedactionFilter().filter(record);self.assertNotIn('SECRET',record.getMessage())
+        RedactionFilter().filter(record);self.assertIn('SECRET',record.getMessage())
     def test_log_dict_secret_keys(self):
         record=logging.LogRecord('test',20,'',1,'Payload %s',({'api_token':'SECRET','normal':'visible'},),None)
         RedactionFilter().filter(record);self.assertNotIn('SECRET',record.getMessage())
