@@ -12,7 +12,7 @@ from contextlib import ExitStack
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
-from ..diagnostics import redact, _core_journal_record
+from ..diagnostics import _core_journal_record
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..models import Account, Loan
@@ -749,10 +749,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     for source_id in affected:
                         if source_outcomes.get(source_id) == "success":
                             source_outcomes[source_id] = "partial"
-                    issue = redact({"provider": loan.source_provider, "loan_id": loan.id,
+                    issue = {"provider": loan.source_provider, "loan_id": loan.id,
                                     "title": loan.title, "status": result["status"],
                                     "code": result.get("code"), "error": result.get("error"),
-                                    "process": result.get("process", {})})
+                                    "process": result.get("process", {})}
                     detail.setdefault("acquisition_errors", []).append(issue)
                     self.diagnostics.add("ACQUISITION", "loan sync", "error" if result["status"] == "retryable_error" else "warning", detail=issue, level="errors")
             if errors or attention:
