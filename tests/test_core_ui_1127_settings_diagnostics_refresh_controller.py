@@ -192,7 +192,8 @@ def test_empty_attention_filter_reports_clear_state_without_leaking_sources():
     assert empty.label == "Aucune anomalie à examiner."
     assert "success" in empty.classes
     assert "Source: journal canonique local" in report.text
-    assert "reader@example.invalid" in report.text
+    assert "reader@example.invalid" not in report.text
+    assert '"login": "login-' in report.text
     assert [x[0] for x in calls] == ["status", "project", "journal"]
 
 
@@ -277,7 +278,7 @@ def test_report_preserves_existing_provenance_performance_and_provider_state():
         'ui_performance: {"perf": 4}',
         'providers: {"source": "ready"}',
         '"event_id": "physical-1"',
-        '"login": "reader@example.invalid"',
+        '"login": "login-',
         '"path": "/tmp/book.epub"',
     ):
         assert snippet in report.text
@@ -318,11 +319,18 @@ def test_settings_preview_reads_single_physical_journal_without_memory(
     host, args, _calls, report = make_context()
     refresh_settings_diagnostics(host, **args)
     assert '"operation": "import_acsm"' in report.text
-    for value in (
-        "alice@example.org", "VISIBLE", "KEEP", "/home/alice/book.epub",
-    ):
+    assert "alice@example.org" not in report.text
+    assert '"password": "mot-de-passe-' in report.text
+    assert '"login": "login-' in report.text
+    for value in ("KEEP", "/home/alice/book.epub"):
         assert value in report.text
     assert '"event_id":' in report.text
+
+    # The physical source remains unchanged; only the GTK rendering differs.
+    from cifereca.core.diagnostic_journal import query_journal
+    physical, = query_journal(journal)["events"]
+    assert physical["detail"]["login"] == "alice@example.org"
+    assert physical["detail"]["password"] == "VISIBLE"
 
 
 def test_settings_preview_reports_journal_failure_without_memory_fallback(monkeypatch):
