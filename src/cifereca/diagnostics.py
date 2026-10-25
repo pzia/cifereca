@@ -753,4 +753,4 @@ class Diagnostics:
                 if type(key) is str:
                     lines.append(f"{key}={display(value)}")
             lines.append("")
-        return "\\n".join(lines).rstrip() + "\\n"
+        return "\n".join(lines).rstrip() + "\n"
