@@ -30,7 +30,7 @@ _PLUGIN_USAGE_HINTS = {
     ),
     "provider.numilog.catalog": (
         "Numilog — Catalogue public : recherche anonyme optionnelle, sans compte, "
-        "achat attesté ni téléchargement. L’activation par identité est "
+        "sans achat attesté et sans téléchargement. L’activation par identité est "
         "indépendante du compte Numilog — Mes achats."
     ),
 }
