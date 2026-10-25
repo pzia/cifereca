@@ -622,8 +622,10 @@ class Diagnostics:
         from .diagnostic_task_context import diagnostic_task_reference
         logger = logging.getLogger("cifereca")
         severity = logging.ERROR if status == "failed" else (
-            logging.WARNING if status == "cancelled" else logging.INFO)
-        record = self.enabled and (self.level != "errors" or status in {"failed", "cancelled"})
+            logging.WARNING if status in {"cancelled", "partial"} else logging.INFO)
+        record = self.enabled and (
+            self.level != "errors" or status in {"failed", "cancelled", "partial"}
+        )
         if not record and not logger.isEnabledFor(severity):
             return
         fields = dict(schema_version=1, provider_id=provider_id,
