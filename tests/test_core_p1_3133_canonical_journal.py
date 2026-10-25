@@ -139,14 +139,14 @@ def test_orphan_after_rotation_never_rewrites_previous_event(tmp_path):
     older = tmp_path / "cifereca.log.1"
     current = tmp_path / "cifereca.log"
     older.write_text(
-        "2026-10-25 08:00:00,100 ERROR cifereca [MainThread] older failure\\n"
-        "older traceback belongs only to older file\\n",
+        "2026-10-25 08:00:00,100 ERROR cifereca [MainThread] older failure\n"
+        "older traceback belongs only to older file\n",
         encoding="utf-8",
     )
     current.write_text(
-        "ORPHAN=must-not-cross-inodes\\n"
-        "2026-10-25 08:01:00,100 WARNING cifereca [MainThread] newer warning\\n"
-        "newer traceback belongs only to newer file\\n",
+        "ORPHAN=must-not-cross-inodes\n"
+        "2026-10-25 08:01:00,100 WARNING cifereca [MainThread] newer warning\n"
+        "newer traceback belongs only to newer file\n",
         encoding="utf-8",
     )
     result = query_journal(current)
