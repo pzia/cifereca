@@ -703,4 +703,4 @@ class Diagnostics:
                             if type(value) in (dict, list) else str(value))
                 lines.append(f"{key}={rendered}")
             lines.append("")
-        return "\\n".join(lines).rstrip() + "\\n"
+        return "\n".join(lines).rstrip() + "\n"
