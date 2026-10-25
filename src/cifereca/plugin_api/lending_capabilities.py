@@ -7,10 +7,11 @@ method declarations; it cannot invoke a provider operation or touch the net.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from inspect import getattr_static
 from typing import Literal
 
 from cifereca.models import Account
-from cifereca.providers.base import ProviderSession, ProviderDescriptor
+from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities
 
 LendingAvailability = Literal["supported", "unsupported", "unavailable", "unknown"]
 
@@ -76,38 +77,82 @@ def assess_lending_operation(
 
     declared = manifest_name in manifest_capabilities
     try:
-        if type(descriptor) is not ProviderDescriptor:
+        if (type(descriptor) is not ProviderDescriptor
+                or type(descriptor.capabilities) is not ProviderCapabilities):
             raise TypeError
-        raw_cap = getattr(descriptor.capabilities, descriptor_name, None)
+        # Exact dataclass fields only. A hostile descriptor must never use an
+        # arbitrary property to run HTTP during a capability inspection.
+        raw_cap = vars(descriptor.capabilities).get(descriptor_name)
         if type(raw_cap) is not bool:
             raise TypeError
         desc_claim = raw_cap
-        # Only an override of the abstract legacy 'unsupported' method
-        # counts as an implementation. A method name alone cannot prove use.
-        method = getattr(type(session), method_name, None) if session is not None else None
-        base = getattr(ProviderSession, method_name)
-        implemented = callable(method) and method is not base
-        plugin_ready = descriptor.state == "ready"
-        connected = (type(getattr(session, "connected", None)) is bool
-                     and session.connected is True) if session is not None else False
-        exact_session = (
-            session is not None and session.provider_id == descriptor.id
-            and account is not None and type(account) is Account
-            and account.provider_id == descriptor.id
-            and account.credential_id == session.credential_id
-            and type(account.identity_id) is str and bool(account.identity_id)
+        # A class lookup via getattr can invoke an attacker-controlled
+        # metaclass descriptor. Static lookup cannot trigger that method.
+        klass = type(session) if session is not None else None
+        base = getattr_static(ProviderSession, method_name)
+        method = getattr_static(klass, method_name, None) if klass is not None else None
+        implemented = (
+            isinstance(klass, type)
+            and issubclass(klass, ProviderSession)
+            and callable(method) and method is not base
         )
-        # The chosen account must exist in THIS live session. A stored
-        # credential and a successful connect are not enough by themselves.
-        current_accounts = session.accounts if connected and exact_session else ()
-        account_ready = (
+        plugin_ready = descriptor.state == "ready"
+
+        # The ProviderSession.accounts property is a method call (even if it
+        # looks like a field). Subclasses may replace it with network access.
+        # Read the base class's _accounts data directly ONLY when the
+        # descriptor is the unchanged safe base property. Custom dynamic
+        # account registries are unverified until a separate trusted adapter
+        # exists; never invoke them merely to render action availability.
+        session_data = None
+        if (session is not None and isinstance(session, ProviderSession)
+                and getattr_static(klass, "accounts", None) is
+                    ProviderSession.__dict__["accounts"]):
+            session_data = object.__getattribute__(session, "__dict__")
+            if type(session_data) is not dict:
+                session_data = None
+        if session_data is None:
+            session_data = {}
+        connected = session_data.get("connected") is True
+        provider = session_data.get("provider_id")
+        credential = session_data.get("credential_id")
+        current_accounts = session_data.get("_accounts")
+        account_valid = (
+            type(account) is Account
+            and all(type(value) is str and len(value) <= 1024
+                    and chr(0) not in value
+                    for value in (
+                        account.provider_id, account.credential_id,
+                        account.identity_id, account.unique_id,
+                    ))
+            and bool(account.identity_id)
+        )
+        exact_session = bool(
+            type(provider) is str and type(credential) is str
+            and type(descriptor.id) is str and bool(descriptor.id)
+            and provider == descriptor.id
+            and account_valid
+            and account.provider_id == descriptor.id
+            and account.credential_id == credential
+        )
+        # Bound at most 512 already-known accounts. This is a memory read,
+        # NEVER a session.accounts property call or provider refresh.
+        account_ready = bool(
             type(current_accounts) in (list, tuple)
-            and any(type(row) is Account and
-                    row.identity_id == account.identity_id and
-                    row.provider_id == account.provider_id and
-                    row.credential_id == account.credential_id and
-                    row.unique_id == account.unique_id
-                    for row in current_accounts[:512])
+            and len(current_accounts) <= 512
+            and exact_session
+            and any(
+                type(row) is Account
+                and all(type(value) is str for value in (
+                    row.identity_id, row.provider_id,
+                    row.credential_id, row.unique_id,
+                ))
+                and row.identity_id == account.identity_id
+                and row.provider_id == account.provider_id
+                and row.credential_id == account.credential_id
+                and row.unique_id == account.unique_id
+                for row in current_accounts
+            )
         )
         ready = bool(plugin_ready and connected and exact_session and account_ready)
     except Exception:
@@ -165,15 +210,16 @@ def validate_lending_publication(
     Optional legacy capabilities remain unmapped rather than silently
     promoting an internal method to a public lending operation.
     """
-    from inspect import getattr_static
-
     manifest_ok = (
         type(manifest_capabilities) in (tuple, list)
         and len(manifest_capabilities) <= 128
         and all(type(cap) is str for cap in manifest_capabilities)
         and len(set(manifest_capabilities)) == len(manifest_capabilities)
     )
-    descriptor_ok = type(descriptor) is ProviderDescriptor
+    descriptor_ok = (
+        type(descriptor) is ProviderDescriptor
+        and type(descriptor.capabilities) is ProviderCapabilities
+    )
     class_ok = (
         isinstance(session_type, type)
         and issubclass(session_type, ProviderSession)
@@ -186,7 +232,7 @@ def validate_lending_publication(
         descriptor_claim = False
         implemented = False
         if manifest_ok and descriptor_ok and class_ok:
-            raw_claim = getattr(descriptor.capabilities, capability_name, None)
+            raw_claim = vars(descriptor.capabilities).get(capability_name)
             if type(raw_claim) is not bool:
                 status, reason = "unverified", "invalid_declaration"
             else:

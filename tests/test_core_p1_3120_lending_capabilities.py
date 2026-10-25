@@ -283,3 +283,124 @@ def test_static_audit_requires_real_provider_session_subclass():
         )
         assert all(f.publication_status == "unverified" for f in result)
         assert not any(f.publishable for f in result)
+
+
+# P1 #3120: a read-only capability inspection must never invoke plugin
+# accounts/connected getters, method descriptors or network side effects.
+
+
+def test_custom_accounts_property_must_not_execute_during_capability_read():
+    a = account()
+    d = descriptor()
+    touched = []
+
+    class NetworkAccounts(OnlyList):
+        @property
+        def accounts(self):
+            touched.append("network")
+            raise AssertionError("inspection must not call a plugin getter")
+
+    s = NetworkAccounts(d, a)
+    result = fact("loan.list", d, s, a)
+    assert result.availability == "unavailable"
+    assert not result.usable and touched == []
+
+
+def test_custom_connected_property_is_not_called_if_local_session_data_exists():
+    a = account()
+    d = descriptor()
+    touched = []
+
+    class NetworkConnected(OnlyList):
+        @property
+        def connected(self):
+            touched.append("network")
+            raise AssertionError("inspection must not call a plugin getter")
+
+        @connected.setter
+        def connected(self, value):
+            self.__dict__["connected"] = value
+
+    s = NetworkConnected(d, a)
+    assert fact("loan.list", d, s, a).availability == "supported"
+    assert touched == []
+
+
+def test_runtime_method_lookup_is_static_even_with_malicious_metaclass():
+    from abc import ABCMeta
+
+    a = account()
+    d = descriptor()
+    looked_up = []
+
+    class MaliciousMeta(ABCMeta):
+        def __getattribute__(cls, name):
+            if name in {"loans", "accounts"}:
+                looked_up.append(name)
+                raise AssertionError("no dynamic plugin class attribute lookup")
+            return super().__getattribute__(name)
+
+    class MaliciousSession(OnlyList, metaclass=MaliciousMeta):
+        pass
+
+    s = MaliciousSession(d, a)
+    assert fact("loan.list", d, s, a).availability == "supported"
+    assert looked_up == []
+
+
+def test_bounded_scoped_accounts_fail_closed_without_getter_or_network():
+    a = account()
+    d = descriptor()
+    s = OnlyList(d, a)
+    # An oversized catalogue of accounts is not a reason to scan the whole
+    # registry or to make a request while simply rendering a button.
+    s._accounts = [a] * 513
+    result = fact("loan.list", d, s, a)
+    assert result.availability == "unavailable"
+    assert result.session_ready is False
+
+
+def test_publication_and_runtime_validators_ignore_dynamic_method_descriptors():
+    a = account()
+    d = descriptor(loans=True, borrow=True)
+    touched = []
+
+    class MethodProperty(OnlyList):
+        @property
+        def borrow(self):
+            touched.append("provider side effect")
+            raise AssertionError("no method lookup or POST")
+
+    s = MethodProperty(d, a)
+    manifest = ("sync.loans", "acquisition.borrow")
+    runtime = fact("loan.borrow", d, s, a, capabilities=manifest)
+    assert runtime.reason_code == "method_unimplemented"
+    static = _publications(d, MethodProperty, capabilities=manifest)
+    assert static["loan.borrow"].publication_status == "conflict"
+    assert touched == []
+
+
+def test_malformed_capability_descriptor_does_not_execute_custom_getters():
+    a = account()
+    touched = []
+
+    class RemoteCapabilityClaim:
+        def __getattr__(self, name):
+            touched.append(name)
+            raise AssertionError("descriptor property must not run a GET")
+
+    bad_descriptor = replace(
+        descriptor(), capabilities=RemoteCapabilityClaim(),
+    )
+    s = OnlyList(descriptor(), a)
+    runtime = assess_lending_operation(
+        "loan.list", manifest_capabilities=("sync.loans",),
+        descriptor=bad_descriptor, session=s, account=a,
+    )
+    static = validate_lending_publication(
+        manifest_capabilities=("sync.loans",),
+        descriptor=bad_descriptor, session_type=OnlyList,
+    )
+    assert runtime.availability == "unknown" and not runtime.usable
+    assert all(item.publication_status == "unverified" for item in static)
+    assert touched == []
