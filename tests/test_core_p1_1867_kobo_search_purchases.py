@@ -193,3 +193,79 @@ def test_unavailable_scoped_reader_fails_to_catalogue_without_provider_io():
                  kobo_personal_right_states=Mock(side_effect=RuntimeError("private")))
     assert "Catalogue Kobo" in usage(item, service)
     assert "private" not in usage(item, service)
+
+
+def test_kobo_availability_never_promotes_raw_catalogue_owned_flag():
+    from cifereca.core.search_orchestration import availability_display_label
+
+    item = _offer()
+    yes = Mock(return_value=True)
+    service = NS(
+        current_identity=NS(identity_id="alice"),
+        kobo_personal_right_states=Mock(return_value={}),
+        can_direct_download=yes,
+    )
+    # A non-Kobo provider could publish this label; the Kobo catalogue
+    # scope must ignore it and must not invent a loan or a purchase.
+    detail = NS(availability_label="Empruntable", availability_status="available")
+    assert availability_display_label(service, item, detail) == (
+        "Catalogue Kobo · aucun achat attesté"
+    )
+    yes.assert_not_called()
+    service.kobo_personal_right_states.assert_called_once_with("alice")
+    assert "aucun achat attesté" in availability_display_label(
+        service, replace(item, price="9,99", currency="EUR"), detail,
+    )
+    yes.assert_not_called()
+
+
+def test_kobo_availability_confirms_purchase_only_from_core_rights():
+    from cifereca.core.search_orchestration import availability_display_label
+
+    item = _offer()
+    can_download = Mock(return_value=False)
+    reader = Mock(return_value={
+        ("vault-alice", "active"): "active",
+        ("vault-alice", "archived"): "archived",
+    })
+    service = NS(
+        current_identity=NS(identity_id="alice"),
+        kobo_personal_right_states=reader,
+        can_direct_download=can_download,
+    )
+    detail = NS(availability_label="Empruntable", availability_status="available")
+    assert availability_display_label(service, item, detail) == (
+        "Mes achats Kobo · fichier local non présumé"
+    )
+    can_download.assert_called_once_with(item)
+    can_download.reset_mock()
+    assert "Achat Kobo archivé" in availability_display_label(
+        service, _offer(product="archived"), detail,
+    )
+    can_download.assert_not_called()
+    can_download.return_value = True
+    assert availability_display_label(service, item, detail) == (
+        "Mes achats Kobo · sauvegarde possible"
+    )
+    service.current_identity = NS(identity_id="bob")
+    reader.return_value = {}
+    can_download.reset_mock()
+    assert "Catalogue Kobo" in availability_display_label(service, item, detail)
+    can_download.assert_not_called()
+
+
+def test_kobo_availability_error_is_closed_and_never_shows_loan_or_owned():
+    from cifereca.core.search_orchestration import availability_display_label
+
+    service = NS(
+        current_identity=NS(identity_id="alice"),
+        kobo_personal_right_states=Mock(side_effect=RuntimeError("private")),
+        can_direct_download=Mock(side_effect=AssertionError("no right")),
+    )
+    value = availability_display_label(
+        service, _offer(), NS(availability_label="Empruntable"),
+    )
+    assert "Catalogue Kobo" in value
+    assert "achat attesté" in value
+    assert "Emprunt" not in value
+    assert "private" not in value
