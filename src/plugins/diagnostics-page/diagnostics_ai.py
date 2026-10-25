@@ -251,7 +251,7 @@ def _public_structured_row(item: Mapping[str, Any]) -> dict[str, Any]:
         except (ValueError, OverflowError):
             pass
     source = item.get("source")
-    if type(source) is str and source in ("core_events", "app_log"):
+    if type(source) is str and source in ("journal", "core_events", "app_log"):
         row["source"] = source
     for key in ("component", "status", "operation"):
         value = item.get(key)
@@ -335,7 +335,7 @@ def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
         except (ValueError, OverflowError):
             pass
     source = item.get("source")
-    if type(source) is str and source in ("core_events", "app_log"):
+    if type(source) is str and source in ("journal", "core_events", "app_log"):
         row["source"] = source
     provider = public_provider_id(item.get("provider_id"))
     if "source" in row and provider is not None:
@@ -511,7 +511,7 @@ def _valid_since(since: object) -> bool:
 
 
 def prepare_analysis(
-    llm: Any, diagnostics_broker: Any, *, source: str = "all",
+    llm: Any, diagnostics_broker: Any, *, source: str = "journal",
     since: str | None = None, module: str = "", severity: str = "",
     provider_id: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
@@ -521,7 +521,7 @@ def prepare_analysis(
     from cifereca_diagnostics_page import redacted_detail, format_diagnostic_detail
 
     destination = llm_destination(llm)
-    if type(source) is not str or source not in ("all", "core_events", "app_log"):
+    if type(source) is not str or source not in ("journal", "all", "core_events", "app_log"):
         raise ValueError("unsupported_source")
     if type(module) is not str or len(module) > 90 or any(
         ord(char) < 32 or ord(char) == 127 for char in module
