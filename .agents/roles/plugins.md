@@ -1,5 +1,7 @@
 # Rôle : plugins
 
+**Skill obligatoire pour les logs fournisseurs :** [cifereca-logging](../skills/cifereca-logging/SKILL.md), [contrat canonique](../../docs/LOGGING-CONTRACT.md). Aucun plugin ne redige/supprime ses traces au nom d'un export public : le Core conserve le journal **tel qu'émis** ; **uniquement l'IHM** pseudonymise **login et mot de passe**. Conserver les statuts HTTP, routes, réponses, erreurs et autres valeurs effectivement produites. Aucun envoi de logs bruts automatique.
+
 ## Mission
 Traiter tous les plugins fonctionnels, qu'il s'agisse d'un plugin unique ou de sujets transversaux.
 
