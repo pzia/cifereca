@@ -223,3 +223,27 @@ def test_bnf_invalid_dom_fails_without_fake_zero_coverage():
         assert s.connected is False
     finally:
         s.close()
+
+
+def test_paris_connected_reader_replaced_mid_read_cannot_publish_loan_snapshot():
+    a = account()
+    s = paris([a])
+    original = s.client.loans
+    calls = []
+
+    def replaced(upstream, borrower):
+        calls.append(upstream)
+        rows = original(upstream, borrower)
+        if upstream == "DILICOM":
+            # A linked-account reconfiguration raced with the two reads.
+            s._accounts = [account(borrower="unrelated")]
+        return rows
+
+    s.client.loans = replaced
+    try:
+        snap = read_loan_inventory(s, a)
+        assert calls == ["DILICOM", "SYRACUSE"]
+        assert snap.status == "failed" and snap.loans == ()
+        assert snap.reason_code == "read_failed"
+    finally:
+        s.close()
