@@ -565,7 +565,8 @@ class DiagnosticsPagePlugin:
         search_filter.set_tooltip_text(
             "Recherche côté Core sur toutes les rotations avant pagination ; Entrée pour actualiser"
         )
-        journals_tab.append(search_filter)
+        if journal_available:
+            journals_tab.append(search_filter)
 
         advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         filters_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -596,6 +597,9 @@ class DiagnosticsPagePlugin:
         sort_latest = Gtk.CheckButton(label="Plus récents d’abord")
         sort_latest.set_active(True)
         filters_bottom.append(module_filter)
+        if not journal_available:
+            # Preserve the existing GTK keyboard focus order for legacy brokers.
+            filters_bottom.append(search_filter)
         filters_bottom.append(sort_latest)
         advanced_box.append(filters_bottom)
 
