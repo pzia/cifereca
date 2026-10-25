@@ -8,8 +8,8 @@ journalisés. Chaque occurrence est identifiée par l'identité locale du fichie
 (device + inode) et son offset initial. Ni l'heure ni la similarité du message
 ne constituent une preuve de doublon ou de causalité.
 
-Le broker `diagnostics.events(source="journal", search="...", limit=50,
-offset=...)` lit les quatre fichiers conservés, applique les filtres avant
+Le broker `diagnostics.events(search="...", limit=50,
+offset=...)` (ou `source="journal"` explicite) lit les quatre fichiers conservés, applique les filtres avant
 pagination et renvoie `total`, `next_offset`, des événements datés UTC et la
 couverture de la fenêtre physique. Recherche insensible à la casse et aux
 accents. Les événements `Diagnostics.add` compatibles JSON sont sérialisés
@@ -76,3 +76,12 @@ Les loggers indépendants de `cifereca` ne sont couverts que s'ils écrivent
 dans le handler de journal configuré. Toute déclaration de couverture
 exhaustive serait fausse. Pas de fusion de traces par heure, provider ou
 message ; pas de diagnostic réseau implicite.
+
+## Source par défaut du broker (#3133)
+
+La source par défaut de `DiagnosticsBroker.events()` et du protocole public
+`DiagnosticsBroker` est désormais `journal` : même pour les appels sans
+paramètre `source`, la consultation est persistante et ne consulte pas le
+snapshot mémoire. Les sources `all`, `core_events`, `app_log` restent
+accessibles **seulement par sélection explicite**, pour les anciens clients
+et tests. Leur disparition nécessite une migration distincte des appelants.
