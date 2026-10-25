@@ -239,3 +239,104 @@ def test_untrusted_artifact_outside_stage_is_never_deleted(
             loan, confirmed=True, expected_identity_id="default")
     assert unrelated.read_bytes() == TOKEN
     assert not downloaded and not service.storage.acquisitions()
+
+
+# P1 #3121: Core-owned epoch lease is *additional* to the BnF HTTPX
+# session's own _epoch/observed-loan protection. Tests are synthetic.
+
+
+@pytest.mark.parametrize("mutation", [
+    "core_epoch", "identity_aba", "provider_epoch", "credential_in_place",
+    "borrower_in_place", "session_borrower_replaced", "loan_mutated",
+])
+def test_bnf_token_get_rejects_epoch_or_in_place_rebind_even_after_http_success(
+    connected_core, monkeypatch, mutation,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    previous_identity = service.current_identity
+    previous_accounts = list(session._accounts)
+    previous_epoch = session._epoch
+    previous_credential = session.credential_id
+    previous_borrower = account.unique_id
+    previous_loan_state = loan.state
+    core_epoch = service._account_context_epoch
+    original_download = session.download_digital
+    staged_paths = []
+    initial_rights = service.storage.entitlements()
+    try:
+        def interrupted(*args, **kwargs):
+            path, url = original_download(*args, **kwargs)
+            staged_paths.append(path)
+            if mutation == "core_epoch":
+                service._account_context_epoch += 1
+            elif mutation == "identity_aba":
+                service.select_identity("alex")
+                service.select_identity("default")
+            elif mutation == "provider_epoch":
+                session._epoch = "rotated-generation"
+            elif mutation == "credential_in_place":
+                session.credential_id = "replacement-card"
+            elif mutation == "borrower_in_place":
+                account.unique_id = "different-reader"
+            elif mutation == "session_borrower_replaced":
+                session._accounts = [replace(account)]
+            elif mutation == "loan_mutated":
+                loan.state = "returned"
+            return path, url
+
+        monkeypatch.setattr(session, "download_digital", interrupted)
+        with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+            service.stage_bnf_loan_acsm(
+                loan, confirmed=True, expected_identity_id="default",
+            )
+        assert len(staged_paths) == 1
+        assert not staged_paths[0].exists()
+        assert len(downloaded) == 1
+        assert service.storage.entitlements() == initial_rights
+        assert not service.storage.acquisitions()
+        assert not service.storage.placements()
+    finally:
+        service.current_identity = previous_identity
+        service._account_context_epoch = core_epoch
+        session._accounts = previous_accounts
+        session._epoch = previous_epoch
+        session.credential_id = previous_credential
+        account.unique_id = previous_borrower
+        loan.state = previous_loan_state
+
+
+def test_epoch_revoked_after_staging_preparation_blocks_bnf_token_get(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    original_dir = service._acquisition_work_dir
+    original_epoch = service._account_context_epoch
+    def changed_during_staging(*args, **kwargs):
+        destination = original_dir(*args, **kwargs)
+        service._account_context_epoch += 1
+        return destination
+
+    monkeypatch.setattr(service, "_acquisition_work_dir", changed_during_staging)
+    try:
+        with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+            service.stage_bnf_loan_acsm(
+                loan, confirmed=True, expected_identity_id="default",
+            )
+        assert not downloaded  # No private loan-token GET at all.
+        assert not service.storage.acquisitions()
+    finally:
+        service._account_context_epoch = original_epoch
+
+
+def test_loan_scope_guard_is_not_consent_or_public_bnf_capability(connected_core):
+    service, session, account, loan, state, downloaded = connected_core
+    from cifereca.core.loan_action_scope import capture_loan_action_scope
+    lease = capture_loan_action_scope(
+        service, loan, account, session, expected_identity_id="default",
+    )
+    assert lease is not None and lease.current(service)
+    assert session.capabilities.digital_download is False
+    assert "loan" not in repr(lease).lower()
+    # Capturing/revalidating an action scope must never perform a GET.
+    assert not downloaded
+    assert not service.storage.acquisitions()
