@@ -1,7 +1,11 @@
 """Only closed synthetic Maintenance GTK milestones can enter public E2E."""
 import importlib.util
+import ast
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,4 +104,58 @@ def test_narrow_920_and_1024_expose_same_closed_fixture_checkpoint(tmp_path):
         assert set(evidence) <= {
             "scenario", "status", "returncode", "maintenance_last_safe_checkpoint",
         }
+
+
+@pytest.mark.parametrize('width,height,reached,failed', [
+    (1000, 700, 'inspection_open', True),
+    (900, 700, 'inspection_width_ok', True),
+    (900, 600, 'inspection_height_ok', False),
+])
+def test_real_dimension_assertions_publish_only_the_last_completed_check(
+    tmp_path, width, height, reached, failed,
+):
+    # Execute the actual GTK probe's initial dimension assertions with numeric
+    # widget doubles. No GTK run is claimed: verify that a height failure cannot
+    # conceal a passed width check, and neither failed check is marked passed.
+    path = ROOT / 'e2e/library_inspection_acceptance.py'
+    tree = ast.parse(path.read_text())
+    initial = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.FunctionDef) and node.name == 'initial')
+    prefix = []
+    for statement in initial.body:
+        if any(isinstance(node, ast.Attribute) and node.attr == 'get_decorated'
+               for node in ast.walk(statement)):
+            break
+        prefix.append(statement)
+    initial.body = prefix
+    report = {'checks': {}}
+    namespace = {
+        'report': report,
+        'checkpoint': lambda _name: None,
+        'controller': SimpleNamespace(dialog=SimpleNamespace(
+            get_width=lambda: width, get_height=lambda: height)),
+        'parent': SimpleNamespace(get_width=lambda: 920, get_height=lambda: 620),
+    }
+    exec(compile(ast.fix_missing_locations(ast.Module(
+        body=[initial], type_ignores=[])), str(path), 'exec'), namespace)
+    if failed:
+        with pytest.raises(AssertionError):
+            namespace['initial']()
+    else:
+        namespace['initial']()
+    assert report['checks'].get('P0_2712_initial_window_width_ok', False) == (width <= 920)
+    assert report['checks'].get('P0_2712_initial_window_height_ok', False) == (
+        width <= 920 and height <= 620)
+
+    scenario = 'maintenance-tools-920'
+    source = tmp_path / 'summary.json'
+    source.write_text(json.dumps([{'scenario': scenario, 'returncode': 1}]))
+    destination = tmp_path / scenario / scenario / 'screen.json'
+    destination.parent.mkdir(parents=True)
+    report.update(error='PRIVATE_ERROR', geometry={'PRIVATE_PATH': width})
+    destination.write_text(json.dumps(report))
+    evidence = exporter.safe_summary(source)['results'][0]
+    assert evidence['maintenance_last_safe_checkpoint'] == reached
+    assert 'PRIVATE' not in repr(evidence)
+    assert 'geometry' not in evidence
 
