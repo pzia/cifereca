@@ -124,15 +124,20 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             raise ProviderConfigurationError("loan_source_scope_changed")
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
-        # A source refresh has the same positive-loan semantics as opening
-        # sync. Never infer absence or close loans missing from a partial list.
-        # BnF materialization below requires its separate per-account opt-in.
-        if loans:
+        # Only a typed snapshot with explicit complete digital coverage
+        # may prove absence. Legacy, unknown and partial stay positive-only.
+        complete_scope = (
+            _complete_digital_loan_scope(account, snapshot)
+            if snapshot is not None else None
+        )
+        if loans or complete_scope is not None:
             from . import library_mutation
             with measure("rights_mirror_ms"):
                 library_mutation._persist_active_loans(
                     self, account.identity_id, loans,
-                    reconcile_missing=False, realize_expired=False,
+                    reconcile_missing=complete_scope is not None,
+                    complete_scopes={complete_scope} if complete_scope else None,
+                    realize_expired=False,
                 )
         if snapshot is not None:
             # A typed read is not a committed observation if rights-mirroring
@@ -443,6 +448,40 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
     return True
 
 
+def _complete_digital_loan_scope(
+    account: Account, snapshot: Any,
+) -> tuple[str, str, str] | None:
+    """Only exact, exhaustive digital branches can authorize missing-loan writes.
+
+    Paris and BnF have one known digital upstream each. A second digital or
+    unclassified branch prevents whole-medium absence from being proven.
+    """
+    from ..plugin_api.loan_inventory import (
+        LoanInventoryScope, LoanInventorySnapshot,
+    )
+    expected = {"paris": "dilicom", "bnf-pret": "bnf_html"}.get(
+        account.provider_id if type(account) is Account else None,
+    )
+    if (expected is None or type(snapshot) is not LoanInventorySnapshot
+            or snapshot.scope != LoanInventoryScope.for_account(account)
+            or snapshot.status != "success"
+            or not snapshot.branch_claims_complete(expected, "digital")):
+        return None
+    if (any(branch.medium == "unknown" for branch in snapshot.branches)
+            or {branch.upstream for branch in snapshot.branches
+                if branch.medium == "digital"} != {expected}):
+        return None
+    if account.provider_id == "paris" and account.unique_id == "":
+        if account.is_primary is not True:
+            return None
+        borrower = "primary"
+    else:
+        if not account.unique_id:
+            return None
+        borrower = account.unique_id
+    return account.provider_id, account.credential_id, borrower
+
+
 def _registered_typed_loan_scope_current(
     self, account: Account, session: Any, scope: tuple[Any, ...],
 ) -> bool:
@@ -570,6 +609,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             # Each typed reader is pinned to the Core registry/epoch. Recheck
             # the whole staged set just before the identity-level rights write.
             typed_observations: list[tuple[Account, Any, tuple[Any, ...], list[Loan]]] = []
+            complete_by_source: dict[str, tuple[str, str, str]] = {}
             accounts = sorted(
                 [a for a in self.accounts_for_identity(identity.identity_id) if self.sync_source_enabled(a)],
                 key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id),
@@ -671,6 +711,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         typed_observations.append(
                             (account, session, typed_scope, list(account_loans)),
                         )
+                        complete_scope = _complete_digital_loan_scope(account, snapshot)
+                        if complete_scope is not None and not partial_errors:
+                            complete_by_source[source_id] = complete_scope
                     source_outcomes[source_id] = (
                         "partial" if partial_errors else "success"
                     )
@@ -695,11 +738,18 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 for account, session, scope, _rows in typed_observations
             ):
                 raise ProviderConfigurationError("loan_source_scope_changed")
-            # No current supplier offers a Core-attested exhaustive per-account
-            # negative listing contract (including pagination and row validity).
-            # Preserve old active rights until a specific complete scope is
-            # explicitly proven; separately proven expiry remains effective.
-            lifecycle = self._persist_active_loans(identity.identity_id, loans)
+            # Current Paris/BnF plugins still publish unknown/partial digital
+            # coverage. Only an explicit exhaustive, currently bound typed
+            # result authorizes a scoped missing-loan transition.
+            complete_scopes = {
+                scope for source_id, scope in complete_by_source.items()
+                if source_outcomes.get(source_id) == "success"
+            }
+            lifecycle = self._persist_active_loans(
+                identity.identity_id, loans,
+                reconcile_missing=bool(complete_scopes),
+                complete_scopes=complete_scopes or None,
+            )
             all_loans.extend(loans)
             for account, session, scope, observed in typed_observations:
                 # Cache is a positive read optimization, never a source of
