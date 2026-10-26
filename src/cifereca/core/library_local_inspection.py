@@ -967,7 +967,7 @@ class LocalInspection:
                           for li in own_ledger_indices[:20])
                       + '\n\nAbsence de preuve de fichier, pas preuve de livre absent. Aucun téléchargement ni rattachement autorisé.')
             if 'declared_link_recorded' in case_state:
-                detail += ('\\n\\nAssociation déclarée par vous pour ce droit et ce compte exact. '
+                detail += ('\n\nAssociation déclarée par vous pour ce droit et ce compte exact. '
                            'Le fichier, sa présence actuelle et les preuves fournisseur '
                            'restent à revérifier ; aucun reçu ni placement attesté créé.')
             if not add('right', index, case_heading + ' · ' + right_label,
