@@ -61,7 +61,7 @@ from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .core import loan_accounts, loan_download_projection, loan_adept_fulfillment
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
-from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
+from .plugin_api import AttentionRequired, Cancelled, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
 from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 from .core.provider_collection_cache import ProviderCollectionSnapshotStore
@@ -2884,6 +2884,12 @@ class LibraryService:
 
         try:
             result = self._reacquire_digital_loan_impl(loan)
+        except Cancelled:
+            # The provider or task stopped cooperatively. Keep the original
+            # cancellation signal and use the existing terminal journal code,
+            # never misreport a provider failure or a completed download.
+            emit("cancelled", "operation_cancelled")
+            raise
         except AttentionRequired as exc:
             try:
                 code = exc.code
