@@ -473,6 +473,10 @@ class DiagnosticsPagePlugin:
         if previous_raw_chooser is not None:
             previous_raw_chooser.destroy()
         self._raw_export_chooser = None
+        previous_http_export = getattr(self, "_http_trace_export", None)
+        if previous_http_export is not None:
+            previous_http_export.close()
+        self._http_trace_export = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []
@@ -724,11 +728,11 @@ class DiagnosticsPagePlugin:
         journals_http_export = Gtk.Button(label="Exporter les échanges HTTP…")
         journals_tab.append(journals_http_export)
         from diagnostics_http_export import HTTPTraceExport
-        self._support_exports.append(HTTPTraceExport(
+        self._http_trace_export = HTTPTraceExport(
             journals_http_export, broker=broker, tasks=self.tasks, host=host,
             current=lambda: self._page_root is page_root and self.diagnostics is broker,
             folder=_readable_raw_export_folder,
-        ))
+        )
 
         # FlowBox wraps four actions even in narrow 760px windows.
         journals_select_actions = Gtk.FlowBox()
@@ -2256,6 +2260,10 @@ class DiagnosticsPagePlugin:
         if previous_raw_chooser is not None:
             previous_raw_chooser.destroy()
         self._raw_export_chooser = None
+        previous_http_export = getattr(self, "_http_trace_export", None)
+        if previous_http_export is not None:
+            previous_http_export.close()
+        self._http_trace_export = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []

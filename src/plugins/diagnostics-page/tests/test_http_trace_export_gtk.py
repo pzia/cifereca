@@ -84,7 +84,8 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
         spin_until(lambda:page.get_mapped())
         button=next(w for w in walk(page) if isinstance(w,Gtk.Button)
                     and w.get_label()=='Exporter les échanges HTTP…')
-        controller=next(x for x in plugin._support_exports if hasattr(x,'broker'))
+        controller=plugin._http_trace_export
+        assert controller not in plugin._support_exports
         assert not button.get_sensitive()
         assert 'Trace inactif' in button.get_tooltip_text()
         set_diagnostics_level('trace')
