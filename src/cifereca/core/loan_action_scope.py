@@ -7,9 +7,25 @@ grant. It performs no network, storage mutation or ADEPT operation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from inspect import getattr_static
 from typing import Any
 
 from ..models import Account, Loan
+from ..providers.base import ProviderSession
+
+
+def _inert_session_accounts(session: object) -> list[Account] | tuple[Account, ...] | None:
+    """Read base ProviderSession's initialized accounts without plugin code.
+
+    An override of the public property, a dynamic session registry or an
+    oversized list cannot authorize a remote loan action. No getter is run.
+    """
+    if not isinstance(session, ProviderSession):
+        return None
+    if getattr_static(type(session), "accounts", None) is not ProviderSession.__dict__["accounts"]:
+        return None
+    values = object.__getattribute__(session, "__dict__").get("_accounts")
+    return values if type(values) in (list, tuple) and len(values) <= 512 else None
 
 
 def _exact_loan_fields(loan: Loan) -> tuple[object, ...]:
@@ -96,8 +112,10 @@ class LoanActionScopeLease:
                 return False
             # Object identity matters: two reader accounts with the same
             # display name or an ABA reconnect are not interchangeable.
-            if (sum(row is account for row in service.accounts) != 1
-                    or sum(row is account for row in session.accounts) != 1
+            session_accounts = _inert_session_accounts(session)
+            if (session_accounts is None
+                    or sum(row is account for row in service.accounts) != 1
+                    or sum(row is account for row in session_accounts) != 1
                     or service._account_for_loan(loan) is not account
                     or service._session_for_source(provider, credential) is not session):
                 return False
