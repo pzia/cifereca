@@ -3477,6 +3477,16 @@ class Storage:
                 (placement_id, row.get("artifact_id"), path, row.get("identity_id"), row.get("provider_id"), row.get("source_item_id"),
                  str(row.get("state") or "present"), row.get("last_seen_at"), self._json_dump(row.get("metadata")), now, now),
             )
+            if str(row.get("state") or "present") == "invalid":
+                # A corrupted/unreadable file must not remain presented as a
+                # locally available catalogue entry after its placement was
+                # invalidated. Keep this transition in the SAME SQLite commit,
+                # including when ON CONFLICT(path) selected an existing ID.
+                db.execute(
+                    "UPDATE catalog_entries SET local_state='invalid',updated_at=? "
+                    "WHERE placement_id=(SELECT placement_id FROM placements WHERE path=?)",
+                    (now, path),
+                )
         return placement_id
 
     def placements(self, *, state: str | None = None) -> list[dict[str, Any]]:
