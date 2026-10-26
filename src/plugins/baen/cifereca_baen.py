@@ -28,6 +28,31 @@ def _trusted_baen_url(value):
         return False
 
 
+def _baen_explicit_download_offer(html_text, detail_url):
+    """Find a trusted download button and whether its EPUB format is proven.
+
+    A generic "Download" button remains eligible for the existing acquisition
+    flow, but does not attest EPUB availability in the read-only holdings view.
+    A PDF/MOBI link is evidence of a different format, not an EPUB offer.
+    """
+    links = re.findall(
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        html_text, re.I | re.S,
+    )
+    for href, label in links:
+        text = ' '.join(re.sub('<[^>]+>', ' ', html.unescape(label)).split()).casefold()
+        candidate = urljoin(detail_url, href)
+        if not _trusted_baen_url(candidate):
+            continue
+        path = urlsplit(candidate).path.casefold()
+        if path.endswith(('.pdf', '.mobi', '.azw', '.azw3')):
+            continue
+        epub_attested = 'epub' in text or path.endswith('.epub')
+        if 'download' in text or epub_attested:
+            return candidate, epub_attested
+    return None, False
+
+
 def _public_epub_filename(title, detail_url):
     """Bounded per-product basename, never a raw provider record_id.
 
@@ -98,7 +123,7 @@ def _baen_download_failure(error):
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Seul le champ général est exposé ; le filtrage serveur de la requête reste non qualifié. Aucun champ spécialisé attesté.','Numéros de page transmis sans preuve de pagination effective ; réponses partielles, y compris une page vide.',)),homepage=BASE,notes=('Couverture de recherche publique non qualifiée ; achats et bibliothèque privée hors périmètre.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.14','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.15','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -212,6 +237,8 @@ class BaenSession(ProviderSession):
                 )
         return out[:self.page_size]
     def holdings(self,item,search_terms=''):
+        availability = 'unknown'
+        label = 'Baen : disponibilité EPUB non vérifiée'
         if item.source_provider==self.provider_id and item.friendly_url:
             if not _trusted_baen_url(item.friendly_url):
                 raise ProviderCapabilityError('Baen : untrusted_url')
@@ -220,9 +247,20 @@ class BaenSession(ProviderSession):
                 _reject_redirect(response)
                 response.raise_for_status()
                 self._enrich_item_from_detail(item,response.text)
+                offer, epub_attested = _baen_explicit_download_offer(
+                    response.text, item.friendly_url,
+                )
+                if epub_attested:
+                    availability = 'available'
+                    label = 'Lien EPUB public affiché ; téléchargement non vérifié'
+                elif offer:
+                    label = 'Lien de téléchargement public présent ; format EPUB inconnu'
+                else:
+                    label = 'Aucun lien EPUB public explicite sur la fiche'
             except httpx.HTTPError:
-                pass
-        return ItemDetail(record_id=item.record_id,docbase='BAEN',title=item.title,author=item.author,type=item.type,year=item.published_at,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Baen Free Library — ouvrir la fiche pour vérifier le format',holdings=[],source_provider='baen',source_credential=self.credential_id)
+                label = 'Fiche Baen inaccessible ; disponibilité EPUB inconnue'
+        return ItemDetail(record_id=item.record_id,docbase='BAEN',title=item.title,author=item.author,type=item.type,year=item.published_at,thumbnail_url=item.thumbnail_url,availability_status=availability,availability_label=label,holdings=[],source_provider='baen',source_credential=self.credential_id)
+
     def download_direct(self,item,target_dir):
         if item.source_provider!=self.provider_id or not item.friendly_url: raise ProviderError('Baen : fiche inconnue')
         if not _trusted_baen_url(item.friendly_url):
@@ -239,15 +277,10 @@ class BaenSession(ProviderSession):
         if failed:
             raise ProviderError('Baen : fiche inaccessible')
         self._enrich_item_from_detail(item,r.text)
-        # Baen exposes a public free-download action on some Free Library fiches.
-        links=re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S)
-        candidate=None
-        for href,label in links:
-            txt=' '.join(re.sub('<[^>]+>',' ',html.unescape(label)).split()).casefold()
-            if 'download' in txt or 'epub' in txt or href.lower().endswith('.epub'):
-                proposal=urljoin(item.friendly_url,href)
-                if _trusted_baen_url(proposal):
-                    candidate=proposal; break
+        # A PDF/MOBI button cannot qualify as a public EPUB offer.
+        candidate, _epub_attested = _baen_explicit_download_offer(
+            r.text, item.friendly_url,
+        )
         if not candidate: raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
         if self.transport is None: raise ProviderError('Baen : transport.http indisponible')
         d=Path(target_dir);d.mkdir(parents=True,exist_ok=True)
