@@ -1538,6 +1538,67 @@ class Storage:
                         or not old_row[5] or old_row[5] != target_row[5]
                     ):
                         raise ValueError("relocate_scope_conflict")
+                placement_metadata = None
+                # A different catalogue projection may still point at the
+                # source path even when it uses another placement ID. Do not
+                # strand or silently retarget that independent reference.
+                # Only the direct metadata.path of the affected placement(s)
+                # can be rewritten by the transaction below.
+                if old_text != new_text:
+                    from .core.duplicate_maintenance_guard import _mentions_exact_path
+                    owned_catalog_ids = {
+                        row[0] for row in (old_row, target_row) if row is not None
+                    }
+                    for index, (catalog_placement, raw) in enumerate(db.execute(
+                        "SELECT placement_id,metadata_json FROM catalog_entries"
+                    )):
+                        if index >= 100_000 or type(raw) is not str or len(raw) > 1024 * 1024:
+                            raise ValueError("relocate_catalog_context_unavailable")
+                        try:
+                            catalogue = json.loads(raw)
+                        except (ValueError, TypeError, RecursionError):
+                            raise ValueError("relocate_catalog_context_unavailable") from None
+                        if type(catalogue) is not dict:
+                            raise ValueError("relocate_catalog_context_unavailable")
+                        if not _mentions_exact_path(catalogue, old_text):
+                            continue
+                        if catalog_placement not in owned_catalog_ids or any(
+                            _mentions_exact_path(value, old_text)
+                            for key, value in catalogue.items() if key != "path"
+                        ):
+                            raise ValueError("relocate_catalog_reference_requires_relink")
+                    # Keep a scan-generated relative_path in sync with the
+                    # renamed file. Its directory is unchanged for the
+                    # normalize_filename operation; directory migration has
+                    # a separate transaction and must not use this shortcut.
+                    if old_row and (
+                        target_row is None or target_row[0] == old_row[0]
+                    ):
+                        raw = old_row[1]
+                        if type(raw) is not str or len(raw) > 1024 * 1024:
+                            raise ValueError("relocate_placement_context_unavailable")
+                        try:
+                            placement_metadata = json.loads(raw)
+                        except (ValueError, TypeError, RecursionError):
+                            raise ValueError("relocate_placement_context_unavailable") from None
+                        if type(placement_metadata) is not dict:
+                            raise ValueError("relocate_placement_context_unavailable")
+                        if _mentions_exact_path(placement_metadata, old_text):
+                            raise ValueError("relocate_placement_reference_requires_relink")
+                        relative = placement_metadata.get("relative_path")
+                        if relative not in (None, ""):
+                            old_name, new_name = Path(old_text), Path(new_text)
+                            if (type(relative) is not str or len(relative) > 4096
+                                    or Path(relative).is_absolute()
+                                    or ".." in Path(relative).parts
+                                    or Path(relative).name != old_name.name
+                                    or old_name.parent != new_name.parent):
+                                raise ValueError("relocate_relative_path_requires_relink")
+                            placement_metadata["relative_path"] = str(
+                                Path(relative).with_name(new_name.name)
+                            )
+                    else:
+                        placement_metadata = None
                 if any(
                     row[0] not in (None, "", identity_id)
                     for row in db.execute(
@@ -1570,8 +1631,12 @@ class Storage:
                         db.execute("DELETE FROM placements WHERE placement_id=?", (old_placement_id,))
                     else:
                         db.execute(
-                            "UPDATE placements SET path=?,identity_id=?,provider_id=?,updated_at=? WHERE placement_id=?",
-                            (new_text, identity_id, provider_id, now, old_placement_id),
+                            "UPDATE placements SET path=?,identity_id=?,provider_id=?,"
+                            "metadata_json=?,updated_at=? WHERE placement_id=?",
+                            (new_text, identity_id, provider_id,
+                             self._json_dump(placement_metadata)
+                             if placement_metadata is not None else old_row[1],
+                             now, old_placement_id),
                         )
                     rows = db.execute(
                         "SELECT catalog_entry_id,metadata_json FROM catalog_entries WHERE placement_id=?", (placement_id,)
