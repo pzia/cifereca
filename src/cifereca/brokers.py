@@ -1475,6 +1475,14 @@ class DiagnosticsBrokerImpl:
             limit=limit, offset=offset,
         )
 
+    def http_trace_status(self):
+        from .http_trace import HTTP_TRACE
+        return HTTP_TRACE.status()
+
+    def export_http_trace(self, destination: str) -> str:
+        from .http_trace import HTTP_TRACE
+        return str(HTTP_TRACE.export(destination))
+
     def export_raw_journal(self) -> bytes:
         """Explicit local export; no provider interaction, no GUI masking."""
         from .core.diagnostic_journal import export_raw_journal

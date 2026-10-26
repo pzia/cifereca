@@ -53,6 +53,11 @@ def _share_canonical_handlers(core: logging.Logger) -> None:
             numilog.addHandler(handler)
 
 
+def diagnostics_level() -> str:
+    """Return the sole effective diagnostics level (including HTTP Trace)."""
+    return _diagnostic_level
+
+
 def set_diagnostics_level(level):
     """Switch the effective file/console logger verbosity without restart."""
     global _diagnostic_level
