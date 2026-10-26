@@ -27,6 +27,26 @@ from diagnostics_support import (
 # The journal, console, broker and raw exports retain their original values.
 from diagnostics_pseudonyms import DISPLAY_PSEUDONYMS
 
+def _readable_raw_export_folder() -> str | None:
+    """Prefer a real, browsable local home directory over GTK's stale Recents.
+
+    No journal is written here. Only the user-selected SAVE destination is
+    ever opened; no directory name appears in a toast, log or broker call.
+    """
+    import os
+    from pathlib import Path
+
+    try:
+        home = Path.home()
+        if not home.is_absolute() or not home.is_dir():
+            return None
+        with os.scandir(home) as entries:
+            next(entries, None)
+        return str(home)
+    except (OSError, ValueError):
+        return None
+
+
 _MAX_DETAIL_BYTES = 24_000
 _MAX_DETAIL_NODES = 300
 _MAX_DETAIL_DEPTH = 7
@@ -448,6 +468,11 @@ class DiagnosticsPagePlugin:
 
         # Rebuilding a page revokes file actions belonging to its old widgets.
         # The shared Core capture itself deliberately remains untouched.
+        # Native dialogs outlive the GTK page unless explicitly dismissed.
+        previous_raw_chooser = getattr(self, "_raw_export_chooser", None)
+        if previous_raw_chooser is not None:
+            previous_raw_chooser.destroy()
+        self._raw_export_chooser = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []
@@ -1588,11 +1613,24 @@ class DiagnosticsPagePlugin:
             # supplies the real toplevel; detached test pages have no parent.
             root = _button.get_root()
             parent = root if isinstance(root, Gtk.Window) else None
+            if self._raw_export_chooser is not None:
+                host.toast("Un sélecteur d’export est déjà ouvert")
+                return
             chooser = Gtk.FileChooserNative.new(
                 "Exporter les événements bruts", parent,
                 Gtk.FileChooserAction.SAVE, "Exporter", "Annuler",
             )
+            chooser.set_modal(parent is not None)
+            folder = _readable_raw_export_folder()
+            if folder is not None:
+                try:
+                    chooser.set_current_folder(Gio.File.new_for_path(folder))
+                except (GLib.Error, OSError, ValueError):
+                    # The native/portal backend may reject a local folder.
+                    # Keep the chooser available; never choose a path to write.
+                    pass
             chooser.set_current_name("cifereca-journal-brut.json")
+            self._raw_export_chooser = chooser
 
             def chose_file(dialog, response):
                 try:
@@ -1648,6 +1686,8 @@ class DiagnosticsPagePlugin:
 
                     handle.add_done_callback(completed)
                 finally:
+                    if self._raw_export_chooser is dialog:
+                        self._raw_export_chooser = None
                     dialog.destroy()
 
             chooser.connect("response", chose_file)
@@ -2203,6 +2243,11 @@ class DiagnosticsPagePlugin:
         return page_root
 
     def deactivate(self):
+        # Native dialogs outlive the GTK page unless explicitly dismissed.
+        previous_raw_chooser = getattr(self, "_raw_export_chooser", None)
+        if previous_raw_chooser is not None:
+            previous_raw_chooser.destroy()
+        self._raw_export_chooser = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []
