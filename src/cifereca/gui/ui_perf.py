@@ -46,8 +46,17 @@ def _process_resource_sample() -> dict[str, float | int | None]:
 
 # Only enumerated public operation labels may enter a performance export.
 _PERF_CATEGORIES = frozenset({
-    "task", "opening-sync", "deep-sync", "source-sync", "source-materialize", "sync-preflight",
-    "kobo-acquisition", "maintenance", "library", "recent", "search", "plugin", "other",
+    "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
+    "sync-preflight", "kobo-acquisition", "maintenance", "library", "recent",
+    "search", "plugin", "other",
+    # Fixed Core UI/MainWindow task kinds already present at the submit call.
+    # Without this exact allowlist, an opt-in 600-file Maintenance audit is
+    # reported as "other.worker" despite being a known maintenance action.
+    # Keep untrusted/plugin-defined task labels out of performance exports.
+    "maintenance-plan", "maintenance-tool", "maintenance-inspection",
+    "history", "bookings", "search-known", "detail-cache",
+    "adept-inventory", "adept-return", "loan-acquisition", "borrow",
+    "obtain", "provider-connect", "sync-audit", "source-consent", "identity",
 })
 _PERF_PHASES = frozenset({
     "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
