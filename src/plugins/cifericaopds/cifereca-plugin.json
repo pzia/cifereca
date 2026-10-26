@@ -2,16 +2,16 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.integration.cifericaopds",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "CifericaOPDS — sources dynamiques (pilote)",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4,<2"
+    "plugin_api": ">=1.4.1,<2"
   },
   "plugins": [
     {
       "id": "org.cifereca.integration.cifericaopds",
       "type": "provider.collection",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "entrypoint": "cifereca_cifericaopds:PLUGIN",
       "display_name": "CifericaOPDS — sources dynamiques",
       "description": "Plugin expérimental, fixtures par défaut ; profil HTTP v0.2 candidat non attesté.",
@@ -59,7 +59,9 @@
       "requires": [],
       "recommends": [],
       "system_requires": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "httpx"
+      ],
       "requires_contracts": []
     }
   ]

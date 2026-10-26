@@ -16,11 +16,11 @@ import stat
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import RLock
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+import httpx
 
 from cifereca.plugin_api import (
+    HTTPX_TRANSPORT,
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
     SearchResult, ProviderCollectionSnapshot, validate_provider_collection_snapshot,
 )
@@ -32,11 +32,6 @@ MAX_RESULTS = 500
 
 class ContractUnavailable(RuntimeError):
     """Unavailable, invalid or unverified server contract."""
-
-
-class NoRedirects(HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, newurl):
-        raise ContractUnavailable("redirect refused")
 
 
 def safe_base_url(raw: str) -> str:
@@ -96,7 +91,6 @@ class JsonClient:
             raise ContractUnavailable("invalid configured timeout") from None
         # No proxies from HTTP_PROXY/HTTPS_PROXY or platform settings:
         # even requests to a loopback fixture must remain on loopback.
-        self._opener = build_opener(ProxyHandler({}), NoRedirects())
 
     def get(self, endpoint: str, *, params=None):
         # Do not let child providers turn this candidate read-only transport
@@ -119,20 +113,28 @@ class JsonClient:
         else:
             raise ContractUnavailable("endpoint not allowed")
         url = self.base_url + endpoint + query_string
-        request = Request(url, headers={
-            "Accept": "application/json", "User-Agent": "cifereca-cifericaopds/0.1"
-        })
+        headers = {
+            "Accept": "application/json", "Accept-Encoding": "identity",
+            "User-Agent": "cifereca-cifericaopds/0.1",
+        }
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
-                if response.status != 200:
-                    raise ContractUnavailable("unexpected HTTP status")
-                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
-                if content_type != "application/json":
-                    raise ContractUnavailable("invalid JSON content type")
-                raw = response.read(MAX_JSON_BYTES + 1)
-        except (HTTPError, URLError, OSError, TimeoutError):
-            # Do not chain a transport exception: its repr may contain
-            # URL query parameters, hostname or configuration secrets.
+            with HTTPX_TRANSPORT.client(producer="cifericaopds", timeout=self.timeout,
+                                        trust_env=False, follow_redirects=False) as client:
+                with client.stream("GET", url, headers=headers) as response:
+                    if 300 <= response.status_code < 400:
+                        raise ContractUnavailable("redirect refused")
+                    response.raise_for_status()
+                    if response.status_code != 200:
+                        raise ContractUnavailable("unexpected HTTP status")
+                    content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
+                    if content_type != "application/json":
+                        raise ContractUnavailable("invalid JSON content type")
+                    raw = bytearray()
+                    for chunk in response.iter_raw(chunk_size=64 * 1024):
+                        raw.extend(chunk)
+                        if len(raw) > MAX_JSON_BYTES:
+                            raise ContractUnavailable("oversized JSON response")
+        except (httpx.HTTPError, OSError, TimeoutError):
             raise ContractUnavailable("server unavailable") from None
         if len(raw) > MAX_JSON_BYTES:
             raise ContractUnavailable("oversized JSON response")

@@ -2,16 +2,16 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.dev-updater",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "Releases développeur (consultation)",
     "publisher": "CIFERECA",
-    "plugin_api": ">=1.4,<2"
+    "plugin_api": ">=1.4.1,<2"
   },
   "plugins": [
     {
       "id": "ui.page.dev-updater",
       "type": "ui.page",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "entrypoint": "dev_updater_page:PLUGIN",
       "display_name": "Releases développeur",
       "description": "Consultation manuelle et en lecture seule des releases GitHub du dépôt configuré.",
@@ -25,7 +25,8 @@
       "requires": [],
       "recommends": [],
       "requires_brokers": [
-        "tasks"
+        "tasks",
+        "httpx"
       ],
       "requires_contracts": [],
       "system_requires": [],

@@ -829,11 +829,6 @@ def test_candidate_http_bypasses_untrusted_environment_proxy(
     monkeypatch.setenv("HTTPS_PROXY", "http://malicious.invalid:8080")
     monkeypatch.setenv("http_proxy", "http://malicious.invalid:8080")
     client = JsonClient(url)
-    from urllib.request import ProxyHandler
-    handlers = [handler for handler in client._opener.handlers
-                if isinstance(handler, ProxyHandler)]
-    # urllib may omit an empty ProxyHandler from the built opener entirely.
-    assert not any(handler.proxies for handler in handlers)
     assert client.get("/api/v1/sources")["api_major"] == 1
     assert client.get("/api/v1/search", params={
         "source_id": "alpha", "q": "Un livre",
@@ -1190,3 +1185,39 @@ def test_candidate_remote_search_rejects_unverified_field_before_any_http(tmp_pa
         assert calls == []
     finally:
         session.close()
+
+
+def test_candidate_http_is_captured_by_core_only_in_trace(mocked_candidate_server,monkeypatch):
+    from cifereca.http_trace import HTTPTraceCapture
+    import cifereca.http_trace as trace_module
+    from cifereca.logging_utils import diagnostics_level,set_diagnostics_level
+    import cifereca_cifericaopds as module
+    url,calls,_state=mocked_candidate_server
+    capture=HTTPTraceCapture()
+    monkeypatch.setattr(trace_module,'HTTP_TRACE',capture)
+    original=module.HTTPX_TRANSPORT.client
+    constructors=[]
+
+    def construct(**options):
+        constructors.append(options.copy())
+        return original(**options)
+
+    monkeypatch.setattr(module.HTTPX_TRANSPORT,'client',construct)
+    previous=diagnostics_level()
+    client=JsonClient(url)
+    assert not constructors and not calls  # construction does not do I/O
+    try:
+        for level in ('normal','trace','normal'):
+            set_diagnostics_level(level)
+            assert client.get('/api/v1/sources')['api_major']==1
+        assert calls==['/api/v1/sources']*3
+        assert len(constructors)==3
+        assert all(o['producer']=='cifericaopds' and o['trust_env'] is False
+                   and o['follow_redirects'] is False for o in constructors)
+        entries=capture.snapshot()['exchanges']
+        assert len(entries)==1
+        body=entries[0]['response_body']
+        assert body['state']=='complete'
+        assert json.loads(body['data'])['api_major']==1
+    finally:
+        set_diagnostics_level(previous)
