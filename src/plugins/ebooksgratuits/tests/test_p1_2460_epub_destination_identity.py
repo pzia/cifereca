@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cifereca_ebooksgratuits import EbooksSession, _public_epub_filename
 
 
@@ -69,12 +71,13 @@ def test_same_title_distinct_attested_offers_have_distinct_files(tmp_path):
         obj.close()
 
 
-def test_hostile_record_id_cannot_escape_target_directory(tmp_path):
+@pytest.mark.parametrize("bad_title", ["   ", "///"])
+def test_hostile_record_id_cannot_escape_target_directory(tmp_path, bad_title):
     obj, broker = session()
     try:
         # Previously an all-punctuation title fell back to raw record_id,
         # allowing '../' path components when the broker wrote the EPUB.
-        malicious = item(FIRST, title="///", record_id="../../outside")
+        malicious = item(FIRST, title=bad_title, record_id="../../outside")
         result, _ = obj.download_direct(malicious, tmp_path / "safe")
         assert result.parent == tmp_path / "safe"
         assert result.name.startswith("Livre-")
