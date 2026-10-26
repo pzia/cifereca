@@ -996,8 +996,10 @@ class LocalInspection:
         # as a positive relation to an arbitrary replacement.
         if recorded_pairs:
             visible_scopes = {
-                scope for scope in self._declared_right_scopes.values()
+                scope for right_key, scope in self._declared_right_scopes.items()
                 if scope in recorded_scopes
+                and right_key in self._cases
+                and 'declared_link_recorded' in self._cases[right_key].states
             }
             declared_paths = {
                 path for scope, path in recorded_pairs if scope in visible_scopes
