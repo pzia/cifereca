@@ -306,7 +306,31 @@ class LocalCatalog:
         media_format = self._media_format(path)
         if media_format is None:
             return {"status": "unsupported", "path": str(path)}
+        # The validation must apply to the same inode subsequently hashed.
+        # A replacement between _validate() and the first hash could otherwise
+        # publish a corrupt PDF/EPUB as 'present' under its fresh SHA.
+        try:
+            validation_stat = os.stat(path, follow_symlinks=False)
+            if not _stat.S_ISREG(validation_stat.st_mode):
+                raise OSError("catalog_index_not_regular")
+        except OSError:
+            validation_stat = None
         ok, invalid_reason = self._validate(path, media_format)
+        if validation_stat is None:
+            if ok:
+                raise OSError("catalog_index_file_changed")
+        else:
+            try:
+                checked_stat = os.stat(path, follow_symlinks=False)
+                if (not _stat.S_ISREG(checked_stat.st_mode)
+                        or any(
+                            getattr(validation_stat, key) != getattr(checked_stat, key)
+                            for key in ("st_dev", "st_ino", "st_size",
+                                        "st_mtime_ns", "st_ctime_ns")
+                        )):
+                    raise OSError("catalog_index_file_changed")
+            except OSError as exc:
+                raise OSError("catalog_index_file_changed") from exc
         path_text = str(path)
         existing = self.storage.placement_for_path(Path(path_text))
         placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
@@ -335,8 +359,8 @@ class LocalCatalog:
             proposed_item = proposed_item or existing.get("source_item_id")
         now = int(time.time())
         try:
-            indexed_stat = os.stat(path, follow_symlinks=False)
-            if not _stat.S_ISREG(indexed_stat.st_mode):
+            indexed_stat = validation_stat
+            if indexed_stat is None:
                 raise OSError("catalog_index_not_regular")
             stat_meta = {
                 "file_size": int(indexed_stat.st_size),
@@ -560,7 +584,21 @@ class LocalCatalog:
             if media_format is None:
                 unsupported += 1
                 continue
+            # Hold the physical snapshot across extension/format validation
+            # and hashing: a replaced file cannot inherit an earlier valid
+            # PDF/EPUB verdict simply because the hash is fresh.
+            validation_stat = os.stat(path, follow_symlinks=False)
+            if not _stat.S_ISREG(validation_stat.st_mode):
+                raise OSError("catalog_scan_file_changed")
             ok, invalid_reason = self._validate(path, media_format)
+            checked_stat = os.stat(path, follow_symlinks=False)
+            if (not _stat.S_ISREG(checked_stat.st_mode)
+                    or any(
+                        getattr(validation_stat, key) != getattr(checked_stat, key)
+                        for key in ("st_dev", "st_ino", "st_size",
+                                    "st_mtime_ns", "st_ctime_ns")
+                    )):
+                raise OSError("catalog_scan_file_changed")
             if repair_misnamed and not ok and media_format in {"epub", "pdf"}:
                 # Deep Sync is an inventory, never a file-maintenance consent.
                 # The historical path.replace() ran before any SQLite commit
@@ -665,7 +703,7 @@ class LocalCatalog:
             placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
             previous_placement = self.storage.placement_get(placement_id)
             placement_was_new = previous_placement is None
-            stat = path.stat()
+            stat = validation_stat
             previous_meta = dict((previous_placement or {}).get("metadata") or {})
             artifact_id = str((previous_placement or {}).get("artifact_id") or "")
             cached_unchanged = bool(
