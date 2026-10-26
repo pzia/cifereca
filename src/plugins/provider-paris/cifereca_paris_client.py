@@ -14,6 +14,7 @@ from dataclasses import asdict
 from typing import Any, Iterable, Callable
 from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
 from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH, USER_AGENT
 from cifereca_paris_trace import (
@@ -168,7 +169,7 @@ class ParisClient:
             headers["Accept-Encoding"] = "identity"
             headers["Connection"] = "close"
             limits = httpx.Limits(max_connections=10, max_keepalive_connections=0)
-        return httpx.Client(
+        return HTTPX_TRANSPORT.client(producer="provider.paris",
             headers=headers,
             follow_redirects=True,
             timeout=httpx.Timeout(self.timeout),
