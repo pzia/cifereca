@@ -351,6 +351,20 @@ def _record_source_retry_after(
 
 
 def search(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', field: str='all', content_types: tuple[str, ...] | list[str] | None=None, include_redundant_merged: bool=False, logger, facade_type) -> list[SearchResult]:
+    # Capture before session discovery, which may run across an identity
+    # transition. A query must not discover sources as A then run them as B.
+    with self._search_generation_lock:
+        self._search_generation += 1
+        search_generation = self._search_generation
+        identity = self.current_identity
+
+    def request_current() -> bool:
+        with self._search_generation_lock:
+            return (
+                self._search_generation == search_generation
+                and self.current_identity is identity
+            )
+
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     # Search is global: one connected session per provider is queried,
     # independently of the reader account currently selected in the GUI.
@@ -373,7 +387,6 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         include_redundant_merged=include_redundant_merged,
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-    identity = self.current_identity
     pref_key = ""
     if identity is not None:
         pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
@@ -390,16 +403,23 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     if not force:
         cached = self.storage.cache_get("search", cache_key)
         if isinstance(cached, list):
-            self.last_search = [_provider_search_row(SearchResult(**x)) for x in cached]
-            # Never leak a warning from a previous, unrelated search.
-            self.last_search_warnings = []
-            self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(self.last_search), "q_len": len(query), "providers": provider_key})
-            return self.last_search
+            rows = [_provider_search_row(SearchResult(**x)) for x in cached]
+            with self._search_generation_lock:
+                if (self._search_generation != search_generation
+                        or self.current_identity is not identity):
+                    return []
+                self.last_search = rows
+                # Never leak a warning from a previous, unrelated search.
+                self.last_search_warnings = []
+            self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(rows), "q_len": len(query), "providers": provider_key})
+            return rows
 
     rows: list[SearchResult] = []
     warnings: list[str] = []
     variants = self._search_query_variants(query)
     for session in searchable:
+        if not request_current():
+            return []
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
         effective_field, contract_warning = _effective_search_field(
@@ -415,6 +435,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if public_outage:
             warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
         for attempt, variant in enumerate(() if public_outage else variants):
+            # Stop network work after an identity switch or newer search.
+            # A second loose-text GET cannot repair a revoked request.
+            if not request_current():
+                return []
             # Loose fallbacks are needed only when the exact query produced
             # no strong title/author match. This keeps normal searches fast.
             if attempt > 0 and primary_ok:
@@ -529,19 +553,30 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             reverse=True,
         )
     warnings = list(dict.fromkeys(warnings))
-    try:
-        self._mirror_remote_results([
-            row for row in rows
-            if not isinstance(row.metadata, dict)
-            or row.metadata.get("search_provenance") != "known_catalog_stale"
-        ])
-    except Exception:
-        # Mirror exceptions may be dynamically named by untrusted plugins.
-        logger.warning("TRACE catalog mirror search code=mirror_failed")
+    # Provider I/O may outlive both a user switch and a newer search request.
+    # Never write those stale notices under the now-selected identity.
+    if not request_current():
+        return []
+    if identity is not None:
+        try:
+            self._mirror_remote_results([
+                row for row in rows
+                if not isinstance(row.metadata, dict)
+                or row.metadata.get("search_provenance") != "known_catalog_stale"
+            ], identity_id=identity.identity_id)
+        except Exception:
+            # Mirror exceptions may be dynamically named by untrusted plugins.
+            logger.warning("TRACE catalog mirror search code=mirror_failed")
+    if not request_current():
+        return []
     if not warnings:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-    self.last_search = rows
-    self.last_search_warnings = warnings
+    with self._search_generation_lock:
+        if (self._search_generation != search_generation
+                or self.current_identity is not identity):
+            return []
+        self.last_search = rows
+        self.last_search_warnings = warnings
     self.diagnostics.add(
         "SEARCH", "federated",
         detail={
