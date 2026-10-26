@@ -355,7 +355,27 @@ class LocalCatalog:
         seen_paths: set[str] = set()
         scanned = cataloged = invalid = unsupported = artifacts_new = placements_new = 0
 
-        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if p.is_file() and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
+        # Never treat a linked file (or a file below a linked directory)
+        # as an owned local book. resolve() would otherwise project its
+        # external target as a placement, outside the configured library,
+        # while the apparent symlink filename supplies misleading provenance.
+        # The explicitly configured root itself may be a symlink; paths must
+        # stay beneath that resolved root without crossing further links.
+        resolved_root = self.root.resolve()
+
+        def is_unlinked_local_file(path: Path) -> bool:
+            try:
+                relative = path.relative_to(self.root)
+                candidate = self.root
+                for part in relative.parts:
+                    candidate = candidate / part
+                    if candidate.is_symlink():
+                        return False
+                return path.resolve(strict=True).is_relative_to(resolved_root)
+            except (OSError, ValueError, RuntimeError):
+                return False
+
+        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
         bundle_root_set = set(bundle_roots)
         for bundle_root in bundle_roots:
             scanned += 1
@@ -374,6 +394,9 @@ class LocalCatalog:
 
         for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)):
             scanned += 1
+            if not is_unlinked_local_file(path):
+                invalid += 1
+                continue
             media_format = self._media_format(path)
             if media_format is None:
                 unsupported += 1
