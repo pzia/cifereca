@@ -1978,11 +1978,10 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                         - max(0.0, time.monotonic() - started),
                     )
                 if presence.status == "declared_current":
-                    self.storage.backup_put({
-                        **base_record, "status": "attention_required",
-                        "attention_code": "declared_link_recorded",
-                        "error": "EPUB local vérifié et déclaré par l’utilisateur ; aucun reçu Kobo créé",
-                    })
+                    # No backup_put here: the compatibility projection would
+                    # insert another entitlement for the same right. A personal
+                    # declaration is NOT a backup row or provider receipt.
+                    # Store only the scoped run checkpoint below.
                     summary["already_local_declared"] += 1
                     emit("already_local_declared", current=index + 1,
                          total=total, title=title, item_id=product_id)
