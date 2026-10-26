@@ -110,6 +110,21 @@ def test_download_without_epub_offer_stops_after_one_detail_get(tmp_path, page):
         obj.close()
 
 
+def test_explicit_epub_offer_wins_over_earlier_untyped_download():
+    page = (
+        '<a href="/downloads/ambiguous">Download</a>'
+        '<a href="/downloads/book.epub">Download EPUB</a>'
+    )
+    obj, transport = session(page)
+    try:
+        detail = obj.holdings(book())
+        assert detail.availability_status == "available"
+        assert obj.client.calls == [DETAIL]
+        assert transport.calls == []
+    finally:
+        obj.close()
+
+
 def test_unavailable_detail_does_not_claim_available():
     request = httpx.Request("GET", DETAIL)
     obj, transport = session(None, error=httpx.ReadTimeout("timeout", request=request))
