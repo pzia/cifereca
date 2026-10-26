@@ -17,6 +17,72 @@ from diagnostics_reconciliation import (
     exportable_reconciliation_aggregates, sanitized_reconciliation_export,
 )
 
+# Fixed Core-owned cover failure grammar (#3108). These fields identify
+# observed journal records only; they do not prove unique HTTP requests,
+# numerical status codes, a provider, a title or a borrower.
+_COVER_FAILURE_MESSAGES = {
+    "timeout": "couverture · délai dépassé",
+    "http_status": "couverture · échec HTTP",
+    "request_failed": "couverture · requête échouée",
+    "storage_failed": "couverture · écriture échouée",
+    "invalid_image": "couverture · image invalide",
+    "unexpected": "couverture · erreur inattendue",
+}
+
+
+def published_cover_failure(raw: Mapping[str, Any]) -> str | None:
+    """Recognize only the dedicated Core observation's strict envelope."""
+    if not isinstance(raw, Mapping):
+        return None
+    source = raw.get("source")
+    if type(source) is not str or source not in {"journal", "core_events"}:
+        # app_log/TRACE are not a second failed HTTP attempt.
+        return None
+    if (raw.get("module") != "COVER" or raw.get("status") != "error"
+            or raw.get("severity") != "error"):
+        return None
+    if source == "journal":
+        if (raw.get("logger") != "cifereca"
+                or raw.get("operation") != "cover_download_failure"):
+            return None
+    elif "operation" in raw:
+        # The legacy Core projection never exports its internal operation.
+        return None
+    detail = raw.get("detail")
+    if type(detail) is not dict or set(detail) != {"code"}:
+        return None
+    code = detail.get("code")
+    if (type(code) is not str
+            or raw.get("message") != _COVER_FAILURE_MESSAGES.get(code)):
+        return None
+    return code
+
+
+def cover_failure_page_summary(rows: list[dict[str, Any]]) -> str:
+    """Page-local count from attested rows, never a total of HTTP attempts."""
+    counts = {code: 0 for code in _COVER_FAILURE_MESSAGES}
+    for row in rows[:PAGE_SIZE]:
+        if not isinstance(row, dict):
+            continue
+        code = row.get("cover_reason")
+        if (type(code) is str and code in counts
+                and row.get("module") == "COVER"
+                and row.get("status") == "error"
+                and row.get("message") == _COVER_FAILURE_MESSAGES[code]
+                and type(row.get("source")) is str
+                and row["source"] in {"journal", "core_events"}):
+            counts[code] += 1
+    total = sum(counts.values())
+    if total == 0:
+        return ""
+    reasons = ", ".join(
+        f"{_COVER_FAILURE_MESSAGES[code].split(' · ', 1)[1]} : {count}"
+        for code, count in counts.items() if count
+    )
+    return (f" · Couvertures : {total} événement(s) observé(s) sur cette page"
+            f" ({reasons}) · nombre de requêtes HTTP distinctes inconnu")
+
+
 def local_timestamp_label(value: object) -> str:
     """Present a broker UTC instant in the machine's local offset, GUI only.
 
@@ -242,6 +308,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
+        cover_reason = published_cover_failure(raw)
+        if cover_reason is not None:
+            safe["cover_reason"] = cover_reason
         # The Core attests the terminal reconciliation event; present only
         # finite, local aggregate labels. The code is searchable on this page
         # without changing the broker's server-side query or exporting books.
@@ -642,7 +711,7 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     if not payload.get("sources"):
         return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     suffix = " · recherche dans cette page uniquement" if search else ""
-    return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
+    return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}" + cover_failure_page_summary(rows)
 
 
 def empty_observation(payload: Mapping[str, Any], *, period: str,
