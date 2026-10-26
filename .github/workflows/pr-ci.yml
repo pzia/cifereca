@@ -52,7 +52,14 @@ jobs:
           fi
 
           changed_file="$RUNNER_TEMP/cifereca-changed-files"
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | tee "$changed_file"
+          # A stale PR branch must not acquire unrelated changes from main
+          # as test-scope changes. First reject a tree already in main, then
+          # select ONLY the files changed since the PR branch point.
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA"; then
+            echo "PR tree is identical to current main: refuse redundant no-op merge" >&2
+            exit 1
+          fi
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" | tee "$changed_file"
 
           matches() {
             grep -Eq "$1" "$changed_file"
