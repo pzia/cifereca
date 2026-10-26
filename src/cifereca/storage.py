@@ -2029,17 +2029,26 @@ class Storage:
             rows = db.execute(
                 "SELECT " + ",".join(keys) + " FROM backup_items WHERE local_path IS NOT NULL"
             ).fetchall()
+        match = None
         for row in rows:
             item = dict(zip(keys, row))
             raw = str(item.get("local_path") or "").strip()
             if not raw:
                 continue
             try:
-                if str(Path(raw).expanduser().resolve()) == target:
-                    return item
+                if str(Path(raw).expanduser().resolve()) != target:
+                    continue
             except OSError:
                 continue
-        return None
+            # A shared path is not a supplier receipt. Two buyers, accounts,
+            # editions or providers may legitimately refer to identical
+            # bytes. Choosing the first SQLite row was nondeterministic and
+            # could reassign catalogue provenance during a local rescan.
+            # Treat multiple rows as unproven rather than promoting one.
+            if match is not None:
+                return None
+            match = item
+        return match
 
     def entitlement_realize_missing_loans(
         self, active_entitlement_ids: set[str], *, identity_id: str | None = None,
