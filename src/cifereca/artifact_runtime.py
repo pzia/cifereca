@@ -646,6 +646,44 @@ class LibraryMaintenanceBrokerImpl:
                 raise _LibraryFilenameConflict("Source locale non vérifiable") from None
             new=old.with_name(str(plan.facts.get("new_filename") or old.name))
             if new != old:
+                # A stored artifact_id is not evidence that the bytes on
+                # disk are still those of the indexed book. Rehash the actual
+                # source under a no-follow fd for this explicit maintenance
+                # operation, before creating the destination hardlink or
+                # changing SQLite. Size + mtime alone are not a fingerprint.
+                evidence = self.service.storage.artifact_get(str(row.get("artifact_id") or ""))
+                digest = evidence.get("sha256") if type(evidence) is dict else None
+                length = evidence.get("size") if type(evidence) is dict else None
+                if (type(digest) is not str or len(digest) != 64
+                        or any(c not in "0123456789abcdef" for c in digest)
+                        or row.get("artifact_id") != "sha256:" + digest
+                        or type(length) is not int or length <= 0
+                        or not hasattr(os, "O_NOFOLLOW")):
+                    raise _LibraryFilenameConflict("Empreinte source non attestée")
+                try:
+                    fd = os.open(
+                        old, os.O_RDONLY | os.O_NOFOLLOW |
+                        getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0),
+                    )
+                    try:
+                        before = os.fstat(fd)
+                        if not stat.S_ISREG(before.st_mode) or before.st_size != length:
+                            raise _LibraryFilenameConflict("Fichier source modifié")
+                        hasher = hashlib.sha256()
+                        while chunk := os.read(fd, 1024 * 1024):
+                            hasher.update(chunk)
+                        after = os.fstat(fd)
+                        named = os.stat(old, follow_symlinks=False)
+                        attrs = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                        if (any(getattr(before, key) != getattr(after, key) or
+                                getattr(before, key) != getattr(named, key)
+                                for key in attrs)
+                                or hasher.hexdigest() != digest):
+                            raise _LibraryFilenameConflict("Fichier source modifié")
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    raise _LibraryFilenameConflict("Source locale non vérifiable") from None
                 # Never allow a target symlink to redirect the new SQLite
                 # pathname to a different inode/root, even at equal SHA.
                 if new.is_symlink():
