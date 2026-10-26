@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -150,7 +150,7 @@ jobs:
       - name: Check production plugins use Core HTTPX service
         run: python3 scripts/ci_plugin_httpx_boundary.py
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.scope.outputs.python == 'true'
         with:
           python-version: "3.11"
