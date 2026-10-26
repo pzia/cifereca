@@ -55,7 +55,7 @@ def fixture():
     session._enrich_digital_loan_metadata = lambda loan: None
     account = Account(
         unique_id="", is_primary=True, provider_id="paris",
-        credential_id="synthetic-card", identity_id=None,
+        credential_id="synthetic-card", identity_id="synthetic-identity",
     )
     session.connected = True
     session._accounts = [account]
