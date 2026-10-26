@@ -72,6 +72,7 @@ def _deep_json():
 
 @pytest.mark.parametrize("metadata_json", [
     "{invalid json",
+    '["unknown-structure"]',
     _deep_json(),
     " " * (1024 * 1024 + 1),
 ])
