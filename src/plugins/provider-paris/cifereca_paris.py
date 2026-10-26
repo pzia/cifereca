@@ -30,7 +30,7 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderPlugin,
     ProviderSession,
-    ProviderError,
+    ProviderError, Cancelled,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     inspect_artifact_content,
     publish_artifact_content,
@@ -426,6 +426,11 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             try:
                 rows.extend(self.client.loans(upstream, account.unique_id))
+            except Cancelled:
+                # Cooperative cancellation is NOT an unavailable branch.
+                # Stop the second upstream GET and never publish a partial
+                # inventory or synthetic negative-rights evidence.
+                raise
             except Exception as exc:
                 # Neither branch failure nor sibling success proves an empty
                 # inventory. Keep the compatibility code and attach only the
