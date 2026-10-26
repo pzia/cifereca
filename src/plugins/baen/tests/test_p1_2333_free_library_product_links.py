@@ -55,6 +55,8 @@ def test_current_free_library_links_are_not_silently_lost():
 @pytest.mark.parametrize("anchor", [
     '<a href="/buy.html">Buy</a>',
     '<a href="/1632.html">1632</a>',  # no verified product-title class
+    '<a data-class="product-item-link" href="/1632.html">1632</a>',
+    '<a data-href="/1632.html" class="product-item-link">1632</a>',
     '<a class="product-item-link" href="https://outside.test/1632.html">1632</a>',
     '<a class="product-item-link" href="/1632.html?token=opaque">1632</a>',
     '<a class="product-item-link" href="/customer/account.html">Account</a>',
