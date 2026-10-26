@@ -135,3 +135,25 @@ def test_zero_index_page_offsets_are_not_silently_clamped(page, first_record):
         assert client.calls[0][1]["startRecord"] == first_record
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("field", ["all", "author", "title", "subject"])
+def test_one_character_query_is_skipped_not_attested_zero(field):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        session.last_search_warnings = ["previous"]
+        assert session.search("x", field=field) == []
+        assert client.calls == []
+        assert session.last_search_warnings == [
+            "partial_results : requête trop courte ; BnF non interrogée",
+        ]
+        # Clear query is an intentional UI reset, not a user search result.
+        assert session.search("", field=field) == []
+        assert session.last_search_warnings == []
+        # A real requested SRU zero must still not report partial coverage.
+        assert session.search("Doyle", field=field) == []
+        assert len(client.calls) == 1
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
