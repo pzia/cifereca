@@ -4,6 +4,7 @@ All EPUB/PDF facts below are synthetic local files and SQLite rows.
 """
 from __future__ import annotations
 
+from cifereca.acquisition_engine import stable_id
 from cifereca.catalog import LocalCatalog
 from cifereca.storage import Storage
 
@@ -22,6 +23,7 @@ def _case(tmp_path, *parts, provider="kobo"):
         "metadata": {"legacy_note": "provenance already checked"},
     })
     storage.catalog_entry_put({
+        "catalog_entry_id": stable_id("catalog", placement_id),
         "placement_id": placement_id, "artifact_id": None,
         "title": "Existing title", "identity_id": "buyer-a",
         "provider_id": provider, "item_id": "edition-123",
