@@ -10,6 +10,7 @@ from cifereca.models import Account, Loan
 from cifereca.plugin_api import (
     INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage,
     LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory,
+    Cancelled,
 )
 
 
@@ -255,3 +256,33 @@ def test_identity_or_credential_switch_during_typed_read_discards_all_results():
         assert result.status == "failed"
         assert result.reason_code == "scope_changed"
         assert result.loans == ()
+
+
+
+@pytest.mark.parametrize("kind", ["typed", "legacy"])
+def test_provider_cancellation_is_not_misclassified_as_inventory_read_failure(kind):
+    a = account(provider="paris")
+    def stopped(_):
+        raise Cancelled("signed://PRIVATE/reader?token=SECRET")
+    if kind == "typed":
+        s, calls = session(a, hook=stopped)
+    else:
+        s, calls = session(a, reader=stopped)
+
+    result = read_loan_inventory(s, a)
+    assert result.status == "cancelled" and result.reason_code == "cancelled"
+    assert result.scope == LoanInventoryScope.for_account(a)
+    assert result.loans == () and result.branches == ()
+    assert not result.branch_claims_complete("dilicom", "digital")
+    assert calls == [(kind, a)]
+    assert "SECRET" not in repr(result) and "PRIVATE" not in repr(result)
+
+
+def test_arbitrary_provider_exception_still_failed_not_cancelled():
+    a = account()
+    s, calls = session(a, hook=lambda _: (_ for _ in ()).throw(
+        RuntimeError("failure in typed inventory"),
+    ))
+    result = read_loan_inventory(s, a)
+    assert result.status == "failed" and result.reason_code == "read_failed"
+    assert calls == [("typed", a)]
