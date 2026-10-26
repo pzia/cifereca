@@ -651,19 +651,37 @@ class NumilogSession(ProviderSession):
         item.friendly_url = public_book_url(item.friendly_url, self.library_url)
 
     def _inventory_owner_or_none(self):
-        """Advisory owner observation for the existing v1 library reader.
+        """Freeze all candidate owner bindings, including ambiguous ones.
 
-        Legacy library discovery must remain possible with an unresolved
-        identity: the *explicit acquisition* has its own mandatory ownership
-        guard and remains denied. Compare the binding on BOTH sides of the
-        read, including a transition from/to unresolved.
+        _identity_id() intentionally refuses multiple/no owners for delivery.
+        Its former None fallback here erased *which* unresolved mapping was
+        observed: [A,B] -> [A,C] looked unchanged although the ownership
+        evidence changed during MesLivres. Keep legacy inventory readable
+        while unresolved, but reject a changed mapping after the read.
+        No acquisition rights are inferred from this advisory snapshot.
         """
-        if self.identity_broker is None:
-            return None
+        broker = self.identity_broker
+        if broker is None:
+            return None  # Legacy brokerless inventory inspection.
         try:
-            return self._identity_id()
+            accounts = broker.accounts()
+            if type(accounts) not in (list, tuple):
+                return ('unverified_broker',)
+            target = 'numilog:' + self.scope
+            owners = []
+            for ref in accounts:
+                if (getattr(ref, 'provider_id', None) != 'numilog'
+                        or getattr(ref, 'account_id', None) != target):
+                    continue
+                identity = getattr(ref, 'identity_id', None)
+                # Bad IDs remain unresolved; never stringify arbitrary
+                # provider objects, even into an internal owner snapshot.
+                owners.append(identity if type(identity) is str else '')
+            # A canonical *multiset* notices both owner changes and duplicate
+            # rows, without relying on upstream account order.
+            return ('broker', id(broker), tuple(sorted(owners)))
         except Exception:
-            return None
+            return ('unverified_broker', id(broker))
 
     def _enrichment_identity_snapshot(self):
         """Optionally pin the owning identity for ONE explicit metadata read.
