@@ -399,24 +399,31 @@ class KoboSession(ProviderSession):
         # service can issue /library/search. Post-filtering private hits is
         # insufficient: a disconnected or mismatched account must not incur
         # a private HTTP request, nor be blocked by a personal 429/5xx.
-        account_id = (
-            self._accounts[0].unique_id
-            if self.connected and len(self._accounts) == 1
-            and self._accounts[0].provider_id == self.provider_id
-            and self._accounts[0].credential_id == self.credential_id
-            # A connected session with an invalid account key cannot attest
-            # legacy library hits that omit an explicit account_id.
-            and _strict_account_scope(self._accounts[0].unique_id)
+        bound_account = (
+            self._accounts[0] if self.connected and len(self._accounts) == 1
             else None
         )
-        # A personal search can include rights-scoped library rows. Pin the
-        # exact bound Account object and generation while the Vault query and
-        # per-row normalization complete. Public catalogue-only requests do
-        # not require a private account and remain usable after disconnect.
+        binding_generation = self._personal_binding_generation
+        account_id = (
+            bound_account.unique_id
+            if bound_account is not None
+            and bound_account.provider_id == self.provider_id
+            and bound_account.credential_id == self.credential_id
+            # A connected session with an invalid account key cannot attest
+            # legacy library hits that omit an explicit account_id.
+            and _strict_account_scope(bound_account.unique_id)
+            else None
+        )
+        # Personal catalogue discovery can include rights-scoped rows; public
+        # catalog-only requests never require an authenticated account.
         personal_binding = (
-            (self._accounts[0], self._personal_binding_generation)
+            (bound_account, binding_generation)
             if account_id is not None and scope != "catalog" else None
         )
+        if personal_binding is not None:
+            # Detect a rebind between the initial account check and the
+            # network request, not only after its result is projected.
+            self._ensure_personal_binding(*personal_binding)
         # Input validation above accepts harmless casing/outer whitespace,
         # but the Vault API must always receive the *declared* canonical
         # general-search value. Passing " ALL " to Vault would be a different
