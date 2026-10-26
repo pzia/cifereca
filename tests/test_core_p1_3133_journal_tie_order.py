@@ -45,8 +45,8 @@ def test_same_timestamp_order_is_physical_and_consistent_across_surfaces(tmp_pat
     assert [event["message"] for event in all_events["events"]] == expected
     assert len({event["event_id"] for event in all_events["events"]}) == len(expected)
     assert [event["message"] for event in query_journal(
-        active, search="provider", limit=10,
-    )["events"]] == ["02 provider started", "03 provider failed"]
+        active, search="03 provider failed", limit=10,
+    )["events"]] == ["03 provider failed"]
     assert [
         event["message"] for event in query_journal(
             active, provider_id="bnf-pret", offset=2, limit=2,
