@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca_bnf_pret_web import _DOM, MAX_HTML_BYTES, WebParseError
 from cifereca_bnf_pret_paging import _params
+from cifereca_bnf_pret_signed_action import signed_loan_url
 
 ORIGIN = 'https://pret.bnf.fr'
 ACTIVITY = ORIGIN + '/my_profile/activity'
@@ -184,7 +185,7 @@ class ReaderHTTPClient:
                 raise ReaderHTTPError('transport_unavailable') from None
         raise ReaderHTTPError('redirect_limit')
 
-    def loan_token(self, loan_id: str) -> bytes:
+    def loan_token(self, loan_id: str, signed_url: str) -> bytes:
         """One non-retried GET for a loan previously checked by its session.
 
         Unlike HTML requests, this never follows a redirect (even to BnF).
@@ -193,9 +194,11 @@ class ReaderHTTPClient:
         """
         from cifereca_bnf_pret_download import MAX_TOKEN_BYTES, exact_loan_id
         loan_id = exact_loan_id(loan_id)
-        url = ORIGIN + '/loans/' + loan_id
-        # Enforce a second, narrow URL boundary independent of auth/login.
-        if not re.fullmatch(r'/loans/[A-Za-z0-9_-]{1,128}', urlsplit(url).path):
+        # Use the signed action observed in the fresh authenticated page.
+        # Never construct nonce/timestamp/token or reuse a signed URL from
+        # another loan: take the link directly from fresh activity HTML.
+        url = signed_loan_url(signed_url, loan_id)
+        if url is None or url != signed_url:
             raise ReaderHTTPError('url_refused')
         deadline = time.monotonic() + 30
         try:
