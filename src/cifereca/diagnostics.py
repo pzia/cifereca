@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from .diagnostic_task_context import numilog_task_reference
+from .diagnostic_task_context import diagnostic_task_reference
 
 # Backwards-compatible API names. Only GTK Diagnostics pseudonymizes explicit
 # login/password values in its presentation layer; the Core and plugins must
@@ -109,6 +109,14 @@ class Diagnostics:
             raw_detail = journal_payload(detail) if type(detail) is dict else {}
         except Exception:
             raw_detail = {}
+        # BnF HTTP observations belong to the actual worker executing the GET.
+        # This reference is Core-owned; request_ref and plugin-supplied detail
+        # cannot claim task provenance. Leave unrelated generic events alone.
+        bnf_http = (type(category) is str and category == "API"
+                    and type(operation) is str and operation == "BnF HTTP"
+                    and type(raw_detail.get("provider_id")) is str
+                    and raw_detail["provider_id"] == "bnf-pret")
+        correlate = bnf_http or (type(category) is str and category == "NUMILOG")
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             category=category[:160] if type(category) is str else "DIAGNOSTICS",
@@ -116,7 +124,7 @@ class Diagnostics:
             status=status if type(status) is str and status in _GENERIC_STATUSES else "unknown",
             duration_ms=duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000 else None,
             detail=raw_detail,
-            task_ref=numilog_task_reference() if type(category) is str and category == "NUMILOG" else None,
+            task_ref=diagnostic_task_reference() if correlate else None,
         )
         with self._lock:
             self._items.append(entry)
