@@ -138,3 +138,16 @@ corps, le budget global et les décisions de redirection (dont refus de
 downgrade HTTPS). Le backend synchrone dépend explicitement de HTTPcore 1.0.x
 et HTTPX 0.28.x ; l'upgrade de ces bornes doit rééprouver ce point d'intégration.
 Aucune requête de sondage et aucune interception globale ne sont ajoutées.
+
+## Garde de frontière CI (#3315)
+
+`scripts/ci_plugin_httpx_boundary.py` contrôle les imports et constructeurs
+HTTP connus de tous les fichiers Python de production des plugins. Le check
+PR CI l'exécute même si la modification n'ajoute pas de dépendance Python.
+Les types/erreurs HTTPX et `urllib.parse` restent autorisés ; constructeurs
+HTTPX directs, raccourcis réseau et piles urllib.request/requests/aiohttp/
+http.client sont refusés, y compris les alias simples et `getattr` littéral.
+Les doubles sous `tests/` sont exclus. Browser Recorder est la seule exception
+de production, par nom de package exact. Cette garde statique ne constitue pas
+une sandbox ; les tests de consommateurs prouvent aussi le passage réel par le
+service et la fidélité des échanges capturés.

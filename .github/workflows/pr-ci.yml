@@ -144,6 +144,9 @@ jobs:
             echo "bnf_reader=$bnf_reader"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check production plugins use Core HTTPX service
+        run: python3 scripts/ci_plugin_httpx_boundary.py
+
       - uses: actions/setup-python@v5
         if: steps.scope.outputs.python == 'true'
         with:
