@@ -8,7 +8,7 @@ pending ADEPT/index receipts.
 from __future__ import annotations
 
 from collections import Counter
-from time import time
+from time import time, monotonic
 from typing import Any
 
 from ..models import SearchResult
@@ -25,7 +25,8 @@ from .numilog_materialization_consent import (
 def _result(status: str, *, ok: bool = False,
             downloaded: int = 0, attempted: int = 0,
             skipped: int = 0, failed: int = 0,
-            blocked: int = 0, claimed: int = 0, source_results=()) -> SyncResult:
+            blocked: int = 0, claimed: int = 0, declared_local: int = 0,
+            declared_pending: int = 0, source_results=()) -> SyncResult:
     return SyncResult(
         ok=ok, changed=downloaded, warnings=() if ok else (status,),
         facts={
@@ -33,6 +34,8 @@ def _result(status: str, *, ok: bool = False,
             "status": status, "downloaded": downloaded,
             "attempted": attempted, "skipped": skipped, "failed": failed,
             "blocked": blocked, "sources_claimed": claimed,
+            "already_local_declared": declared_local,
+            "declared_needs_review": declared_pending,
             "acquisition_authorized": False, "source_results": tuple(source_results),
         },
     )
@@ -68,7 +71,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
     """At most eight attempts *per source*; failures never starve siblings."""
     if trigger != "startup" or type(identity_id) is not str:
         return _result("invalid_trigger")
-    total = attempts = skipped = failures = blocked = claimed = 0
+    total = attempts = skipped = failures = blocked = claimed = declared_local = declared_pending = 0
     source_results = []
     sources = eligible_source_ids(broker, identity_id)
     if not sources:
@@ -80,6 +83,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         account, session, roots = bound
         trace = StartupTrace(broker.service, source_id)
         previous = (total, attempts, skipped, failures, blocked)
+        previous_declared_local = declared_local
+        previous_declared_pending = declared_pending
+        presence_seconds_remaining = 8.0
 
         def observe(phase, code="started"):
             trace.counts.update(downloaded=total - previous[0], attempted=attempts - previous[1],
@@ -276,9 +282,38 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 observe("preflight")
                 prior = broker.preflight_numilog_purchase(source_id, row.record_id)
                 if prior.facts.get('status') == 'declared_link_recorded':
-                    # A recorded user association requires local verification,
-                    # not a duplicate download or a successful "0 attempted".
+                    from .library_declared_presence import verify_declared_presence
+                    if presence_seconds_remaining <= 0:
+                        blocked += 1
+                        declared_pending += 1
+                        trace.fail('preflight_failed')
+                        continue
+                    presence_started = monotonic()
+                    try:
+                        presence = verify_declared_presence(
+                            broker.service, identity_id=account.identity_id,
+                            provider_id='numilog', credential_id=account.credential_id,
+                            account_id=account.unique_id, item_id=row.record_id,
+                            source_current=lambda: (
+                                same_source() and mode(broker, source_id) == 'on_start'
+                                and broker.service.storage.numilog_materialization_consent_revision(
+                                    source_id) == consent_revision
+                            ),
+                            cancelled=lambda: bool(control is not None
+                                and callable(getattr(control, 'cancelled', None)) and control.cancelled()),
+                            seconds=presence_seconds_remaining,
+                        )
+                    finally:
+                        presence_seconds_remaining = max(0.0, presence_seconds_remaining
+                            - max(0.0, monotonic() - presence_started))
+                    if control is not None and callable(getattr(control, 'check_cancelled', None)):
+                        control.check_cancelled()
+                    if presence.status == 'declared_current':
+                        declared_local += 1
+                        skipped += 1
+                        continue
                     blocked += 1
+                    declared_pending += 1
                     trace.fail('preflight_failed')
                     continue
                 if (prior.ok is not True
@@ -346,6 +381,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 own_skipped = skipped - previous[2]
                 own_failed = failures - previous[3]
                 own_blocked = blocked - previous[4]
+                own_declared_local = declared_local - previous_declared_local
+                own_declared_pending = declared_pending - previous_declared_pending
                 result_status = (
                     "partial" if own_downloaded and (own_failed or own_blocked or interrupted)
                     else "failed" if own_failed
@@ -358,7 +395,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         source_id=source_id, started_at=started_at,
                         status=result_status, attempted=own_attempted,
                         downloaded=own_downloaded, skipped=own_skipped,
-                        failed=own_failed,
+                        failed=own_failed, declared_local=own_declared_local,
+                        declared_pending=own_declared_pending,
                     )
                     if finalized is not True:
                         # The stale-run SQL guard can refuse a final receipt
@@ -396,5 +434,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         status, ok=not (failures or blocked),
         downloaded=total, attempted=attempts,
         skipped=skipped, failed=failures,
-        blocked=blocked, claimed=claimed, source_results=source_results,
+        blocked=blocked, claimed=claimed, declared_local=declared_local,
+        declared_pending=declared_pending, source_results=source_results,
     )

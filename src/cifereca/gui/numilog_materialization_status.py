@@ -39,6 +39,16 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
            or data[key] > (2048 if key == "skipped" else 9 if key == "failed" else 8)
            for key in counts):
         return "Dernier bilan indisponible."
+    # Optional account-scoped numbers exist only on recently finalized
+    # receipts. Older v1 receipts remain readable, without invented counts.
+    declared_keys = ("already_local_declared", "declared_needs_review")
+    has_declared = any(key in data for key in declared_keys)
+    if has_declared and (
+            any(type(data.get(key)) is not int or not 0 <= data[key] <= 2048
+                for key in declared_keys)
+            or data["already_local_declared"] > data["skipped"]
+            or (status == "complete" and data["declared_needs_review"] != 0)):
+        return "Dernier bilan indisponible."
     # A manifest/acquisition failure can be followed by a *second* failure
     # while closing its durable receipt. Both must remain visible even when
     # no download was attempted (0 attempted, 2 failed). This agrees with
@@ -93,6 +103,11 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
             f"{data['attempted']} tenté(s), "
             f"{data['skipped']} ignoré(s), {data['failed']} échec(s)"
         )
+        if has_declared:
+            caption += (
+                f" ; {data['already_local_declared']} présence(s) déclarée(s) vérifiée(s)"
+                f" ; {data['declared_needs_review']} liaison(s) déclarée(s) à revoir"
+            )
     if detail:
         caption += f". Phase : {detail['cause_phase']} ; cause : {detail['code']}"
         if "task_ref" in detail:
