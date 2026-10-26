@@ -215,6 +215,10 @@ class KoboSession(ProviderSession):
         self.vault_release = ""
         self.acquisition_access = "unknown"
         self.last_library_rejections: list[dict[str, str]] = []
+        # A personal manifest response belongs to the connection generation
+        # that started its GET, even when an A→B→A reconnect returns the same
+        # account identifier. This guard does not infer any negative rights.
+        self._personal_binding_generation = 0
         # Sanitized integrity signal for Core backup/preview. A personal
         # manifest with discarded upstream rows must never authorize pruning.
         self.backup_manifest_rejection_count = 0
@@ -233,6 +237,7 @@ class KoboSession(ProviderSession):
             pass
 
     def connect(self) -> list[Account]:
+        self._personal_binding_generation += 1
         # A reconnect may use a replaced token, so the previous successful
         # account handshake must not continue to authorize operations while
         # /status or /account is being queried. Keep the previous account
@@ -356,8 +361,9 @@ class KoboSession(ProviderSession):
         return self.accounts
 
     def close(self) -> None:
-        self.client.close()
+        self._personal_binding_generation += 1
         self.connected = False
+        self.client.close()
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
 
     def cover_url(self, item: dict[str, Any]) -> str | None:
@@ -520,6 +526,18 @@ class KoboSession(ProviderSession):
         )
         return accepted
 
+    def _ensure_personal_binding(self, account: Account, generation: int) -> None:
+        """Reject an in-flight Vault snapshot after account/session replacement."""
+        if (
+            self._personal_binding_generation != generation
+            or not self.connected or len(self._accounts) != 1
+            or self._accounts[0] is not account
+            or account.provider_id != self.provider_id
+            or account.credential_id != self.credential_id
+            or not _strict_account_scope(account.unique_id)
+        ):
+            raise ProviderError("Kobo-Vault : session modifiée pendant lecture")
+
     def library(self) -> list[SearchResult]:
         # The rights/inventory view must be tied to a verified connection,
         # independently of the acquisition-specific backup_manifest() path.
@@ -535,8 +553,11 @@ class KoboSession(ProviderSession):
                 "type": "invalid_scope", "reason": "unbound_account",
             })
             return []
-        account_id = self._accounts[0].unique_id
+        bound_account = self._accounts[0]
+        generation = self._personal_binding_generation
+        account_id = bound_account.unique_id
         items = self.client.library_manifest()
+        self._ensure_personal_binding(bound_account, generation)
         self.last_library_rejections.extend(
             _public_kobo_rejections(
                 getattr(self.client, "last_manifest_rejections", ())
@@ -641,7 +662,13 @@ class KoboSession(ProviderSession):
             or not _strict_account_scope(self._accounts[0].unique_id)
         ):
             return []
+        bound_account = self._accounts[0]
+        generation = self._personal_binding_generation
         items = self.client.library_manifest()
+        # Unlike an empty manifest, a disconnected/replaced session is not
+        # evidence that purchases disappeared. Do not publish rows OR an
+        # authoritative empty manifest after this race.
+        self._ensure_personal_binding(bound_account, generation)
         # Keep the complete raw snapshot only inside this provider call so
         # its advisory classification can count foreign-account rows. Such
         # rows must never reach Core's legacy materialization loop.
