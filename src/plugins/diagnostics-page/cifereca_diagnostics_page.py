@@ -1385,6 +1385,10 @@ class DiagnosticsPagePlugin:
             }
             if int(source_selector.get_selected()) == 3:
                 query["domain"] = ""
+                # A journal page is already globally ordered by Core. The
+                # 50-row GTK display sort alone would otherwise reverse the
+                # OLDEST page and falsely label it "Plus récents d’abord".
+                query["sort_order"] = "desc" if sort_latest.get_active() else "asc"
 
             def read_snapshot(_control):
                 return fetch_explorer_page(broker, **query)
@@ -1746,7 +1750,11 @@ class DiagnosticsPagePlugin:
             search_timeout = GLib.timeout_add(220, apply_search)
 
         search_filter.connect("changed", on_search_change)
-        sort_latest.connect("toggled", lambda *_: display_events())
+        sort_latest.connect(
+            "toggled",
+            lambda *_: reset_events() if int(source_selector.get_selected()) == 3
+            else display_events(),
+        )
         operation_grouping.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)
         journals_previous.set_sensitive(False)

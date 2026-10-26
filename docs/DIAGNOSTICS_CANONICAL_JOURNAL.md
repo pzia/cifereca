@@ -12,7 +12,13 @@ Le broker `diagnostics.events(search="...", limit=50,
 offset=...)` (ou `source="journal"` explicite) lit les quatre fichiers conservés, applique les filtres avant
 pagination et renvoie `total`, `next_offset`, des événements datés UTC et la
 couverture de la fenêtre physique. Recherche insensible à la casse et aux
-accents. Les événements `Diagnostics.add` compatibles JSON sont sérialisés
+accents. Le paramètre optionnel `sort_order="asc" | "desc"` s'applique
+**après les filtres globaux mais avant la pagination** ; `asc` reste le
+défaut pour les anciens consommateurs. La page GTK « Plus récents d'abord »
+utilise `desc` : son premier lot contient les 50 événements les plus récents
+**de toutes les rotations**, et sa page suivante remonte dans le temps.
+À timestamp égal, l'ordre physique est préservé (`asc`) ou inversé (`desc`),
+jamais déterminé par le hash `event_id`. Les événements `Diagnostics.add` compatibles JSON sont sérialisés
 dans ce même fichier sous une enveloppe `DIAG_JSON`; le journal conserve le
 message et tous les champs d'origine, sans pseudonymisation ni inférence de
 provider à partir des messages libres. Les autres logs Python déjà produits
