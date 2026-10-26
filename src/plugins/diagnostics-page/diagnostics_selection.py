@@ -97,7 +97,11 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                     and not row["module"].casefold().startswith(module_prefix)
                     and not row.get("business_module", "").casefold().startswith(module_prefix))):
             raise ValueError("diagnostic selection contains out-of-scope events")
-        if provider_id and source != "journal" and row.get("provider_id") != provider_id:
+        # The canonical journal already filters provider_id in Core, but a
+        # non-atomic paginated selection must still reject any contradictory
+        # page before copying it. Previously this check was disabled precisely
+        # for source=journal: a stale/misrouted page could enter the batch.
+        if provider_id and row.get("provider_id") != provider_id:
             raise ValueError("diagnostic selection contains out-of-scope events")
         if domain and row.get("domain") != domain:
             raise ValueError("diagnostic selection contains out-of-scope events")
