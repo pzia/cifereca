@@ -11,6 +11,13 @@ import re
 ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 EXPECTED = {
+    "gtk-debian13-cache-asset.yml": (
+        (
+            ".gtk-publish/gtk4-deb-cache-debian13-trixie-amd64.tar.gz",
+            ".gtk-publish/SHA256SUMS",
+        ),
+    ),
+
     "e2e-smoke.yml": (
         ("${{ runner.temp }}/cifereca-e2e-public/summary.json",),
     ),
