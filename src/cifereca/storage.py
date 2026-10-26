@@ -1480,6 +1480,36 @@ class Storage:
                         for declaration in declarations
                     ):
                         raise ValueError("relocate_active_declaration_requires_relink")
+                # Reconciliation may *not* rename away an acquisition's
+                # checkpoint path and then claim that the download is absent.
+                # Historical and active metadata cannot safely be distinguished
+                # here: refuse rather than corrupt an index_pending recovery,
+                # an ADEPT receipt or an independent account's provenance.
+                # This is intentionally read-only and fail-closed until #3185
+                # provides an explicit transactional checkpoint migration.
+                if old_text != new_text:
+                    import json as _json
+                    from .core.duplicate_maintenance_guard import _mentions_exact_path
+                    for (raw,) in db.execute(
+                        "SELECT metadata_json FROM acquisition_ledger"
+                    ):
+                        if type(raw) is not str or len(raw) > 1024 * 1024:
+                            raise ValueError("relocate_acquisition_context_unavailable")
+                        try:
+                            value = _json.loads(raw)
+                        except (ValueError, TypeError, RecursionError):
+                            raise ValueError("relocate_acquisition_context_unavailable") from None
+                        if _mentions_exact_path(value, old_text):
+                            raise ValueError("relocate_acquisition_reference_requires_relink")
+                    # A shared local_path belonging to another provider or
+                    # identity must not remain dangling after this move.
+                    if db.execute(
+                        "SELECT 1 FROM backup_items WHERE local_path=? AND "
+                        "(provider_id<>? OR (identity_id IS NOT NULL "
+                        "AND identity_id<>?)) LIMIT 1",
+                        (old_text, provider_id, identity_id),
+                    ).fetchone():
+                        raise ValueError("relocate_scope_conflict")
                 # A matching path or SHA is not evidence that a placement
                 # belongs to the same identity, provider and logical source.
                 # Validate *before* changing any backup or catalog references.
