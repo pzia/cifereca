@@ -410,6 +410,12 @@ class LocalCatalog:
             ):
                 raise FileNotFoundError("catalog_scan_root_unavailable")
         self.root.mkdir(parents=True, exist_ok=True)
+        # The library root can be unmounted or atomically replaced after
+        # the initial existence check. A later os.walk on a vanished root
+        # may yield zero entries without calling onerror; such an empty walk
+        # must never authorize a mass transition to 'missing'.
+        initial_root = self.root.stat()
+        root_identity = (initial_root.st_dev, initial_root.st_ino)
         started_at = int(time.time())
         previous_catalog = {row["catalog_entry_id"]: row for row in self.storage.catalog_entries()}
         seen_paths: set[str] = set()
@@ -711,6 +717,16 @@ class LocalCatalog:
                     and is_unlinked_local_file(candidate)):
                 raise OSError("catalog_scan_changed_during_inventory")
 
+        # Validate the directory *after* traversal and immediately before
+        # the negative transition. A missing/replaced mount is not evidence
+        # of missing books, even when os.walk reported no error.
+        try:
+            final_root = self.root.stat()
+            if (not _stat.S_ISDIR(final_root.st_mode)
+                    or (final_root.st_dev, final_root.st_ino) != root_identity):
+                raise OSError("catalog_scan_root_changed")
+        except OSError:
+            raise OSError("catalog_scan_root_changed") from None
         missing_marked = self.storage.placements_mark_missing(self.root, seen_paths, seen_at=started_at)
         return CatalogScanResult(
             root=self.root,
