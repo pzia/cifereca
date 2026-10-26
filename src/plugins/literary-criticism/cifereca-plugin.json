@@ -2,10 +2,10 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.8",
+    "version": "0.3.9",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
-    "plugin_api": ">=1.4,<2"
+    "plugin_api": ">=1.4.2,<2"
   },
   "categories": [
     {
@@ -26,7 +26,7 @@
     {
       "id": "literary.criticism",
       "type": "criticism.index",
-      "version": "0.3.8",
+      "version": "0.3.9",
       "entrypoint": "literary_criticism:PLUGIN",
       "display_name": "Critique littéraire",
       "description": "Agrège des critiques publiques, les déduplique et les rattache aux livres par preuves explicables.",
@@ -48,7 +48,7 @@
     {
       "id": "ui.page.literary-criticism",
       "type": "ui.page",
-      "version": "0.3.8",
+      "version": "0.3.9",
       "entrypoint": "criticism_page:PLUGIN",
       "display_name": "Critiques littéraires",
       "description": "Sources et critiques associées depuis la fiche d’un livre.",
@@ -95,7 +95,7 @@
     {
       "id": "criticism.source.rss",
       "type": "criticism.source",
-      "version": "0.3.8",
+      "version": "0.3.9",
       "entrypoint": "criticism_feeds:PLUGIN",
       "display_name": "Source RSS/Atom",
       "description": "Source de critiques publique RSS 2, Atom ou JSON Feed.",
@@ -128,7 +128,9 @@
       },
       "requires": [],
       "recommends": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "httpx"
+      ],
       "requires_contracts": []
     }
   ]
