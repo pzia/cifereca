@@ -205,6 +205,12 @@ class LocalCatalog:
                 "metadata": {**dict((existing or {}).get("metadata") or {}),
                              "invalid_reason": reason, "artifact_kind": "bundle"},
             })
+            # Invalid bytes/manifest revoke only physical presence, not the
+            # existing artifact/ownership history. Catalogue cannot stay local.
+            if existing:
+                for entry in self.storage.catalog_entries():
+                    if entry.get("placement_id") == placement_id and entry.get("local_state") != "invalid":
+                        self.storage.catalog_entry_put({**entry, "local_state": "invalid"})
             return {"status": "invalid", "path": path_text, "reason": reason, "artifact_kind": "bundle"}
 
         artifact = Artifact.from_bundle(
@@ -304,13 +310,24 @@ class LocalCatalog:
         except OSError:
             stat_meta = {}
         if not ok:
+            # Current bytes are unusable, but historic artifact/edition/owner
+            # remains evidence for reconciliation. Never advertise an invalid
+            # physical placement as an available local catalogue entry.
             self.storage.placement_put({
-                "placement_id": placement_id, "artifact_id": None, "path": path_text,
+                "placement_id": placement_id,
+                "artifact_id": (existing or {}).get("artifact_id"),
+                "path": path_text,
                 "identity_id": identity_hint, "provider_id": provider_hint,
-                "source_item_id": item_id or (legacy.get("item_id") if legacy else None),
+                "source_item_id": proposed_item,
                 "state": "invalid", "last_seen_at": now,
-                "metadata": {"invalid_reason": invalid_reason, "media_format": media_format, **stat_meta},
+                "metadata": {**dict((existing or {}).get("metadata") or {}),
+                             "invalid_reason": invalid_reason,
+                             "media_format": media_format, **stat_meta},
             })
+            if existing:
+                for entry in self.storage.catalog_entries():
+                    if entry.get("placement_id") == placement_id and entry.get("local_state") != "invalid":
+                        self.storage.catalog_entry_put({**entry, "local_state": "invalid"})
             return {"status": "invalid", "path": path_text, "reason": invalid_reason, "media_format": media_format}
 
         catalog_entry_id = stable_id('catalog', placement_id)
