@@ -169,7 +169,7 @@ jobs:
           fi
 
       - name: Install plugin-only test dependencies
-        if: steps.scope.outputs.plugins == 'true' && steps.scope.outputs.core != 'true'
+        if: (steps.scope.outputs.plugins == 'true' || steps.scope.outputs.lending_conformance == 'true') && steps.scope.outputs.core != 'true'
         env:
           PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
         run: |
