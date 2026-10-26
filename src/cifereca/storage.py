@@ -1090,15 +1090,26 @@ class Storage:
         placement_id = None
         if local_path:
             placement_id = cls._stable_id("placement", str(Path(local_path).expanduser().resolve()))
-            db.execute(
+            # A physical pathname is unique across canonical placements.
+            # Another right/identity cannot silently take it over merely
+            # because its legacy Kobo projection names the same local file.
+            placement_cursor = db.execute(
                 "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,"
                 "metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(path) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,placements.artifact_id),"
                 "provider_id=COALESCE(excluded.provider_id,placements.provider_id),source_item_id=COALESCE(excluded.source_item_id,placements.source_item_id),"
-                "updated_at=excluded.updated_at",
+                "updated_at=excluded.updated_at "
+                "WHERE (placements.identity_id IS NULL OR excluded.identity_id IS NULL "
+                "OR placements.identity_id=excluded.identity_id) "
+                "AND (placements.provider_id IS NULL OR excluded.provider_id IS NULL "
+                "OR placements.provider_id=excluded.provider_id) "
+                "AND (placements.source_item_id IS NULL OR excluded.source_item_id IS NULL "
+                "OR placements.source_item_id=excluded.source_item_id)",
                 (placement_id, artifact_id, str(Path(local_path).expanduser().resolve()), row.get("identity_id"), row.get("provider_id"),
                  row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
             )
+            if placement_cursor.rowcount != 1:
+                raise ValueError("backup_placement_owner_conflict")
             catalog_id = cls._stable_id("catalog", placement_id)
             db.execute(
                 "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,"
