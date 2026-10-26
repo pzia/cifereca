@@ -262,6 +262,23 @@ class LocalCatalog:
             provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
         identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
+        proposed_item = item_id or (legacy.get("item_id") if legacy else None)
+        if existing and any((
+            identity_hint and existing.get("identity_id")
+                and identity_hint != existing["identity_id"],
+            provider_hint and existing.get("provider_id")
+                and provider_hint != existing["provider_id"],
+            proposed_item and existing.get("source_item_id")
+                and proposed_item != existing["source_item_id"],
+        )):
+            # A targeted re-index is not authorization to transfer an
+            # existing purchase/loan between owners, providers or editions.
+            return {"status": "invalid", "path": path_text,
+                    "reason": "placement_scope_conflict"}
+        if existing:
+            identity_hint = identity_hint or existing.get("identity_id")
+            provider_hint = provider_hint or existing.get("provider_id")
+            proposed_item = proposed_item or existing.get("source_item_id")
         now = int(time.time())
         try:
             stat = path.stat()
@@ -296,7 +313,7 @@ class LocalCatalog:
             relative = str(path.relative_to(self.root.resolve()))
         except ValueError:
             relative = path.name
-        source_item_id = item_id or (legacy.get("item_id") if legacy else None)
+        source_item_id = proposed_item
         self.storage.placement_put({
             "placement_id": placement_id, "artifact_id": artifact_id, "path": path_text,
             "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": source_item_id,
