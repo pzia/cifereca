@@ -380,25 +380,14 @@ class LocalCatalog:
                 continue
             ok, invalid_reason = self._validate(path, media_format)
             if repair_misnamed and not ok and media_format in {"epub", "pdf"}:
+                # Deep Sync is an inventory, never a file-maintenance consent.
+                # The historical path.replace() ran before any SQLite commit
+                # and silently rewrote only a subset of acquisition metadata,
+                # stranding backup/placement/checkpoint provenance. Record the
+                # mismatch for explicit repair instead of moving user files.
                 actual = detect_artifact_format(path)
                 if actual in {"epub", "pdf"} and actual != media_format:
-                    old_path = path.resolve()
-                    suffix = ".pdf" if actual == "pdf" else ".epub"
-                    target = path.with_suffix(suffix)
-                    if target.exists() and target.resolve() != old_path:
-                        target = path.with_name(path.stem + ".repaired" + suffix)
-                    path.replace(target)
-                    path = target
-                    media_format = actual
-                    ok, invalid_reason = self._validate(path, media_format)
-                    new_path = str(path.resolve())
-                    for acquisition in self.storage.acquisitions():
-                        metadata = dict(acquisition.get("metadata") or {})
-                        if str(metadata.get("path") or "") == str(old_path):
-                            self.storage.acquisition_update_state(
-                                acquisition["acquisition_id"], str(acquisition.get("status") or "complete"),
-                                metadata={"path": new_path, "deep_repair": "extension_matches_content"},
-                            )
+                    invalid_reason = "extension_mismatch"
             path_text = str(path.resolve())
             seen_paths.add(path_text)
             identity_hint, provider_hint = self._path_hints(path)
