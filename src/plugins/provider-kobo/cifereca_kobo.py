@@ -788,7 +788,17 @@ class KoboSession(ProviderSession):
         )
         # Classification and cover extraction happen after the initial GET
         # fence; a close/reconnect there must not return a stale backup batch.
-        self._ensure_personal_binding(bound_account, generation)
+        try:
+            self._ensure_personal_binding(bound_account, generation)
+        except ProviderError:
+            # This advisory policy is also consumed by Core. Invalidating the
+            # returned rows alone must not leave stale positive authority for
+            # an unrelated reader of diagnostic_state().
+            self.backup_manifest_rejection_count = 0
+            self.backup_manifest_policy = classify_personal_manifest(
+                (), account_id=None,
+            )
+            raise
         return items
 
     def resolve_acquisition(
