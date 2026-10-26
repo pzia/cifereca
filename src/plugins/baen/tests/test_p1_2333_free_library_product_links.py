@@ -89,6 +89,7 @@ def test_product_link_on_other_pages_does_not_become_free_book(page):
 @pytest.mark.parametrize("anchor", [
     '<a href="/allbooks/category/index/id/2012">Free Library</a>',
     '<a href="/allbooks/category">Free Library</a>',
+    '<a href="/allbooks/category/book">Category record</a>',
     '<a href="/allbooks/search">Search Books</a>',
     '<a href="/allbooks/account">My account</a>',
     '<a href="/allbooks/checkout">Checkout</a>',
