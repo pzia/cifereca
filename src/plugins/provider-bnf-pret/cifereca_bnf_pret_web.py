@@ -290,7 +290,7 @@ def _public_cover_url(value: str) -> str | None:
                 return None
         elif not re.fullmatch(
             r'/[A-Za-z0-9_-]{8,128}/[A-Za-z0-9_-]{8,128}/'
-            r'(?:public|thumbnail|cover|small|medium|large)', parts.path,
+            r'(?:public|default|thumbnail|cover|small|medium|large)', parts.path,
         ):
             return None
     except ValueError:

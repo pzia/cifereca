@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.4.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.8.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -88,6 +88,16 @@ prêt du compte, `due_at` reste inconnu. La version 0.3.3 accepte une couverture
 La fiche publique de certains livres propose une image sur
 `imagedelivery.net` ; cela ne qualifie pas les images des cartes de prêt.
 Ce travail n'ajoute aucun achat, droit, URL de téléchargement ni mutation.
+
+## Correctif couverture 0.3.8 — variante CDN publique /default (#3104)
+
+La variante `imagedelivery.net/.../default` identifiée sur une fiche BnF
+publique est désormais admise, avec le même rattachement impératif à l'ancre
+de ressource exacte du prêt. Hôtes, structure de chemin et refus des URL
+privées/signées, queries et fragments restent inchangés. Une image hors
+de l'ancre ne devient pas une couverture attestée. Aucun GET supplémentaire
+ni date n'est inventé. La présence réelle de cette image dans la carte privée
+reste non qualifiée ; ce correctif seul ne clôture pas #3104.
 
 ## Préparation du téléchargement explicite — 0.3.1
 
