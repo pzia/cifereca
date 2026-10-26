@@ -306,6 +306,21 @@ def _validated_public_query(query):
     return query
 
 
+def _public_epub_filename(title, acquisition_url):
+    """Stable, collision-resistant basename for an attested public EPUB offer.
+
+    Different editions may have the same title. A caller-controlled record_id
+    must never become a path, and the acquisition URL (possibly with query
+    parameters) must never appear in the basename or logs.
+    """
+    stem = re.sub(r'[^\w .-]', '_', title if type(title) is str else '')
+    stem = stem.strip(' .')[:48].rstrip(' .') or 'Livre'
+    # Up to 48 Unicode code points cannot exceed the 255-byte component
+    # limit once the fixed digest and suffix are added.
+    digest = hashlib.sha256(acquisition_url.encode('utf-8')).hexdigest()[:16]
+    return f'{stem}-{digest}.epub'
+
+
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw)
@@ -329,7 +344,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.28',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.29',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -477,7 +492,8 @@ class EbooksSession(ProviderSession):
                     and detail != item.friendly_url)):
             raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_catalog_link')
         if self.transport is None: raise ProviderError('Ebooks libres et gratuits : transport.http indisponible')
-        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
+        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True)
+        dest=d/_public_epub_filename(item.title,item.download_url)
         headers={
             'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2',
             # Never send a historical www-site referer to the OPDS origin.
