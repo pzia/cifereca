@@ -155,6 +155,13 @@ class BnfProviderSession(ProviderSession):
                          raw={'inventory_exhaustive': False}) for row in snapshot.loans]
 
     def loan_inventory_snapshot(self, account):
+        # Keep the loan GET, the active account and its typed envelope under
+        # the SAME epoch/session lock. Otherwise connect() could replace
+        # _accounts after loans() returns and before snapshot publication.
+        with self._lock:
+            return self._loan_inventory_snapshot_locked(account)
+
+    def _loan_inventory_snapshot_locked(self, account):
         """Optional v1 inventory evidence: BnF HTML never attests completeness.
 
         Calls exactly one existing scoped loans() read. A successful GET/empty
