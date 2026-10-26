@@ -185,3 +185,27 @@ def test_valid_session_still_publishes_after_projection_fence(entrypoint):
             assert session.backup_manifest_policy["status"] == "classified"
     finally:
         session.close()
+
+
+def test_backup_classification_is_not_published_midway_through_projection():
+    vault = FakeVault([{
+        "product_id": "book-1", "account_id": "alice",
+        "owned": True, "downloadable": True,
+    }])
+    session = _session(vault)
+    seen = []
+    def observe_policy(row):
+        seen.append(session.backup_manifest_policy["manifest_authoritative"])
+        return None
+
+    session.catalog.cover_url = observe_policy
+    try:
+        rows = session.backup_manifest()
+        assert len(rows) == 1
+        # No reader observing the post-HTTP cover/metadata phase can consume
+        # a positive policy before its final generation fence has passed.
+        assert seen == [False]
+        assert session.backup_manifest_policy["manifest_authoritative"] is True
+        assert vault.calls == 1
+    finally:
+        session.close()
