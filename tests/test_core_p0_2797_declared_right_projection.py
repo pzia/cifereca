@@ -34,12 +34,21 @@ def test_manual_statement_is_a_separate_unverified_right_facet(rig):
             service.storage.entitlement_put(right)
             inspection = _inspect(service, root)
             try:
-                row, = inspection.page(provider=options["provider_id"],
-                                        state="declared_link_recorded").cases
+                cases = inspection.page(
+                    state="declared_link_recorded"
+                ).cases
+                rights = [case for case in cases if case.key.startswith("right:")]
+                files = [case for case in cases if case.key.startswith("file:")]
+                assert len(rights) == len(files) == 1
+                row, = rights
+                file_case, = files
                 assert "rights_without_verified_file" in row.states
                 assert "Association manuelle enregistrée" in row.label
                 assert "Association déclarée par vous" in row.details
                 assert "aucun reçu ni placement attesté" in row.details
+                assert "Association enregistrée (à revérifier)" in file_case.label
+                assert "Fichier et droit à revérifier" in file_case.details
+                assert "confirmed_link" not in file_case.states
                 assert inspection.overview()["confirmed_files"] == 0
                 assert inspection.page(state="confirmed_link").total == 0
             finally:
