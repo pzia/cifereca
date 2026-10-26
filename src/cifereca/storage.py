@@ -3749,6 +3749,39 @@ class Storage:
             "local_state=excluded.local_state,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at"
         )
         with self._lock, self._connect() as db:
+            # Batch writes have the same ownership contract as
+            # catalog_entry_put. Validate the complete batch before SQL writes
+            # so one conflicting local row cannot partially publish others.
+            db.execute("BEGIN IMMEDIATE")
+            staged: dict[str, tuple[Any, Any, Any, Any]] = {}
+            unique_ids = list(dict.fromkeys(ids))
+            for offset in range(0, len(unique_ids), 800):
+                chunk = unique_ids[offset:offset + 800]
+                placeholders = ",".join("?" for _ in chunk)
+                for record in db.execute(
+                    "SELECT catalog_entry_id,placement_id,identity_id,provider_id,item_id "
+                    f"FROM catalog_entries WHERE catalog_entry_id IN ({placeholders}) "
+                    "AND placement_id IS NOT NULL", tuple(chunk),
+                ):
+                    staged[str(record[0])] = tuple(record[1:])
+            for raw in rows:
+                entry_id = str(raw[0])
+                current = staged.get(entry_id)
+                proposed = (raw[2], raw[6], raw[7], raw[8])
+                if current is not None and current[0]:
+                    if proposed[0] != current[0] or any(
+                        stored and new and stored != new
+                        for stored, new in zip(current[1:], proposed[1:])
+                    ):
+                        raise ValueError("catalog_entry_scope_conflict")
+                # Even repeated IDs within one batch must not transfer the
+                # placement introduced by an earlier row of that same batch.
+                staged[entry_id] = (
+                    proposed[0],
+                    proposed[1] or (current[1] if current else None),
+                    proposed[2] or (current[2] if current else None),
+                    proposed[3] or (current[3] if current else None),
+                )
             db.executemany(sql, rows)
         return ids
 
