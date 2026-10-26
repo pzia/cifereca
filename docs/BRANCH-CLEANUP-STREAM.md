@@ -52,3 +52,14 @@ Test hors réseau :
 ```bash
 python3 -m unittest scripts.test_nettoyer_branches_git_stream
 ```
+
+## Validation CI du nettoyeur
+
+La PR CI intègre le gate de sûreté ajouté par #3380 : à chaque changement
+`nettoyer_branches_git_stream.py` **ou** `test_nettoyer_branches_git_stream.py`,
+elle exécute `python3 -m unittest -v scripts.test_nettoyer_branches_git_stream`
+sur des dépôts Git bare temporaires. Ce test n'efface **aucune branche GitHub**.
+Pour une branche ouverte avant l'installation du gate, actualiser son HEAD
+et vérifier que l'étape **Stream branch cleanup safety tests (local bare Git)**
+a réellement réussi sur ce HEAD avant fusion, même si un ancien contexte
+« PR CI » était déjà vert.
