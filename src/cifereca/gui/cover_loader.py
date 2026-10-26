@@ -18,7 +18,7 @@ import re
 from ..epub_metadata import cover_cache_dir, MAX_IMAGE
 
 import httpx
-from ..http_trace import TraceHTTPClient
+from ..http_trace import HTTPX_TRANSPORT
 
 from ..diagnostics import Diagnostics
 from ..paths import cache_dir
@@ -90,7 +90,7 @@ class CoverLoader:
         }
         if self.base_url:
             headers["Referer"] = self.base_url + "/"
-        self.client = TraceHTTPClient(
+        self.client = HTTPX_TRANSPORT.client(
             producer="core.cover_loader",
             timeout=httpx.Timeout(10.0, connect=5.0),
             follow_redirects=True,

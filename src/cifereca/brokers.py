@@ -1703,6 +1703,7 @@ class LibraryNamingBrokerImpl:
 
 
 def build_public_brokers(service: Any) -> dict[str, object]:
+    from .http_trace import HTTPX_TRANSPORT
     from .core.release_update_read import ReleaseUpdateReadBrokerImpl
     from .core.library_audit_broker import LibraryReconciliationReadBrokerImpl
     artifact_execution = ArtifactExecutionBrokerImpl(service)
@@ -1720,6 +1721,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "adept.profiles": AdeptProfileBrokerImpl(service),
         "adept.loans": AdeptLoanBrokerImpl(service),
         "diagnostics": DiagnosticsBrokerImpl(service),
+        "httpx": HTTPX_TRANSPORT,
         "library.naming": LibraryNamingBrokerImpl(service),
         "artifact.execution": artifact_execution,
         "library.read": LibraryReadBrokerImpl(service),

@@ -385,3 +385,20 @@ class TraceAsyncHTTPClient(httpx.AsyncClient):
             return transport
         return TraceAsyncHTTPTransport(transport, producer=self._trace_producer,
                                        capture=self._trace_capture)
+
+
+class _HTTPXTransportService:
+    """Core-owned construction service; clients keep independent cookies/pools."""
+
+    def client(self, *, producer: str, **options) -> httpx.Client:
+        if 'capture' in options:
+            raise TypeError("The Core HTTPX service owns the capture session")
+        return TraceHTTPClient(producer=producer, **options)
+
+    def async_client(self, *, producer: str, **options) -> httpx.AsyncClient:
+        if 'capture' in options:
+            raise TypeError("The Core HTTPX service owns the capture session")
+        return TraceAsyncHTTPClient(producer=producer, **options)
+
+
+HTTPX_TRANSPORT = _HTTPXTransportService()

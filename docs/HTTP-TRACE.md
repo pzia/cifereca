@@ -5,14 +5,38 @@ explicitement instrumentés. Aucun état ou préférence de capture supplémenta
 `verbose`, `normal` et `errors` ne capturent rien. Les clients déjà construits
 avec ces transports suivent également les changements du niveau effectif.
 
+## Service HTTPX obligatoire pour les plugins
+
+Décision utilisateur du 26/10/2026, #3315 / BnF-Prêt P0 #3316 : tout plugin
+construit ses clients avec le service Core public `HTTPX_TRANSPORT.client()` ou
+`HTTPX_TRANSPORT.async_client()`, également disponible via le broker `httpx`.
+Chaque appel demande un `producer` explicite et conserve les options natives
+HTTPX. Chaque client possède ses cookies, authentification, limites et pools ;
+le service commun ne partage jamais une session de compte entre identités.
+Le tampon Trace appartient au Core ; aucun paramètre de capture autonome n'est
+accepté par le service. Les clients sont fermés par leur propriétaire habituel.
+HTTPX reste utilisable pour les types, exceptions et transports de tests.
+Les wrappers/classes ci-dessous sont les primitives internes du service et un
+pont de migration, pas une autorisation de pile réseau autonome dans un plugin.
+
+### Registre des exceptions
+
+| Plugin | Exception admise | Justification / portée |
+| --- | --- | --- |
+| Browser Recorder | Reste autonome | Navigation, capture et rejeu supervisé pilotés par son navigateur ; aucune greffe du transport partagé sur ce parcours. |
+
+Aucune autre exception n'est autorisée. Les chemins non encore migrés sont une
+dette suivie par #3315, pas de nouvelles exceptions implicites. BnF-Prêt est P0
+(#3316), les autres adaptations sont P1. La capture Trace #3203 reste P0.
+
 ## Adaptation d'un client HTTPX
 
 ```python
 import httpx
-from cifereca.plugin_api import TraceHTTPTransport, TraceAsyncHTTPTransport
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
-client = httpx.Client(
-    transport=TraceHTTPTransport(producer="provider.example", trust_env=False),
+client = HTTPX_TRANSPORT.client(
+    producer="provider.example",
     trust_env=False,
     follow_redirects=False,
 )

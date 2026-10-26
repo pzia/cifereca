@@ -387,3 +387,44 @@ def test_async_client_preserves_mounted_transport_and_avoids_double_capture():
     asyncio.run(run())
     assert closed==[True]
     assert len(capture.snapshot()['exchanges'])==1
+
+
+def test_core_httpx_service_is_same_public_broker_and_isolates_cookies(monkeypatch):
+    import cifereca.http_trace as module
+    from cifereca.plugin_api import HTTPX_TRANSPORT
+    from cifereca.brokers import build_public_brokers
+    capture=HTTPTraceCapture()
+    monkeypatch.setattr(module,'HTTP_TRACE',capture)
+    assert build_public_brokers(None)['httpx'] is HTTPX_TRANSPORT
+    cookies=[]
+
+    def serve(request):
+        cookies.append(request.headers.get('cookie'))
+        return httpx.Response(200,headers={'Set-Cookie':'session=synthetic; Path=/'},
+                              stream=httpx.ByteStream(b'ok'))
+
+    first=HTTPX_TRANSPORT.client(producer='provider.test.a',transport=httpx.MockTransport(serve),trust_env=False)
+    second=HTTPX_TRANSPORT.client(producer='provider.test.b',transport=httpx.MockTransport(serve),trust_env=False)
+    with first,second:
+        first.get('https://example.test')
+        second.get('https://example.test')
+        first.get('https://example.test')
+    assert cookies==[None,None,'session=synthetic']
+    assert len(capture.snapshot()['exchanges'])==3
+    with pytest.raises(TypeError):
+        HTTPX_TRANSPORT.client(producer='provider.test',capture=HTTPTraceCapture())
+
+
+def test_async_core_httpx_service_uses_same_session(monkeypatch):
+    import cifereca.http_trace as module
+    from cifereca.plugin_api import HTTPX_TRANSPORT
+    capture=HTTPTraceCapture()
+    monkeypatch.setattr(module,'HTTP_TRACE',capture)
+
+    async def run():
+        async with HTTPX_TRANSPORT.async_client(producer='provider.async',
+                transport=httpx.MockTransport(lambda r:httpx.Response(200,content=b'ok')),
+                trust_env=False) as c:
+            assert (await c.get('https://example.test')).content==b'ok'
+    asyncio.run(run())
+    assert capture.snapshot()['exchanges'][0]['request']['producer']=='provider.async'
