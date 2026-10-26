@@ -44,12 +44,16 @@ def test_unresolved_owned_purchase_never_counts_as_complete(tmp_path, monkeypatc
         service.close()
 
 
-def test_owned_not_downloadable_is_pending_not_silently_ignored(tmp_path):
+def test_owned_not_downloadable_is_pending_not_silently_ignored(tmp_path, monkeypatch):
     service, account, session, calls, broker, sid = _setup(tmp_path)
     try:
         _authorize(broker, sid)
         book = replace(_row(account.credential_id, 0), downloadable=False)
         session.library = lambda: [book]
+        monkeypatch.setattr(
+            service, "acquire_direct_item",
+            lambda *_a, **_kw: pytest.fail("non-downloadable owned item must not acquire"),
+        )
         result = execute(broker, account.identity_id, "startup")
         assert not result.ok
         assert result.facts["status"] == "blocked"
