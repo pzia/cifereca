@@ -168,11 +168,22 @@ class BnfProviderSession(ProviderSession):
         HTML section is still only a partial view of the active-loan corpus.
         This method never retrieves private loan tokens or starts ADEPT.
         """
+        if (not self.connected or self._closed or len(self._accounts) != 1
+                or account is not self._accounts[0]):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        # The Account model is mutable even while the session lock holds:
+        # another Core owner can rebind its identity during the HTML read.
+        # Freeze the scope before touching the provider and check it again
+        # before publishing positive loans under a typed envelope.
+        scope = LoanInventoryScope.for_account(account)
         rows = self.loans(account)
         if not self.connected or self._closed:
             raise ProviderConfigurationError('session_closed')
+        if (len(self._accounts) != 1 or account is not self._accounts[0]
+                or LoanInventoryScope.for_account(account) != scope):
+            raise ProviderConfigurationError('account_scope_mismatch')
         return LoanInventorySnapshot(
-            scope=LoanInventoryScope.for_account(account),
+            scope=scope,
             loans=tuple(rows),
             status='partial',
             branches=(LoanBranchCoverage(
