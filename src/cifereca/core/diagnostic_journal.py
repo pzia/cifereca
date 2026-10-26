@@ -239,8 +239,19 @@ def query_journal(
         instant = datetime.fromisoformat(event["timestamp"])
         if lower and instant < lower or upper and instant > upper:
             continue
-        if needle and needle not in _fold(json.dumps(event, ensure_ascii=False, default=str)):
-            continue
+        if needle:
+            # Search original observed log/structured fields, not the journal
+            # reader's synthetic envelope. Otherwise every query for
+            # "journal" or "schema_version" matches ALL events solely
+            # because these labels were added during projection.
+            searchable = {
+                key: value for key, value in event.items()
+                if key not in {"source", "event_id", "schema_version"}
+            }
+            if needle not in _fold(json.dumps(
+                searchable, ensure_ascii=False, default=str,
+            )):
+                continue
         matched.append(event)
     matched.sort(key=lambda row: (row["timestamp"], row["event_id"]))
     state = "partial" if gaps or missing else ("available" if events else "empty")
