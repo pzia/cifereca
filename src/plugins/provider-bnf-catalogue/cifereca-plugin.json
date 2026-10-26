@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.bnf-catalogue",
-    "version": "1.0.12",
+    "version": "1.0.13",
     "name": "BnF Catalogue général",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
@@ -44,7 +44,7 @@
           }
         }
       },
-      "version": "1.0.12",
+      "version": "1.0.13",
       "capabilities": [
         "catalog.search",
         "catalog.detail"

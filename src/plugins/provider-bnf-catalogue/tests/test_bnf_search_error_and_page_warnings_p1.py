@@ -107,7 +107,11 @@ def test_unsupported_request_resets_warning_and_never_sends_http():
         assert session.last_search_warnings == []
         assert session.search("x", field="series") == []
         assert calls == []
-        assert session.last_search_warnings == []
+        # A skipped one-character request never queried SRU. It must carry
+        # the new partial-evidence warning, not be confused with a true zero.
+        assert session.last_search_warnings == [
+            "partial_results : requête trop courte ; BnF non interrogée"
+        ]
     finally:
         session.close()
 

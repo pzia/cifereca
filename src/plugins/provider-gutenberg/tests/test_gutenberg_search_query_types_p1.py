@@ -60,3 +60,20 @@ def test_none_and_short_plain_text_keep_original_empty_search_contract():
         assert calls == []
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("field", ["all", "title", "author", "subject", "language"])
+def test_one_character_query_is_not_an_attested_gutenberg_zero(field):
+    s, calls = session()
+    try:
+        s.last_search_warnings = ["stale warning"]
+        assert s.search("x", field=field) == []
+        assert calls == []
+        assert s.last_search_warnings == [
+            "partial_results : requête trop courte ; Gutenberg non interrogé",
+        ]
+        assert s.search(None, field=field) == []
+        assert s.last_search_warnings == []
+        assert calls == []
+    finally:
+        s.close()
