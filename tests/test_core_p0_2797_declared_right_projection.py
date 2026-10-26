@@ -34,12 +34,21 @@ def test_manual_statement_is_a_separate_unverified_right_facet(rig):
             service.storage.entitlement_put(right)
             inspection = _inspect(service, root)
             try:
-                row, = inspection.page(provider=options["provider_id"],
-                                        state="declared_link_recorded").cases
+                cases = inspection.page(
+                    state="declared_link_recorded"
+                ).cases
+                rights = [case for case in cases if case.key.startswith("right:")]
+                files = [case for case in cases if case.key.startswith("file:")]
+                assert len(rights) == len(files) == 1
+                row, = rights
+                file_case, = files
                 assert "rights_without_verified_file" in row.states
                 assert "Association manuelle enregistrée" in row.label
                 assert "Association déclarée par vous" in row.details
                 assert "aucun reçu ni placement attesté" in row.details
+                assert "Association enregistrée (à revérifier)" in file_case.label
+                assert "Fichier et droit à revérifier" in file_case.details
+                assert "confirmed_link" not in file_case.states
                 assert inspection.overview()["confirmed_files"] == 0
                 assert inspection.page(state="confirmed_link").total == 0
             finally:
@@ -71,6 +80,48 @@ def test_manual_statement_is_a_separate_unverified_right_facet(rig):
             after.close()
     finally:
         assert not service.storage.placements()
+
+
+@pytest.mark.parametrize("rig", ["kobo"], indirect=True)
+def test_replaced_file_at_same_path_is_not_the_declared_epub(rig):
+    service, book, root, _right, options = rig
+    preview = declare_local_link(service, **options)
+    assert declare_local_link(
+        service, confirmation=preview.plan_token, **options,
+    ).status == "declared"
+    from tests.test_library_reconciliation import epub
+    epub(book, title="DIFFERENT edition at same path")
+    inspection = _inspect(service, root)
+    try:
+        cases = inspection.page(state="declared_link_recorded").cases
+        assert len(cases) == 1 and cases[0].key.startswith("right:")
+        files = [case for case in inspection.page().cases
+                 if case.key.startswith("file:")]
+        assert len(files) == 1
+        assert "declared_link_recorded" not in files[0].states
+    finally:
+        inspection.close()
+
+
+@pytest.mark.parametrize("rig", ["paris"], indirect=True)
+def test_inactive_loan_does_not_label_file_as_current_declaration(rig):
+    service, _book, root, right, options = rig
+    preview = declare_local_link(service, **options)
+    assert declare_local_link(
+        service, confirmation=preview.plan_token, **options,
+    ).status == "declared"
+    service.storage.entitlement_put({**right, "state": "expired"})
+    inspection = _inspect(service, root)
+    try:
+        # Historical consent survives, but the closed loan is not an active
+        # association and cannot mark a current file positively.
+        assert inspection.page(state="declared_link_recorded").total == 0
+        files = [case for case in inspection.page().cases
+                 if case.key.startswith("file:")]
+        assert len(files) == 1
+        assert "declared_link_recorded" not in files[0].states
+    finally:
+        inspection.close()
 
 
 @pytest.mark.parametrize("rig", ["kobo"], indirect=True)
