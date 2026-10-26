@@ -13,7 +13,13 @@ from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY, 
 from cifereca_bnf_pret import BnfProviderSession, PLUGIN
 from cifereca.plugin_api import ProviderConfigurationError
 
-ACT = '<section class="active-loans"><div class="js-loan"><a href="/resources/book-a">Titre synthétique</a><a href="/loans/loan-a">Fichier</a></div></section>'
+FAKE_SIGNED_HREF = ('/loans/loan-a?device_type=reader&amp;drm=acs4&amp;'
+                    'nonce=syntheticNonce123&amp;timestamp=2026-10-26T00%3A00%3A00Z&amp;'
+                    'token=0123456789abcdef0123456789abcdef01234567')
+ACT = ('<section class="active-loans"><div class="js-loan">'
+       '<a href="/resources/book-a">Titre synthétique</a>'
+       '<a href="' + FAKE_SIGNED_HREF + '">Fichier</a>'
+       '</div></section>')
 LOGIN = '<form method="post" action="login"><input name="username"><input type="password" name="password"><input type="hidden" name="execution" value="synthetic-flow"><input type="hidden" name="_eventId" value="submit"></form>'
 SAML = '<form method="post" action="https://pret.bnf.fr/sso/saml/consume"><input type="hidden" name="SAMLResponse" value="synthetic-not-an-assertion"></form>'
 
