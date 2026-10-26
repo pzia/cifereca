@@ -487,7 +487,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 and row.get("verified_cover_failure") is True):
             raw_detail = row.get("detail")
             candidate = public_cover_failure_fields({
-                "code": raw_detail.get("code") if type(raw_detail) is dict else None,
+                "code": (raw_detail["code"] if type(raw_detail) is dict
+                         and set(raw_detail) == {"code"} else None),
                 "duration_ms": row.get("duration_ms"),
             })
             if candidate:
