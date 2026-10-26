@@ -772,7 +772,9 @@ class KoboSession(ProviderSession):
             self.backup_manifest_rejection_count = min(
                 1_000_000, self.backup_manifest_rejection_count + rejected_count,
             )
-        self.backup_manifest_policy = classify_personal_manifest(
+        # Keep positive classification private until the last session fence.
+        # Another Core consumer must not observe it midway through projection.
+        projected_policy = classify_personal_manifest(
             source_items,
             account_id=account_id,
             rejection_count=self.backup_manifest_rejection_count,
@@ -791,14 +793,9 @@ class KoboSession(ProviderSession):
         try:
             self._ensure_personal_binding(bound_account, generation)
         except ProviderError:
-            # This advisory policy is also consumed by Core. Invalidating the
-            # returned rows alone must not leave stale positive authority for
-            # an unrelated reader of diagnostic_state().
             self.backup_manifest_rejection_count = 0
-            self.backup_manifest_policy = classify_personal_manifest(
-                (), account_id=None,
-            )
             raise
+        self.backup_manifest_policy = projected_policy
         return items
 
     def resolve_acquisition(
