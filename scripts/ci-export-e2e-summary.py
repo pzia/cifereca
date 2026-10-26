@@ -53,6 +53,7 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         "mainwindow-baseline-1366": "diagnostics_navigation_probe.py",
         "mainwindow-baseline-1600": "diagnostics_navigation_probe.py",
         "diagnostics-1366": "diagnostics_page_probe.py",
+        "diagnostics-raw-export-1366": "diagnostics_raw_export_probe.py",
         "diagnostics-large-1600": "diagnostics_page_probe.py",
         "diagnostics-states-1366": "diagnostics_states_probe.py",
         "diagnostics-structured-1366": "diagnostics_structured_probe.py",
