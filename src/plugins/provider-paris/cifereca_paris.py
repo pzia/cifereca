@@ -2,6 +2,7 @@ from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
 
 import logging
+import httpx
 from dataclasses import replace
 import re
 import time
@@ -15,7 +16,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError
+from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError, ParisError
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -420,7 +421,14 @@ class ParisProviderSession(ProviderSession):
                 # Neither branch failure nor sibling success proves an empty
                 # inventory. Keep the compatibility code and attach only the
                 # separately typed HTTP/transport reason when attested.
-                reason = exc.code if isinstance(exc, ParisLoanListError) else None
+                reason = (
+                    exc.code if isinstance(exc, ParisLoanListError) else
+                    "paris_loans_transport_timeout" if isinstance(exc, httpx.TimeoutException) else
+                    "paris_loans_transport_failed" if isinstance(exc, httpx.RequestError) else
+                    "paris_loans_inventory_shape_invalid"
+                    if type(exc) is ParisError and str(exc) == "paris_loans_inventory_shape_invalid" else
+                    None
+                )
                 failure = {
                     "upstream": upstream,
                     "code": "paris_loans_upstream_failed",
