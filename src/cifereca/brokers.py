@@ -1453,7 +1453,7 @@ class DiagnosticsBrokerImpl:
         provider_id: str = "", domain: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
-        search: str = "",
+        search: str = "", sort_order: str = "asc",
     ) -> dict[str, Any]:
         """Read only the canonical physical journal, never the memory cache.
 
@@ -1472,7 +1472,7 @@ class DiagnosticsBrokerImpl:
         return query_journal(
             log_file(), search=search, module=module, severity=severity,
             provider_id=provider_id, since=since, until=until,
-            limit=limit, offset=offset,
+            limit=limit, offset=offset, sort_order=sort_order,
         )
 
     def export_raw_journal(self) -> bytes:
