@@ -158,6 +158,30 @@ def test_session_account_and_plugin_readiness_fail_closed(mutation):
     assert result.availability == "unavailable"
 
 
+@pytest.mark.parametrize("same_instance", [True, False])
+def test_duplicate_exact_borrower_registration_is_not_ready(same_instance):
+    borrower = account(borrower="linked-1")
+    descriptor_row = descriptor()
+    session = OnlyList(descriptor_row, borrower)
+    # Two entries with the same exact identity/provider/credential/borrower
+    # are ambiguous even if they are distinct Account objects.
+    repeated = borrower if same_instance else account(borrower="linked-1")
+    session._accounts = [borrower, repeated]
+    available = fact("loan.list", descriptor_row, session, borrower)
+    assert available.availability == "unavailable"
+    assert available.reason_code == "session_unavailable"
+    assert available.session_ready is False
+    assert not available.usable
+    # Duplicates cannot become a public lending action either.
+    session_action = ParisActions(descriptor_row, borrower)
+    session_action._accounts = list(session._accounts)
+    borrow_claim = fact(
+        "loan.borrow", descriptor(borrow=True), session_action, borrower,
+    )
+    assert borrow_claim.availability == "unavailable"
+    assert not borrow_claim.usable
+
+
 def test_multiple_paris_linked_accounts_remain_independently_scoped():
     a = account(borrower="")
     linked = account(borrower="reader-2")
