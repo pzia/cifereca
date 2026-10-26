@@ -137,6 +137,26 @@ def test_budget_and_owner_scope_never_report_partial_counts_as_complete(tmp_path
         db.close()
 
 
+def test_old_compatibility_row_without_identity_never_claims_complete(tmp_path):
+    db = Storage(tmp_path / "books.sqlite3")
+    try:
+        _put(db, identity="alice", item="good")
+        _put(db, identity="bob", item="legacy")
+        with db._lock, db._connect() as connection:
+            connection.execute(
+                "UPDATE backup_items SET identity_id=NULL "
+                "WHERE provider_id='kobo' AND item_id='legacy'"
+            )
+        result = audit_backup_projection(db, identity_id="alice")
+        assert result["status"] == "scope_unverified"
+        assert result["scanned"] == 0
+        # Inconsistent legacy metadata stays unchanged; no inferred owner.
+        assert next(row for row in db.backup_list("kobo")
+                    if row["item_id"] == "legacy")["identity_id"] is None
+    finally:
+        db.close()
+
+
 @pytest.mark.parametrize("owner,cap", [
     ("", 10), ("alice", 0), ("alice", 501), ("alice", True),
     ("alice\x00bob", 10), (None, 10),
