@@ -2,10 +2,10 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.gutenberg",
-    "version": "1.2.19",
+    "version": "1.2.20",
     "name": "Project Gutenberg",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4,<2"
+    "plugin_api": ">=1.4.1,<2"
   },
   "plugins": [
     {
@@ -57,7 +57,7 @@
       },
       "recommends": [],
       "instantiation": "singleton_public",
-      "version": "1.2.19",
+      "version": "1.2.20",
       "help_text": "Recherche publique OPDS, contact requis. Le contrat de recherche déclare all/title/author/subject/language et les scopes all/digital ; title/author/subject/language sont des post-filtres locaux appliqués à la page OPDS obtenue, pas des champs serveur. ISBN, série et collection ne sont pas pris en charge. La pagination suit uniquement les liens Atom rel=next, avec pages Gutenberg observées à 25 éléments et une limite locale de 101 pages (indices 0–100), sans préchargement ni URL de page inventée. La navigation accepte aussi `lang:fr` et `bookshelf:...` dans la requête générale. Une panne de résolution d’offre est signalée. Les EPUB sont téléchargés avec une limite de taille puis validés. Couverture issue des liens OPDS thumbnail/image ; repli sur une autre édition du même identifiant Gutenberg. Les notices sans vignette restent sans requête supplémentaire pendant la recherche ; la vignette peut être enrichie paresseusement depuis le feed détail lors de l’ouverture de la notice, avec cache borné. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Provenance temporelle OPDS : dcterms:issued validé est la seule date publiée comme bibliographique ; atom:published / atom:updated sont conservés séparément en métadonnées de l'entrée, jamais utilisés comme année de publication de l'ouvrage. Le feed XML OPDS est annoncé en fin de vie à l'horizon 2027 par Gutenberg ; migration OPDS2 à qualifier sans endpoint inventé.",
       "capabilities": [
         "catalog.search",
@@ -71,7 +71,9 @@
         }
       ],
       "system_requires": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "httpx"
+      ],
       "requires_contracts": []
     }
   ]

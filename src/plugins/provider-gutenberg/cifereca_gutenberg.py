@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from cifereca.plugin_api import (
     Account,
@@ -206,7 +207,7 @@ class GutenbergSession(ProviderSession):
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
-        self.client = httpx.Client(
+        self.client = HTTPX_TRANSPORT.client(producer="provider.gutenberg",
             timeout=timeout,
             follow_redirects=True,
             http2=False,
