@@ -494,6 +494,14 @@ class LocalCatalog:
                 artifact_id
                 and int(previous_meta.get("file_size") or -1) == int(stat.st_size)
                 and int(previous_meta.get("mtime_ns") or -1) == int(stat.st_mtime_ns)
+                # Size and mtime are not a sufficient local presence proof:
+                # a restored mtime after an in-place replacement can retain
+                # an unrelated file under the stale artifact SHA. Require a
+                # full inode/device/ctime fingerprint before reusing bytes.
+                # Older metadata simply rehashes on its next scan.
+                and int(previous_meta.get("file_inode") or -1) == int(stat.st_ino)
+                and int(previous_meta.get("file_device") or -1) == int(stat.st_dev)
+                and int(previous_meta.get("file_ctime_ns") or -1) == int(stat.st_ctime_ns)
                 and self.storage.artifact_get(artifact_id) is not None
             )
             if cached_unchanged:
@@ -527,6 +535,9 @@ class LocalCatalog:
                         "relative_path": str(path.relative_to(self.root)),
                         "file_size": int(stat.st_size),
                         "mtime_ns": int(stat.st_mtime_ns),
+                        "file_inode": int(stat.st_ino),
+                        "file_device": int(stat.st_dev),
+                        "file_ctime_ns": int(stat.st_ctime_ns),
                         "artifact_kind": "file",
                     },
                 }
