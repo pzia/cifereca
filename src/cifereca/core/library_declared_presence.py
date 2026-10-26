@@ -6,6 +6,7 @@ file movement, rights write or currently selected GUI identity is involved.
 """
 from dataclasses import dataclass
 import sqlite3
+from contextlib import nullcontext
 
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
@@ -29,12 +30,16 @@ class DeclaredPresence:
 def verify_declared_presence(service, *, identity_id, provider_id, credential_id,
                              account_id, item_id, source_current,
                              cancelled=lambda: False, seconds=8,
-                             max_bytes=64 * 1024 * 1024):
+                             max_bytes=64 * 1024 * 1024,
+                             _acquisition_lock_held=False):
     """Verify one source-bound statement without granting acquisition authority.
 
     No pathname or SHA is returned. A moved/unavailable/changed file remains
     for review, not a missing-file authorization. Callers retain their own
     consent/session guard and decide how to report a scoped observed presence.
+
+    Internal callers may set _acquisition_lock_held ONLY while holding the
+    same global acquisition lock, avoiding a non-reentrant nested acquire.
     """
     scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                     account_id, item_id)))
@@ -90,7 +95,9 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
                 _collisions(db, scope, observation, records)
                 return record, context, observation
 
-        with InterProcessLock(acquisition_lock_file()):
+        lock = (nullcontext() if _acquisition_lock_held
+                else InterProcessLock(acquisition_lock_file()))
+        with lock:
             _require(valid() and source_current() is True, 'source_scope_changed')
             record, context, observation = read_pair()
             # Do not call source guards or hash a book with Storage._lock held.
