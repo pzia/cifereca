@@ -178,6 +178,10 @@ class TaskBrokerImpl:
             "core", "plugin", "task", "source-sync", "opening-sync",
             "deep-sync", "sync-preflight", "kobo-acquisition", "maintenance",
             "library", "recent", "search", "other",
+            # Installed plugins already use these fixed public task kinds.
+            # Keep arbitrary names, tokens and account-specific kind strings
+            # in the fallback "other" bucket.
+            "diagnostics", "recommendations", "browser-recorder",
         } else "other"
 
         def invoke() -> Any:
