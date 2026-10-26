@@ -320,6 +320,14 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     declared_pending += 1
                     trace.fail('preflight_failed')
                     continue
+                # The fresh authenticated inventory is authoritative for
+                # delivery capability. SQLite's older owned right may omit
+                # 'downloadable'; a permissive preflight must never override
+                # an explicit no-download observation from THIS source.
+                if row.downloadable is not True:
+                    blocked += 1
+                    trace.fail('preflight_failed')
+                    continue
                 if (prior.ok is not True
                         or prior.facts.get("status") != "candidate_unverified"):
                     # A prior receipt, conflicting placement, missing proof or
