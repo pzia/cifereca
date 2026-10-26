@@ -234,9 +234,13 @@ def test_startup_keeps_max_eight_fresh_downloads_and_skips_reconciliations(
             lambda *_a, **_kw: None,
         )
         result = execute(broker, account.identity_id, "startup")
-        assert result.ok and result.changed == 8
+        # One item needs reconciliation and five are still deferred by the
+        # eight-download quota: eight downloads cannot be 'complete'.
+        assert not result.ok and result.changed == 8
+        assert result.facts["status"] == "partial"
         assert result.facts["attempted"] == 8
-        assert result.facts["skipped"] == 1
+        assert result.facts["skipped"] == 0
+        assert result.facts["blocked"] == 2
         assert seen == [r.record_id for r in books[1:9]]
         assert calls == []
     finally:
@@ -380,7 +384,10 @@ def test_large_numilog_manifest_is_bounded_without_starving_hundreds_of_books(
         result = execute(broker, account.identity_id, "startup")
         assert result.changed == expected
         assert len(downloads) == expected
-        assert result.ok is (size <= 2048)
+        # A 300-item manifest has unprocessed purchases after the bounded
+        # first eight downloads, so the source remains partial.
+        assert result.ok is False
+        assert result.facts["status"] == ("partial" if size <= 2048 else "failed")
         assert calls == []
     finally:
         service.close()
