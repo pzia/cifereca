@@ -244,12 +244,27 @@ def query_journal(
             # reader's synthetic envelope. Otherwise every query for
             # "journal" or "schema_version" matches ALL events solely
             # because these labels were added during projection.
-            searchable = {
-                key: value for key, value in event.items()
-                if key not in {"source", "event_id", "schema_version"}
-            }
+            # JSON object keys in this reader's envelope (e.g. "module",
+            # "severity", "status", "message", "logger") did not occur as
+            # words in an unstructured log line. Searching a serialized event
+            # object makes every such query spuriously match every row.
+            #
+            # Search observed VALUES only. Preserve source-provided detail
+            # dictionaries with their real keys, including phase/reason_code.
+            observed = [
+                event["timestamp"], event["logger"], event["severity"],
+                event["module"], event["message"],
+            ]
+            observed.extend(event[key] for key in (
+                "operation", "task_ref", "duration_ms",
+            ) if key in event)
+            if event.get("detail"):
+                observed.append(event["detail"])
+            if (event.get("operation") or event.get("detail")
+                    or event["status"] != "unknown"):
+                observed.append(event["status"])
             if needle not in _fold(json.dumps(
-                searchable, ensure_ascii=False, default=str,
+                observed, ensure_ascii=False, default=str,
             )):
                 continue
         matched.append(event)
