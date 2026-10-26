@@ -591,6 +591,25 @@ class LocalCatalog:
                          followlinks=False):
             pass
 
+        # A file can reappear after the earlier rglob snapshot, yet before
+        # the negative SQLite transition. A full directory walk alone does
+        # not mean this *specific* old path stayed absent throughout. Refuse
+        # to mark anything missing if a previously indexed regular file has
+        # become observable but was not in the scan's validated set. Symlinks
+        # and files outside the configured root are never presence evidence.
+        for placement in self.storage.placements(state="present"):
+            previous_path = placement.get("path")
+            if type(previous_path) is not str or not previous_path:
+                continue
+            if previous_path in seen_paths:
+                continue
+            candidate = Path(previous_path)
+            if (candidate.is_absolute()
+                    and candidate.is_relative_to(self.root)
+                    and candidate.is_file()
+                    and is_unlinked_local_file(candidate)):
+                raise OSError("catalog_scan_changed_during_inventory")
+
         missing_marked = self.storage.placements_mark_missing(self.root, seen_paths, seen_at=started_at)
         return CatalogScanResult(
             root=self.root,
