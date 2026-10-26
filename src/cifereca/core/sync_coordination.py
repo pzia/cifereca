@@ -653,14 +653,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         self, account, session, typed_scope,
                     ):
                         raise ProviderConfigurationError("loan_source_scope_changed")
-                    # Legacy side-channel is used ONLY for legacy readers.
-                    # Typed partial evidence stays coherent with its rows
-                    # despite a later unrelated call mutating last_loan_errors.
+                    # Legacy loans() never proves complete branch coverage.
+                    # Ignore mutable last_loan_errors in all Core decisions.
                     partial_errors = (
-                        [None] if snapshot is not None and snapshot.status == "partial"
-                        else [] if snapshot is not None
-                        else list(getattr(session, "last_loan_errors", []) or [])
-                        if session is not None else []
+                        [None] if snapshot is None or snapshot.status == "partial"
+                        else []
                     )
                     if partial_errors:
                         errors += len(partial_errors)

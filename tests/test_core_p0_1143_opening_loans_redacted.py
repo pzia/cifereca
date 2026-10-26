@@ -76,12 +76,12 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
         assert _state(service, paris)["status"] == "partial"
         assert _state(service, kobo)["status"] == "success"
         assert service.storage.latest_sync_run("default")["detail"]["provider_errors"] == [
-            {"code": "loan_partial_failure"}, {"code": "loan_partial_failure"},
+            {"code": "loan_partial_failure"},
         ]
         visible = json.dumps(result) + json.dumps(
             service.storage.latest_sync_run("default")) + caplog.text
         assert PRIVATE not in visible
-        assert "loan_partial_failure count=2" in caplog.text
+        assert "loan_partial_failure count=1" in caplog.text
         assert all("paris-private" not in line for line in caplog.text.splitlines()
                    if "TRACE loans sync" in line)
     finally:
