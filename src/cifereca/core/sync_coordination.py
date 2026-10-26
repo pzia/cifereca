@@ -653,10 +653,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         self, account, session, typed_scope,
                     ):
                         raise ProviderConfigurationError("loan_source_scope_changed")
-                    # Legacy loans() never proves complete branch coverage.
-                    # Ignore mutable last_loan_errors in all Core decisions.
+                    # Operational success is not proof of exhaustive coverage.
+                    # Legacy loans() remains positive-only for rights mirroring:
+                    # the negative-proof path requires a typed complete branch,
+                    # and last_loan_errors is NEVER read as authorization.
+                    # Preserve historical source-level success/error counters;
+                    # only an atomic typed partial snapshot marks this source
+                    # operationally partial.
                     partial_errors = (
-                        [None] if snapshot is None or snapshot.status == "partial"
+                        [None] if snapshot is not None and snapshot.status == "partial"
                         else []
                     )
                     if partial_errors:
