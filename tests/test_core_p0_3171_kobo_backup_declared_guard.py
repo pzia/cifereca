@@ -3,10 +3,6 @@
 The declaration is not an acquired Kobo receipt; a revoked, mismatched or
 unreadable declaration never becomes a successful backup.
 """
-from pathlib import Path
-
-import pytest
-
 from cifereca.core.library_declared_links import (
     _PREFIX, declare_local_link, has_active_declared_link,
 )
