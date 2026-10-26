@@ -369,8 +369,16 @@ def kobo_backup_preview(
         "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
         "potentially_missing": 0, "invalid_manifest_items": upstream_rejected,
     }
+    # Do not change the historical offline/legacy counter schema. A
+    # declaration-presence result is exposed only by a caller that explicitly
+    # refreshed its manifest AND requested a physical file check.
+    if refresh_manifest and verify_local_files:
+        counts["already_local_declared"] = 0
     examples: list[dict[str, str]] = []
     seen: set[str] = set()
+    # A verified declaration is local presence, not an authenticated Kobo
+    # receipt. Keep one bounded physical-check budget for the entire preview.
+    presence_seconds_remaining = 8.0
 
     for raw in manifest:
         if not isinstance(raw, dict):
@@ -467,6 +475,43 @@ def kobo_backup_preview(
                         account_id=account_id, item_id=product_id,
                     ):
                         reason = "attention_required"
+                        # Only an explicit, fresh-file preview can recognize
+                        # physical presence. Mere recording never proves
+                        # the EPUB exists or authorizes an acquisition.
+                        if (verify_local_files and refresh_manifest
+                                and session is not None
+                                and presence_seconds_remaining > 0):
+                            from .library_declared_presence import verify_declared_presence
+                            storage_at_start = self.storage
+
+                            def source_current() -> bool:
+                                return bool(
+                                    self.storage is storage_at_start
+                                    and session.connected
+                                    and any(value is session for value in self._sessions.values())
+                                    and len(session.accounts) == 1
+                                    and session.accounts[0].identity_id == identity_id
+                                    and session.accounts[0].unique_id == account_id
+                                    and self.storage.identity_for_connection(
+                                        "kobo", credential_id) == identity_id
+                                )
+
+                            checked_started = time.monotonic()
+                            try:
+                                presence = verify_declared_presence(
+                                    self, identity_id=identity_id,
+                                    provider_id="kobo", credential_id=credential_id,
+                                    account_id=account_id, item_id=product_id,
+                                    source_current=source_current,
+                                    seconds=presence_seconds_remaining,
+                                )
+                            finally:
+                                presence_seconds_remaining = max(
+                                    0.0, presence_seconds_remaining
+                                    - max(0.0, time.monotonic() - checked_started),
+                                )
+                            if presence.status == "declared_current":
+                                reason = "already_local_declared"
                 except DeclarationRejected:
                     # Malformed user statements cannot authorize a fresh GET.
                     reason = "attention_required"
@@ -506,6 +551,7 @@ def kobo_backup_preview(
             _item_reasons[product_id] = reason
         if len(examples) < 20 and reason not in {
             "already_local_linked", "already_local_verified",
+            "already_local_declared",
         }:
             item_digest = hashlib.sha256(
                 (credential_id + "\\x00" + product_id).encode("utf-8")
