@@ -9,6 +9,8 @@ from bnf_token_fixture import connected, TOKEN
 from cifereca.plugin_api import ProviderError
 from cifereca_bnf_pret_http import ACTIVITY, ReaderHTTPClient, ReaderHTTPError
 
+SIGNED = 'https://pret.bnf.fr/loans/synthetic-loan?device_type=reader&drm=acs4&nonce=syntheticNonce123&timestamp=2026-10-26T00%3A00%3A00Z&token=0123456789abcdef0123456789abcdef01234567'
+
 
 def observations(caplog):
     return [json.loads(record.getMessage().removeprefix('DIAG_JSON '))
@@ -27,7 +29,7 @@ def test_failed_http_keeps_exact_status_and_endpoint_without_retry(endpoint, sta
     client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
     with client.http, caplog.at_level(logging.INFO, logger='cifereca'):
         with pytest.raises(ReaderHTTPError):
-            client.activity() if endpoint == 'activity' else client.loan_token('synthetic-loan')
+            client.activity() if endpoint == 'activity' else client.loan_token('synthetic-loan', SIGNED)
     rows = observations(caplog)
     assert len(calls) == 1
     assert [row['detail']['event'] for row in rows] == ['begin', 'response', 'terminal']
@@ -91,7 +93,7 @@ def test_transport_failure_does_not_invent_response_or_success(after_headers, ca
     client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
     try:
         with caplog.at_level(logging.INFO, logger='cifereca'), pytest.raises(ReaderHTTPError, match='transport_unavailable'):
-            client.loan_token('synthetic-loan')
+            client.loan_token('synthetic-loan', SIGNED)
         row = observations(caplog)[-1]
         assert row['status'] == 'failed'
         assert row['detail']['code'] == 'transport_unavailable'
@@ -112,10 +114,10 @@ def test_terminal_read_result_is_separate_from_fulfillment(status, content, head
     try:
         with caplog.at_level(logging.INFO, logger='cifereca'):
             if code == 'http_read_completed':
-                assert client.loan_token('synthetic-loan') == TOKEN
+                assert client.loan_token('synthetic-loan', SIGNED) == TOKEN
             else:
                 with pytest.raises(ReaderHTTPError, match=code):
-                    client.loan_token('synthetic-loan')
+                    client.loan_token('synthetic-loan', SIGNED)
         terminal = observations(caplog)[-1]
         assert terminal['detail']['code'] == code
         assert terminal['detail']['http_status'] == status
@@ -130,7 +132,7 @@ def test_failing_optional_sink_cannot_change_http_result():
     client = ReaderHTTPClient(diagnostics=BrokenDiagnostics(), transport=httpx.MockTransport(
         lambda r: httpx.Response(200, content=TOKEN)))
     try:
-        assert client.loan_token('synthetic-loan') == TOKEN
+        assert client.loan_token('synthetic-loan', SIGNED) == TOKEN
     finally:
         client.close()
 
@@ -142,7 +144,7 @@ def test_supplied_diagnostics_uses_one_canonical_occurrence(caplog):
         lambda r: httpx.Response(404, headers={'content-type': 'application/xml'})))
     try:
         with caplog.at_level(logging.INFO, logger='cifereca'), pytest.raises(ReaderHTTPError):
-            client.loan_token('synthetic-loan')
+            client.loan_token('synthetic-loan', SIGNED)
         assert len(observations(caplog)) == 3
         assert observations(caplog)[-1]['detail']['http_status'] == 404
     finally:
