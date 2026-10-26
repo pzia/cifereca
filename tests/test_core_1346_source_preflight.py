@@ -80,7 +80,8 @@ def test_preflight_only_on_explicit_call_and_only_for_kobo_source():
     assert service.calls == [] and service.storage.values == {}
     label = sync_local_preflight_presentation(receipt)
     assert "Notices connues : 6" in label
-    assert "déjà liées : 3" in label
+    assert "liens de sauvegarde repérés : 3" in label
+    assert "Déclarations manuelles : non évaluées" in label
     assert "à rapprocher : 2" in label
     assert "aucun téléchargement autorisé" in label
 
@@ -174,3 +175,73 @@ def test_sync_page_preview_is_explicit_identity_bound_and_not_an_acquisition():
     assert 'kind="sync-preflight"' in code
     assert 'run_kobo_backup(' not in code.split('def run_opening_sync(', 1)[0]
     assert 'sync_kobo_backup(' not in code.split('def run_opening_sync(', 1)[0]
+
+
+def test_p0_2797_zero_backup_links_do_not_disprove_saved_user_declarations():
+    from cifereca.plugin_api import SyncResult
+
+    result = SyncResult(ok=True, facts={
+        "status": "preview_only", "known_item_count": 9,
+        "counts": {**COUNTS, "already_local_linked": 0, "already_local_verified": 0},
+        "read_only": True, "acquisition_authorized": False,
+        "requires_manifest_validation": True,
+        "manifest_refreshed": False, "files_verified": False,
+    })
+    label = sync_local_preflight_presentation(result)
+    assert "liens de sauvegarde repérés : 0" in label
+    assert "Déclarations manuelles : non évaluées" in label
+    assert "0 déclaration" not in label
+    assert "Manifeste distant non actualisé" in label
+    assert "aucun téléchargement autorisé" in label
+
+
+@pytest.mark.parametrize("value", ["5", -1, 1_000_001, True, False, {"secret": "PRIVATE"}, []])
+def test_p0_2797_untrusted_declared_counter_fails_closed(value):
+    from cifereca.plugin_api import SyncResult
+
+    result = SyncResult(ok=True, facts={
+        "status": "preview_only", "known_item_count": 9,
+        "counts": {**COUNTS, "already_local_declared": value},
+        "read_only": True, "acquisition_authorized": False,
+        "requires_manifest_validation": True,
+        "manifest_refreshed": True, "files_verified": True,
+    })
+    label = sync_local_preflight_presentation(result)
+    assert label == "Aperçu indisponible. Aucun téléchargement autorisé."
+    assert "PRIVATE" not in label
+
+
+@pytest.mark.parametrize("remote, local", [
+    (True, False), (False, True), (False, False),
+])
+def test_p0_2797_declarations_not_counted_without_both_checks(remote, local):
+    from cifereca.plugin_api import SyncResult
+
+    result = SyncResult(ok=True, facts={
+        "status": "preview_only", "known_item_count": 9,
+        "counts": {**COUNTS, "already_local_declared": 5},
+        "read_only": True, "acquisition_authorized": False,
+        "requires_manifest_validation": True,
+        "manifest_refreshed": remote, "files_verified": local,
+    })
+    assert sync_local_preflight_presentation(result) == (
+        "Aperçu indisponible. Aucun téléchargement autorisé."
+    )
+
+
+def test_p0_2797_valid_verified_declarations_separated_from_backup_links():
+    from cifereca.plugin_api import SyncResult
+
+    result = SyncResult(ok=True, facts={
+        "status": "preview_only", "known_item_count": 9,
+        "counts": {**COUNTS, "already_local_linked": 0,
+                   "already_local_verified": 0, "already_local_declared": 5},
+        "read_only": True, "acquisition_authorized": False,
+        "requires_manifest_validation": True,
+        "manifest_refreshed": True, "files_verified": True,
+    })
+    label = sync_local_preflight_presentation(result)
+    assert "liens de sauvegarde repérés : 0" in label
+    assert "Déclarations manuelles vérifiées pour ce compte : 5" in label
+    assert "Manifeste distant actualisé" in label
+    assert "aucun téléchargement autorisé" in label

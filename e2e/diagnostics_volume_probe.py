@@ -496,7 +496,20 @@ def main():
         device[0].key("End", True)
         device[0].key("End", False)
         device[0].key("Control_L", False)
-        later(lambda: verify_kobo_detail_keyboard_end(adjustment, detail_text, query_count), 260)
+        # Ctrl+End was sent physically via XTEST above. GTK applies its
+        # resulting scroll asynchronously: a fixed 260ms snapshot sometimes
+        # observed the previous position (CI diagnostics-volume-1366).
+        # Wait only for the *real* value to reach the actual content end;
+        # never fabricate success with adjustment.set_value(bottom).
+        until(
+            lambda: adjustment.get_value() >= max(
+                0, adjustment.get_upper() - adjustment.get_page_size()
+            ) - 5,
+            lambda: verify_kobo_detail_keyboard_end(
+                adjustment, detail_text, query_count,
+            ),
+            seconds=3,
+        )
 
     def verify_kobo_detail_keyboard_end(adjustment, detail_text, query_count):
         bottom = max(0, adjustment.get_upper() - adjustment.get_page_size())

@@ -85,6 +85,17 @@ def sync_local_preflight_presentation(result: object) -> str:
     ):
         return "Aperçu indisponible. Aucun téléchargement autorisé."
     local = counts["already_local_linked"] + counts["already_local_verified"]
+    # An offline backup-only preview has no verified current Kobo rights
+    # manifest. Personal user_declarations are tracked separately: they are
+    # not receipts or backup links, and must NOT be counted as zero merely
+    # because this preview did not inspect their exact right/file pairs.
+    declarations = counts.get("already_local_declared")
+    if declarations is not None and (
+        type(declarations) is not int or not 0 <= declarations <= 1_000_000
+        or facts.get("files_verified") is not True
+        or facts.get("manifest_refreshed") is not True
+    ):
+        return "Aperçu indisponible. Aucun téléchargement autorisé."
     blockers = sum(counts[key] for key in (
         "attention_required", "blocked_scope", "blocked_unlinked",
         "not_downloadable", "invalid_manifest_items",
@@ -94,13 +105,25 @@ def sync_local_preflight_presentation(result: object) -> str:
         if facts.get("files_verified") is True
         else "État des liens locaux uniquement (sans vérification SHA)"
     )
+    declaration_label = (
+        f"Déclarations manuelles vérifiées pour ce compte : {declarations}."
+        if declarations is not None else
+        "Déclarations manuelles : non évaluées dans cet aperçu. "
+        "Une déclaration enregistrée n'est ni un reçu Kobo ni un fichier "
+        "vérifié ; le compteur de liens n'en atteste pas l'absence."
+    )
+    manifest_label = (
+        "Manifeste distant actualisé ; " if facts.get("manifest_refreshed") is True
+        else "Manifeste distant non actualisé ; "
+    )
     return (
-        f"Notices connues : {known} · déjà liées : {local} · "
+        f"Notices connues : {known} · liens de sauvegarde repérés : {local} · "
         f"à rapprocher : {counts['needs_reconciliation']} · "
         f"candidats incertains : {counts['candidate_unverified']} · "
         f"potentiellement manquants : {counts['potentially_missing']} · "
         f"actions requises : {blockers}.\n"
-        f"{evidence}. Manifeste distant non actualisé ; "
+        f"{declaration_label}\n"
+        f"{evidence}. {manifest_label}"
         "aucun téléchargement autorisé depuis cet aperçu."
     )
 
