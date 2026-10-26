@@ -444,6 +444,36 @@ class LocalCatalog:
                 continue
 
             existing = self.storage.placement_for_path(Path(path_text))
+            # A folder hint or old backup row is not a transaction that
+            # transfers a file's already recorded owner/provider/edition.
+            # Keep existing authority and mark the physical projection
+            # untrusted for review rather than silently moving provenance to
+            # another identity on an ordinary (including deep) scan.
+            proposed_item = legacy.get("item_id") if legacy else None
+            if existing and any((
+                identity_hint and existing.get("identity_id")
+                    and identity_hint != existing["identity_id"],
+                provider_hint and existing.get("provider_id")
+                    and provider_hint != existing["provider_id"],
+                proposed_item and existing.get("source_item_id")
+                    and proposed_item != existing["source_item_id"],
+            )):
+                invalid += 1
+                self.storage.placement_put({
+                    **existing,
+                    "state": "invalid",
+                    "last_seen_at": started_at,
+                    "metadata": {
+                        **dict(existing.get("metadata") or {}),
+                        "invalid_reason": "placement_scope_conflict",
+                    },
+                })
+                for entry in self.storage.catalog_entries():
+                    if entry.get("placement_id") == existing["placement_id"]:
+                        self.storage.catalog_entry_put({
+                            **entry, "local_state": "invalid",
+                        })
+                continue
             placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
             previous_placement = self.storage.placement_get(placement_id)
             placement_was_new = previous_placement is None

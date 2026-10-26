@@ -1680,6 +1680,51 @@ class Storage:
                     db.execute("DELETE FROM placements WHERE placement_id=?", (pid,))
                 else:
                     db.execute("UPDATE placements SET path=?,updated_at=? WHERE placement_id=?", (new, now, pid))
+            # Folder names once served as synthetic owner IDs for legacy
+            # unconfigured trees. Only an EXPLICIT, journaled directory
+            # migration may adopt those inferred owners; an ordinary scan
+            # must never do so. Requalify them in this same SQLite commit,
+            # after relocating paths and before the post-migration scan.
+            for change in plan["changes"]:
+                identity = str(change["identity_id"])
+                destination = str(change["new"])
+                for legacy in {
+                    Path(str(change["old"])).name,
+                    Path(destination).name,
+                }:
+                    if legacy == identity or not legacy:
+                        continue
+                    if any(
+                        db.execute(
+                            f"SELECT 1 FROM {table} WHERE identity_id=? LIMIT 1",
+                            (legacy,),
+                        ).fetchone()
+                        for table in (
+                            "identities", "entitlements", "acquisition_ledger",
+                            "provider_connections",
+                        )
+                    ):
+                        # A registered/attested owner is not a folder alias.
+                        continue
+                    prefix = destination + "/"
+                    inferred = db.execute(
+                        "SELECT placement_id FROM placements "
+                        "WHERE identity_id=? AND (path=? OR "
+                        "substr(path,1,length(?))=?)",
+                        (legacy, destination, prefix, prefix),
+                    ).fetchall()
+                    for (placement_id,) in inferred:
+                        db.execute(
+                            "UPDATE placements SET identity_id=?,updated_at=? "
+                            "WHERE placement_id=? AND identity_id=?",
+                            (identity, now, placement_id, legacy),
+                        )
+                        db.execute(
+                            "UPDATE catalog_entries SET identity_id=?,updated_at=? "
+                            "WHERE placement_id=? AND "
+                            "(identity_id IS NULL OR identity_id=?)",
+                            (identity, now, placement_id, legacy),
+                        )
             for provider, credential, item, path in db.execute("SELECT provider_id,credential_id,item_id,local_path FROM backup_items").fetchall():
                 new = rewrite_path(path, mappings, root)
                 if new != path:

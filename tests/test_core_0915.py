@@ -37,6 +37,15 @@ class Core0915(unittest.TestCase):
         self.book('old');self.book('target','existing.epub');self.service.catalog_scan()
         with self.storage._connect() as db:db.execute("UPDATE placements SET identity_id='target' WHERE path LIKE ?",(str(self.root/'target')+'/%',))
         self.service.change_identity_directory('stable','target');self.assertTrue(all(p['identity_id']=='stable' for p in self.storage.placements()))
+    def test_migration_explicitly_requalifies_unattested_source_folder_owner(self):
+        self.book('old');self.service.catalog_scan()
+        with self.storage._connect() as db:
+            db.execute("UPDATE placements SET identity_id='old'")
+            db.execute("UPDATE catalog_entries SET identity_id='old'")
+        self.service.change_identity_directory('stable','target')
+        self.assertTrue(all(row['identity_id']=='stable' for row in self.storage.placements()))
+        self.assertTrue(all(row['identity_id']=='stable' for row in self.storage.catalog_entries()))
+
     def test_legacy_inference_with_acquisition_evidence_is_not_adopted(self):
         self.book('old');self.book('target','existing.epub');self.service.catalog_scan()
         with self.storage._connect() as db:db.execute("UPDATE placements SET identity_id='target' WHERE path LIKE ?",(str(self.root/'target')+'/%',))
