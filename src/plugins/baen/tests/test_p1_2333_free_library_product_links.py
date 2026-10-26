@@ -86,6 +86,42 @@ def test_product_link_on_other_pages_does_not_become_free_book(page):
     assert len(warnings) == 2
 
 
+@pytest.mark.parametrize("anchor", [
+    '<a href="/allbooks/category/index/id/2012">Free Library</a>',
+    '<a href="/allbooks/category">Free Library</a>',
+    '<a href="/allbooks/category/book">Category record</a>',
+    '<a href="/allbooks/search">Search Books</a>',
+    '<a href="/allbooks/account">My account</a>',
+    '<a href="/allbooks/checkout">Checkout</a>',
+    '<a href="/allbooks/synthetic-book?token=unverified">Book</a>',
+    '<a href="/account?next=/allbooks/synthetic-book">Account</a>',
+    '<a href="/catalog/allbooks/synthetic-book">Book</a>',
+    '<a href="/allbooks/synthetic-book/chapter">Chapter</a>',
+    '<a href="https://outside.test/allbooks/synthetic-book">Book</a>',
+])
+def test_legacy_substring_match_cannot_publish_navigation_as_book(anchor):
+    rows, warnings, calls = _search(FREE_PAGE + anchor)
+    assert rows == []
+    assert len(calls) == 1
+    assert warnings == [
+        UNVERIFIED_SEARCH_WARNING,
+        "partial_results : Baen : absence de résultats non attestée",
+    ]
+
+
+def test_legacy_single_product_with_other_page_links_keeps_only_exact_book():
+    rows, warnings, calls = _search(
+        '<a href="/allbooks/category/index/id/2012">Free Library</a>'
+        '<a href="/allbooks/synthetic-book">Synthetic Book</a>'
+        '<a href="/allbooks/checkout?next=/allbooks/synthetic-book">Checkout</a>'
+    )
+    assert [row.title for row in rows] == ["Synthetic Book"]
+    assert rows[0].friendly_url == "https://www.baen.com/allbooks/synthetic-book"
+    assert rows[0].downloadable is False and rows[0].owned is False
+    assert warnings == [UNVERIFIED_SEARCH_WARNING]
+    assert len(calls) == 1
+
+
 def test_legacy_links_remain_readable_and_partial():
     rows, warnings, calls = _search(
         '<a href="/allbooks/example-book">Legacy attested fixture</a>'

@@ -30,28 +30,35 @@ def _trusted_baen_url(value):
 
 
 def _listing_product_href(href, attrs, page_html):
-    """Recognize a product-title anchor without mistaking navigation for books.
+    """Select only a plausible product URL; never a category or account link.
 
-    Legacy /allbooks/ fixtures stay compatible. Root .html product URLs are
-    accepted only with Free Library listing evidence and a product-item-link
-    class, not on arbitrary search/home pages. Search stays partial.
+    The former substring check accepted any URI merely containing /allbooks/,
+    including unrelated query parameters and category navigation. Legacy
+    synthetic product paths keep working only as one clean /allbooks/<slug>.
+    Canonical root .html products still require verified listing/title context.
     """
-    if '/allbooks/' in href:
-        return True
+    try:
+        parsed = urlsplit(urljoin(BASE, href))
+        if parsed.query or parsed.fragment or parsed.username or parsed.password:
+            return False
+        path = parsed.path
+        legacy = re.fullmatch(r'/allbooks/([A-Za-z0-9][A-Za-z0-9._-]*)', path)
+        if legacy is not None:
+            return legacy.group(1).casefold() not in {
+                'category', 'catalog', 'search', 'account', 'login',
+                'checkout', 'cart', 'index', 'page', 'filter',
+            }
+    except ValueError:
+        return False
+
     classes = re.search(r'(?:^|\s)class\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
     if classes is None or 'product-item-link' not in classes.group(1).split():
         return False
-    try:
-        parsed = urlsplit(urljoin(BASE, href))
-        if (parsed.query or parsed.fragment
-                or not re.fullmatch(r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parsed.path)):
-            return False
-    except ValueError:
+    if not re.fullmatch(r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', path):
         return False
     return bool(re.search(r'\bFree\s+Library\b', page_html, re.I)
                 and re.search(r'\bShowing\s+\d+\s*-\s*\d+\s+of\s+\d+\b',
                               page_html, re.I))
-
 
 def _baen_explicit_download_offer(html_text, detail_url):
     """Find a trusted download button and whether its EPUB format is proven.
