@@ -100,12 +100,11 @@ def test_placement_outside_scanned_root_is_not_touched(tmp_path):
     assert _state(storage, foreign_id) == "present"
 
 
-@pytest.mark.parametrize("raw", [
-    "relative/untrusted.pdf",
-    "/library/../outside.pdf",
-])
-def test_untrusted_noncanonical_legacy_path_is_not_marked(tmp_path, raw):
+@pytest.mark.parametrize("raw_kind", ["relative", "traversal"])
+def test_untrusted_noncanonical_legacy_path_is_not_marked(tmp_path, raw_kind):
     storage, root, _, _ = _case(tmp_path)
+    raw = ("relative/untrusted.pdf" if raw_kind == "relative"
+           else str(root / ".." / "outside.pdf"))
     placement_id = "synthetic-legacy"
     with storage._lock, storage._connect() as db:
         db.execute(
