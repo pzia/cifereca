@@ -317,6 +317,8 @@ def kobo_backup_preview(
     neither book titles, raw product IDs, credentials nor signed URLs. It is
     advisory: a subsequent acquisition MUST revalidate manifest and files.
     """
+    from .library_declared_links import DeclarationRejected, has_active_declared_link
+
     credential_id = str(credential_id or "").strip()
     identity_id = self.storage.identity_for_connection("kobo", credential_id)
     if not credential_id or not identity_id:
@@ -446,11 +448,45 @@ def kobo_backup_preview(
                 reason = "needs_reconciliation"
 
         if not reason:
+            # A private declaration blocks a candidate acquisition, but is
+            # never classified as a verified Kobo backup. Resolve the borrower
+            # from the live provider for a refreshed manifest; do not trust a
+            # backup row belonging to a previous login as the current owner.
+            account_id = None
+            if session is not None and len(session.accounts) == 1:
+                owner = session.accounts[0]
+                if owner.identity_id == identity_id:
+                    account_id = owner.unique_id
+            elif session is None and current and current.get("identity_id") == identity_id:
+                account_id = current.get("account_id")
+            if type(account_id) is str and account_id:
+                try:
+                    if has_active_declared_link(
+                        self.storage, identity_id=identity_id,
+                        provider_id="kobo", credential_id=credential_id,
+                        account_id=account_id, item_id=product_id,
+                    ):
+                        reason = "attention_required"
+                except DeclarationRejected:
+                    # Malformed user statements cannot authorize a fresh GET.
+                    reason = "attention_required"
+            elif refresh_manifest:
+                # A fresh manifest without a unique account is not evidence
+                # that a particular user's file/declaration is absent.
+                reason = "attention_required"
+
+        if not reason:
             if bool(raw.get("archived")):
                 reason = "attention_required"
             elif raw.get("downloadable") is False:
                 reason = "not_downloadable"
-            elif current and current.get("status") == "attention_required":
+            elif (current and current.get("status") == "attention_required"
+                  and current.get("attention_code") not in {
+                      "declared_link_recorded", "declared_links_unavailable",
+                  }):
+                # The previous declaration-only attention is recalculated
+                # above on every preview. A revoked statement must not remain
+                # a permanent non-downloadable status.
                 reason = (
                     "blocked_scope"
                     if current.get("attention_code") == "missing_delegation_scope"
