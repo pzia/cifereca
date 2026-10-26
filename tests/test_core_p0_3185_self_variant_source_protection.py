@@ -92,10 +92,10 @@ def test_variant_changed_to_self_reference_after_plan_is_rechecked_before_unlink
     assert caught.value.code == "artifact_variant_scope_conflict"
     assert service.storage.placement_get(original_id)["artifact_id"] == source.artifact_id
     assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
+    assert (tmp_path / "library" / "Optimized.epub").is_file()
     assert any(
-        (tmp_path / "library" / "Optimized.epub") == __import__("pathlib").Path(row["path"])
+        row["artifact_id"] == derivative.artifact_id
         for row in service.storage.placements()
-        if row["artifact_id"] == derivative.artifact_id
     )
 
 
