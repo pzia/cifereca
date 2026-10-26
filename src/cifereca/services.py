@@ -831,7 +831,25 @@ class LibraryService:
         session = self._session_for_account(account)
         if not session.capabilities.loans:
             return []
-        rows = session.loans(account)
+        # Prefer the atomic, scoped v2 observation where published. The v1
+        # list reader stays available for old installed plugin packages; it
+        # is never consulted as a second read of an opt-in snapshot.
+        reader = getattr(session, "loan_inventory_snapshot", None)
+        if callable(reader):
+            from .plugin_api.loan_inventory import read_loan_inventory
+            epoch = self._account_context_epoch
+            snapshot = read_loan_inventory(session, account)
+            if snapshot.status in ("failed", "cancelled"):
+                raise ProviderConfigurationError("loan_inventory_read_unavailable")
+            # The reader already checks the account and mutable session
+            # fields; additionally protect against an ABA identity switch or
+            # replacement of the registered provider during the I/O.
+            if (self._account_context_epoch != epoch
+                    or self._session_for_account(account) is not session):
+                raise ProviderConfigurationError("loan_inventory_scope_changed")
+            rows = list(snapshot.loans)
+        else:
+            rows = session.loans(account)
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
