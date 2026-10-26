@@ -49,10 +49,19 @@ def test_distinct_kobo_entitlement_cannot_take_over_same_path(tmp_path, other):
     try:
         storage.backup_put(_book(path=same_path))
         before = _snapshot(storage)
-        with pytest.raises(ValueError, match="backup_placement_owner_conflict"):
-            storage.backup_put(_book(path=same_path, **other))
-        assert _snapshot(storage) == before
-        assert len(storage.placements()) == 1
+        storage.backup_put(_book(path=same_path, **other))
+        after = _snapshot(storage)
+        # Both provider declarations remain (diagnostics/migration parity).
+        assert len(after["legacy"]) == 2
+        assert len(after["rights"]) == 2
+        assert len(after["acquisitions"]) == 2
+        # No second LOCAL claim or takeover by the newly seen book.
+        assert len(after["placements"]) == len(before["placements"]) == 1
+        assert after["placements"] == before["placements"]
+        assert after["catalogue"] == before["catalogue"]
+        acquired = next(x for x in after["acquisitions"]
+                        if x["item_id"] == other["item"])
+        assert acquired["artifact_id"] is None
         assert storage.placements()[0]["identity_id"] == "alice"
     finally:
         storage.close()
