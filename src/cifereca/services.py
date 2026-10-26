@@ -2920,18 +2920,26 @@ class LibraryService:
         Preserve a usable previous acquisition/binding on failed re-acquisition.
         A successful re-acquisition publishes a distinct file if one exists.
         """
-        # The existing read-only eligibility check already decides whether
-        # a provider action can start. Keep its exact closed reason at the
-        # decision point instead of reclassifying it as a provider failure.
-        # No second check or network call is introduced.
-        eligibility = self.loan_download_eligibility(loan)
-        if eligibility.get("available") is not True:
-            code = eligibility.get("code")
-            if type(code) is not str or code not in {
-                "not_digital", "provider_unavailable",
-                "provider_disconnected", "download_unsupported",
-            }:
-                code = "provider_unavailable"
+        # Keep the existing can_download_loan admission contract: other
+        # real callers/test fixtures may override it to authorize an explicit
+        # action. Only AFTER that boolean rejects the action do we inspect
+        # the read-only eligibility explanation. This is local state only,
+        # never an extra provider GET or a new eligibility veto.
+        if not self.can_download_loan(loan):
+            eligibility = self.loan_download_eligibility(loan)
+            code = eligibility.get("code") if type(eligibility) is dict else None
+            if (
+                type(eligibility) is not dict
+                or eligibility.get("available") is not False
+                or type(code) is not str
+                or code not in {
+                    "not_digital", "provider_unavailable",
+                    "provider_disconnected", "download_unsupported",
+                }
+            ):
+                # State can change between the boolean decision and its
+                # explanation. Do not invent a more specific provider cause.
+                code = "unclassified_error"
             raise _LoanDownloadAdmissionRefused(code)
         try:
             with InterProcessLock(acquisition_lock_file()):
