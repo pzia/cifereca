@@ -3502,12 +3502,25 @@ class Storage:
             db.execute("DELETE FROM artifact_variants WHERE variant_id=?", (str(variant_id),))
 
     def artifact_delete_if_unreferenced(self, artifact_id: str) -> bool:
+        # A placement is not the only live reference to content-addressed
+        # bytes. An unplaced catalogue notice, acquisition receipt or variant
+        # with a *different* source can still refer to this artifact. Deleting
+        # the authority record would orphan those links in reconciliation.
+        artifact_id = str(artifact_id)
         with self._lock, self._connect() as db:
-            placement = db.execute("SELECT 1 FROM placements WHERE artifact_id=? LIMIT 1", (str(artifact_id),)).fetchone()
-            variant = db.execute("SELECT 1 FROM artifact_variants WHERE source_artifact_id=? LIMIT 1", (str(artifact_id),)).fetchone()
-            if placement or variant:
-                return False
-            db.execute("DELETE FROM artifacts WHERE artifact_id=?", (str(artifact_id),))
+            for table, column in (
+                ("placements", "artifact_id"),
+                ("catalog_entries", "artifact_id"),
+                ("acquisition_ledger", "artifact_id"),
+                ("artifact_variants", "source_artifact_id"),
+                ("artifact_variants", "artifact_id"),
+            ):
+                if db.execute(
+                    f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1",
+                    (artifact_id,),
+                ).fetchone():
+                    return False
+            db.execute("DELETE FROM artifacts WHERE artifact_id=?", (artifact_id,))
             return True
 
     def artifact_variant_find(self, *, source_sha256: str, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> dict[str, Any] | None:
