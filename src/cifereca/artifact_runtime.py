@@ -590,6 +590,45 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
     return True
 
 
+def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
+    """Deleting a derived SHA cannot unlink another book sharing its bytes.
+
+    The physical placement table is content-addressed. Only placements
+    explicitly materialized by this variant's source are candidates for
+    global deletion. A generic/local/provider placement with the same SHA,
+    or a derivative now shared across identities, remains independent.
+    """
+    if type(variant) is not dict:
+        return False
+    artifact_id = variant.get("artifact_id")
+    source_id = variant.get("source_artifact_id")
+    if (type(artifact_id) is not str or not artifact_id
+            or type(source_id) is not str or not source_id
+            or artifact_id == source_id):
+        return False
+    placements = [
+        row for row in storage.placements()
+        if row.get("artifact_id") == artifact_id
+    ]
+    scopes = set()
+    for row in placements:
+        metadata = row.get("metadata")
+        scope = tuple(row.get(key) for key in (
+            "identity_id", "provider_id", "source_item_id"
+        ))
+        if (type(metadata) is not dict
+                or metadata.get("variant") is not True
+                or metadata.get("source_artifact_id") != source_id
+                or any(type(value) is not str or not value for value in scope)
+                or row.get("state") != "present"
+                or Path(str(row.get("path") or "")).is_symlink()):
+            return False
+        scopes.add(scope)
+        if len(scopes) > 1:
+            return False
+    return True
+
+
 @dataclass(slots=True)
 class LibraryMaintenanceBrokerImpl:
     service: Any
@@ -630,8 +669,7 @@ class LibraryMaintenanceBrokerImpl:
             # More than one variant row sharing the hash is also ambiguous:
             # deleting one cannot authorize deletion of the other's bytes.
             if (len(rows) != 1
-                    or rows[0].get("source_artifact_id") == request.artifact_id
-                    or not rows[0].get("source_artifact_id")):
+                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
                 raise Conflict("Variante et source non indépendantes", code="artifact_variant_scope_conflict")
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
@@ -860,8 +898,7 @@ class LibraryMaintenanceBrokerImpl:
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: return LibraryMutationResult(True,0,"Variante déjà absente")
             if (len(rows) != 1
-                    or rows[0].get("source_artifact_id") == request.artifact_id
-                    or not rows[0].get("source_artifact_id")):
+                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
                 raise Conflict("Variante et source non indépendantes", code="artifact_variant_scope_conflict")
             variant=rows[0]; source_id=str(variant.get("source_artifact_id") or "")
             for placement in [p for p in self.service.storage.placements() if str(p.get("artifact_id") or "") == request.artifact_id]:
