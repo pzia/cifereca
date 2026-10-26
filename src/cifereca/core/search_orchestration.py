@@ -299,7 +299,10 @@ def _search_cooldown_key(session: ProviderSession, identity: object) -> tuple:
 
 def _source_in_retry_after(self, session: ProviderSession, identity: object) -> bool:
     """Check only the same configured source, session and identity."""
-    with self._search_generation_lock:
+    lock = getattr(self, "_search_generation_lock", None)
+    if lock is None:
+        return False  # Compatible with lightweight search-only test hosts.
+    with lock:
         entries = getattr(self, "_search_retry_after", None)
         if not entries:
             return False
@@ -308,11 +311,12 @@ def _source_in_retry_after(self, session: ProviderSession, identity: object) -> 
         if row is None:
             return False
         bound_session, bound_identity, expires = row
-        if (bound_session is not session or bound_identity is not identity
-                or _search_cooldown_clock() >= expires):
+        if _search_cooldown_clock() >= expires:
             entries.pop(key, None)
             return False
-        return True
+        # A new session with the same account key cannot inherit this
+        # throttle; nor may it erase the old session's active cooldown.
+        return bound_session is session and bound_identity is identity
 
 
 def _record_source_retry_after(
@@ -640,7 +644,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
         warnings.append(contract_warning)
     if effective_field is None:
         return [], warnings, "", ""
-    identity = self.current_identity
+    identity = getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
