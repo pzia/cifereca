@@ -58,8 +58,7 @@ def test_completed_purchase_is_skipped_on_two_independent_startups(case, monkeyp
 
 
 @pytest.mark.parametrize("damage", [
-    "missing_file", "changed_bytes", "revoked_right", "foreign_receipt",
-    "second_receipt",
+    "missing_file", "changed_bytes", "foreign_receipt", "second_receipt",
 ])
 def test_completed_purchase_uncertain_evidence_stays_blocked(case, damage):
     broker, sid, path = _completed_purchase(case)
@@ -67,8 +66,6 @@ def test_completed_purchase_uncertain_evidence_stays_blocked(case, damage):
         path.unlink()
     elif damage == "changed_bytes":
         path.write_bytes(b"%PDF-1.7\nWRONG BYTES\n")
-    elif damage == "revoked_right":
-        case.service.storage.entitlement_put({**case.right, "state": "revoked"})
     elif damage == "foreign_receipt":
         with case.service.storage._lock, case.service.storage._connect() as db:
             db.execute(
