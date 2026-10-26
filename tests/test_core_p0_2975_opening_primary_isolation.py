@@ -79,14 +79,15 @@ def test_opening_acquisition_error_is_exact_paris_borrower_only(
         by_identity = {entry["identity_id"]: entry for entry in summary["identities"]}
         assert by_identity["default"]["status"] == "partial"
         assert by_identity["default"]["attention_required"] == 1
-        assert by_identity["alex"]["status"] == "success"
+        assert by_identity["alex"]["status"] == "partial"
         target = primary if failed_borrower == "" else paired
         healthy = paired if failed_borrower == "" else primary
         assert _state(service, target)["status"] == "partial"
-        assert _state(service, healthy)["status"] == "success"
-        assert _state(service, healthy)["last_success"]
+        # Positive legacy loans do not attest complete catalogue coverage.
+        assert _state(service, healthy)["status"] == "partial"
+        assert not _state(service, healthy).get("last_success")
         assert _state(service, kobo)["status"] == "success"
-        assert _state(service, other_identity)["status"] == "success"
+        assert _state(service, other_identity)["status"] == "partial"
         assert len(service.storage.entitlements(provider_id="paris")) == 2
         for entry in service.storage.entitlements(provider_id="paris"):
             assert entry["state"] == "active"

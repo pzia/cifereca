@@ -117,6 +117,7 @@ def test_opening_partial_paris_does_not_close_existing_right(tmp_path, monkeypat
         service.accounts = [account]
         service._sessions[service._session_key("paris", "cred")] = SimpleNamespace(
             provider_id="paris", credential_id="cred", connected=True,
+            capabilities=SimpleNamespace(loans=True),
             last_loan_errors=[error],
         )
         monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [])
@@ -142,6 +143,7 @@ def test_opening_fully_empty_paris_still_requires_explicit_negative_proof(tmp_pa
         service.accounts = [account]
         service._sessions[service._session_key("paris", "cred")] = SimpleNamespace(
             provider_id="paris", credential_id="cred", connected=True,
+            capabilities=SimpleNamespace(loans=True),
             last_loan_errors=[],
         )
         monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [])

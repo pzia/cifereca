@@ -45,7 +45,7 @@ def test_real_guards_are_counted_and_persisted_without_fulfillment(tmp_path, mon
             ended = next(e for e in events if e['event'] == 'identity_end' and e['identity_id'] == 'default')
             assert ended[key] == value
         assert first['new_acquisitions'] == 0 and first['attention_required'] == count
-        assert first['status'] == ('partial' if count else 'success')
+        assert first['status'] == 'partial'  # v1 coverage is never complete
         assert sibling['status'] == 'success'
         assert len(service.storage.acquisitions()) == (count if guard == 'cross_identity' else 0)
     finally:
