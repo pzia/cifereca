@@ -115,3 +115,35 @@ def test_revoked_policy_during_get_blocks_adept(connected_core, monkeypatch):
     monkeypatch.setattr(session, 'download_digital', revoke)
     assert materialize(service, account, loan)['status'] == 'attention_required'
     assert len(downloaded) == 1 and not calls
+
+def test_bnf_auto_skips_other_manual_acquisitions_before_inspecting_files(
+        connected_core, monkeypatch):
+    """An opted-in sync must never read unrelated local manual EPUB/PDFs."""
+    from cifereca.core import bnf_auto_materialization as auto
+
+    service, session, account, loan, _state, _downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    assert broker.set_bnf_auto_download(broker._source_id(account), True)
+    monkeypatch.setattr(
+        service.storage, 'acquisitions', lambda **_kwargs: [
+            {'identity_id': 'other-identity',
+             'metadata': {'bnf_auto_ref': 'other-ref', 'path': '/unrelated/private.pdf'}},
+            {'identity_id': account.identity_id,
+             'metadata': {'bnf_auto_ref': 'other-ref', 'path': '/different/manual.epub'}},
+        ],
+    )
+    inspections = []
+    monkeypatch.setattr(
+        auto, 'inspect_artifact', lambda path: inspections.append(path)
+        or (_ for _ in ()).throw(AssertionError('unrelated-file-inspected')),
+    )
+    attempted = []
+    def stop_before_get(*_args, **_kwargs):
+        attempted.append(True)
+        raise RuntimeError('synthetic-stop-before-get')
+    monkeypatch.setattr(session, 'download_digital', stop_before_get)
+    assert auto.materialize(service, account, loan) == {
+        'status': 'attention_required', 'code': 'bnf_auto_acquisition_failed',
+    }
+    assert attempted == [True]
+    assert inspections == []
