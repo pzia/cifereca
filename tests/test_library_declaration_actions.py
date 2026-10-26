@@ -141,12 +141,16 @@ def test_existing_declaration_is_labelled_without_automatic_new_confirmation(ui,
     controls.preview(False)
     assert len(Dialog.dialogs) == count
     assert 'déjà déclarée' in controls.status.label
+    assert 'Fichier local revérifié' in controls.status.label
+    assert 'n’atteste ni achat' in controls.status.label
     assert controls.revoke.visible
     service, rig = selected[3], selected[4]
     service.storage.entitlement_put({**rig[3], 'state': 'expired'})
     controls.preview(False)
     assert len(Dialog.dialogs) == count
-    assert 'a changé' in controls.status.label and controls.revoke.visible
+    assert 'nouvelle vérification' in controls.status.label
+    assert 'Aucune présence locale confirmée' in controls.status.label
+    assert controls.revoke.visible
 
 
 def test_failed_preview_does_not_show_raw_exception_or_confirmation(ui, selected):
