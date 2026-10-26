@@ -29,15 +29,39 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-def _commercial_search_usage(item: SearchResult) -> str:
-    """Read-only source usage; public notices must not acquire owned status."""
+def _commercial_search_usage(item: SearchResult, service=None) -> str:
+    """Read-only commercial scope; a public notice never proves ownership.
+
+    For Kobo, consult only Core's persisted, identity-scoped entitlement
+    projection. No Vault lookup, account connection or remote request is
+    needed to render the detail, including while the source is offline.
+    """
     if item.source_provider == "numilog-catalog":
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_provider == "numilog":
         if result_row(item)["state"] == "remote_owned":
             return "Mes achats Numilog · fichier local non présumé"
         return "Notice Numilog · aucun droit d'achat attesté"
-    return ""
+    if item.source_provider != "kobo":
+        return ""
+    if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
+        return "Notice Kobo connue hors ligne · droits non actualisés"
+    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    state = None
+    if type(identity) is str and identity:
+        try:
+            reader = getattr(service, "kobo_personal_right_states", None)
+            scoped = reader(identity) if callable(reader) else {}
+            if type(scoped) is dict:
+                state = scoped.get((item.source_credential, item.record_id))
+        except Exception:
+            # A failed read is unknown, never a reason to promote a right.
+            pass
+    if state == "active":
+        return "Mes achats Kobo · droit attesté en ligne, fichier local non présumé"
+    if state == "archived":
+        return "Kobo · achat archivé, sans droit actif de sauvegarde"
+    return "Catalogue Kobo · aucun achat attesté pour ce profil"
 
 
 class DetailPanel(Gtk.Box):
@@ -511,6 +535,12 @@ class DetailPanel(Gtk.Box):
         self._actions(buttons)
 
     def _direct_download_action(self, item: SearchResult) -> None:
+        # The GUI must never turn a public Numilog notice into a download
+        # merely because a mocked/legacy provider reports direct_download.
+        if (item.source_provider == "numilog-catalog"
+                or (item.source_provider == "numilog"
+                    and result_row(item)["state"] != "remote_owned")):
+            return
         if not self.window.service.can_direct_download(item):
             return
         content_type = self.window.service.content_type_for(item)
@@ -686,7 +716,7 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
-        usage = _commercial_search_usage(item)
+        usage = _commercial_search_usage(item, self.window.service)
         freshness_rows = [
             ("Recherche en ligne", "Indisponible"),
         ] if stale_known else []
@@ -827,7 +857,7 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
-        usage = _commercial_search_usage(item)
+        usage = _commercial_search_usage(item, self.window.service)
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
@@ -852,11 +882,18 @@ class DetailPanel(Gtk.Box):
             links=document_links(result_row(item)),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
-        direct_download = (False if item.source_provider == "numilog-catalog"
-                           else self.window.service.can_direct_download(item))
+        direct_download = (
+            False if (item.source_provider == "numilog-catalog"
+                      or (item.source_provider == "numilog"
+                          and result_row(item)["state"] != "remote_owned"))
+            else self.window.service.can_direct_download(item)
+        )
         if direct_download:
             self._direct_download_action(item)
-        elif item.medium == "digital" and availability == "Empruntable":
+        elif (item.medium == "digital" and availability == "Empruntable"
+              and item.source_provider not in {"numilog", "numilog-catalog", "kobo"}):
+            # Commercial store inventory/catalogues never become loan sources,
+            # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
             action.set_title("Action")
             if self.window.can_borrow_item(item):

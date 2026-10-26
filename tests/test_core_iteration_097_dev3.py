@@ -61,7 +61,10 @@ class Core097Dev3(unittest.TestCase):
         with self.assertRaises(ManifestError):parse_manifest(self.manifest(['invalid']))
     def test_artifact_format_repairs_stale_local_catalogue_projection(self):
         import zipfile
-        file=self.path/'book.epub'
+        # Targeted indexing proves presence inside the configured library,
+        # not an arbitrary file next to the test's SQLite database.
+        self.core.config.set('library.directory', str(self.path/'library'))
+        file=self.core.library.library_dir()/'book.epub'
         with zipfile.ZipFile(file,'w') as z:
             z.writestr('mimetype','application/epub+zip')
             z.writestr('META-INF/container.xml','<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>')

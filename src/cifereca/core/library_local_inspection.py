@@ -23,6 +23,7 @@ STATES = {
     'present_unlinked': 'Présent sans lien confirmé', 'metadata_candidate': 'Candidat bibliographique',
     'ambiguous': 'Correspondance ambiguë', 'hash_mismatch': 'Empreinte différente',
     'rights_without_verified_file': 'Droit sans fichier vérifié',
+    'declared_link_recorded': 'Association manuelle enregistrée (fichier à revérifier)',
     'local_file_without_attested_right': 'Fichier sans droit attesté',
     'unverified_file': 'Fichier non vérifié', 'stored_path_missing': 'Chemin enregistré absent',
     'stored_path_missing_active': 'Chemin absent, placement encore actif',
@@ -758,6 +759,23 @@ class LocalInspection:
             index for index in sorted(inactive_paris_loans)
             if index not in active_indices
         )
+        # Read declarations for *display only*; file bytes and provider rights
+        # remain unverified, even if the user made an exact-scoped statement.
+        recorded_scopes = frozenset()
+        if service is not None:
+            from .library_declared_links import recorded_declared_scopes
+            try:
+                current_storage = service.storage
+                if valid():
+                    observed_scopes = recorded_declared_scopes(
+                        current_storage, identity_id=identity_id,
+                    )
+                    if valid() and service.storage is current_storage:
+                        recorded_scopes = observed_scopes
+            except Exception:
+                # Optional local projection must never interrupt inspection;
+                # unknown evidence is not an active statement or a file proof.
+                pass
         for index in displayed_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
@@ -933,6 +951,12 @@ class LocalInspection:
                 {'loan_inactive'} if is_closed_paris_loan
                 else {'rights_without_verified_file'}
             )
+            # Both states intentionally coexist: a user assertion is NOT
+            # supplier provenance nor verified local-file presence.
+            if (not is_closed_paris_loan and scope in recorded_scopes
+                    and scope_counts[scope] == 1):
+                case_state.add('declared_link_recorded')
+                case_heading = 'Association manuelle enregistrée · droit sans fichier attesté'
             detail = (case_heading + ' · ' + right_label + '\n\n'
                       + bibliography + '\n\n'
                       + evidence('entitlements', index)
@@ -942,6 +966,10 @@ class LocalInspection:
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
                           for li in own_ledger_indices[:20])
                       + '\n\nAbsence de preuve de fichier, pas preuve de livre absent. Aucun téléchargement ni rattachement autorisé.')
+            if 'declared_link_recorded' in case_state:
+                detail += ('\n\nAssociation déclarée par vous pour ce droit et ce compte exact. '
+                           'Le fichier, sa présence actuelle et les preuves fournisseur '
+                           'restent à revérifier ; aucun reçu ni placement attesté créé.')
             if not add('right', index, case_heading + ' · ' + right_label,
                        _provider(right.get('provider_id')),
                        case_state, detail):
@@ -1406,6 +1434,15 @@ class LocalInspection:
                     self._declared_last = (right_key, file_key, existing.relation_id)
                     return {'status': ('needs_review' if existing.status == 'needs_review'
                                        else 'already_declared'),
+                            # This is the result of the selected pair's fresh
+                            # no-follow file check + exact current SQLite
+                            # right/account review, not supplier attestation.
+                            # Never reuse it as acquisition or placement proof.
+                            'presence_state': (
+                                'present_declared'
+                                if existing.status == 'declared_current'
+                                else 'declared_needs_review'
+                            ),
                             'read_only': True, 'trust': 'user_declaration',
                             'revoke_available': True}
             result = declare_local_link(

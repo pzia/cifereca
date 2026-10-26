@@ -17,6 +17,17 @@ from tests.test_core_1345_confirmed_local_reconciliation import case as kobo_cas
 from tests.test_library_reconciliation import epub, filesystem
 
 
+def _persistent_files(root):
+    """Keep strict EPUB/DB/WAL immutability; SQLite readers can alter -shm.
+
+    WAL shared memory is an ephemeral locking/index structure, not a durable
+    book or SQL mutation. Comparing -shm bytes after legitimate read-only SQL
+    transactions gives a false positive even when the DB and WAL are intact.
+    """
+    return {name: value for name, value in filesystem(root).items()
+            if not name.endswith("-shm")}
+
+
 def _cause(media_format, validation, structure):
     observed = SimpleNamespace(
         media_format=media_format,
@@ -77,7 +88,7 @@ def test_kobo_pdf_needs_minimal_structure_and_exact_attested_sha(kobo_case, tmp_
             (digest, len(data)),
         )
 
-    before = filesystem(tmp_path)
+    before = _persistent_files(tmp_path)
     audit = audit_library(case.storage.path, {"default": (case.target.parent,)})
     session = LocalInspection(
         audit, lambda: True, "default", roots=(case.target.parent,),
@@ -99,6 +110,6 @@ def test_kobo_pdf_needs_minimal_structure_and_exact_attested_sha(kobo_case, tmp_
         assert bad_review.status == "blocked"
         assert "file_unverified" in bad_review.codes
         assert "kobo_backup_signature_mismatch" in bad_review.codes
-        assert filesystem(tmp_path) == before
+        assert _persistent_files(tmp_path) == before
     finally:
         session.close()

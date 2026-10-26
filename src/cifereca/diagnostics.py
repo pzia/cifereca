@@ -1,19 +1,17 @@
 from __future__ import annotations
 import json
 import logging
-import re
 import threading
 from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from .diagnostic_task_context import numilog_task_reference
+from .diagnostic_task_context import diagnostic_task_reference
 
-# Public redact()/redact_text() is also used by book/sync UI. Its legacy
-# contract must not mask a book title or a non-sensitive presence boolean.
-SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
-
+# Backwards-compatible API names. Only GTK Diagnostics pseudonymizes explicit
+# login/password values in its presentation layer; the Core and plugins must
+# never alter source evidence in the journal, UI or exports.
 _GENERIC_STATUSES = frozenset({
     "ok", "error", "warning", "failed", "success", "partial", "running",
     "complete", "completed", "attention_required", "retryable_error",
@@ -22,56 +20,12 @@ _GENERIC_STATUSES = frozenset({
 
 
 def redact_text(text: str) -> str:
-    # The redactor is a last-resort guard for free-text coming from providers,
-    # exceptions or plugin logs. It cannot replace typed, closed diagnostics.
-    # Never print signed URLs, private filesystem locations or email addresses.
-    text = re.sub(r"https?://[^\s<>\"']+", lambda m: _redact_url(m.group()), text, flags=re.I)
-    text = re.sub(r"(?i)file://[^\s<>\"']+", "<redacted-path>", text)
-    text = re.sub(
-        r"(?i)(?<![\w:/])/(?:home|users|root|tmp|var|mnt|media|run)/[^\s,;:\"'<>)}\]]+",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)\b[a-z]:[\\/](?:[^\s,;:\"'<>)}\]]+)",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)(?<![\w.+-])[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}(?![\w.-])",
-        "<redacted-email>", text,
-    )
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
-    text = re.sub(r"(?i)\b(password|cookie|token|secret|authorization|session|barcode|readerid)\b\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)
-    text = re.sub(r"(?i)([\"']?(?:password|cookie|token|secret|authorization|session|barcode|readerid)[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;}]+)", r"\1<redacted>", text)
+    """Deprecated name; return original evidence without masking."""
     return text
 
 
-def _redact_url(url):
-    from urllib.parse import urlsplit
-    try:
-        parsed = urlsplit(url)
-        # Preserve non-sensitive public URLs (historical Plugin API contract)
-        # while hiding known borrower/account routes even without a query.
-        private_route = re.search(
-            r"(?i)/(?:LOAN|reader|account|users?|private(?:[-_][^/]+)?|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\.acsm)(?:/|$)",
-            parsed.path,
-        )
-        if parsed.query or parsed.fragment or parsed.username or private_route:
-            return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
-        return url
-    except ValueError:
-        return "<redacted-url>"
-
-
 def redact(value: Any, key: str = "") -> Any:
-    if SENSITIVE_KEYS.search(key):
-        return "<redacted>"
-    if isinstance(value, dict):
-        return {k: redact(v, str(k)) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(v, key) for v in value]
-    if isinstance(value, str):
-        text = redact_text(value)
-        return text[:500] + "…" if len(text) > 500 else text
+    """Deprecated name; return original data without mutation or masking."""
     return value
 
 
@@ -120,6 +74,7 @@ class DiagnosticEntry:
     verified_reconciliation: bool = False
     verified_loan_download: bool = False
     verified_bnf_loan_action: bool = False
+    verified_cover_failure: bool = False
 
 
 class Diagnostics:
@@ -155,6 +110,14 @@ class Diagnostics:
             raw_detail = journal_payload(detail) if type(detail) is dict else {}
         except Exception:
             raw_detail = {}
+        # BnF HTTP observations belong to the actual worker executing the GET.
+        # This reference is Core-owned; request_ref and plugin-supplied detail
+        # cannot claim task provenance. Leave unrelated generic events alone.
+        bnf_http = (type(category) is str and category == "API"
+                    and type(operation) is str and operation == "BnF HTTP"
+                    and type(raw_detail.get("provider_id")) is str
+                    and raw_detail["provider_id"] == "bnf-pret")
+        correlate = bnf_http or (type(category) is str and category == "NUMILOG")
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             category=category[:160] if type(category) is str else "DIAGNOSTICS",
@@ -162,7 +125,7 @@ class Diagnostics:
             status=status if type(status) is str and status in _GENERIC_STATUSES else "unknown",
             duration_ms=duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000 else None,
             detail=raw_detail,
-            task_ref=numilog_task_reference() if type(category) is str and category == "NUMILOG" else None,
+            task_ref=diagnostic_task_reference() if correlate else None,
         )
         with self._lock:
             self._items.append(entry)
@@ -236,7 +199,15 @@ class Diagnostics:
         if not fields:
             return
         status = fields["status"]
-        severity = logging.INFO if status == "success" else logging.WARNING
+        # A terminal provider refusal or download failure is an ERROR, not
+        # a generic warning. Otherwise the canonical Diagnostics journal's
+        # "Erreurs" filter hides precisely the incidents the user requested.
+        # Cancellation/retry/attention remain warnings, success stays info.
+        severity = (
+            logging.INFO if status == "success" else
+            logging.ERROR if status in {"failed", "refused"} else
+            logging.WARNING
+        )
         record = self.enabled and (self.level != "errors" or status != "success")
         if record:
             entry = DiagnosticEntry(
@@ -323,6 +294,43 @@ class Diagnostics:
             )
         except Exception:
             # Diagnostics must never alter the plugin operation's result.
+            pass
+
+
+    def add_core_cover_failure(self, code: str, *, duration_ms: int) -> None:
+        """One attested image-download failure, not an EPUB acquisition.
+
+        A generic plugin diagnostic cannot attest a cover failure reason.
+        Publish a single Core-owned canonical journal occurrence; the
+        in-memory snapshot remains read-only legacy compatibility.
+        """
+        from .core.diagnostic_cover_failure import public_fields, public_message
+        fields = public_fields({"code": code, "duration_ms": duration_ms})
+        if not fields or not self.enabled:
+            return
+        message = public_message(fields)
+        if message is None:
+            return
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="COVER", operation="download", status="error",
+            duration_ms=fields["duration_ms"], detail={"code": fields["code"]},
+            verified_cover_failure=True,
+        )
+        with self._lock:
+            self._items.append(entry)
+        try:
+            logger = logging.getLogger("cifereca")
+            if logger.isEnabledFor(logging.ERROR):
+                logger.log(
+                    logging.ERROR, "%s", message,
+                    extra=_core_journal_record(
+                        "COVER", "cover_download_failure", "error", message,
+                        {"code": fields["code"]}, duration_ms=fields["duration_ms"],
+                    ),
+                )
+        except Exception:
+            # Observability cannot interfere with the visual fallback.
             pass
 
     def add_core_provider_connection_attempt(self, event: object) -> None:
@@ -717,6 +725,8 @@ class Diagnostics:
                     row.pop("verified_reconciliation", None)
                 if row.get("verified_loan_download") is False:
                     row.pop("verified_loan_download", None)
+                if row.get("verified_cover_failure") is False:
+                    row.pop("verified_cover_failure", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:

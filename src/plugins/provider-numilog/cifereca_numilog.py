@@ -24,9 +24,10 @@ from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionE
 from cifereca_numilog_filename import publish
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
-_LOG = logging.getLogger(__name__)
+# A descendant of the Core logger shares its canonical journal handler.
+_LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.84'
+VERSION = '0.1.85'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -418,9 +419,20 @@ class NumilogSession(ProviderSession):
 
     def library(self):
         with self.lock:
+            # The HTTP client is serialized with reconnect/close, but the Core
+            # identity broker may reassign this account while MesLivres is
+            # loading. Pin the owner across GET and normalization; never
+            # publish a positive purchase observation under a new identity.
+            # Standalone legacy sessions without a broker remain supported.
+            owner = self._inventory_owner_or_none()
             rows = self._rows()
-            self._diag('bibliothèque',items=len(rows))
-            return [self._normalize(row) for row in rows]
+            normalized = [self._normalize(row) for row in rows]
+            if self._inventory_owner_or_none() != owner:
+                raise ProviderCapabilityError(
+                    'Numilog : identité propriétaire modifiée ; inventaire arrêté'
+                )
+            self._diag('bibliothèque',items=len(normalized))
+            return normalized
 
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
@@ -637,6 +649,21 @@ class NumilogSession(ProviderSession):
         # Re-check links restored from older persisted catalogue objects:
         # they are not proof of a public product URL and may carry tokens.
         item.friendly_url = public_book_url(item.friendly_url, self.library_url)
+
+    def _inventory_owner_or_none(self):
+        """Advisory owner observation for the existing v1 library reader.
+
+        Legacy library discovery must remain possible with an unresolved
+        identity: the *explicit acquisition* has its own mandatory ownership
+        guard and remains denied. Compare the binding on BOTH sides of the
+        read, including a transition from/to unresolved.
+        """
+        if self.identity_broker is None:
+            return None
+        try:
+            return self._identity_id()
+        except Exception:
+            return None
 
     def _enrichment_identity_snapshot(self):
         """Optionally pin the owning identity for ONE explicit metadata read.

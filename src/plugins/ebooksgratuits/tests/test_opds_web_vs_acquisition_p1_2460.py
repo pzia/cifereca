@@ -163,14 +163,53 @@ def test_html_source_is_used_only_as_public_referrer(tmp_path):
         s.close()
 
 
-def test_broker_is_not_called_for_fake_xml_web_url(tmp_path):
+@pytest.mark.parametrize("cached,bad_web", [
+    (False, FEED),
+    (True, FEED),
+    (True, HOST + "/index.php/feed/item/42"),
+    (True, HOST + "/index.php/book/42?token=PRIVATE"),
+    (True, "https://foreign.invalid/not-the-book?sig=PRIVATE"),
+    (True, HOST + "/index.php/%252566eed/42"),
+])
+def test_bad_cached_xml_or_foreign_web_link_does_not_block_exact_epub(
+    tmp_path, cached, bad_web,
+):
     s = session()
     try:
-        row = book(s)
-        row.friendly_url = FEED
+        fresh = book(s)
+        row = deepcopy(fresh) if cached else fresh
+        row.friendly_url = bad_web  # Historical cached HTML/Atom conflation.
+        dest, returned = s.download_direct(row, tmp_path)
+        assert dest.is_file()
+        assert returned == EPUB
+        assert len(s.transport.calls) == 1
+        source = s.transport.calls[0][0]
+        assert source["url"] == EPUB
+        assert source["headers"]["Referer"] == s.opds_feed_url
+        assert source["redirect_policy"] == "same_origin"
+        assert source["expected_format"] == "epub"
+        assert bad_web not in repr(source)
+        assert "PRIVATE" not in repr(source)
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("invalid_epub", [
+    FEED,
+    HOST + "/index.php/account/private.epub",
+    "https://foreign.invalid/index.php/fetch/42.epub",
+    HOST + "/index.php/fetch/%2e%2e/account/private.epub",
+])
+def test_invalid_epub_is_still_refused_even_with_good_or_bad_web_link(
+    tmp_path, invalid_epub,
+):
+    s = session()
+    try:
+        row = book(s, ("alternate", "text/html", "/index.php/page/book/42"))
+        row.download_url = invalid_epub
         with pytest.raises(ProviderCapabilityError, match="invalid_catalog_link"):
             s.download_direct(row, tmp_path)
-        assert s.transport.calls == []
+        assert not s.transport.calls
     finally:
         s.close()
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
 
 import logging
+import httpx
 from dataclasses import replace
+from threading import RLock
 import re
 import time
 import unicodedata
@@ -15,7 +17,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError
+from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError, ParisError
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -28,7 +30,7 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderPlugin,
     ProviderSession,
-    ProviderError,
+    ProviderError, Cancelled,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     inspect_artifact_content,
     publish_artifact_content,
@@ -144,6 +146,10 @@ class ParisProviderSession(ProviderSession):
         timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.diagnostics = diagnostics
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
+        # Paris still publishes branch failures through the v1 mutable
+        # last_loan_errors facade. Keep one borrower read and its typed
+        # projection atomic so concurrent readers cannot exchange evidence.
+        self._loan_inventory_lock = RLock()
         self.last_loan_errors: list[dict[str, str]] = []
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
@@ -174,6 +180,13 @@ class ParisProviderSession(ProviderSession):
         return account
 
     def connect(self) -> list[Account]:
+        # A reconnect replaces the authenticated client and account list.
+        # Serialize it with the complete two-branch inventory snapshot so a
+        # single published observation cannot span two sessions.
+        with self._loan_inventory_lock:
+            return self._connect_locked()
+
+    def _connect_locked(self) -> list[Account]:
         username = str(self.credentials.get("username") or "").strip()
         password = str(self.credentials.get("password") or "")
         if not username or not password:
@@ -286,12 +299,14 @@ class ParisProviderSession(ProviderSession):
         return self.accounts
 
     def connect_with_credentials(self, username: str, password: str) -> list[Account]:
-        self.credentials = {"username": username, "password": password}
-        return self.connect()
+        with self._loan_inventory_lock:
+            self.credentials = {"username": username, "password": password}
+            return self.connect()
 
     def close(self) -> None:
-        self.client.close()
-        self.connected = False
+        with self._loan_inventory_lock:
+            self.client.close()
+            self.connected = False
 
     @staticmethod
     def _decorate(items: list[Any], provider_id: str, credential_id: str) -> list[Any]:
@@ -409,6 +424,10 @@ class ParisProviderSession(ProviderSession):
             loan.thumbnail_url = str(metadata["thumbnail_url"])
 
     def loans(self, account: Account) -> list[Loan]:
+        with self._loan_inventory_lock:
+            return self._read_loans_for_account(account)
+
+    def _read_loans_for_account(self, account: Account) -> list[Loan]:
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -416,20 +435,33 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             try:
                 rows.extend(self.client.loans(upstream, account.unique_id))
-            except Exception:
-                # HTTP/provider exceptions may carry a signed loan URL,
-                # reader number or opaque secret even without a recognizable
-                # key name. Keep only fixed diagnostic codes at *emission*;
-                # Core needs the failed upstream, never its raw exception.
-                errors.append({
+            except Cancelled:
+                # Cooperative cancellation is NOT an unavailable branch.
+                # Stop the second upstream GET and never publish a partial
+                # inventory or synthetic negative-rights evidence.
+                raise
+            except Exception as exc:
+                # Neither branch failure nor sibling success proves an empty
+                # inventory. Keep the compatibility code and attach only the
+                # separately typed HTTP/transport reason when attested.
+                reason = (
+                    exc.code if isinstance(exc, ParisLoanListError) else
+                    "paris_loans_transport_timeout" if isinstance(exc, httpx.TimeoutException) else
+                    "paris_loans_transport_failed" if isinstance(exc, httpx.RequestError) else
+                    "paris_loans_inventory_shape_invalid"
+                    if type(exc) is ParisError and str(exc) == "paris_loans_inventory_shape_invalid" else
+                    None
+                )
+                failure = {
                     "upstream": upstream,
                     "code": "paris_loans_upstream_failed",
-                })
+                    **({"reason_code": reason} if reason is not None else {}),
+                }
+                errors.append(failure)
                 try:
                     self.diagnostics.add(
                         "API", f"loans {upstream}", "error",
-                        detail={"provider": "paris", "upstream": upstream,
-                                "code": "paris_loans_upstream_failed"},
+                        detail={"provider": "paris", **failure},
                     )
                 except Exception:
                     pass
@@ -448,6 +480,10 @@ class ParisProviderSession(ProviderSession):
         return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
+        with self._loan_inventory_lock:
+            return self._snapshot_for_account(account)
+
+    def _snapshot_for_account(self, account: Account) -> LoanInventorySnapshot:
         """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
 
         Neither legacy Paris upstream currently attests pagination/exhaustive

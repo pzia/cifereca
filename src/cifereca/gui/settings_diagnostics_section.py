@@ -112,12 +112,13 @@ def build_settings_diagnostics_section(
     section.append(buttons)
     refresh = action_button("Actualiser", "view-refresh-symbolic")
     copy = action_button("Copier dans le presse-papiers", "edit-copy-symbolic", suggested=True)
-    export = action_button("Exporter le diagnostic", "document-save-symbolic")
-    export.set_tooltip_text("Enregistrer le rapport de diagnostic expurgé dans un fichier texte")
-    clear = action_button("Effacer", "edit-clear-symbolic")
+    export = action_button("Exporter l’affichage", "document-save-symbolic")
+    export.set_tooltip_text("Sauvegarde locale de la vue avec login/mot de passe pseudonymisés ; autres valeurs visibles, fichier 0600")
+    clear = action_button("Effacer l’affichage", "edit-clear-symbolic")
     buttons.append(refresh)
     buttons.append(copy)
     buttons.append(export)
+    clear.set_tooltip_text("Efface uniquement le texte affiché ; le journal conservé ne sera pas supprimé")
     buttons.append(clear)
     return DiagnosticSettingsWidgets(
         summary=diag_summary, filter=diag_filter, issues_box=diag_issues_box,

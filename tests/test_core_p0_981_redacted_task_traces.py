@@ -134,3 +134,23 @@ def test_rejected_task_kind_is_redacted_without_breaking_feedback(caplog):
         assert displayed[-1][1][3] is False
     finally:
         runner.close()
+
+
+def test_core_gui_navigation_kinds_are_named_in_trace_without_private_labels(caplog):
+    """Known MainWindow operations must not be indistinguishable as 'other'."""
+    runner, displayed, flush, logger = _runner()
+    private = "https://private.invalid/profile?token=SECRET_NAVIGATION"
+    try:
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            for kind in ("history", "bookings", "search-known"):
+                runner.submit(
+                    "Compte " + private, lambda: None, kind=kind, origin="user",
+                )
+                flush()
+        for kind in ("history", "bookings", "search-known"):
+            assert f"kind={kind}" in caplog.text
+        assert "kind=other" not in caplog.text
+        assert private not in caplog.text
+        assert len([event for event, _ in displayed if event == "finished"]) == 3
+    finally:
+        runner.close()

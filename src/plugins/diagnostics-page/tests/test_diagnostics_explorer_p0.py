@@ -705,3 +705,28 @@ def test_partial_core_memory_is_not_described_as_rotated_application_journal():
     assert "Événements Core (mémoire) : Historique Core partiel" in text
     assert "Journal applicatif (lecture bornée) : Journal partiel" in text
     assert "rotation" not in text.split("Journal applicatif", 1)[0]
+
+
+def test_journal_mode_hides_unsupported_legacy_filters():
+    """Journal-only UI must not invite filters the canonical broker rejects."""
+    from pathlib import Path
+
+    module = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
+    source = module.read_text(encoding="utf-8")
+    assert "source_selector.set_selected(3 if journal_available else 0)" in source
+    for row in ("source_selector", "domain_row", "reason_row"):
+        assert ("if not journal_available:\n"
+                f"            advanced_box.append({row})") in source
+
+
+def test_explorer_without_source_explicitly_queries_canonical_journal():
+    broker = Broker({
+        "events": [], "sources": [{"source": "journal", "status": "empty"}],
+        "total": 0, "offset": 0, "next_offset": None,
+    })
+    fetch_explorer_page(broker, period="all", search="échec")
+    assert broker.calls == [{
+        "source": "journal", "module": "", "severity": "",
+        "since": None, "until": None, "limit": PAGE_SIZE,
+        "offset": 0, "search": "échec",
+    }]

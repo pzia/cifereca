@@ -32,16 +32,22 @@ def _ensure_trace_console(logger: logging.Logger, *, force: bool = False) -> Non
 
 
 def _share_canonical_handlers(core: logging.Logger) -> None:
-    """Route independent Numilog module logs to the SAME handler objects.
+    """Compatibility for older installed Numilog provider packages.
 
-    Numilog's historical module logger is 'cifereca_numilog', not a child
-    of 'cifereca', so Python logger propagation otherwise loses its records.
-    Reusing the exact file/console handlers retains a single rotation lock,
-    physical journal and console mirror without a second writer.
+    New Numilog versions use 'cifereca.plugin.provider.numilog' and propagate
+    to the canonical Core logger directly. Older 'cifereca_numilog' instances
+    reuse the exact file/console handlers, never creating a second journal.
     """
     numilog = logging.getLogger("cifereca_numilog")
     numilog.setLevel(core.level)
     numilog.propagate = False
+    # This legacy logger must MIRROR the Core's current canonical handlers,
+    # not accumulate retired file/console handlers after a reconfiguration.
+    # Keeping a stale file handler writes the same event to two physical
+    # journals, and can resurrect a closed/old journal after switching paths.
+    for handler in tuple(numilog.handlers):
+        if handler not in core.handlers:
+            numilog.removeHandler(handler)
     for handler in core.handlers:
         if handler not in numilog.handlers:
             numilog.addHandler(handler)

@@ -126,6 +126,50 @@ def check_home_summary(window, *, later, capture, report, done):
             render_next()
             return
         assert len(calls) == len(cases) + 1  # initial build + explicit snapshots
+        native_store_filters()
+
+    def native_store_filters():
+        """Validate the actual GTK source selector without reparenting the UI.
+
+        A detached temporary QueryControls previously altered the visible
+        Accueil geometry during the MainWindow baseline recipe. MultiSelect
+        is the same native widget used by that controller; exercising it
+        detached avoids changing focus, navigation or asynchronous tasks.
+        """
+        from cifereca.gui.query_controls import MultiSelect
+        from cifereca.gui.query_widget_factory_controller import _provider_choices
+
+        live = [
+            ("kobo", "Kobo"), ("numilog", "Numilog"),
+            ("numilog-catalog", "Numilog — Catalogue public"),
+        ]
+        source = SimpleNamespace(service=SimpleNamespace(
+            searchable_providers=lambda: list(live),
+        ))
+        choices = _provider_choices(source)
+        assert set(dict(choices)) == {"kobo", "numilog", "numilog-catalog", "local"}
+        selection_changes = []
+        selector = MultiSelect("Source", choices, lambda: selection_changes.append(True))
+        options = selector.buttons
+        assert options["numilog"].get_label() == "Numilog — Mes achats (compte)"
+        assert options["numilog-catalog"].get_label() == "Numilog — Catalogue public"
+        assert options["kobo"].get_label() == "Kobo — Catalogue et compte"
+
+        selector.set_values(("numilog-catalog",))
+        assert selector.values() == ("numilog-catalog",)
+        live[:] = [("kobo", "Kobo"), ("numilog", "Numilog")]
+        selector.set_choices(_provider_choices(source))
+        assert "numilog-catalog" not in selector.buttons
+        assert selector.values() == ()
+        selector.set_values(("numilog",))
+        assert selector.values() == ("numilog",)
+        live.append(("numilog-catalog", "Numilog — Catalogue public"))
+        selector.set_choices(_provider_choices(source))
+        assert selector.values() == ("numilog",)
+        assert not selector.buttons["numilog-catalog"].get_active()
+        assert selection_changes
+        report["checks"]["P1_1867_native_store_filter_roles_and_opt_in"] = True
+
         window.view_stack.set_visible_child_name(previous)
         window.view_stack.remove(page)
         for controller in controllers:

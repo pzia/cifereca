@@ -95,6 +95,7 @@ def test_generic_diagnostic_is_logged_as_structured_event_once(tmp_path, monkeyp
         assert event["operation"] == "import_acsm"
         assert event["detail"]["password"] == "real"
         assert event["detail"]["login"] == "reader@example.invalid"
+        assert event["provider_id"] == "bnf-pret"  # Exact original structured field.
         assert event["detail"]["acsm_url"].endswith("token=real")
         assert query_journal(p, search="reader@example.invalid")["total"] == 1
         assert query_journal(p, provider_id="bnf-pret")["total"] == 1
@@ -511,3 +512,33 @@ def test_partial_source_sync_is_a_warning_in_errors_only_mode(tmp_path, monkeypa
     assert event["detail"]["code"] == "source_sync_partial"
     assert event["duration_ms"] == 321
     assert path.read_text().count("DIAG_JSON ") == 1
+
+
+
+def test_canonical_journal_import_does_not_load_legacy_event_feed():
+    """Physical-journal imports must never initialize old memory projections."""
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    source_tree = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = source_tree + os.pathsep + env.get("PYTHONPATH", "")
+    process = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; import cifereca.core.diagnostic_journal; "
+         "assert 'cifereca.core.diagnostic_event_feed' not in sys.modules"],
+        capture_output=True, text=True, env=env, timeout=20, check=False,
+    )
+    assert process.returncode == 0, process.stderr
+
+
+def test_standalone_line_parser_supports_thread_and_legacy_log_syntax():
+    from cifereca.core.diagnostic_log_line import _LOG_LINE
+    for line, body in (
+        ("2026-10-25 13:20:00,123 INFO cifereca [MainThread] event", "event"),
+        ("2026-10-25 13:20:00,123 WARNING cifereca.plugin.source operation", "operation"),
+    ):
+        match = _LOG_LINE.fullmatch(line)
+        assert match is not None
+        assert match["body"] == body
+        assert match["logger"].startswith("cifereca")

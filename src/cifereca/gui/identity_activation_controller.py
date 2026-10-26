@@ -26,6 +26,15 @@ def activate_identity(window, identity_id: str) -> None:
         _TRACE_LOG.debug("Identity selection notification ignored: already current identity=%s", identity.identity_id)
         return
     window.service.select_identity(identity.identity_id)
+    # Retire visible borrower rows synchronously, BEFORE the async identity
+    # loader runs. The old profile must not remain selectable in GTK during
+    # the network/cache read of the new identity.
+    window._displayed_loan = None
+    window._populate_loans([])
+    if hasattr(window, "loan_page"):
+        window.loan_page.detail.empty(
+            "Nouvelle identité", "Chargement des emprunts de ce profil…",
+        )
     window._identity_context_generation += 1
     window._dispose_maintenance_lines()
     if window.view_stack.get_visible_child_name() == "tools":

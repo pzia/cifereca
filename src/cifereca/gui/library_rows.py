@@ -31,7 +31,15 @@ def project_library_rows(
         key = str(item.get("key") or f"library:{len(objects)}")
         objects[key] = item
         meta_parts = [state] if state else []
-        if item.get("due_at"):
+        # A store entitlement may have an expiry/refresh timestamp, but it
+        # is never a library return deadline. Render "retour" only when
+        # the row carries explicit loan provenance, not for owned rights.
+        is_loan = (
+            item.get("source") == "loan"
+            or item.get("entitlement_type") == "loan"
+            or item.get("state") in {"borrowed", "remote_loan_active", "remote_loan_realized"}
+        )
+        if is_loan and item.get("due_at"):
             meta_parts.append(f"retour {format_date(str(item.get('due_at')))}")
         sync_status = item.get("sync_status")
         if sync_status and not item.get("local"):

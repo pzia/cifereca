@@ -12,7 +12,13 @@ Le broker `diagnostics.events(search="...", limit=50,
 offset=...)` (ou `source="journal"` explicite) lit les quatre fichiers conservés, applique les filtres avant
 pagination et renvoie `total`, `next_offset`, des événements datés UTC et la
 couverture de la fenêtre physique. Recherche insensible à la casse et aux
-accents. Les événements `Diagnostics.add` compatibles JSON sont sérialisés
+accents. Le paramètre optionnel `sort_order="asc" | "desc"` s'applique
+**après les filtres globaux mais avant la pagination** ; `asc` reste le
+défaut pour les anciens consommateurs. La page GTK « Plus récents d'abord »
+utilise `desc` : son premier lot contient les 50 événements les plus récents
+**de toutes les rotations**, et sa page suivante remonte dans le temps.
+À timestamp égal, l'ordre physique est préservé (`asc`) ou inversé (`desc`),
+jamais déterminé par le hash `event_id`. Les événements `Diagnostics.add` compatibles JSON sont sérialisés
 dans ce même fichier sous une enveloppe `DIAG_JSON`; le journal conserve le
 message et tous les champs d'origine, sans pseudonymisation ni inférence de
 provider à partir des messages libres. Les autres logs Python déjà produits
@@ -45,11 +51,17 @@ sources anormales ; les trous, dépassements ou rotations inaccessibles sont
 signalés `partial`. La lecture n'interroge aucun fournisseur. Un événement
 antérieur aux rotations disponibles ne peut plus être retrouvé.
 
-Le journal historique `source="all" / "core_events" / "app_log"` reste
-temporairement disponible comme façade de compatibilité. Cette ancienne
-projection, avec ses restrictions, **n'est pas une autre source d'autorité**.
-Elle ignore les nouvelles lignes `DIAG_JSON` pour éviter leur double
-comptage. Les consommateurs doivent migrer vers `source="journal"`.
+Les anciens noms `source="all"`, `"core_events"` et `"app_log"`
+restent provisoirement acceptés par le **broker public** comme alias stricts
+de `journal`. Ils renvoient exactement les mêmes événements physiques et
+identifiants, sans lecture supplémentaire, duplication ni cache mémoire.
+Les filtres `domain`/`reason_code` des projections héritées sont refusés :
+ils ne sauraient être attestés à partir des journaux bruts. Un `provider_id`
+explicitement présent dans le `detail` structuré est également exposé au
+premier niveau pour le filtrage exact et l'UI ; il n'est jamais inféré du
+message ni du nom du logger. L'ancien module
+`core.diagnostic_event_feed` subsiste uniquement pour les tests/consommateurs
+historiques à retirer séparément.
 
 ## Migration des producteurs Core attestés — lot #3155
 
@@ -67,6 +79,24 @@ Un échec Numilog et une décision Kobo `error`/ `partial` sont respectivement
 émis en `ERROR`/`WARNING` plutôt qu'en `INFO` afin de ne pas disparaître
 du journal quand le niveau effectif est `errors`.
 
+## Paramètres → Diagnostic système (aperçu de compatibilité)
+
+Le panneau Paramètres ne lit plus `Diagnostics._items` ni
+`Diagnostics.text()`. Il affiche au maximum 100 dernières observations
+**structurées** du broker canonique, plus les faits locaux de présentation.
+Ce n'est pas l'ensemble des logs : la recherche, les rotations et l'export
+complet sont accessibles dans la page Diagnostics.
+
+Le panneau Paramètres utilise les **mêmes pseudonymes de session GTK**
+que la page Diagnostics, exclusivement sur les valeurs explicites
+login/mot de passe. Tokens, URLs, titres, chemins et autres champs restent
+visibles. La copie et « Exporter l'affichage » reprennent exactement ce
+texte présenté. Cet export volontaire se fait en `0600` (même à
+l'écrasement) et sans suivre de lien symbolique. L'**export brut du journal**
+reste disponible, sans aucune transformation, depuis la page Diagnostics.
+« Effacer l'affichage » ne supprime ni ne réécrit le journal et n'efface
+plus un cache mémoire trompeur.
+
 ## Points restant à consolider
 
 Les autres producteurs spécialisés et intégrations de plugins doivent être
@@ -82,9 +112,11 @@ message ; pas de diagnostic réseau implicite.
 La source par défaut de `DiagnosticsBroker.events()` et du protocole public
 `DiagnosticsBroker` est désormais `journal` : même pour les appels sans
 paramètre `source`, la consultation est persistante et ne consulte pas le
-snapshot mémoire. Les sources `all`, `core_events`, `app_log` restent
-accessibles **seulement par sélection explicite**, pour les anciens clients
-et tests. Leur disparition nécessite une migration distincte des appelants.
+snapshot mémoire. Les noms `all`, `core_events`, `app_log` sont tolérés
+uniquement comme alias physiques rétrocompatibles, sans requête en mémoire. Les fonctions du plugin Diagnostics `fetch_explorer_page()` et
+`collect_filtered_selection()` utilisent également `journal` par défaut ;
+les tests des canaux historiques déclarent explicitement `source="all"`.
+Leur disparition nécessite une migration distincte des appelants.
 
 
 ## Compatibilité broker : snapshot et export texte (#3133)
@@ -102,6 +134,13 @@ physiques** en NDJSON lisible dans un éditeur, précédé d'un en-tête de vers
 et d'indications de couverture/rotations. La limite de l'export brut est
 conservée. **Aucune expurgation** des login, mots de passe, cookies, jetons,
 URLs, titres ou chemins n'est appliquée à ce texte ; l'export est local et
-explicite. Le support-report historique et `Diagnostics.text()` constituent
-encore des voies distinctes à migrer ; leur présence n'est pas assimilée à la
-fermeture de #3133.
+explicite. Le rapport de support (`build_support_report`), les contrôles de santé et
+`Diagnostics.text()` conservent aussi les valeurs brutes depuis #3172/#3173.
+Les helpers historiques `redact()` / `redact_text()` deviennent des identités
+avec #3181 ; seule la page GTK Diagnostics pseudonymise au rendu les valeurs
+explicites login/mot de passe.
+
+Le cache `Diagnostics._items` et la fonction de projection
+`query_diagnostic_events()` restent présents uniquement pour des contrats
+historiques et leurs tests, mais **ne sont plus appelés par le broker public**.
+Leur suppression physique (et celle des alias) est le prochain lot de #3133.

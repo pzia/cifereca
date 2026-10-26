@@ -259,3 +259,54 @@ def test_closed_runner_never_generates_task_samples():
     worker.assert_not_called()
     flush()
     runner.close()
+
+
+@pytest.mark.parametrize("kind", (
+    "maintenance-plan", "maintenance-tool", "maintenance-inspection",
+))
+def test_real_maintenance_task_has_own_phase_category_in_opt_in_export(kind):
+    """The known audit phase must not collapse to 'other.worker' (#1741)."""
+    TaskRunner, flush = _headless_runner()
+    monitor = UiPerfMonitor(measurement_origin="simulated")
+    monitor.enable_detailed_capture(True)
+    window = NS(
+        _closed=False, ui_perf=monitor,
+        _task_started=Mock(), _task_finished=Mock(),
+        _task_progress_for_task=Mock(),
+    )
+    runner = TaskRunner(window)
+    try:
+        runner.submit(
+            "https://private.invalid/audit?token=PRIVATE_AUDIT",
+            lambda: "synthetic-audit-complete",
+            kind=kind, origin="maintenance",
+        )
+        flush()
+        report = monitor.performance_report()
+        assert set(report["stats"]) == {
+            f"{kind}.queue_wait", f"{kind}.worker",
+            f"{kind}.gtk_delivery_wait",
+        }
+        assert len(report["events"]) == 3
+        assert {event["category"] for event in report["events"]} == {kind}
+        assert {event["operation_id"] for event in report["events"]} == {1}
+        assert "other.worker" not in report["stats"]
+        assert "PRIVATE_AUDIT" not in json.dumps(report)
+        assert report["measurement_origin"] == "simulated"
+    finally:
+        runner.close()
+
+
+def test_phase_export_remains_closed_for_arbitrary_kind_after_maintenance_fix():
+    monitor = UiPerfMonitor(measurement_origin="simulated")
+    monitor.enable_detailed_capture(True)
+    assert monitor.record_phase("maintenance-tool", "worker", 10)
+    assert monitor.record_phase("maintenance/SIGNED_PRIVATE_URL", "worker", 20)
+    report = monitor.performance_report()
+    assert set(report["stats"]) == {
+        "maintenance-tool.worker", "other.worker",
+    }
+    assert [row["category"] for row in report["events"]] == [
+        "maintenance-tool", "other",
+    ]
+    assert "SIGNED_PRIVATE_URL" not in json.dumps(report)

@@ -24,7 +24,7 @@ BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366")
-DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
+DIAG = ("diagnostics-1366", "diagnostics-raw-export-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
 # CI smoke for P1 bibliographic detail plugins (#1599). These existing GTK
@@ -81,6 +81,7 @@ PROBES = {
     "e2e/maintenance_tools_probe.py": MAINT,
     "e2e/search_filter_probe.py": ("search-filter-p0",),
     "e2e/diagnostics_page_probe.py": DIAG_SHARED,
+    "e2e/diagnostics_raw_export_probe.py": ("diagnostics-raw-export-1366",),
     "e2e/diagnostics_states_probe.py": DIAG_STATES,
     "e2e/diagnostics_structured_probe.py": ("diagnostics-structured-1366",),
     "e2e/diagnostics_volume_probe.py": ("diagnostics-volume-1366",),

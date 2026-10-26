@@ -113,10 +113,15 @@ def connect_configured_sources(
     # worker. The very first UI connection belongs to startup; subsequent
     # user-requested re-connections are explicit refreshes. Never infer the
     # caller from log timestamps, provider messages or a worker thread.
+    # A plugin reload is a distinct, explicitly attested GUI origin.
+    # The reload controller installs the marker only around its synchronous
+    # reconnect submission and removes it immediately afterward. A stray or
+    # unknown marker cannot become Core provenance.
+    startup_seen = getattr(window, "_source_inventory_startup_connection_seen", False) is True
     caller_category = (
-        "explicit_refresh" if getattr(
-            window, "_source_inventory_startup_connection_seen", False
-        ) is True else "startup/connect_configured"
+        "startup/connect_configured" if not startup_seen else
+        "plugin_activation" if getattr(window, "_provider_connect_caller_hint", None) == "plugin_activation"
+        else "explicit_refresh"
     )
     # The dedicated Core facade accepts this audited marker. Historical
     # test/plugin service doubles may expose only connect_configured(); do

@@ -17,6 +17,72 @@ from diagnostics_reconciliation import (
     exportable_reconciliation_aggregates, sanitized_reconciliation_export,
 )
 
+# Fixed Core-owned cover failure grammar (#3108). These fields identify
+# observed journal records only; they do not prove unique HTTP requests,
+# numerical status codes, a provider, a title or a borrower.
+_COVER_FAILURE_MESSAGES = {
+    "timeout": "couverture · délai dépassé",
+    "http_status": "couverture · échec HTTP",
+    "request_failed": "couverture · requête échouée",
+    "storage_failed": "couverture · écriture échouée",
+    "invalid_image": "couverture · image invalide",
+    "unexpected": "couverture · erreur inattendue",
+}
+
+
+def published_cover_failure(raw: Mapping[str, Any]) -> str | None:
+    """Recognize only the dedicated Core observation's strict envelope."""
+    if not isinstance(raw, Mapping):
+        return None
+    source = raw.get("source")
+    if type(source) is not str or source not in {"journal", "core_events"}:
+        # app_log/TRACE are not a second failed HTTP attempt.
+        return None
+    if (raw.get("module") != "COVER" or raw.get("status") != "error"
+            or raw.get("severity") != "error"):
+        return None
+    if source == "journal":
+        if (raw.get("logger") != "cifereca"
+                or raw.get("operation") != "cover_download_failure"):
+            return None
+    elif "operation" in raw:
+        # The legacy Core projection never exports its internal operation.
+        return None
+    detail = raw.get("detail")
+    if type(detail) is not dict or set(detail) != {"code"}:
+        return None
+    code = detail.get("code")
+    if (type(code) is not str
+            or raw.get("message") != _COVER_FAILURE_MESSAGES.get(code)):
+        return None
+    return code
+
+
+def cover_failure_page_summary(rows: list[dict[str, Any]]) -> str:
+    """Page-local count from attested rows, never a total of HTTP attempts."""
+    counts = {code: 0 for code in _COVER_FAILURE_MESSAGES}
+    for row in rows[:PAGE_SIZE]:
+        if not isinstance(row, dict):
+            continue
+        code = row.get("cover_reason")
+        if (type(code) is str and code in counts
+                and row.get("module") == "COVER"
+                and row.get("status") == "error"
+                and row.get("message") == _COVER_FAILURE_MESSAGES[code]
+                and type(row.get("source")) is str
+                and row["source"] in {"journal", "core_events"}):
+            counts[code] += 1
+    total = sum(counts.values())
+    if total == 0:
+        return ""
+    reasons = ", ".join(
+        f"{_COVER_FAILURE_MESSAGES[code].split(' · ', 1)[1]} : {count}"
+        for code, count in counts.items() if count
+    )
+    return (f" · Couvertures : {total} événement(s) observé(s) sur cette page"
+            f" ({reasons}) · nombre de requêtes HTTP distinctes inconnu")
+
+
 def local_timestamp_label(value: object) -> str:
     """Present a broker UTC instant in the machine's local offset, GUI only.
 
@@ -160,11 +226,11 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 
 def fetch_explorer_page(
-    broker: Any, *, source: str = "all", module: str = "",
+    broker: Any, *, source: str = "journal", module: str = "",
     provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
-    search: str = "",
+    search: str = "", sort_order: str = "asc",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -188,11 +254,19 @@ def fetch_explorer_page(
     }
     if type(search) is not str or len(search) > 500:
         raise ValueError("invalid diagnostics search")
+    if type(sort_order) is not str or sort_order not in {"asc", "desc"}:
+        raise ValueError("invalid diagnostics sort order")
+    if source != "journal" and sort_order != "asc":
+        raise ValueError("global ordering requires canonical journal")
     if source == "journal":
         if reason_code or verified_domain:
             raise ValueError("raw journal does not attest a domain or reason code")
-        # Only the canonical journal has a Core-side pre-pagination text search.
+        # Only the canonical journal has Core-side pre-pagination search and
+        # full-retention ordering. The ascending default omits the new kwarg
+        # to remain compatible with older Core brokers.
         query["search"] = search
+        if sort_order == "desc":
+            query["sort_order"] = "desc"
     # Older Core versions can still serve the unfiltered page. Require the
     # optional new broker keyword ONLY for an explicitly selected code;
     # never silently downgrade a global filter to local 50-item search.
@@ -242,6 +316,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
+        cover_reason = published_cover_failure(raw)
+        if cover_reason is not None:
+            safe["cover_reason"] = cover_reason
         # The Core attests the terminal reconciliation event; present only
         # finite, local aggregate labels. The code is searchable on this page
         # without changing the broker's server-side query or exporting books.
@@ -257,16 +334,24 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         reference = published_task_reference(raw)
         if reference is not None:
             safe["task_ref"] = reference
-        # Full text search is explicitly local to this 50-item broker page.
-        searchable = " ".join(
-            safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
-        )
-        if reconciliation is not None:
-            searchable += " " + " ".join(reconciliation.values())
-        if provider is not None:
-            searchable += " " + provider
-        if search and search.casefold() not in searchable.casefold():
-            continue
+        connection = published_connection_attempt(raw)
+        if connection is not None:
+            safe.update(connection)
+        # Legacy sources only: their search was limited to the loaded page.
+        # For the canonical journal, Core ALREADY searched the complete raw
+        # event (operation, phase, reason_code, task_ref, detail) BEFORE
+        # pagination. A second search over this short display projection
+        # would discard legitimate Core matches during selection/copy.
+        if search and raw.get("source") != "journal":
+            searchable = " ".join(
+                safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
+            )
+            if reconciliation is not None:
+                searchable += " " + " ".join(reconciliation.values())
+            if provider is not None:
+                searchable += " " + provider
+            if search.casefold() not in searchable.casefold():
+                continue
         # Detailed GTK inspection is opt-in. AI previews keep the minimal
         # operational projection and must never inherit arbitrary detail.
         if include_detail is True and "detail" in raw:
@@ -282,7 +367,15 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             instant = datetime.min.replace(tzinfo=timezone.utc)
         return instant, row["event_id"]
 
-    results.sort(key=chronological_key, reverse=newest_first)
+    if results and all(row["source"] == "journal" for row in results):
+        # Core already ordered all retained records before slicing the page.
+        # Do not scramble equal timestamps by the SHA-derived event_id: the
+        # incoming stable physical tie order is authoritative.
+        results.sort(key=lambda row: chronological_key(row)[0],
+                     reverse=newest_first)
+    else:
+        # Historic feeds had only a local page ordering contract.
+        results.sort(key=chronological_key, reverse=newest_first)
     return results
 
 
@@ -308,6 +401,144 @@ def published_task_reference(row: Mapping[str, Any]) -> str | None:
     return values[0] if all(value == values[0] for value in values) else None
 
 
+# The broker's `provider_connect` projection is the ONLY source of these
+# fields. Revalidate the complete Core schema and the physical log/source
+# envelope: a generic PLUGIN row containing "operation_ref" proves nothing.
+_CONNECTION_FIELDS = frozenset({
+    "provider_id", "operation_ref", "phase", "status", "reason_code",
+    "caller_category", "source_kind", "network_auth", "duration_ms",
+})
+_CONNECTION_CALLERS = frozenset({
+    "startup/connect_configured", "opening_sync", "explicit_refresh",
+    "profile_change", "plugin_activation", "other",
+})
+_CONNECTION_SOURCES = frozenset({"configured", "singleton_public", "preview", "virtual"})
+_CONNECTION_PHASES = {
+    "requested": ({"unknown"}, {"requested"}),
+    "connect_invoked": ({"unknown"}, {"connect_invoked"}),
+    "session_reused": ({"success"}, {"session_reused"}),
+    "terminal": (
+        {"success", "failed", "skipped", "cancelled"},
+        {"connected", "connect_failed", "session_invalid", "plugin_missing",
+         "plugin_not_ready", "interactive_auth_required", "cancelled"},
+    ),
+}
+_CONNECTION_TERMINAL = {
+    "success": {"connected"},
+    "failed": {"connect_failed", "session_invalid"},
+    "skipped": {"plugin_missing", "plugin_not_ready", "interactive_auth_required"},
+    "cancelled": {"cancelled"},
+}
+_CONNECTION_PUBLIC_STATUS = {
+    "unknown": "unknown", "success": "ok", "failed": "error",
+    "skipped": "warning", "cancelled": "warning",
+}
+
+
+def _connection_envelope_valid(row: Mapping[str, Any], phase: str,
+                               status: str, provider: str) -> bool:
+    source, module = row.get("source"), row.get("module")
+    if ((source, module) not in {("core_events", "PLUGIN"), ("app_log", "cifereca")}
+            or row.get("provider_id") != provider or public_provider_id(provider) is None
+            or row.get("message") != "connexion fournisseur · " + phase
+            or row.get("status") != _CONNECTION_PUBLIC_STATUS.get(status)):
+        return False
+    return True
+
+
+def published_connection_attempt(row: Mapping[str, Any]) -> dict[str, str] | None:
+    """Read only an exact Core-attested connection observation.
+
+    This is intentionally separate from task_ref: one connection request can
+    have three phases and two physical channels, but proves zero HTTP auths.
+    Never read a reference from generic row text, timestamps or event IDs.
+    """
+    if not isinstance(row, Mapping) or "operation_ref" in row:
+        return None
+    detail = row.get("detail")
+    if type(detail) is not dict or set(detail) not in (
+        _CONNECTION_FIELDS, _CONNECTION_FIELDS | {"scope_ref", "scope_kind"},
+    ):
+        return None
+    phase, status, reason = (detail.get("phase"), detail.get("status"),
+                             detail.get("reason_code"))
+    if (type(phase) is not str or phase not in _CONNECTION_PHASES
+            or type(status) is not str or type(reason) is not str
+            or status not in _CONNECTION_PHASES[phase][0]
+            or reason not in _CONNECTION_PHASES[phase][1]
+            or (phase == "terminal" and reason not in _CONNECTION_TERMINAL[status])):
+        return None
+    operation = detail.get("operation_ref")
+    provider = detail.get("provider_id")
+    if (type(operation) is not str or re.fullmatch(r"[0-9a-f]{24}", operation) is None
+            or type(provider) is not str
+            or type(detail.get("caller_category")) is not str
+            or detail["caller_category"] not in _CONNECTION_CALLERS
+            or type(detail.get("source_kind")) is not str
+            or detail["source_kind"] not in _CONNECTION_SOURCES
+            or detail.get("network_auth") != "unknown"
+            or type(detail.get("duration_ms")) is not int
+            or not 0 <= detail["duration_ms"] <= 600000
+            or not _connection_envelope_valid(row, phase, status, provider)):
+        return None
+    if "scope_ref" in detail and (
+        type(detail["scope_ref"]) is not str
+        or re.fullmatch(r"[0-9a-f]{24}", detail["scope_ref"]) is None
+        or detail.get("scope_kind") != "connection"
+    ):
+        return None
+    # Do not retain/export scope_ref, credential or anything beyond enums.
+    return {
+        "operation_ref": operation, "phase": phase,
+        "caller_category": detail["caller_category"],
+        "source_kind": detail["source_kind"],
+        # Internal anchor from the original validated detail. A later rewrite
+        # of the display provider cannot carry this attestation with it.
+        "connection_provider_id": provider,
+        "network_auth": "unknown", "connection_status": status,
+    }
+
+
+def published_operation_reference(row: Mapping[str, Any]) -> str | None:
+    """Validate the normalized, closed UI observation before grouping/export.
+
+    It never trusts an arbitrary operation_ref alone; sanitized_rows is the
+    only producer of these exact companion fields from a Core broker event.
+    """
+    if not isinstance(row, Mapping):
+        return None
+    ref, phase, status = (row.get("operation_ref"), row.get("phase"),
+                          row.get("connection_status"))
+    if (type(ref) is not str or re.fullmatch(r"[0-9a-f]{24}", ref) is None
+            or type(phase) is not str or phase not in _CONNECTION_PHASES
+            or type(status) is not str or status not in _CONNECTION_PHASES[phase][0]
+            or type(row.get("caller_category")) is not str
+            or row["caller_category"] not in _CONNECTION_CALLERS
+            or type(row.get("source_kind")) is not str
+            or row["source_kind"] not in _CONNECTION_SOURCES
+            or row.get("network_auth") != "unknown"
+            or type(row.get("connection_provider_id")) is not str
+            or row["connection_provider_id"] != row.get("provider_id")
+            or not _connection_envelope_valid(row, phase, status, row["connection_provider_id"])):
+        return None
+    return ref
+
+
+def connection_provenance_label(row: Mapping[str, Any]) -> str:
+    """Short GTK-only caption from a Core-validated connection request.
+
+    A bare hexadecimal-looking reference is never enough to reach the view.
+    """
+    reference = published_operation_reference(row)
+    if reference is None:
+        return ""
+    return (
+        f" · Demande Core : {reference}"
+        f" · Phase : {row['phase']}"
+        f" · Déclencheur : {row['caller_category']}"
+    )
+
+
 def linked_operation_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group this page by explicit worker scope, not by apparent causality.
 
@@ -321,17 +552,28 @@ def linked_operation_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         # sanitized_rows has already resolved/rejected contradictory origins.
         # Do not reconsider retained display detail and revive a rejected ref.
-        reference = published_task_reference({
+        operation = published_operation_reference(row)
+        task = published_task_reference({
             "source": row.get("source"), "task_ref": row.get("task_ref"),
         })
-        group = by_reference.get(reference) if reference is not None else None
+        # Namespaces prevent a task and a connect operation from colliding.
+        # A connection request is not a worker task or a network invocation.
+        key = ("connection", operation) if operation else (
+            ("task", task) if task else None
+        )
+        group = by_reference.get(key) if key is not None else None
         if group is None:
-            group = {"task_ref": reference, "events": [],
-                     "label": (f"Tâche {reference} · référence Core publiée"
-                               if reference else "Corrélation non disponible")}
+            group = {
+                "task_ref": task if operation is None else None,
+                "operation_ref": operation, "events": [],
+                "label": (f"Connexion {operation} · demande Core attestée"
+                          if operation else
+                          f"Tâche {task} · référence Core publiée" if task
+                          else "Corrélation non disponible"),
+            }
             groups.append(group)
-            if reference is not None:
-                by_reference[reference] = group
+            if key is not None:
+                by_reference[key] = group
         group["events"].append(row)
     for group in groups:
         levels = {row.get("severity") for row in group["events"]}
@@ -490,7 +732,7 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     if not payload.get("sources"):
         return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     suffix = " · recherche dans cette page uniquement" if search else ""
-    return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
+    return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}" + cover_failure_page_summary(rows)
 
 
 def empty_observation(payload: Mapping[str, Any], *, period: str,
@@ -602,6 +844,12 @@ def export_selected_events(
         })
         if reference is not None:
             item["task_ref"] = reference
+        if published_operation_reference(row) is not None:
+            for field in (
+                "operation_ref", "phase", "caller_category", "source_kind",
+                "network_auth", "connection_status",
+            ):
+                item[field] = row[field]
         aggregate = sanitized_reconciliation_export(row)
         if aggregate is not None:
             item["reconciliation"] = aggregate
@@ -609,8 +857,8 @@ def export_selected_events(
     if len(selected) > max_events:
         raise ValueError("too many selected events for one export")
     result = json.dumps({
-        "notice": "Événements expurgés du Core ; corrélation limitée aux task_ref "
-                  "publiées. Étapes potentiellement "
+        "notice": "Événements Core : corrélation par task_ref ou operation_ref "
+                  "attestées ; authentifications réseau inconnues. Étapes potentiellement "
                   "absentes ; aucune causalité déduite de l'heure ou des messages.",
         "events": selected,
     }, ensure_ascii=False, indent=2, allow_nan=False)

@@ -124,9 +124,9 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             raise ProviderConfigurationError("loan_source_scope_changed")
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
-        # An explicit source refresh has the SAME positive-loan semantics as
-        # opening sync. Never infer absence, close loans missing from an
-        # empty/partial list, expire another account's loans or acquire EPUBs.
+        # A source refresh has the same positive-loan semantics as opening
+        # sync. Never infer absence or close loans missing from a partial list.
+        # BnF materialization below requires its separate per-account opt-in.
         if loans:
             from . import library_mutation
             with measure("rights_mirror_ms"):
@@ -139,6 +139,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
+        if account.provider_id == 'bnf-pret':
+            from .bnf_auto_materialization import enabled, materialize
+            if enabled(self, account):
+                outcomes = [materialize(self, account, loan, control=control) for loan in loans]
+                result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
+                result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
+                if any(row['status'] not in {'complete', 'unchanged', 'skipped'} for row in outcomes):
+                    result['status'] = 'partial'
         # Use the same provider partial-inventory signal as opening sync.
         # BnF HTML observations are deliberately non-exhaustive even when
         # every request succeeded. Preserve Paris' legacy fail-closed default
@@ -710,6 +718,20 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 session = self._sessions.get(
                     self._session_key(loan.source_provider, loan.source_credential)
                 )
+                if loan.source_provider == 'bnf-pret':
+                    from .bnf_auto_materialization import enabled, materialize
+                    account = next((a for a in self.accounts
+                                    if a.identity_id == loan.identity_id
+                                    and a.provider_id == 'bnf-pret'
+                                    and a.credential_id == loan.source_credential
+                                    and a.unique_id == loan.source_account_id), None)
+                    if account is not None and enabled(self, account):
+                        outcome = materialize(self, account, loan)
+                        if outcome['status'] == 'complete':
+                            new_acquisitions += 1
+                        elif outcome['status'] == 'attention_required':
+                            attention += 1
+                    continue
                 if not _opening_loan_acquisition_allowed(loan, session=session):
                     continue
                 result = self._acquire_active_loan_automatically(loan)
@@ -1001,7 +1023,19 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     self.diagnostics.add_core_kobo_backup_decision(kobo_decision)
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
-    self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
+    # The opening inventory covers ALL local identities to keep their rights
+    # current, but last_loans is consumed directly by the ACTIVE profile's
+    # Loans GTK page. Never publish the global multi-identity union there.
+    # Selecting another profile during a long opening sync is handled by
+    # reading current_identity at publication, not at task submission.
+    with self._search_generation_lock:
+        visible_identity = getattr(self.current_identity, "identity_id", None)
+        self.last_loans = sorted(
+            (row for row in all_loans
+             if type(row) is Loan and row.identity_id == visible_identity
+             and visible_identity is not None),
+            key=lambda row: (str(row.due_at or "9999"), row.title.casefold()),
+        )
     if deep:
         catalog = self.catalog_scan(repair_misnamed=True)
         self.storage.metadata_set("catalog_deep_last_at", int(time.time()))

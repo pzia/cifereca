@@ -15,7 +15,7 @@ from diagnostics_explorer import (
     diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation, local_timestamp_label, DOMAIN_LABELS,
-    normalize_diagnostic_domain,
+    normalize_diagnostic_domain, connection_provenance_label,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -26,6 +26,26 @@ from diagnostics_support import (
 # Only the GTK presentation pseudonymizes login and password fields.
 # The journal, console, broker and raw exports retain their original values.
 from diagnostics_pseudonyms import DISPLAY_PSEUDONYMS
+
+def _readable_raw_export_folder() -> str | None:
+    """Prefer a real, browsable local home directory over GTK's stale Recents.
+
+    No journal is written here. Only the user-selected SAVE destination is
+    ever opened; no directory name appears in a toast, log or broker call.
+    """
+    import os
+    from pathlib import Path
+
+    try:
+        home = Path.home()
+        if not home.is_absolute() or not home.is_dir():
+            return None
+        with os.scandir(home) as entries:
+            next(entries, None)
+        return str(home)
+    except (OSError, ValueError):
+        return None
+
 
 _MAX_DETAIL_BYTES = 24_000
 _MAX_DETAIL_NODES = 300
@@ -448,6 +468,11 @@ class DiagnosticsPagePlugin:
 
         # Rebuilding a page revokes file actions belonging to its old widgets.
         # The shared Core capture itself deliberately remains untouched.
+        # Native dialogs outlive the GTK page unless explicitly dismissed.
+        previous_raw_chooser = getattr(self, "_raw_export_chooser", None)
+        if previous_raw_chooser is not None:
+            previous_raw_chooser.destroy()
+        self._raw_export_chooser = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []
@@ -588,7 +613,8 @@ class DiagnosticsPagePlugin:
         )
         period_selector.set_selected(0 if journal_available else 2)
         period_selector.set_tooltip_text("Période de la consultation")
-        advanced_box.append(source_selector)
+        if not journal_available:
+            advanced_box.append(source_selector)
         filters_top.append(severity_selector)
         filters_top.append(period_selector)
         journals_tab.append(filters_top)
@@ -623,7 +649,8 @@ class DiagnosticsPagePlugin:
         )
         domain_row.append(domain_caption)
         domain_row.append(domain_filter)
-        advanced_box.append(domain_row)
+        if not journal_available:
+            advanced_box.append(domain_row)
 
         # Separate from the module prefix and from the event-source channel.
         # The Core filter is exact and runs before pagination.
@@ -662,7 +689,8 @@ class DiagnosticsPagePlugin:
         reason_code_filter.set_hexpand(True)
         reason_row.append(reason_caption)
         reason_row.append(reason_code_filter)
-        advanced_box.append(reason_row)
+        if not journal_available:
+            advanced_box.append(reason_row)
 
         operation_grouping = Gtk.CheckButton(label="Regrouper par tâche liée (cette page)")
         operation_grouping.set_tooltip_text(
@@ -1270,6 +1298,7 @@ class DiagnosticsPagePlugin:
                             + (f"· Fournisseur : {row['provider_id']} "
                                if row.get("provider_id") else "")
                             + f"· Référence : {event_id[:16]}"
+                            + connection_provenance_label(row)
                         ),
                         xalign=0,
                     )
@@ -1356,6 +1385,10 @@ class DiagnosticsPagePlugin:
             }
             if int(source_selector.get_selected()) == 3:
                 query["domain"] = ""
+                # A journal page is already globally ordered by Core. The
+                # 50-row GTK display sort alone would otherwise reverse the
+                # OLDEST page and falsely label it "Plus récents d’abord".
+                query["sort_order"] = "desc" if sort_latest.get_active() else "asc"
 
             def read_snapshot(_control):
                 return fetch_explorer_page(broker, **query)
@@ -1580,11 +1613,28 @@ class DiagnosticsPagePlugin:
             if not callable(getattr(broker, "export_raw_journal", None)):
                 host.toast("Core incompatible : export brut non disponible")
                 return
+            # _UiHost is an adapter, not a Gtk.Window. The initiating button
+            # supplies the real toplevel; detached test pages have no parent.
+            root = _button.get_root()
+            parent = root if isinstance(root, Gtk.Window) else None
+            if self._raw_export_chooser is not None:
+                host.toast("Un sélecteur d’export est déjà ouvert")
+                return
             chooser = Gtk.FileChooserNative.new(
-                "Exporter les événements bruts", host,
+                "Exporter les événements bruts", parent,
                 Gtk.FileChooserAction.SAVE, "Exporter", "Annuler",
             )
+            chooser.set_modal(parent is not None)
+            folder = _readable_raw_export_folder()
+            if folder is not None:
+                try:
+                    chooser.set_current_folder(Gio.File.new_for_path(folder))
+                except (GLib.Error, OSError, ValueError):
+                    # The native/portal backend may reject a local folder.
+                    # Keep the chooser available; never choose a path to write.
+                    pass
             chooser.set_current_name("cifereca-journal-brut.json")
+            self._raw_export_chooser = chooser
 
             def chose_file(dialog, response):
                 try:
@@ -1640,6 +1690,8 @@ class DiagnosticsPagePlugin:
 
                     handle.add_done_callback(completed)
                 finally:
+                    if self._raw_export_chooser is dialog:
+                        self._raw_export_chooser = None
                     dialog.destroy()
 
             chooser.connect("response", chose_file)
@@ -1698,7 +1750,11 @@ class DiagnosticsPagePlugin:
             search_timeout = GLib.timeout_add(220, apply_search)
 
         search_filter.connect("changed", on_search_change)
-        sort_latest.connect("toggled", lambda *_: display_events())
+        sort_latest.connect(
+            "toggled",
+            lambda *_: reset_events() if int(source_selector.get_selected()) == 3
+            else display_events(),
+        )
         operation_grouping.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)
         journals_previous.set_sensitive(False)
@@ -2195,6 +2251,11 @@ class DiagnosticsPagePlugin:
         return page_root
 
     def deactivate(self):
+        # Native dialogs outlive the GTK page unless explicitly dismissed.
+        previous_raw_chooser = getattr(self, "_raw_export_chooser", None)
+        if previous_raw_chooser is not None:
+            previous_raw_chooser.destroy()
+        self._raw_export_chooser = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []

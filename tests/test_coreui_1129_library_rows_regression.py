@@ -20,7 +20,8 @@ def test_empty_snapshot_has_no_rows_and_does_not_fetch():
 
 def test_multisource_label_and_due_date_keep_order_and_object_identity():
     entry = {"key": "identity:A:book", "title": "Livre", "providers": ["kobo", "local"],
-             "availability": "Prêt", "due_at": "2026-12-01", "provider_id": "kobo"}
+             "availability": "Prêt", "due_at": "2026-12-01", "provider_id": "kobo",
+             "entitlement_type": "loan"}
     rows, objects = _project([entry])
     assert rows[0][0] == "identity:A:book"
     assert rows[0][3] == "Prêt · retour FR:2026-12-01"

@@ -85,3 +85,55 @@ def test_presence_rule_is_exact_branch_and_does_not_infer_absence():
     assert _paris_loan_presence([other_branch], loan) is None
     assert _paris_loan_presence([loan, other_branch], loan) is True
     assert _paris_loan_presence([], loan) is False
+    # Same supplier label does not override a conflicting medium.
+    assert _paris_loan_presence([
+        replace(loan, medium="physical"),
+    ], loan) is None
+    assert _paris_loan_presence([
+        replace(loan, medium="physical"), loan,
+    ], loan) is True
+
+
+
+def test_pnb_same_id_and_provider_but_other_medium_is_not_presence(tmp_path):
+    loan = _loan()
+    other_medium = replace(
+        loan, medium="physical", title="SYNTHETIC_PHYSICAL_ONLY",
+    )
+    session = Session([other_medium])
+    service = _library(tmp_path, session=session)
+    try:
+        result = service.return_digital(loan)
+        assert result["status"] == "verification_unavailable"
+        assert result["verification"] == "unavailable"
+        assert result["provider_inventory_verified"] is False
+        assert "SYNTHETIC_PHYSICAL_ONLY" not in json.dumps(result)
+        assert session.posts == [(loan.id, "linked-b")]
+        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
+        assert len(session.posts) == 1
+        # An exact digital observation supersedes only the same branch.
+        session.inventory = [other_medium, loan]
+        assert service.verify_return_digital(loan)["status"] == "still_active"
+        assert len(session.posts) == 1
+    finally:
+        service.close()
+
+
+def test_adept_first_same_provider_id_different_medium_is_unverified(tmp_path):
+    service, loan, paris = adept_setup(tmp_path)
+    paris.inventory = [replace(
+        loan, medium="physical", title="SYNTHETIC_DIFFERENT_MEDIUM",
+    )]
+    try:
+        result = service.verify_paris_return_inventory(loan)
+        assert result == {
+            "status": "verification_unavailable",
+            "verification": "unavailable",
+        }
+        assert paris.posts == 0
+        assert "SYNTHETIC_DIFFERENT_MEDIUM" not in json.dumps(result)
+        paris.inventory = [loan, *paris.inventory]
+        assert service.verify_paris_return_inventory(loan)["status"] == "still_active"
+        assert paris.posts == 0
+    finally:
+        service.close()

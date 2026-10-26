@@ -66,6 +66,11 @@ def _loan_filter_toggled(self, button: Gtk.ToggleButton) -> None:
 
 
 def _populate_loans(self, rows: list[Loan]) -> None:
+    # Defense in depth: a late global opening-sync callback or cross-profile
+    # service snapshot must not be rendered under the selected identity.
+    identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    rows = [row for row in rows if type(row) is Loan
+            and identity_id is not None and row.identity_id == identity_id]
     self.service.last_loans = rows
     # The same upstream loan can be visible under two Paris credentials.
     # Preserve both source-bound rows instead of overwriting by loan.id.
@@ -78,7 +83,12 @@ def _populate_loans(self, rows: list[Loan]) -> None:
 def _render_loans(self) -> None:
     if not hasattr(self, "loan_page"):
         return
-    all_loans = list(self.service.last_loans)
+    # Service cache/async writers can be updated independently of GTK; never
+    # trust a mixed-identity last_loans projection at display time.
+    identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    all_loans = [loan for loan in self.service.last_loans
+                 if type(loan) is Loan and identity_id is not None
+                 and loan.identity_id == identity_id]
     counts = loan_medium_counts(all_loans)
     if hasattr(self, "loan_filter_buttons"):
         for key, button in self.loan_filter_buttons.items():
@@ -141,9 +151,14 @@ def _loan_selected(self, row: BookListItem | None) -> None:
 def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -> None:
     identity = self.service.current_identity
     identity_id = identity.identity_id if identity else None
+    # An A -> B -> A round trip has the same identity ID but invalidates an
+    # earlier refresh. Guard the GTK callback by the Core account epoch too.
+    account_epoch = getattr(self.service, "_account_context_epoch", None)
     def done(rows):
         current = self.service.current_identity
         if (current.identity_id if current else None) == identity_id:
+            if getattr(self.service, "_account_context_epoch", None) != account_epoch:
+                return
             self._loans_refreshed(rows)
     self.runner.submit(
         "Actualisation des emprunts…",

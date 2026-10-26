@@ -47,6 +47,6 @@ def test_settings_diagnostic_actions_use_adaptive_bar_and_action_buttons():
 
     assert (["Actualiser", "view-refresh-symbolic"], {}) in calls
     assert any(args[1:] == ["edit-copy-symbolic"] and keywords.get("suggested") is True for args, keywords in calls)
-    assert (["Exporter le diagnostic", "document-save-symbolic"], {}) in calls
+    assert (["Exporter l’affichage", "document-save-symbolic"], {}) in calls
     assert any(args[1:] == ["edit-clear-symbolic"] for args, _keywords in calls)
     assert all("connect(" not in ast.unparse(node) for node in builder.body)

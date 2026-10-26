@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat as _stat
 import hashlib
 import mimetypes
 import time
@@ -64,11 +66,35 @@ class LocalCatalog:
 
     @staticmethod
     def sha256(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        # A book can be replaced after the rglob()/is_file() check. Hash via
+        # a no-follow descriptor and require the same inode/size/timestamps
+        # at both ends. Never hash an external symlink target as local proof.
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise OSError("catalog_scan_nofollow_unavailable")
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
+        try:
+            with os.fdopen(fd, "rb") as handle:
+                fd = -1
+                before = os.fstat(handle.fileno())
+                if not _stat.S_ISREG(before.st_mode):
+                    raise OSError("catalog_scan_not_regular")
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                after = os.fstat(handle.fileno())
+                named = os.stat(path, follow_symlinks=False)
+                fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                if any(
+                    getattr(before, key) != getattr(after, key)
+                    or getattr(before, key) != getattr(named, key)
+                    for key in fields
+                ):
+                    raise OSError("catalog_scan_file_changed")
+                return digest.hexdigest()
+        finally:
+            if fd >= 0:
+                os.close(fd)
 
     @staticmethod
     def _media_format(path: Path) -> str | None:
@@ -147,6 +173,22 @@ class LocalCatalog:
         identity_hint, provider_hint = self._path_hints(root)
         identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
+        if existing and any((
+            identity_hint and existing.get("identity_id")
+                and identity_hint != existing["identity_id"],
+            provider_hint and existing.get("provider_id")
+                and provider_hint != existing["provider_id"],
+            item_id and existing.get("source_item_id")
+                and item_id != existing["source_item_id"],
+        )):
+            # A bundle rescan (or targeted reindex) cannot silently transfer
+            # ownership merely because an unrelated folder/caller says so.
+            return {"status": "invalid", "path": path_text,
+                    "reason": "placement_scope_conflict", "artifact_kind": "bundle"}
+        if existing:
+            identity_hint = identity_hint or existing.get("identity_id")
+            provider_hint = provider_hint or existing.get("provider_id")
+            item_id = item_id or existing.get("source_item_id")
         now = int(time.time())
         try:
             manifest = load_bundle_manifest(root, verify=True)
@@ -156,11 +198,15 @@ class LocalCatalog:
             # or raw manifest values. Persist only an explicit closed reason.
             reason = "bundle_manifest_invalid"
             self.storage.placement_put({
-                "placement_id": placement_id, "artifact_id": None, "path": path_text,
+                "placement_id": placement_id,
+                "artifact_id": (existing or {}).get("artifact_id"), "path": path_text,
                 "identity_id": identity_hint, "provider_id": provider_hint,
                 "source_item_id": item_id, "state": "invalid", "last_seen_at": now,
-                "metadata": {"invalid_reason": reason, "artifact_kind": "bundle"},
+                "metadata": {**dict((existing or {}).get("metadata") or {}),
+                             "invalid_reason": reason, "artifact_kind": "bundle"},
             })
+            # Storage.placement_put invalidates all linked catalogue rows
+            # within the same SQLite commit; historical ownership is retained.
             return {"status": "invalid", "path": path_text, "reason": reason, "artifact_kind": "bundle"}
 
         artifact = Artifact.from_bundle(
@@ -218,7 +264,41 @@ class LocalCatalog:
         provider_id: str | None = None,
     ) -> dict[str, Any]:
         """Index one newly materialized artifact without scanning the library."""
-        path = path.expanduser().resolve()
+        # A targeted index is a claim about *this library's* physical copy.
+        # resolve() alone follows a supplied file/directory symlink and may
+        # silently register an external PDF/EPUB under a chosen account.
+        # The configured library root itself may intentionally be a symlink.
+        submitted = Path(os.path.abspath(path.expanduser()))
+        root_alias = Path(os.path.abspath(self.root))
+        root_resolved = self.root.resolve()
+        relative = None
+        anchor = None
+        for candidate_root in (root_alias, root_resolved):
+            try:
+                relative = submitted.relative_to(candidate_root)
+                anchor = candidate_root
+                break
+            except ValueError:
+                continue
+        if relative is None or anchor is None:
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "catalog_index_path_not_local"}
+
+        def linked_child() -> bool:
+            current = anchor
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    return True
+            return False
+
+        if linked_child():
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "catalog_index_path_not_local"}
+        path = submitted.resolve()
+        if not path.is_relative_to(root_resolved) or linked_child():
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "catalog_index_path_not_local"}
         if path.is_dir():
             return self._index_bundle(
                 path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
@@ -226,7 +306,31 @@ class LocalCatalog:
         media_format = self._media_format(path)
         if media_format is None:
             return {"status": "unsupported", "path": str(path)}
+        # The validation must apply to the same inode subsequently hashed.
+        # A replacement between _validate() and the first hash could otherwise
+        # publish a corrupt PDF/EPUB as 'present' under its fresh SHA.
+        try:
+            validation_stat = os.stat(path, follow_symlinks=False)
+            if not _stat.S_ISREG(validation_stat.st_mode):
+                raise OSError("catalog_index_not_regular")
+        except OSError:
+            validation_stat = None
         ok, invalid_reason = self._validate(path, media_format)
+        if validation_stat is None:
+            if ok:
+                raise OSError("catalog_index_file_changed")
+        else:
+            try:
+                checked_stat = os.stat(path, follow_symlinks=False)
+                if (not _stat.S_ISREG(checked_stat.st_mode)
+                        or any(
+                            getattr(validation_stat, key) != getattr(checked_stat, key)
+                            for key in ("st_dev", "st_ino", "st_size",
+                                        "st_mtime_ns", "st_ctime_ns")
+                        )):
+                    raise OSError("catalog_index_file_changed")
+            except OSError as exc:
+                raise OSError("catalog_index_file_changed") from exc
         path_text = str(path)
         existing = self.storage.placement_for_path(Path(path_text))
         placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
@@ -236,20 +340,52 @@ class LocalCatalog:
             provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
         identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
+        proposed_item = item_id or (legacy.get("item_id") if legacy else None)
+        if existing and any((
+            identity_hint and existing.get("identity_id")
+                and identity_hint != existing["identity_id"],
+            provider_hint and existing.get("provider_id")
+                and provider_hint != existing["provider_id"],
+            proposed_item and existing.get("source_item_id")
+                and proposed_item != existing["source_item_id"],
+        )):
+            # A targeted re-index is not authorization to transfer an
+            # existing purchase/loan between owners, providers or editions.
+            return {"status": "invalid", "path": path_text,
+                    "reason": "placement_scope_conflict"}
+        if existing:
+            identity_hint = identity_hint or existing.get("identity_id")
+            provider_hint = provider_hint or existing.get("provider_id")
+            proposed_item = proposed_item or existing.get("source_item_id")
         now = int(time.time())
         try:
-            stat = path.stat()
-            stat_meta = {"file_size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+            indexed_stat = validation_stat
+            if indexed_stat is None:
+                raise OSError("catalog_index_not_regular")
+            stat_meta = {
+                "file_size": int(indexed_stat.st_size),
+                "mtime_ns": int(indexed_stat.st_mtime_ns),
+            }
         except OSError:
+            indexed_stat = None
             stat_meta = {}
         if not ok:
+            # Current bytes are unusable, but historic artifact/edition/owner
+            # remains evidence for reconciliation. Never advertise an invalid
+            # physical placement as an available local catalogue entry.
             self.storage.placement_put({
-                "placement_id": placement_id, "artifact_id": None, "path": path_text,
+                "placement_id": placement_id,
+                "artifact_id": (existing or {}).get("artifact_id"),
+                "path": path_text,
                 "identity_id": identity_hint, "provider_id": provider_hint,
-                "source_item_id": item_id or (legacy.get("item_id") if legacy else None),
+                "source_item_id": proposed_item,
                 "state": "invalid", "last_seen_at": now,
-                "metadata": {"invalid_reason": invalid_reason, "media_format": media_format, **stat_meta},
+                "metadata": {**dict((existing or {}).get("metadata") or {}),
+                             "invalid_reason": invalid_reason,
+                             "media_format": media_format, **stat_meta},
             })
+            # Storage.placement_put also invalidates linked catalogue rows
+            # transactionally, so no second, racy catalogue write is needed.
             return {"status": "invalid", "path": path_text, "reason": invalid_reason, "media_format": media_format}
 
         catalog_entry_id = stable_id('catalog', placement_id)
@@ -265,12 +401,28 @@ class LocalCatalog:
             path, sha256=digest, media_format=media_format, mime_type=mime_type,
             metadata={**((self.storage.artifact_get(artifact_id) or {}).get("metadata") or {}), "discovered_by": "targeted_catalog_index"},
         )
+        # Hashing itself uses a no-follow descriptor, but the pathname can
+        # change *after* that hash and before SQLite publishes the placement.
+        # Only publish a fresh file if it still names precisely the same
+        # regular inode/size/timestamps observed prior to hashing.
+        try:
+            current_stat = os.stat(path, follow_symlinks=False)
+            if (indexed_stat is None
+                    or not _stat.S_ISREG(current_stat.st_mode)
+                    or any(
+                        getattr(indexed_stat, key) != getattr(current_stat, key)
+                        for key in ("st_dev", "st_ino", "st_size",
+                                    "st_mtime_ns", "st_ctime_ns")
+                    )):
+                raise OSError("catalog_index_file_changed")
+        except OSError as exc:
+            raise OSError("catalog_index_file_changed") from exc
         self.storage.artifact_put(artifact)
         try:
             relative = str(path.relative_to(self.root.resolve()))
         except ValueError:
             relative = path.name
-        source_item_id = item_id or (legacy.get("item_id") if legacy else None)
+        source_item_id = proposed_item
         self.storage.placement_put({
             "placement_id": placement_id, "artifact_id": artifact_id, "path": path_text,
             "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": source_item_id,
@@ -335,13 +487,60 @@ class LocalCatalog:
     def scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> CatalogScanResult:
         self._force_covers = force_covers
         self._cover_refresh_seen = set()
+        # Never fabricate an empty replacement for a temporarily unavailable
+        # library (unmounted volume, removed root). Doing so and then marking
+        # every previously indexed placement missing would turn an outage
+        # into false absence evidence for reconciliation/reacquisition.
+        if not self.root.exists():
+            root = self.root.resolve()
+            if any(
+                type(placement.get("path")) is str
+                and Path(placement["path"]).is_absolute()
+                and Path(placement["path"]).is_relative_to(root)
+                for placement in self.storage.placements()
+            ):
+                raise FileNotFoundError("catalog_scan_root_unavailable")
         self.root.mkdir(parents=True, exist_ok=True)
+        # The library root can be unmounted or atomically replaced after
+        # the initial existence check. A later os.walk on a vanished root
+        # may yield zero entries without calling onerror; such an empty walk
+        # must never authorize a mass transition to 'missing'.
+        initial_root = self.root.stat()
+        root_identity = (initial_root.st_dev, initial_root.st_ino)
         started_at = int(time.time())
         previous_catalog = {row["catalog_entry_id"]: row for row in self.storage.catalog_entries()}
+        # Only placements already eligible for a negative observation when
+        # this inventory started can become 'missing'. Another acquisition
+        # may insert a placement or restore an archived one after our rglob
+        # snapshot and immediately before the final SQLite transition.
+        negative_candidate_ids = {
+            row["placement_id"] for row in self.storage.placements()
+            if row.get("state") != "missing"
+        }
         seen_paths: set[str] = set()
         scanned = cataloged = invalid = unsupported = artifacts_new = placements_new = 0
 
-        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if p.is_file() and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
+        # Never treat a linked file (or a file below a linked directory)
+        # as an owned local book. resolve() would otherwise project its
+        # external target as a placement, outside the configured library,
+        # while the apparent symlink filename supplies misleading provenance.
+        # The explicitly configured root itself may be a symlink; paths must
+        # stay beneath that resolved root without crossing further links.
+        resolved_root = self.root.resolve()
+
+        def is_unlinked_local_file(path: Path) -> bool:
+            try:
+                relative = path.relative_to(self.root)
+                candidate = self.root
+                for part in relative.parts:
+                    candidate = candidate / part
+                    if candidate.is_symlink():
+                        return False
+                return path.resolve(strict=True).is_relative_to(resolved_root)
+            except (OSError, ValueError, RuntimeError):
+                return False
+
+        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
         bundle_root_set = set(bundle_roots)
         for bundle_root in bundle_roots:
             scanned += 1
@@ -358,67 +557,167 @@ class LocalCatalog:
             resolved = path.resolve()
             return any(root in resolved.parents for root in bundle_root_set)
 
+        def same_scanned_file(path: Path, before) -> bool:
+            # Compare the actual indexed filename with the stat preceding
+            # SHA/cache lookup, including after metadata/Artifact creation.
+            # A successful hash of one inode never attests replacement bytes.
+            try:
+                after = os.stat(path, follow_symlinks=False)
+                return (
+                    _stat.S_ISREG(after.st_mode)
+                    and is_unlinked_local_file(path)
+                    and all(
+                        getattr(after, key) == getattr(before, key)
+                        for key in ("st_dev", "st_ino", "st_size",
+                                    "st_mtime_ns", "st_ctime_ns")
+                    )
+                )
+            except (OSError, ValueError, RuntimeError):
+                return False
+
         for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)):
             scanned += 1
+            if not is_unlinked_local_file(path):
+                invalid += 1
+                continue
             media_format = self._media_format(path)
             if media_format is None:
                 unsupported += 1
                 continue
+            # Hold the physical snapshot across extension/format validation
+            # and hashing: a replaced file cannot inherit an earlier valid
+            # PDF/EPUB verdict simply because the hash is fresh.
+            validation_stat = os.stat(path, follow_symlinks=False)
+            if not _stat.S_ISREG(validation_stat.st_mode):
+                raise OSError("catalog_scan_file_changed")
             ok, invalid_reason = self._validate(path, media_format)
+            checked_stat = os.stat(path, follow_symlinks=False)
+            if (not _stat.S_ISREG(checked_stat.st_mode)
+                    or any(
+                        getattr(validation_stat, key) != getattr(checked_stat, key)
+                        for key in ("st_dev", "st_ino", "st_size",
+                                    "st_mtime_ns", "st_ctime_ns")
+                    )):
+                raise OSError("catalog_scan_file_changed")
             if repair_misnamed and not ok and media_format in {"epub", "pdf"}:
+                # Deep Sync is an inventory, never a file-maintenance consent.
+                # The historical path.replace() ran before any SQLite commit
+                # and silently rewrote only a subset of acquisition metadata,
+                # stranding backup/placement/checkpoint provenance. Record the
+                # mismatch for explicit repair instead of moving user files.
                 actual = detect_artifact_format(path)
                 if actual in {"epub", "pdf"} and actual != media_format:
-                    old_path = path.resolve()
-                    suffix = ".pdf" if actual == "pdf" else ".epub"
-                    target = path.with_suffix(suffix)
-                    if target.exists() and target.resolve() != old_path:
-                        target = path.with_name(path.stem + ".repaired" + suffix)
-                    path.replace(target)
-                    path = target
-                    media_format = actual
-                    ok, invalid_reason = self._validate(path, media_format)
-                    new_path = str(path.resolve())
-                    for acquisition in self.storage.acquisitions():
-                        metadata = dict(acquisition.get("metadata") or {})
-                        if str(metadata.get("path") or "") == str(old_path):
-                            self.storage.acquisition_update_state(
-                                acquisition["acquisition_id"], str(acquisition.get("status") or "complete"),
-                                metadata={"path": new_path, "deep_repair": "extension_matches_content"},
-                            )
+                    invalid_reason = "extension_mismatch"
             path_text = str(path.resolve())
             seen_paths.add(path_text)
             identity_hint, provider_hint = self._path_hints(path)
             legacy = self._legacy_provenance(path.resolve())
+            # A filename is not evidence that a backup purchased by another
+            # identity belongs to this scanned profile. Even a UNIQUE
+            # backup_items.local_path row may name the wrong identity (or be
+            # legacy-unscoped); do not lift its provider/item provenance into
+            # this placement without an exact identity coordinate.
+            if legacy and (
+                not identity_hint
+                or legacy.get("identity_id") != identity_hint
+            ):
+                legacy = None
             if legacy:
                 provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
             if not ok:
                 invalid += 1
+                # Invalid bytes revoke physical presence, not historic source
+                # ownership. A deep scan must not replace an indexed artifact,
+                # edition or identity with null/inferred provenance when its
+                # extension is wrong. Keep the reference for manual review.
+                previous = self.storage.placement_for_path(Path(path_text))
                 self.storage.placement_put(
                     {
-                        "placement_id": stable_id("placement", path_text),
-                        "artifact_id": None,
+                        "placement_id": (previous or {}).get("placement_id")
+                            or stable_id("placement", path_text),
+                        "artifact_id": (previous or {}).get("artifact_id"),
                         "path": path_text,
-                        "identity_id": identity_hint,
-                        "provider_id": provider_hint,
-                        "source_item_id": legacy.get("item_id") if legacy else None,
+                        "identity_id": (previous or {}).get("identity_id") or identity_hint,
+                        "provider_id": (previous or {}).get("provider_id") or provider_hint,
+                        "source_item_id": (previous or {}).get("source_item_id")
+                            or (legacy.get("item_id") if legacy else None),
                         "state": "invalid",
                         "last_seen_at": started_at,
-                        "metadata": {"invalid_reason": invalid_reason, "media_format": media_format},
+                        "metadata": {**((previous or {}).get("metadata") or {}),
+                                     "invalid_reason": invalid_reason,
+                                     "media_format": media_format},
                     }
                 )
+                # The physical placement is no longer trusted; an old
+                # catalogue projection must not continue to advertise this
+                # file as local/usable while its bytes are invalid.
+                if previous:
+                    for entry in self.storage.catalog_entries():
+                        if (entry.get("placement_id") == previous["placement_id"]
+                                and entry.get("local_state") != "invalid"):
+                            self.storage.catalog_entry_put({
+                                **entry, "local_state": "invalid",
+                            })
                 continue
 
             existing = self.storage.placement_for_path(Path(path_text))
+            # A folder hint or old backup row is not a transaction that
+            # transfers a file's already recorded owner/provider/edition.
+            # Keep existing authority and mark the physical projection
+            # untrusted for review rather than silently moving provenance to
+            # another identity on an ordinary (including deep) scan.
+            proposed_item = legacy.get("item_id") if legacy else None
+            if existing and any((
+                identity_hint and existing.get("identity_id")
+                    and identity_hint != existing["identity_id"],
+                provider_hint and existing.get("provider_id")
+                    and provider_hint != existing["provider_id"],
+                proposed_item and existing.get("source_item_id")
+                    and proposed_item != existing["source_item_id"],
+            )):
+                invalid += 1
+                self.storage.placement_put({
+                    **existing,
+                    "state": "invalid",
+                    "last_seen_at": started_at,
+                    "metadata": {
+                        **dict(existing.get("metadata") or {}),
+                        "invalid_reason": "placement_scope_conflict",
+                    },
+                })
+                for entry in self.storage.catalog_entries():
+                    if entry.get("placement_id") == existing["placement_id"]:
+                        self.storage.catalog_entry_put({
+                            **entry, "local_state": "invalid",
+                        })
+                continue
+            # Re-discovery is physical evidence, not a new ownership event.
+            # An existing scoped placement can sit in a flat/legacy directory
+            # with no identity, provider or edition encoded in its name. Never
+            # replace those established coordinates with absent path hints.
+            # Genuine contradictory non-empty hints were rejected above.
+            if existing:
+                identity_hint = identity_hint or existing.get("identity_id")
+                provider_hint = provider_hint or existing.get("provider_id")
+                proposed_item = proposed_item or existing.get("source_item_id")
             placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
             previous_placement = self.storage.placement_get(placement_id)
             placement_was_new = previous_placement is None
-            stat = path.stat()
+            stat = validation_stat
             previous_meta = dict((previous_placement or {}).get("metadata") or {})
             artifact_id = str((previous_placement or {}).get("artifact_id") or "")
             cached_unchanged = bool(
                 artifact_id
                 and int(previous_meta.get("file_size") or -1) == int(stat.st_size)
                 and int(previous_meta.get("mtime_ns") or -1) == int(stat.st_mtime_ns)
+                # Size and mtime are not a sufficient local presence proof:
+                # a restored mtime after an in-place replacement can retain
+                # an unrelated file under the stale artifact SHA. Require a
+                # full inode/device/ctime fingerprint before reusing bytes.
+                # Older metadata simply rehashes on its next scan.
+                and int(previous_meta.get("file_inode") or -1) == int(stat.st_ino)
+                and int(previous_meta.get("file_device") or -1) == int(stat.st_dev)
+                and int(previous_meta.get("file_ctime_ns") or -1) == int(stat.st_ctime_ns)
                 and self.storage.artifact_get(artifact_id) is not None
             )
             if cached_unchanged:
@@ -437,7 +736,11 @@ class LocalCatalog:
                     mime_type=mime_type,
                     metadata={**((self.storage.artifact_get(artifact_id) or {}).get("metadata") or {}), "discovered_by": "local_catalog_scan"},
                 )
+                if not same_scanned_file(path, stat):
+                    raise OSError("catalog_scan_file_changed")
                 self.storage.artifact_put(artifact)
+            if not same_scanned_file(path, stat):
+                raise OSError("catalog_scan_file_changed")
             self.storage.placement_put(
                 {
                     "placement_id": placement_id,
@@ -445,13 +748,16 @@ class LocalCatalog:
                     "path": path_text,
                     "identity_id": identity_hint,
                     "provider_id": provider_hint,
-                    "source_item_id": legacy.get("item_id") if legacy else None,
+                    "source_item_id": proposed_item,
                     "state": "present",
                     "last_seen_at": started_at,
                     "metadata": {
                         "relative_path": str(path.relative_to(self.root)),
                         "file_size": int(stat.st_size),
                         "mtime_ns": int(stat.st_mtime_ns),
+                        "file_inode": int(stat.st_ino),
+                        "file_device": int(stat.st_dev),
+                        "file_ctime_ns": int(stat.st_ctime_ns),
                         "artifact_kind": "file",
                     },
                 }
@@ -466,7 +772,7 @@ class LocalCatalog:
                     "media_format": media_format,
                     "identity_id": identity_hint,
                     "provider_id": provider_hint,
-                    "item_id": (legacy or {}).get("item_id"),
+                    "item_id": proposed_item,
                     "local_state": "local",
                     "metadata": {"path": path_text, "artifact_kind": "file"},
                 }
@@ -493,7 +799,51 @@ class LocalCatalog:
             if str((effective.get('metadata') or {}).get('path') or '') in seen_paths:
                 self._enrich_epub_entry(effective)
 
-        missing_marked = self.storage.placements_mark_missing(self.root, seen_paths, seen_at=started_at)
+        # pathlib.rglob can suppress scandir failures on some Python versions.
+        # An unreadable child directory is *not* evidence its known files
+        # vanished. Require a successful complete directory traversal before
+        # applying the negative SQLite transition, even if positive files
+        # were indexed earlier in this pass.
+        def fail_incomplete(_error):
+            raise OSError("catalog_scan_incomplete") from None
+
+        for _ in os.walk(self.root, topdown=True, onerror=fail_incomplete,
+                         followlinks=False):
+            pass
+
+        # A file can reappear after the earlier rglob snapshot, yet before
+        # the negative SQLite transition. A full directory walk alone does
+        # not mean this *specific* old path stayed absent throughout. Refuse
+        # to mark anything missing if a previously indexed regular file has
+        # become observable but was not in the scan's validated set. Symlinks
+        # and files outside the configured root are never presence evidence.
+        for placement in self.storage.placements(state="present"):
+            previous_path = placement.get("path")
+            if type(previous_path) is not str or not previous_path:
+                continue
+            if previous_path in seen_paths:
+                continue
+            candidate = Path(previous_path)
+            if (candidate.is_absolute()
+                    and candidate.is_relative_to(self.root)
+                    and candidate.is_file()
+                    and is_unlinked_local_file(candidate)):
+                raise OSError("catalog_scan_changed_during_inventory")
+
+        # Validate the directory *after* traversal and immediately before
+        # the negative transition. A missing/replaced mount is not evidence
+        # of missing books, even when os.walk reported no error.
+        try:
+            final_root = self.root.stat()
+            if (not _stat.S_ISDIR(final_root.st_mode)
+                    or (final_root.st_dev, final_root.st_ino) != root_identity):
+                raise OSError("catalog_scan_root_changed")
+        except OSError:
+            raise OSError("catalog_scan_root_changed") from None
+        missing_marked = self.storage.placements_mark_missing(
+            self.root, seen_paths, seen_at=started_at,
+            candidate_placement_ids=negative_candidate_ids,
+        )
         return CatalogScanResult(
             root=self.root,
             scanned=scanned,

@@ -14,7 +14,10 @@ def test_journals_explorer_is_inside_existing_diagnostics_page():
     assert '["Toutes périodes", "Dernière heure", "24 heures", "7 jours", "30 jours"]' in source
     assert "module_filter.connect(\"activate\", reset_events)" in source
     assert 'search_filter.connect("changed", on_search_change)' in source
-    assert "sort_latest.connect(\"toggled\", lambda *_: display_events())" in source
+    assert 'sort_latest.connect(' in source
+    assert '"toggled",' in source
+    assert 'lambda *_: reset_events() if int(source_selector.get_selected()) == 3' in source
+    assert 'query["sort_order"] = "desc" if sort_latest.get_active() else "asc"' in source
 
 
 def test_query_runs_through_tasks_broker_and_result_renders_on_gtk_idle():

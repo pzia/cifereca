@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from ..models import Loan
+from ..plugin_api.loan_inventory import read_loan_inventory
 from .loan_action_scope import capture_loan_action_scope
 
 
@@ -146,16 +147,19 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         # Never trust the GUI/cache's raw JSON. Paris's own normalizing reader
         # stamps exact borrower provenance on each loan. Partial sibling
         # upstream results do not invalidate a *positive* exact row.
-        fresh = session.loans(account)
+        inventory = read_loan_inventory(session, account)
     except Exception:
         return _public("blocked", "loan_read_unavailable")
-    if (not lease.current(self) or type(fresh) is not list
+    if (not lease.current(self)
             or (
                 loan.identity_id, loan.source_provider, loan.source_credential,
                 loan.source_account_id, loan.id, loan.record_id, loan.provider,
                 loan.medium,
             ) != selected_scope):
         return _public("blocked", "loan_scope_changed")
+    if inventory.status not in {'success', 'partial'}:
+        return _public("blocked", "loan_read_unavailable")
+    fresh = inventory.loans
     positives = [row for row in fresh if _same_positive_loan(row, loan, account)]
     # A borrowed ID can occur on multiple upstream branches. An ambiguous
     # same-ID row also prevents permission even if one branch looked valid.

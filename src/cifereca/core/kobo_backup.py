@@ -317,6 +317,8 @@ def kobo_backup_preview(
     neither book titles, raw product IDs, credentials nor signed URLs. It is
     advisory: a subsequent acquisition MUST revalidate manifest and files.
     """
+    from .library_declared_links import DeclarationRejected, has_active_declared_link
+
     credential_id = str(credential_id or "").strip()
     identity_id = self.storage.identity_for_connection("kobo", credential_id)
     if not credential_id or not identity_id:
@@ -446,11 +448,45 @@ def kobo_backup_preview(
                 reason = "needs_reconciliation"
 
         if not reason:
+            # A private declaration blocks a candidate acquisition, but is
+            # never classified as a verified Kobo backup. Resolve the borrower
+            # from the live provider for a refreshed manifest; do not trust a
+            # backup row belonging to a previous login as the current owner.
+            account_id = None
+            if session is not None and len(session.accounts) == 1:
+                owner = session.accounts[0]
+                if owner.identity_id == identity_id:
+                    account_id = owner.unique_id
+            elif session is None and current and current.get("identity_id") == identity_id:
+                account_id = current.get("account_id")
+            if type(account_id) is str and account_id:
+                try:
+                    if has_active_declared_link(
+                        self.storage, identity_id=identity_id,
+                        provider_id="kobo", credential_id=credential_id,
+                        account_id=account_id, item_id=product_id,
+                    ):
+                        reason = "attention_required"
+                except DeclarationRejected:
+                    # Malformed user statements cannot authorize a fresh GET.
+                    reason = "attention_required"
+            elif refresh_manifest:
+                # A fresh manifest without a unique account is not evidence
+                # that a particular user's file/declaration is absent.
+                reason = "attention_required"
+
+        if not reason:
             if bool(raw.get("archived")):
                 reason = "attention_required"
             elif raw.get("downloadable") is False:
                 reason = "not_downloadable"
-            elif current and current.get("status") == "attention_required":
+            elif (current and current.get("status") == "attention_required"
+                  and current.get("attention_code") not in {
+                      "declared_link_recorded", "declared_links_unavailable",
+                  }):
+                # The previous declaration-only attention is recalculated
+                # above on every preview. A revoked statement must not remain
+                # a permanent non-downloadable status.
                 reason = (
                     "blocked_scope"
                     if current.get("attention_code") == "missing_delegation_scope"
@@ -1829,6 +1865,41 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
              current=index + 1, total=total, item_id=product_id, title=title,
              count=len(candidates))
         return True
+
+    # A user-declared link is not a Kobo backup receipt. It may refer to a
+    # moved or altered EPUB, so neither a matching declaration nor an unreadable
+    # declaration store authorizes downloading a replacement. This check runs
+    # under the existing acquisition lock for BOTH normal and confirmed sync,
+    # after the existing verified-backup/filename guards and before provider I/O.
+    # Revoked declarations no longer block: never persist reconcile_required
+    # solely because of a statement whose active state may later change.
+    if all(type(base_record.get(key)) is str and base_record[key]
+           for key in ("identity_id", "credential_id", "account_id", "item_id")):
+        from .library_declared_links import DeclarationRejected, has_active_declared_link
+        try:
+            declared = has_active_declared_link(
+                self.storage, identity_id=base_record["identity_id"],
+                provider_id="kobo", credential_id=base_record["credential_id"],
+                account_id=base_record["account_id"], item_id=product_id,
+            )
+            declaration_error = False
+        except DeclarationRejected:
+            declared, declaration_error = False, True
+        if declared or declaration_error:
+            code = ("declared_link_recorded" if declared
+                    else "declared_links_unavailable")
+            message = ("Correspondance locale déclarée : vérifier le fichier avant "
+                       "toute nouvelle acquisition" if declared else
+                       "Déclarations locales indisponibles : acquisition suspendue "
+                       "jusqu'à vérification")
+            self.storage.backup_put({
+                **base_record, "status": "attention_required",
+                "attention_code": code, "error": message,
+            })
+            summary["attention_required"] += 1
+            emit("attention_required", current=index + 1, total=total,
+                 title=title, item_id=product_id, code=code, message=message)
+            return True
 
     # Vault 2.3.1 exposes archived items explicitly. Keep an already
     # acquired local file (handled above), otherwise persist a user

@@ -524,6 +524,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         self.catalog_scan()
     merged: dict[str, dict[str, Any]] = {}
     source_alias: dict[tuple[str, str], str] = {}
+    local_keys = {}
     default_identity_id = self.identities[0].identity_id if self.identities else None
     artifacts = {str(row.get("artifact_id") or ""): row for row in self.storage.artifacts()}
     placements_by_artifact: dict[str, list[dict[str, Any]]] = {}
@@ -572,6 +573,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         canonical = f"sha256:{sha256}" if sha256 else (artifact_id or f"source:{provider_id}:{item_id}")
         key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
         source_alias[(provider_id, item_id)] = key
+        local_keys[(row.get('placement_id'), artifact_id)] = key
         metadata = dict(row.get("metadata") or {})
         all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
         current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
@@ -630,6 +632,9 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 existing["thumbnail_url"] = base_cover.url
             existing["metadata"] = {**metadata, **dict(existing.get("metadata") or {})}
 
+    from .bnf_import_provenance import display_links
+    bnf_links = display_links(self.storage,
+                             [p for rows in placements_by_artifact.values() for p in rows], local_keys)
     backup_by_key = {(str(row.get("credential_id") or ""), str(row.get("item_id") or "")): row for row in self.storage.backup_list("kobo")}
     loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
     for loan in self.last_loans:
@@ -649,6 +654,9 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         provider_id = str(entitlement.get("provider_id") or ""); item_id = str(entitlement.get("item_id") or "")
         if not provider_id or not item_id: continue
         source_key=(provider_id,item_id); canonical_key=source_alias.get(source_key, f"source:{provider_id}:{item_id}")
+        if provider_id == 'bnf-pret' and entitlement_type == 'loan':
+            canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
+                                           entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
         existing = merged.get(canonical_key, {})
         meta = dict(entitlement.get("metadata") or {})
         backup = backup_by_key.get((str(entitlement.get("credential_id") or ""), item_id), {}) if provider_id == "kobo" else {}

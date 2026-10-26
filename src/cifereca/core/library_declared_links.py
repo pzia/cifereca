@@ -269,6 +269,32 @@ def has_active_declared_link(storage, *, identity_id, provider_id,
         raise DeclarationRejected('local_storage_unavailable') from None
 
 
+
+def recorded_declared_scopes(storage, *, identity_id):
+    """Snapshot exact active user statements for private *display only*.
+
+    This says nothing about the file's current bytes, rights validity or
+    provider provenance. Corrupt/incomplete metadata fails closed, and two
+    competing declarations for one right are not shown as an unambiguous pair.
+    Neither files nor source sessions are read.
+    """
+    from collections import Counter
+    _require(_text(identity_id), 'invalid_identity')
+    try:
+        with _transaction(storage, False) as db:
+            counts = Counter(
+                tuple(record['scope'][key] for key in _SCOPE_FIELDS)
+                for record in _records(db)
+                if record['state'] == 'active'
+                and record['scope']['identity_id'] == identity_id
+            )
+            return frozenset(scope for scope, count in counts.items() if count == 1)
+    except DeclarationRejected:
+        raise
+    except (sqlite3.Error, OSError):
+        raise DeclarationRejected('local_storage_unavailable') from None
+
+
 def _context(db, scope):
     connections = _rows(db, 'SELECT connection_id,identity_id,provider_id,credential_id,enabled '
                         'FROM provider_connections '

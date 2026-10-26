@@ -13,6 +13,7 @@ def search_failure_code(error: BaseException) -> str | None:
     seen = set()
     pending = [error]
     unavailable = False
+    proxy_unavailable = False
     provider_refusal = None
     # Explicit and implicit exception links can both exist, even when
     # context display is suppressed. A 401/403 on either branch forbids
@@ -28,6 +29,11 @@ def search_failure_code(error: BaseException) -> str | None:
                 return "SearchAuthenticationRequired"
             if status == 403:
                 return "SearchAccessDenied"
+            # A 407 is an intermediary authentication challenge, not proof
+            # that the public provider is offline. Never publish its stale
+            # catalogue or repeat search variants through the same proxy.
+            if status == 407:
+                proxy_unavailable = True
             # HTTP 408 is a server-side request timeout; unlike 400/404,
             # it does not establish a legitimate zero-result response.
             unavailable |= status in {408, 429} or status >= 500
@@ -48,7 +54,12 @@ def search_failure_code(error: BaseException) -> str | None:
         # An invalid Content-Encoding body is a protocol/data-read failure:
         # httpx.DecodingError derives from RequestError, not TransportError.
         # Distinguish it from redirect loops, which may mean login/auth.
-        if isinstance(error, (httpx.TransportError, httpx.DecodingError, ParseError)):
+        if isinstance(error, httpx.ProxyError):
+            # httpx.ProxyError is a TransportError, but an intermediary error
+            # can hide a proxy-login refusal. It does not attest a public
+            # catalogue outage, even under a generic provider wrapper.
+            proxy_unavailable = True
+        elif isinstance(error, (httpx.TransportError, httpx.DecodingError, ParseError)):
             unavailable = True
         if error.__context__ is not None:
             pending.append(error.__context__)
@@ -57,10 +68,11 @@ def search_failure_code(error: BaseException) -> str | None:
     # An exhausted graph may hide an HTTP 401/403. A partial inspection
     # cannot authorize known-catalog stale fallback as if no refusal existed.
     if pending:
-        return provider_refusal
+        return provider_refusal or ("SearchProxyUnavailable" if proxy_unavailable else None)
     # A closed, built-in provider refusal outranks a generic timeout marker,
     # but a concrete underlying HTTP 401/403 outranks both.
-    return provider_refusal or ("SearchTemporarilyUnavailable" if unavailable else None)
+    return (provider_refusal or ("SearchProxyUnavailable" if proxy_unavailable else None)
+            or ("SearchTemporarilyUnavailable" if unavailable else None))
 
 
 def is_technical_search_error(error):

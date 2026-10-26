@@ -27,10 +27,14 @@ git rev-parse --verify "refs/tags/${historic_tag}^{commit}" >/dev/null
 git archive "$historic_tag" | tar -x -C "$root/source"
 test "$(tr -d '[:space:]' < "$root/source/VERSION")" = "$historic_version"
 test "$(tr -d '[:space:]' < VERSION)" != "$historic_version"
-# Build a real historic Core-only installation. Do not activate or install
-# all historic optional plugins; we are testing version-gated refusal.
+# Build a real historic Core-only installation with THAT tag's installer.
+# v0.9.44+dev.10 predates attested offline wheelhouse enforcement and still
+# supports source fallback. Using today's updater here incorrectly fails its
+# provenance guard, before testing historic-version incompatibility at all.
+# This is a disposable CI-only XDG tree; the CURRENT strict updater is invoked
+# separately below and must still reject the installed historic runtime.
 rm -f "$root/source/src/cifereca/plugin-release.json"
-PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python - "$root/source" "$historic_version" <<'PY'
+PYTHONPATH="$root/source/src" python - "$root/source" "$historic_version" <<'PY'
 import sys
 from pathlib import Path
 from cifereca.updater import install_source, install_root, _metadata

@@ -256,20 +256,18 @@ def test_empty_reason_filter_is_backward_compatible(tmp_path):
     assert without == explicit
 
 
-def test_public_diagnostics_broker_forwards_reason_code_exactly(tmp_path):
+def test_canonical_broker_rejects_legacy_reconciliation_reason_filter(tmp_path):
     from cifereca.brokers import DiagnosticsBrokerImpl
     from unittest.mock import patch
 
-    diag = Diagnostics()
-    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["hash_byte_budget"]))
-    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["time_budget"]))
-    service = SimpleNamespace(diagnostics=diag)
+    service = SimpleNamespace(diagnostics=Diagnostics())
     with patch("cifereca.paths.log_file", return_value=tmp_path / "missing.log"):
-        result = DiagnosticsBrokerImpl(service).events(
-            source="core_events", reason_code="hash_byte_budget", limit=1
-        )
-    assert result["total"] == 1
-    assert result["events"][0]["detail"]["reasons"] == ["hash_byte_budget"]
+        for source in ("journal", "all", "core_events", "app_log"):
+            with pytest.raises(ValueError, match="legacy domain/reason filters"):
+                DiagnosticsBrokerImpl(service).events(
+                    source=source, reason_code="hash_byte_budget", limit=1,
+                )
+
 
 
 def test_snapshot_timing_is_present_even_when_read_failed_before_inventory():

@@ -1,0 +1,80 @@
+"""Private, fresh HTML ACSM action. Never a public Loan field or cached URL."""
+from __future__ import annotations
+
+import re
+from urllib.parse import parse_qsl, urlsplit
+
+from cifereca_bnf_pret_web import ORIGIN, _dom, _links
+
+
+def signed_loan_url(href: str, loan_id: str) -> str | None:
+    """Validate the observed five-field action without rewriting signed bytes."""
+    if (type(href) is not str or not 0 < len(href) <= 4096
+            or type(loan_id) is not str
+            or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', loan_id) is None
+            or any(ord(c) <= 32 or ord(c) > 126 or c in '\\#' for c in href)):
+        return None
+    try:
+        parts = urlsplit(href)
+        if (parts.scheme not in {'', 'https'}
+                or parts.netloc not in {'', 'pret.bnf.fr'}
+                or bool(parts.scheme) != bool(parts.netloc)
+                or parts.path != '/loans/' + loan_id or not parts.query):
+            return None
+        # Reject malformed escapes and encoded/aliased parameter names.
+        if re.search(r'%(?![0-9A-Fa-f]{2})', parts.query):
+            return None
+        names = [part.partition('=')[0] for part in parts.query.split('&')]
+        expected = {'device_type', 'drm', 'nonce', 'timestamp', 'token'}
+        if len(names) != 5 or set(names) != expected:
+            return None
+        pairs = parse_qsl(parts.query, keep_blank_values=True,
+                          strict_parsing=True, max_num_fields=5,
+                          encoding='utf-8', errors='strict')
+        values = dict(pairs)
+        if (len(values) != 5 or values['device_type'] != 'reader'
+                or values['drm'] != 'acs4'
+                or any(not value or len(value) > 2048
+                       or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                       for value in values.values())):
+            return None
+        # Nonce, timestamp and token are opaque observed values. Do not
+        # generate, parse/reformat, reorder or URL-encode them a second time.
+        return href if parts.scheme else ORIGIN + href
+    except (ValueError, UnicodeError):
+        return None
+
+
+def signed_acsm_action(html: str, loan_id: str, resource_id: str) -> str | None:
+    """Join the ACSM control to the exact freshly observed loan, by explicit ID.
+
+    The observed aria-controls is {loan_id}-reader-acs. It is a semantic
+    relation even when the action is outside .js-loan; ancestry is not
+    presumed. An action under a conflicting card is nevertheless rejected.
+    The caller separately verifies the fresh loan/resource and account scope.
+    """
+    root = _dom(html)
+    nodes = list(root.walk())
+    candidates = [node for node in nodes if node.tag == 'a'
+                  and node.attrs.get('aria-controls') == loan_id + '-reader-acs'
+                  and all(node.has_class(name) for name in (
+                      'actions-list__link', 'actions-list__sublink', 'js-accordeon__item'))]
+    if not candidates:
+        return None
+    cards = [node for node in nodes if node.has_class('js-loan')]
+    actions = set()
+    for node in candidates:
+        if not node.closed:
+            return None
+        # If a card owns this node, its identifiers must agree. An outside
+        # accordion control is linked by its exact aria-controls AND href ID.
+        for card in cards:
+            if any(child is node for child in card.walk()):
+                if (_links(card, 'loans') != {loan_id}
+                        or _links(card, 'resources') != {resource_id}):
+                    return None
+        url = signed_loan_url(node.attrs.get('href', ''), loan_id)
+        if url is None:
+            return None
+        actions.add(url)
+    return next(iter(actions)) if len(actions) == 1 else None
