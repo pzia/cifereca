@@ -1015,7 +1015,7 @@ class LocalInspection:
                 note = ('Association personnelle enregistrée pour ce chemin et '
                         'un droit du compte exact. Fichier et droit à revérifier : '
                         'aucune provenance, acquisition ou présence attestée.')
-                extra = len((label[len(case.label):] + note).encode('utf-8'))
+                extra = len(('Association enregistrée (à revérifier) · ' + note).encode('utf-8'))
                 if self._bytes + extra > 8 * 1024 * 1024:
                     self._limited = True
                     break
@@ -1023,7 +1023,7 @@ class LocalInspection:
                 self._cases[key] = replace(
                     case, label=label,
                     states=tuple(sorted(set(case.states) | {'declared_link_recorded'})),
-                    details=case.details + '\\n\\n' + note,
+                    details=case.details + '\n\n' + note,
                 )
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
