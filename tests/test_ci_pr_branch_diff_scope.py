@@ -30,12 +30,12 @@ class PRDiffScopeTests(unittest.TestCase):
         git(self.repo, "add", ".")
         git(self.repo, "commit", "-m", "initial")
 
-    def change(self, path, content):
+    def change(self, path, content, *, message=None):
         file = self.repo / path
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(content)
         git(self.repo, "add", path)
-        git(self.repo, "commit", "-m", path)
+        git(self.repo, "commit", "-m", message or path)
 
     def test_main_only_changes_are_not_selected_into_pr_scopes(self):
         git(self.repo, "checkout", "-b", "feature")
@@ -60,7 +60,7 @@ class PRDiffScopeTests(unittest.TestCase):
         self.change("scripts/candidate.py", "same feature\n")
         head = git(self.repo, "rev-parse", "HEAD")
         git(self.repo, "checkout", "main")
-        self.change("scripts/candidate.py", "same feature\n")
+        self.change("scripts/candidate.py", "same feature\n", message="independent main delivery")
         base = git(self.repo, "rev-parse", "HEAD")
         self.assertNotEqual(base, head)
         # Still present in branch history, but main already has the tree.
