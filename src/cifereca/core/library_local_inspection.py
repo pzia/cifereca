@@ -1001,14 +1001,21 @@ class LocalInspection:
                 and right_key in self._cases
                 and 'declared_link_recorded' in self._cases[right_key].states
             }
-            declared_paths = {
-                path for scope, path in recorded_pairs if scope in visible_scopes
+            # Compare with the *scanned* file, not solely its pathname:
+            # a replaced file at the old path is not the declared EPUB.
+            # This still is NOT a fresh attestation at presentation time.
+            declared_files = {
+                (path, sha, size, fingerprint)
+                for scope, path, sha, size, fingerprint in recorded_pairs
+                if scope in visible_scopes
             }
             for index, observation in enumerate(audit.inventory.files):
                 key = f'file:{index}'
                 case = self._cases.get(key)
                 if (observation.identity_id != identity_id
-                        or observation.path not in declared_paths
+                        or (observation.path, observation.sha256,
+                            observation.size, tuple(observation.fingerprint))
+                           not in declared_files
                         or case is None or 'confirmed_link' in case.states):
                     continue
                 # The old snapshot records a *path*, not proof that today's
