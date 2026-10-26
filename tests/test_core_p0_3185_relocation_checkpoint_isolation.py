@@ -103,6 +103,8 @@ def _backup(service, old, provider, identity):
 @pytest.mark.parametrize("provider, identity", [
     ("other-provider", "id1"),
     ("local", "other-identity"),
+    ("local", None),
+    ("local", ""),
 ])
 def test_cross_scope_backup_cannot_be_orphaned(tmp_path, provider, identity):
     service, placement_id, old, new, broker, plan = _case(tmp_path)
