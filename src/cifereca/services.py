@@ -877,9 +877,10 @@ class LibraryService:
         # A worker for Alice may finish after switching Alice -> Bob -> Alice.
         # Its private result is returned to the guarded caller, but must never
         # overwrite the current profile projection after an epoch transition.
-        if (self._account_context_epoch == request_epoch
-                and getattr(self.current_identity, "identity_id", None) == identity_id):
-            self.last_loans = rows
+        with self._search_generation_lock:
+            if (self._account_context_epoch == request_epoch
+                    and getattr(self.current_identity, "identity_id", None) == identity_id):
+                self.last_loans = rows
         if force and identity_id:
             self.refresh_adept_inventory(identity_id)
         return rows
