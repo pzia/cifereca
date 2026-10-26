@@ -45,6 +45,7 @@ jobs:
               echo "dataset=true"
               echo "python=true"
               echo "bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select --full)"
+              echo "lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select --full)"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -66,6 +67,7 @@ jobs:
           install=false
           dataset=false
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
+          lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
           if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
             core=true
@@ -127,7 +129,7 @@ jobs:
           fi
 
           python=false
-          if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true || "$bnf_reader" == true ]]; then
+          if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true || "$bnf_reader" == true || "$lending_conformance" == true ]]; then
             python=true
           fi
 
@@ -142,6 +144,7 @@ jobs:
             echo "dataset=$dataset"
             echo "python=$python"
             echo "bnf_reader=$bnf_reader"
+            echo "lending_conformance=$lending_conformance"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check production plugins use Core HTTPX service
@@ -166,12 +169,12 @@ jobs:
           fi
 
       - name: Install plugin-only test dependencies
-        if: steps.scope.outputs.plugins == 'true' && steps.scope.outputs.core != 'true'
+        if: (steps.scope.outputs.plugins == 'true' || steps.scope.outputs.lending_conformance == 'true') && steps.scope.outputs.core != 'true'
         env:
           PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
         run: |
           python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12" "cryptography>=42,<48"
-          if [[ "${{ steps.scope.outputs.bnf_reader }}" == "true" ]]; then
+          if [[ "${{ steps.scope.outputs.bnf_reader }}" == "true" || "${{ steps.scope.outputs.lending_conformance }}" == "true" ]]; then
             # The BnF acceptance suite exercises real Core SQLite persistence.
             python -m pip install --disable-pip-version-check -e .
           fi
@@ -196,6 +199,12 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: python scripts/ci_bnf_reader_gate.py run
+
+      - name: Paris/BnF lending conformance (real adapters, synthetic data)
+        if: steps.scope.outputs.lending_conformance == 'true'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: python scripts/ci_lending_conformance_gate.py run
 
       - name: Run plugin tests
         if: steps.scope.outputs.plugins == 'true'
