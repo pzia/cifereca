@@ -73,6 +73,22 @@ def candidate_has_active_dependencies(storage, *, placement_id: str, path: str) 
                     return True
                 if _mentions_exact_path(value, path):
                     return True
+            # An artifact variant may keep a physical source/output path
+            # in metadata, independently of the candidate placement. A
+            # matching SHA cannot justify unlinking that referenced name.
+            # Metadata is not a typed active-vs-history contract yet, so
+            # conservatively block an exact match or unreadable record.
+            for index, (raw,) in enumerate(db.execute(
+                "SELECT metadata_json FROM artifact_variants"
+            )):
+                if index >= 100_000 or type(raw) is not str or len(raw) > 1024 * 1024:
+                    return True
+                try:
+                    value = json.loads(raw)
+                except (ValueError, TypeError, RecursionError):
+                    return True
+                if type(value) is not dict or _mentions_exact_path(value, path):
+                    return True
             # User declarations have their own strict private schema/budget,
             # and the source-bound file path is not a receipt we can replace.
             # An invalid declaration namespace cannot prove non-dependency.

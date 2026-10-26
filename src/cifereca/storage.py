@@ -1503,6 +1503,23 @@ class Storage:
                             raise ValueError("relocate_acquisition_context_unavailable")
                         if _mentions_exact_path(value, old_text):
                             raise ValueError("relocate_acquisition_reference_requires_relink")
+                    # Variant metadata may still identify this exact
+                    # physical file as a source or output. Until a separate,
+                    # scoped variant-path migration exists, refuse the rename
+                    # inside the same transaction rather than strand it.
+                    for index, (raw,) in enumerate(db.execute(
+                        "SELECT metadata_json FROM artifact_variants"
+                    )):
+                        if index >= 100_000 or type(raw) is not str or len(raw) > 1024 * 1024:
+                            raise ValueError("relocate_variant_context_unavailable")
+                        try:
+                            value = _json.loads(raw)
+                        except (ValueError, TypeError, RecursionError):
+                            raise ValueError("relocate_variant_context_unavailable") from None
+                        if type(value) is not dict:
+                            raise ValueError("relocate_variant_context_unavailable")
+                        if _mentions_exact_path(value, old_text):
+                            raise ValueError("relocate_variant_reference_requires_relink")
                     # A shared local_path belonging to another provider or
                     # identity must not remain dangling after this move.
                     if db.execute(
