@@ -527,6 +527,15 @@ class LocalCatalog:
                             **entry, "local_state": "invalid",
                         })
                 continue
+            # Re-discovery is physical evidence, not a new ownership event.
+            # An existing scoped placement can sit in a flat/legacy directory
+            # with no identity, provider or edition encoded in its name. Never
+            # replace those established coordinates with absent path hints.
+            # Genuine contradictory non-empty hints were rejected above.
+            if existing:
+                identity_hint = identity_hint or existing.get("identity_id")
+                provider_hint = provider_hint or existing.get("provider_id")
+                proposed_item = proposed_item or existing.get("source_item_id")
             placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
             previous_placement = self.storage.placement_get(placement_id)
             placement_was_new = previous_placement is None
@@ -575,7 +584,7 @@ class LocalCatalog:
                     "path": path_text,
                     "identity_id": identity_hint,
                     "provider_id": provider_hint,
-                    "source_item_id": legacy.get("item_id") if legacy else None,
+                    "source_item_id": proposed_item,
                     "state": "present",
                     "last_seen_at": started_at,
                     "metadata": {
@@ -599,7 +608,7 @@ class LocalCatalog:
                     "media_format": media_format,
                     "identity_id": identity_hint,
                     "provider_id": provider_hint,
-                    "item_id": (legacy or {}).get("item_id"),
+                    "item_id": proposed_item,
                     "local_state": "local",
                     "metadata": {"path": path_text, "artifact_kind": "file"},
                 }
