@@ -130,9 +130,14 @@ def _path_in_identity(value: Any, roots: tuple[Path, ...]) -> bool:
     return any(absolute != root and absolute.is_relative_to(root) for root in roots)
 
 
-def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bool) -> SyncResult:
-    """Only examine SQLite and (if explicitly asked) hash known local files."""
+def preview(
+    broker: Any, account: Any, source_id: str, *, verify_local_files: bool,
+    _only_item_id: str | None = None,
+) -> SyncResult:
+    """Examine SQLite and optionally hash known files; private per-item scope."""
     if type(verify_local_files) is not bool:
+        return _refused("invalid_options")
+    if _only_item_id is not None and (type(_only_item_id) is not str or not _only_item_id):
         return _refused("invalid_options")
     account = _Binding(
         getattr(account, "provider_id", None),
@@ -174,6 +179,8 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
         counts = dict.fromkeys(_COUNT_NAMES, 0)
         scoped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rights:
+            if _only_item_id is not None and row.get("item_id") != _only_item_id:
+                continue
             if (row.get("identity_id") != identity
                     or row.get("credential_id") != credential
                     or row.get("account_id") != account_id

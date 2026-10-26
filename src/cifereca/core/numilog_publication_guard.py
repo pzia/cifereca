@@ -40,6 +40,35 @@ def _known_paths(storage, identity_id, root):
                 "WHERE p.identity_id=? AND p.provider_id='numilog' AND p.state='present' LIMIT ?",
                 (identity_id, MAX_ENTRIES + 1),
             ).fetchall()
+            # An active, explicitly scoped user declaration is provenance
+            # for this physical pathname (not a provider receipt). Its
+            # fingerprint is checked again during the no-follow walk below.
+            from .library_declared_links import (
+                _records, _context, _right_state, DeclarationRejected,
+            )
+            declared = {}
+            for statement in _records(db):
+                scope = statement['scope']
+                file = statement['file']
+                if (statement['state'] != 'active'
+                        or scope['identity_id'] != identity_id
+                        or scope['provider_id'] != 'numilog'
+                        or not _path_in_identity(file['path'], (root,))):
+                    continue
+                try:
+                    context = _context(db, scope)
+                    if (context['connection']['enabled'] != 1
+                            or context['right']['state'] != 'active'
+                            or _right_state(context) != statement['right_state']):
+                        continue
+                except DeclarationRejected:
+                    continue
+                # An imported duplicate statement is ambiguous. Do not use
+                # either one to suppress a publication conflict.
+                if file['path'] in declared:
+                    declared[file['path']] = None
+                else:
+                    declared[file['path']] = tuple(file['fingerprint'])
             receipts = db.execute(
                 "SELECT acquisition_id,credential_id,account_id,item_id,status,"
                 "artifact_id,substr(metadata_json,1,8193) "
@@ -105,7 +134,7 @@ def _known_paths(storage, identity_id, root):
                 and type(meta.get('sha256')) is str and _SHA.fullmatch(meta['sha256'])
                 and type(meta.get('size')) is int and meta['size'] > 0):
             known.add(meta['path'])
-    return known
+    return known, declared
 
 
 def _open_root(root):
@@ -130,7 +159,7 @@ def require_tracked_publications(service, identity_id, target_dir):
         root = roots[0] / 'numilog'
         _require(isinstance(target_dir, Path))
         _require(target_dir == root)
-        known = _known_paths(service.storage, identity_id, root)
+        known, declared = _known_paths(service.storage, identity_id, root)
         root_fd, flags = _open_root(root)
         count = 0
         def visit(fd, relative, depth):
@@ -140,7 +169,8 @@ def require_tracked_publications(service, identity_id, target_dir):
                 for entry in entries:
                     count += 1
                     _require(count <= MAX_ENTRIES)
-                    mode = entry.stat(follow_symlinks=False).st_mode
+                    physical = entry.stat(follow_symlinks=False)
+                    mode = physical.st_mode
                     _require(not stat.S_ISLNK(mode))
                     path = relative / entry.name
                     if stat.S_ISDIR(mode):
@@ -150,7 +180,18 @@ def require_tracked_publications(service, identity_id, target_dir):
                         finally:
                             os.close(child_fd)
                     elif path.suffix.casefold() in {'.epub', '.pdf', '.kepub'}:
-                        _require(stat.S_ISREG(mode) and str(root / path) in known)
+                        absolute = str(root / path)
+                        fingerprint = declared.get(absolute)
+                        declared_unchanged = (
+                            type(fingerprint) is tuple
+                            and fingerprint == (
+                                physical.st_dev, physical.st_ino, physical.st_size,
+                                physical.st_mtime_ns, physical.st_ctime_ns,
+                            )
+                        )
+                        _require(stat.S_ISREG(mode) and (
+                            absolute in known or declared_unchanged
+                        ))
         try:
             visit(root_fd, Path(), 0)
         finally:
