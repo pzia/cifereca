@@ -329,16 +329,21 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         connection = published_connection_attempt(raw)
         if connection is not None:
             safe.update(connection)
-        # Full text search is explicitly local to this 50-item broker page.
-        searchable = " ".join(
-            safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
-        )
-        if reconciliation is not None:
-            searchable += " " + " ".join(reconciliation.values())
-        if provider is not None:
-            searchable += " " + provider
-        if search and search.casefold() not in searchable.casefold():
-            continue
+        # Legacy sources only: their search was limited to the loaded page.
+        # For the canonical journal, Core ALREADY searched the complete raw
+        # event (operation, phase, reason_code, task_ref, detail) BEFORE
+        # pagination. A second search over this short display projection
+        # would discard legitimate Core matches during selection/copy.
+        if search and raw.get("source") != "journal":
+            searchable = " ".join(
+                safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
+            )
+            if reconciliation is not None:
+                searchable += " " + " ".join(reconciliation.values())
+            if provider is not None:
+                searchable += " " + provider
+            if search.casefold() not in searchable.casefold():
+                continue
         # Detailed GTK inspection is opt-in. AI previews keep the minimal
         # operational projection and must never inherit arbitrary detail.
         if include_detail is True and "detail" in raw:
