@@ -155,13 +155,21 @@ def _events(log_path: Path):
     events = []
     gaps = []
     active_missing = False
+    present_rotations = set()
+    missing_rotations = set()
     for rotation in _ROTATIONS:
         path = Path(f"{log_path}.{rotation}" if rotation else str(log_path))
         lines, state, identity = _lines(path)
         if state == "missing":
             if rotation == 0:
                 active_missing = True
+            else:
+                missing_rotations.add(rotation)
             continue
+        # A missing *oldest* backup is normal before enough rotations exist.
+        # A hole BETWEEN two present log files is different: some events
+        # have disappeared, even if every remaining file parses correctly.
+        present_rotations.add(rotation)
         if state != "available":
             gaps.append(f"rotation_{rotation}_{state}")
             continue
@@ -186,6 +194,11 @@ def _events(log_path: Path):
                     current["message"] += "\n" + line
                 elif "event_text_exceeded" not in gaps:
                     gaps.append("event_text_exceeded")
+    for rotation in sorted(missing_rotations, reverse=True):
+        if any(older > rotation for older in present_rotations) and any(
+            newer < rotation for newer in present_rotations
+        ):
+            gaps.append(f"rotation_{rotation}_missing")
     return events, gaps, active_missing
 
 
