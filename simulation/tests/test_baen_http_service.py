@@ -161,6 +161,43 @@ class BaenContractTests(unittest.TestCase):
             finally:
                 session.close()
 
+    def test_canonical_free_library_links_via_real_plugin_and_local_server(self):
+        """Current root .html cards work without authorizing purchases or q."""
+        with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
+            transport = RecordingTransport(server)
+            session = make_session(server, transport=transport)
+            try:
+                rows = session.search("fixture-canonical")
+                self.assertEqual([row.title for row in rows], [
+                    "The Firefly Atlas", "The Garden of Words", "The Last Shore",
+                ])
+                self.assertEqual([row.friendly_url for row in rows], [
+                    "https://www.baen.com/firefly-atlas.html",
+                    "https://www.baen.com/garden-of-words.html",
+                    "https://www.baen.com/last-shore.html",
+                ])
+                self.assertTrue(all(
+                    row.format is None and row.owned is False
+                    and row.downloadable is False and row.download_url is None
+                    for row in rows
+                ))
+                self.assertEqual(session.last_search_warnings, [
+                    UNVERIFIED_SEARCH_WARNING,
+                ])
+                self.assertEqual(len(server.calls), 1)
+                # A detail may enrich author/ISBN, not infer an EPUB right.
+                detail = session.holdings(rows[0])
+                self.assertEqual(detail.author, "Camille Example")
+                self.assertEqual(detail.availability_status, "available")
+                self.assertEqual(len(server.calls), 2)
+                self.assertEqual(transport.calls, [])
+                # The negative product has no EPUB offer, even on its page.
+                missing = session.holdings(rows[1])
+                self.assertEqual(missing.availability_status, "unknown")
+                self.assertEqual(len(server.calls), 3)
+            finally:
+                session.close()
+
     def test_actual_plugin_propagates_simulated_catalog_failures(self):
         with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
             session = make_session(server, transport=RecordingTransport(server))
