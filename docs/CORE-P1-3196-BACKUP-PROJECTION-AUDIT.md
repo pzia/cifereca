@@ -78,11 +78,14 @@ La projection Kobo persistait historiquement le chemin physique par
 connexion ou un autre livre, **sans preuve de transfert de propriété**.
 
 Le miroir applique désormais une condition SQL sur l'identité, le fournisseur
-et le livre source avant tout `UPDATE` d'un placement existant. Deux valeurs
-explicites différentes entraînent `backup_placement_owner_conflict` ; le
-`backup_put` entier est annulé transactionnellement, projection v0.7,
-droits, artefacts, notices et acquisitions compris. Les mises à jour
-idempotentes du même propriétaire sont conservées.
+et le livre source avant tout `UPDATE` d'un placement existant. Deux valeurs explicites différentes **ne transfèrent plus** la propriété
+du placement. Les projections v0.7 conservent cependant les livres historiques
+qui citent le même chemin : le second droit et son acquisition sont conservés,
+mais **sans lien vers un artefact ou un placement canonique**, sans nouvelle
+notice locale et sans mutation du placement déjà occupé. Le diagnostic de
+réconciliation peut ainsi retrouver les preuves incohérentes sans inventer un
+transfert ni interrompre tout l'inventaire. Les mises à jour idempotentes du
+même propriétaire restent autorisées.
 
 Un ancien `NULL` n'est pas réinterprété comme attestation d'une nouvelle
 identité lors de cette projection : l'owner manquant reste à résoudre par
