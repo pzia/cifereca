@@ -44,6 +44,7 @@ def _case(tmp_path, *, owner="identity-a", provider="paris"):
 @pytest.mark.parametrize(("owner", "provider"), [
     ("identity-a", "paris"),
     ("identity-b", "numilog"),
+    ("legacy-folder-alias", "paris"),
 ])
 def test_rescan_does_not_reassign_existing_owner_or_provider(
     tmp_path, owner, provider,
