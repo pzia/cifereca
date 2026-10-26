@@ -49,7 +49,7 @@ def test_opening_exception_is_safe_in_log_export_and_sqlite(tmp_path, monkeypatc
         service.close()
 
 
-def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
+def test_mutable_legacy_upstream_error_fields_are_not_read_as_inventory_authority(
     tmp_path, monkeypatch, caplog,
 ):
     service = _service(tmp_path)
@@ -70,18 +70,17 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
             result = service.opening_sync()
         default = next(row for row in result["identities"]
                        if row["identity_id"] == "default")
-        # A partially responding Paris source is partial even with zero rows;
-        # the other account remains successful and provider details stay closed.
-        assert default["status"] == "partial"
-        assert _state(service, paris)["status"] == "partial"
+        # A v1 source can report an operational read success, never an
+        # exhaustive catalogue claim: legacy absence cannot expire rights.
+        # Mutable plugin-side errors have no Core authority.
+        assert default["status"] == "success"
+        assert _state(service, paris)["status"] == "success"
         assert _state(service, kobo)["status"] == "success"
-        assert service.storage.latest_sync_run("default")["detail"]["provider_errors"] == [
-            {"code": "loan_partial_failure"},
-        ]
+        assert service.storage.latest_sync_run("default")["detail"].get("provider_errors", []) == []
         visible = json.dumps(result) + json.dumps(
             service.storage.latest_sync_run("default")) + caplog.text
         assert PRIVATE not in visible
-        assert "loan_partial_failure count=1" in caplog.text
+        assert "loan_partial_failure" not in caplog.text
         assert all("paris-private" not in line for line in caplog.text.splitlines()
                    if "TRACE loans sync" in line)
     finally:
