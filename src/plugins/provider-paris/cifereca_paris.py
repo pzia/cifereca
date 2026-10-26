@@ -490,20 +490,38 @@ class ParisProviderSession(ProviderSession):
         absence. Consequently even an all-successful read claims UNKNOWN
         completeness, never proof that a missing loan was returned.
         """
+        # A borrower may be passed as an Account copy by the Core; choose
+        # the unique live account by its scoped values, but then pin that
+        # exact instance across the two-branch read. Attribute-only checks
+        # could miss A→A replacement under a concurrent broker/session edit.
+        scope = (
+            account.unique_id, account.identity_id,
+            account.provider_id, account.credential_id,
+        ) if type(account) is Account else None
+
+        def matching_accounts():
+            return [
+                active for active in self._accounts
+                if type(active) is Account
+                and (active.unique_id, active.identity_id,
+                     active.provider_id, active.credential_id) == scope
+            ] if scope is not None else []
+
+        initial = matching_accounts()
+        bound = initial[0] if len(initial) == 1 else None
+
         def still_bound() -> bool:
             return (
                 self.connected is True
-                and type(account) is Account
-                and account.provider_id == self.provider_id
-                and account.credential_id == self.credential_id
-                and any(
-                    type(active) is Account
-                    and active.unique_id == account.unique_id
-                    and active.identity_id == account.identity_id
-                    and active.provider_id == account.provider_id
-                    and active.credential_id == account.credential_id
-                    for active in self._accounts
-                )
+                and scope is not None
+                and scope[2:] == (self.provider_id, self.credential_id)
+                and (account.unique_id, account.identity_id,
+                     account.provider_id, account.credential_id) == scope
+                and bound is not None
+                and (bound.unique_id, bound.identity_id,
+                     bound.provider_id, bound.credential_id) == scope
+                and len(current := matching_accounts()) == 1
+                and current[0] is bound
             )
 
         if not still_bound():
