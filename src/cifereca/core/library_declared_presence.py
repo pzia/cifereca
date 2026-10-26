@@ -5,6 +5,7 @@ one already selected file under the acquisition lock; no global scan, network,
 file movement, rights write or currently selected GUI identity is involved.
 """
 from dataclasses import dataclass
+from contextlib import nullcontext
 import sqlite3
 
 from ..locking import InterProcessLock, LockBusyError
@@ -29,7 +30,8 @@ class DeclaredPresence:
 def verify_declared_presence(service, *, identity_id, provider_id, credential_id,
                              account_id, item_id, source_current,
                              cancelled=lambda: False, seconds=8,
-                             max_bytes=64 * 1024 * 1024):
+                             max_bytes=64 * 1024 * 1024,
+                             _acquisition_lock_held=False):
     """Verify one source-bound statement without granting acquisition authority.
 
     No pathname or SHA is returned. A moved/unavailable/changed file remains
@@ -90,7 +92,11 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
                 _collisions(db, scope, observation, records)
                 return record, context, observation
 
-        with InterProcessLock(acquisition_lock_file()):
+        # Internal Core sync callers can reuse their already-held *same*
+        # cross-process acquisition lock. Never acquire it recursively.
+        lock_scope = (nullcontext() if _acquisition_lock_held
+                      else InterProcessLock(acquisition_lock_file()))
+        with lock_scope:
             _require(valid() and source_current() is True, 'source_scope_changed')
             record, context, observation = read_pair()
             # Do not call source guards or hash a book with Storage._lock held.
