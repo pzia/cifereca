@@ -2928,8 +2928,9 @@ class Storage:
         self, *, source_id: str, started_at: int,
         status: str, attempted: int, downloaded: int,
         skipped: int, failed: int,
+        declared_local: int = 0, declared_pending: int = 0,
     ) -> bool:
-        """Write bounded public counters only, with a stale-run SQL guard."""
+        """Write bounded account-scoped counters with a stale-run SQL guard."""
         import re
         if (type(source_id) is not str
                 or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
@@ -2940,6 +2941,9 @@ class Storage:
                 or any(type(value) is not int or not 0 <= value <= 8
                        for value in (attempted, downloaded, failed))
                 or type(skipped) is not int or not 0 <= skipped <= 2048
+                or type(declared_local) is not int or not 0 <= declared_local <= skipped
+                or type(declared_pending) is not int or not 0 <= declared_pending <= 2048
+                or (status == "complete" and declared_pending != 0)
                 or downloaded > attempted
                 or failed > attempted + 1
                 or (status == "complete" and failed != 0)
@@ -2972,6 +2976,8 @@ class Storage:
                 "version": 1, "started_at": started_at, "status": status,
                 "attempted": attempted, "downloaded": downloaded,
                 "skipped": skipped, "failed": failed,
+                "already_local_declared": declared_local,
+                "declared_needs_review": declared_pending,
             }, sort_keys=True, separators=(",", ":"))
             db.execute(
                 "UPDATE metadata SET value=? WHERE key=?",
@@ -3019,9 +3025,11 @@ class Storage:
         except (ValueError, TypeError):
             return empty
         counts = ("attempted", "downloaded", "skipped", "failed")
-        if (type(result) is not dict or set(result) != {
-                "version", "started_at", "status", *counts,
-            } or type(result.get("version")) is not int
+        receipt_keys = {"version", "started_at", "status", *counts}
+        declared_keys = {"already_local_declared", "declared_needs_review"}
+        if (type(result) is not dict
+                or set(result) not in (receipt_keys, receipt_keys | declared_keys)
+                or type(result.get("version")) is not int
                 or result["version"] != 1 or type(result.get("started_at")) is not int
                 or result["started_at"] != started
                 or type(result.get("status")) is not str
@@ -3041,10 +3049,20 @@ class Storage:
                     result[key] != 0 for key in counts
                 ))):
             return empty
+        if declared_keys <= set(result):
+            if (any(type(result.get(key)) is not int
+                    or not 0 <= result[key] <= 2048 for key in declared_keys)
+                    or result["already_local_declared"] > result["skipped"]
+                    or (result["status"] in {"running", "complete"}
+                        and result["declared_needs_review"] != 0)
+                    or (result["status"] == "running"
+                        and result["already_local_declared"] != 0)):
+                return empty
         return {
             "status": result["status"], "started_at": started,
             "next_eligible_at": started + 3600,
             **{key: result[key] for key in counts},
+            **{key: result[key] for key in declared_keys if key in result},
         }
 
     def source_materialization_evidence(

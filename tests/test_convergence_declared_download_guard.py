@@ -188,6 +188,10 @@ def test_declared_pair_does_not_starve_another_purchase(rig, monkeypatch, change
     assert result.facts['status'] == ('partial' if changed else 'complete')
     assert result.facts['blocked'] == int(changed)
     assert result.facts['already_local_declared'] == int(not changed)
+    assert result.facts['declared_needs_review'] == int(changed)
+    durable = service.storage.numilog_materialization_run_status(broker._source_id(account))
+    assert durable['already_local_declared'] == int(not changed)
+    assert durable['declared_needs_review'] == int(changed)
     assert result.changed == result.facts['attempted'] == 1
     assert result.facts['source_results'][0]['status'] == ('partial' if changed else 'complete')
     assert acquired == [missing.record_id] and indexed == [True]
@@ -204,6 +208,10 @@ def test_fresh_declared_file_counts_as_local_without_receipt_or_download(rig, mo
     result = execute(broker, account.identity_id, 'startup')
     assert result.ok and result.facts['status'] == 'complete'
     assert result.facts['already_local_declared'] == result.facts['skipped'] == 1
+    assert result.facts['declared_needs_review'] == 0
+    durable = service.storage.numilog_materialization_run_status(broker._source_id(account))
+    assert durable['already_local_declared'] == 1
+    assert durable['declared_needs_review'] == 0
     assert result.changed == result.facts['attempted'] == result.facts['blocked'] == 0
     assert book.read_bytes() == original and calls == []
     assert service.storage.acquisitions(provider_id='numilog') == []

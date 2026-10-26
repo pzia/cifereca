@@ -216,3 +216,49 @@ def test_corrupted_public_success_with_failed_count_is_shown_as_unknown(tmp_path
         assert "Dernier bilan indisponible" in describe_run("on_start", status)
     finally:
         service.close()
+
+
+
+def test_durable_declaration_counters_and_user_label(tmp_path):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        clock = int(time())
+        assert service.storage.numilog_materialization_claim_startup(
+            source_id=sid, now=clock,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
+        )
+        assert service.storage.numilog_materialization_finish_startup(
+            source_id=sid, started_at=clock, status="blocked",
+            attempted=0, downloaded=0, skipped=2, failed=0,
+            declared_local=2, declared_pending=1,
+        )
+        record = service.storage.numilog_materialization_run_status(sid)
+        assert record["already_local_declared"] == 2
+        assert record["declared_needs_review"] == 1
+        displayed = describe_run("on_start", record, now=clock)
+        assert "2 présence(s) déclarée(s) vérifiée(s)" in displayed
+        assert "1 liaison(s) déclarée(s) à revoir" in displayed
+        assert "téléchargé(s)" in displayed and calls == []
+    finally:
+        service.close()
+
+
+def test_invalid_declaration_counts_fail_closed_without_overwriting_receipt(tmp_path):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        clock = int(time())
+        assert service.storage.numilog_materialization_claim_startup(
+            source_id=sid, now=clock,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
+        )
+        with pytest.raises(ValueError, match="invalid_numilog_materialization_receipt"):
+            service.storage.numilog_materialization_finish_startup(
+                source_id=sid, started_at=clock, status="complete",
+                attempted=0, downloaded=0, skipped=0, failed=0,
+                declared_local=1, declared_pending=1,
+            )
+        assert service.storage.numilog_materialization_run_status(sid)["status"] == "running"
+    finally:
+        service.close()

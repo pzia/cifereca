@@ -26,7 +26,7 @@ def _result(status: str, *, ok: bool = False,
             downloaded: int = 0, attempted: int = 0,
             skipped: int = 0, failed: int = 0,
             blocked: int = 0, claimed: int = 0, declared_local: int = 0,
-            source_results=()) -> SyncResult:
+            declared_pending: int = 0, source_results=()) -> SyncResult:
     return SyncResult(
         ok=ok, changed=downloaded, warnings=() if ok else (status,),
         facts={
@@ -35,6 +35,7 @@ def _result(status: str, *, ok: bool = False,
             "attempted": attempted, "skipped": skipped, "failed": failed,
             "blocked": blocked, "sources_claimed": claimed,
             "already_local_declared": declared_local,
+            "declared_needs_review": declared_pending,
             "acquisition_authorized": False, "source_results": tuple(source_results),
         },
     )
@@ -70,7 +71,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
     """At most eight attempts *per source*; failures never starve siblings."""
     if trigger != "startup" or type(identity_id) is not str:
         return _result("invalid_trigger")
-    total = attempts = skipped = failures = blocked = claimed = declared_local = 0
+    total = attempts = skipped = failures = blocked = claimed = declared_local = declared_pending = 0
     source_results = []
     sources = eligible_source_ids(broker, identity_id)
     if not sources:
@@ -82,6 +83,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         account, session, roots = bound
         trace = StartupTrace(broker.service, source_id)
         previous = (total, attempts, skipped, failures, blocked)
+        previous_declared_local = declared_local
+        previous_declared_pending = declared_pending
         presence_seconds_remaining = 8.0
 
         def observe(phase, code="started"):
@@ -282,6 +285,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     from .library_declared_presence import verify_declared_presence
                     if presence_seconds_remaining <= 0:
                         blocked += 1
+                        declared_pending += 1
                         trace.fail('preflight_failed')
                         continue
                     presence_started = monotonic()
@@ -309,6 +313,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         skipped += 1
                         continue
                     blocked += 1
+                    declared_pending += 1
                     trace.fail('preflight_failed')
                     continue
                 if (prior.ok is not True
@@ -376,6 +381,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 own_skipped = skipped - previous[2]
                 own_failed = failures - previous[3]
                 own_blocked = blocked - previous[4]
+                own_declared_local = declared_local - previous_declared_local
+                own_declared_pending = declared_pending - previous_declared_pending
                 result_status = (
                     "partial" if own_downloaded and (own_failed or own_blocked or interrupted)
                     else "failed" if own_failed
@@ -388,7 +395,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         source_id=source_id, started_at=started_at,
                         status=result_status, attempted=own_attempted,
                         downloaded=own_downloaded, skipped=own_skipped,
-                        failed=own_failed,
+                        failed=own_failed, declared_local=own_declared_local,
+                        declared_pending=own_declared_pending,
                     )
                     if finalized is not True:
                         # The stale-run SQL guard can refuse a final receipt
@@ -427,5 +435,5 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         downloaded=total, attempted=attempts,
         skipped=skipped, failed=failures,
         blocked=blocked, claimed=claimed, declared_local=declared_local,
-        source_results=source_results,
+        declared_pending=declared_pending, source_results=source_results,
     )
