@@ -94,8 +94,9 @@ def test_revoked_declaration_no_longer_blocks_kobo(tmp_path, monkeypatch):
     service, book, scope, relation = _declared_kobo(tmp_path, monkeypatch)
     calls = _no_download(service, monkeypatch)
     try:
-        preview = declare_local_link(service, observation=None, revoke=relation, **scope)
-        revoke = declare_local_link(service, observation=None, revoke=relation,
+        observed, = scan_identity_roots({"alice": (book.parents[1],)}).files
+        preview = declare_local_link(service, observation=observed, revoke=relation, **scope)
+        revoke = declare_local_link(service, observation=observed, revoke=relation,
                                     confirmation=preview.plan_token, **scope)
         assert revoke.status == "revoked"
         assert not has_active_declared_link(service.storage, **scope)
