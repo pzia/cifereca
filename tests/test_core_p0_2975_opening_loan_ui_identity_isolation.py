@@ -151,3 +151,31 @@ def test_gui_loan_projection_filters_foreign_rows_even_from_stale_caller(tmp_pat
         assert "foreign" not in str(host.loan_objects)
     finally:
         service.close()
+
+
+def test_gui_refresh_callback_rejects_old_a_b_a_request(tmp_path):
+    pytest.importorskip("gi")
+    from cifereca.gui.loans_controller import refresh_loans
+    service = _service(tmp_path)
+    submitted = []
+    applied = []
+    try:
+        host = NS(
+            service=service,
+            runner=NS(submit=lambda title, work, done, **kw:
+                      submitted.append(NS(work=work, done=done, kwargs=kw))),
+            _loans_refreshed=lambda rows: applied.append(rows),
+        )
+        refresh_loans(host, force=False)
+        stale = submitted[-1]
+        # GUI may return to the same profile; identity equality is NOT
+        # sufficient to authorize publication of the former worker result.
+        service.select_identity("alex")
+        service.select_identity("default")
+        stale.done(["PRIVATE stale loan"])
+        assert applied == []
+        refresh_loans(host, force=False)
+        submitted[-1].done(["fresh"])
+        assert applied == [["fresh"]]
+    finally:
+        service.close()
