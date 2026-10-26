@@ -5,9 +5,46 @@ No HTTP, token requests, purchases, local file mutation or Core scheduler.
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace as NS
 
 from cifereca.plugin_api import Account, ProviderError
-from test_kobo_manifest_account_binding_p1 import FakeVault, _session
+from cifereca_kobo import DESCRIPTOR, KoboSession
+
+
+class FakeVault:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = 0
+        self.last_manifest_rejections = []
+
+    def library_manifest(self):
+        self.calls += 1
+        return list(self.rows)
+
+    def close(self):
+        pass
+
+    def acquisition(self, *_a, **_k):
+        raise AssertionError("No acquisition for an inventory read")
+
+
+def _session(vault):
+    session = KoboSession(
+        descriptor=DESCRIPTOR, credential_id="synthetic-card",
+        label="Kobo", credentials={"api_token": "synthetic-token"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=NS(add=lambda *_a, **_kw: None),
+        runtime_capabilities=NS(acquisition=lambda *_a: None),
+    )
+    session.client.close()
+    session.client = vault
+    session.catalog = NS(cover_url=lambda _row: None)
+    session.connected = True
+    session._accounts = [Account(
+        unique_id="alice", display_name="Reader",
+        provider_id="kobo", credential_id="synthetic-card",
+    )]
+    return session
 
 
 @pytest.mark.parametrize("entrypoint", ["library", "backup_manifest"])
