@@ -47,7 +47,7 @@ _PUBLIC_CODES = frozenset({
     'search_redirect_mismatch', 'detail_redirect_mismatch', 'ambiguous_search',
     'search_page_limit', 'inventory_not_exhaustive',
     'loan_not_observed', 'invalid_loan_token', 'token_limit', 'session_closed',
-    'download_redirect_refused', 'download_storage_failed',
+    'download_redirect_refused', 'download_storage_failed', 'download_link_unavailable',
 })
 
 
@@ -216,10 +216,16 @@ class BnfProviderSession(ProviderSession):
                 # Invalidate BEFORE the token GET, not only after it.
                 if self._closed or epoch != self._epoch or not self.connected:
                     raise ReaderHTTPError('session_closed')
-                if not any(row.loan_id == loan.id and row.resource_id == loan.record_id
-                           for row in fresh.loans):
+                matching = [row for row in fresh.loans
+                            if row.loan_id == loan.id and row.resource_id == loan.record_id]
+                if len(matching) != 1:
                     raise ReaderHTTPError('loan_not_observed')
-                token = self.client.loan_token(loan.id)
+                # Do not downgrade to unsigned GET when BnF's signed action
+                # is absent, expired or synthesized outside this HTML page.
+                signed_url = matching[0].signed_download_url
+                if signed_url is None:
+                    raise ReaderHTTPError('download_link_unavailable')
+                token = self.client.loan_token(loan.id, signed_url)
                 validate_loan_token(token)
                 if self._closed or epoch != self._epoch:
                     raise ReaderHTTPError('session_closed')
