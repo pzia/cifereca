@@ -313,7 +313,25 @@ class TaskRunner:
                 )
                 if kind_outcome == "ok":
                     if ok:
-                        ok(payload)
+                        try:
+                            ok(payload)
+                        except Exception as callback_error:
+                            trace_failure("gtk_ok_callback", callback_error)
+                            if getattr(self.window, "_closed", False):
+                                return False
+                            # Worker success is not a successful UI delivery.
+                            # Reclassify the same receipt in the activity
+                            # history; do not pretend the worker itself failed
+                            # or assign this to another provider/task.
+                            reporter = getattr(self.window, "_activity_result", None)
+                            if callable(reporter):
+                                reporter(
+                                    "Traitement indisponible", success=False,
+                                    task_id=task_id,
+                                )
+                            if origin != "automatic":
+                                self.present_error(callback_error)
+                            return False
                     if getattr(self.window, "_closed", False):
                         return False
                     # A success callback may close the window itself.
@@ -328,7 +346,14 @@ class TaskRunner:
                     if getattr(self.window, "_closed", False):
                         return False
                     if err:
-                        err(payload)
+                        try:
+                            err(payload)
+                        except Exception as callback_error:
+                            trace_failure("gtk_error_callback", callback_error)
+                            if getattr(self.window, "_closed", False):
+                                return False
+                            if origin != "automatic":
+                                self.present_error(callback_error)
                     elif origin != "automatic":
                         # Automatic exceptions are already visible in the
                         # activity feedback and correlated local diagnostics.
