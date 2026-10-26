@@ -212,6 +212,15 @@ class ArtifactExecutionBrokerImpl:
             raise Conflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
         if result.size_bytes and actual_size != int(result.size_bytes):
             raise Conflict("Taille de transformation invalide", code="artifact_output_size_mismatch")
+        # An identity transform has exactly the original content-addressed
+        # artifact_id. Persisting a self-variant would make delete_variant
+        # select and physically unlink the ORIGINAL book placements. The
+        # produced staging file is disposable; preserve the existing source
+        # artifact and do not create a false independent derivative.
+        if actual_sha == source.sha256:
+            path.unlink()
+            lease.active = False
+            return source
         existing = self.service.storage.artifact_variant_find(
             source_sha256=source.sha256, transformer_plugin_id=transformer_plugin_id,
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
@@ -616,6 +625,14 @@ class LibraryMaintenanceBrokerImpl:
         if op == "delete_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: raise NotFound("Variante inconnue", code="artifact_variant_not_found")
+            # Content-addressed identity derivatives can exist in historical
+            # stores. Never unlink the source artifact's physical placements.
+            # More than one variant row sharing the hash is also ambiguous:
+            # deleting one cannot authorize deletion of the other's bytes.
+            if (len(rows) != 1
+                    or rows[0].get("source_artifact_id") == request.artifact_id
+                    or not rows[0].get("source_artifact_id")):
+                raise Conflict("Variante et source non indépendantes", code="artifact_variant_scope_conflict")
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
@@ -842,6 +859,10 @@ class LibraryMaintenanceBrokerImpl:
         if request.operation == "delete_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: return LibraryMutationResult(True,0,"Variante déjà absente")
+            if (len(rows) != 1
+                    or rows[0].get("source_artifact_id") == request.artifact_id
+                    or not rows[0].get("source_artifact_id")):
+                raise Conflict("Variante et source non indépendantes", code="artifact_variant_scope_conflict")
             variant=rows[0]; source_id=str(variant.get("source_artifact_id") or "")
             for placement in [p for p in self.service.storage.placements() if str(p.get("artifact_id") or "") == request.artifact_id]:
                 path=Path(str(placement.get("path") or ""))
