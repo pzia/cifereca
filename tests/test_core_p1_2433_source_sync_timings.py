@@ -46,7 +46,7 @@ def test_real_sync_measures_nested_intervals_without_changing_result(tmp_path, m
         monkeypatch.setattr(service, "catalog_scan", lambda: operation(11, {"entries": 0}))
         result = service.synchronize_account_source(account, deep=True)
         assert result == {"provider": "provider.test", "account_id": "PRIVATE",
-                          "loans": 0, "library": 0, "catalog_scan": {"entries": 0}}
+                          "loans": 0, "status": "partial", "library": 0, "catalog_scan": {"entries": 0}}
         fields = terminal(service)
         assert {key: fields[key] for key in timing.TIMING_FIELDS if key in fields} == {
             "lock_acquire_ms": 2, "locked_work_ms": 26, "loan_refresh_ms": 5,
