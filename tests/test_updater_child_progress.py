@@ -144,6 +144,40 @@ def test_timeout_reaps_child_before_returning_to_rollback(tmp_path, monkeypatch)
     assert children[0].poll() is not None
 
 
+def test_orphan_pip_descendant_is_killed_when_parent_cli_has_exited(tmp_path, monkeypatch):
+    """The CLI may exit while its pip descendant still owns inherited pipes.
+
+    The process group must receive SIGKILL before this runner returns to the
+    calling updater's rollback path, even after the direct child is reaped.
+    This covers the real #3204 strace failure, not just a sleeping CLI.
+    """
+    if os.name != "posix":
+        pytest.skip("POSIX process groups required")
+    pid_file = tmp_path / "descendant-pid"
+    real_killpg = update_child.os.killpg
+    killed = []
+
+    def record_killpg(pgid, signum):
+        killed.append((pgid, signum))
+        return real_killpg(pgid, signum)
+
+    monkeypatch.setattr(update_child.os, "killpg", record_killpg)
+    with pytest.raises(TimeoutError, match="update_child_timeout"):
+        _run(tmp_path, f'''
+            import subprocess, sys
+            from pathlib import Path
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                stdout=sys.stdout, stderr=sys.stderr,
+            )
+            Path({str(pid_file)!r}).write_text(str(child.pid))
+            print('{{"ok":true}}', flush=True)
+        ''', timeout=1.5)
+    assert pid_file.is_file(), "descendant did not start before the timeout"
+    assert len(killed) == 1
+    assert killed[0][1] == update_child.signal.SIGKILL
+
+
 def test_interrupt_reaps_child_and_no_more_events_escape(tmp_path):
     pid = tmp_path / "pid"
     seen = []
