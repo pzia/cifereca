@@ -22,7 +22,7 @@ STAGE_CODES = frozenset({
 })
 PROVIDER_REASONS = frozenset({
     'loan_not_observed', 'invalid_loan_token', 'token_limit', 'session_closed',
-    'download_redirect_refused', 'download_storage_failed', 'auth_required',
+    'download_redirect_refused', 'download_storage_failed', 'download_link_unavailable', 'auth_required',
     'access_denied', 'rate_limited', 'http_unavailable', 'operation_timeout',
     'transport_unavailable', 'invalid_activity_page', 'unrecognized_loans',
     'ambiguous_loans', 'unexpected_content', 'invalid_dom', 'html_limit',
