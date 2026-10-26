@@ -415,6 +415,16 @@ class LocalCatalog:
             seen_paths.add(path_text)
             identity_hint, provider_hint = self._path_hints(path)
             legacy = self._legacy_provenance(path.resolve())
+            # A filename is not evidence that a backup purchased by another
+            # identity belongs to this scanned profile. Even a UNIQUE
+            # backup_items.local_path row may name the wrong identity (or be
+            # legacy-unscoped); do not lift its provider/item provenance into
+            # this placement without an exact identity coordinate.
+            if legacy and (
+                not identity_hint
+                or legacy.get("identity_id") != identity_hint
+            ):
+                legacy = None
             if legacy:
                 provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
             if not ok:
