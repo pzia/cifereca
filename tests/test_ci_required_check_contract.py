@@ -41,7 +41,8 @@ def test_required_job_identity_and_read_only_permissions_cannot_drift():
 
 def test_all_prs_emit_scope_outputs_even_for_docs_only_changes():
     workflow = _workflow()
-    assert "git diff --name-only \"$BASE_SHA\" \"$HEAD_SHA\"" in workflow
+    assert 'git diff --quiet "$BASE_SHA" "$HEAD_SHA"' in workflow
+    assert 'git diff --name-only "$BASE_SHA...$HEAD_SHA"' in workflow
     assert 'if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then' in workflow
     assert 'echo "python=$python"' in workflow
     assert "if: steps.scope.outputs.python == 'true'" in workflow
