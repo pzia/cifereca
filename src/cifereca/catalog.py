@@ -299,9 +299,15 @@ class LocalCatalog:
             proposed_item = proposed_item or existing.get("source_item_id")
         now = int(time.time())
         try:
-            stat = path.stat()
-            stat_meta = {"file_size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+            indexed_stat = os.stat(path, follow_symlinks=False)
+            if not _stat.S_ISREG(indexed_stat.st_mode):
+                raise OSError("catalog_index_not_regular")
+            stat_meta = {
+                "file_size": int(indexed_stat.st_size),
+                "mtime_ns": int(indexed_stat.st_mtime_ns),
+            }
         except OSError:
+            indexed_stat = None
             stat_meta = {}
         if not ok:
             self.storage.placement_put({
@@ -326,6 +332,22 @@ class LocalCatalog:
             path, sha256=digest, media_format=media_format, mime_type=mime_type,
             metadata={**((self.storage.artifact_get(artifact_id) or {}).get("metadata") or {}), "discovered_by": "targeted_catalog_index"},
         )
+        # Hashing itself uses a no-follow descriptor, but the pathname can
+        # change *after* that hash and before SQLite publishes the placement.
+        # Only publish a fresh file if it still names precisely the same
+        # regular inode/size/timestamps observed prior to hashing.
+        try:
+            current_stat = os.stat(path, follow_symlinks=False)
+            if (indexed_stat is None
+                    or not _stat.S_ISREG(current_stat.st_mode)
+                    or any(
+                        getattr(indexed_stat, key) != getattr(current_stat, key)
+                        for key in ("st_dev", "st_ino", "st_size",
+                                    "st_mtime_ns", "st_ctime_ns")
+                    )):
+                raise OSError("catalog_index_file_changed")
+        except OSError as exc:
+            raise OSError("catalog_index_file_changed") from exc
         self.storage.artifact_put(artifact)
         try:
             relative = str(path.relative_to(self.root.resolve()))
