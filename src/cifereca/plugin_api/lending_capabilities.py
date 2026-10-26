@@ -137,11 +137,13 @@ def assess_lending_operation(
         )
         # Bound at most 512 already-known accounts. This is a memory read,
         # NEVER a session.accounts property call or provider refresh.
+        # Duplicate borrower registrations must not count as readiness.
         account_ready = bool(
             type(current_accounts) in (list, tuple)
             and len(current_accounts) <= 512
             and exact_session
-            and any(
+            and sum(
+                1 for row in current_accounts if (
                 type(row) is Account
                 and all(type(value) is str for value in (
                     row.identity_id, row.provider_id,
@@ -151,8 +153,8 @@ def assess_lending_operation(
                 and row.provider_id == account.provider_id
                 and row.credential_id == account.credential_id
                 and row.unique_id == account.unique_id
-                for row in current_accounts
-            )
+                )
+            ) == 1
         )
         ready = bool(plugin_ready and connected and exact_session and account_ready)
     except Exception:
