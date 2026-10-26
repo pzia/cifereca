@@ -409,6 +409,14 @@ class KoboSession(ProviderSession):
             and _strict_account_scope(self._accounts[0].unique_id)
             else None
         )
+        # A personal search can include rights-scoped library rows. Pin the
+        # exact bound Account object and generation while the Vault query and
+        # per-row normalization complete. Public catalogue-only requests do
+        # not require a private account and remain usable after disconnect.
+        personal_binding = (
+            (self._accounts[0], self._personal_binding_generation)
+            if account_id is not None and scope != "catalog" else None
+        )
         # Input validation above accepts harmless casing/outer whitespace,
         # but the Vault API must always receive the *declared* canonical
         # general-search value. Passing " ALL " to Vault would be a different
@@ -524,6 +532,10 @@ class KoboSession(ProviderSession):
             "TRACE kobo catalog plugin source=search items=%s with_cover=%s",
             len(accepted), cover_count,
         )
+        if personal_binding is not None:
+            # A close/rebind inside catalogue HTTP or local row projection
+            # must not present stale purchased items as current search hits.
+            self._ensure_personal_binding(*personal_binding)
         return accepted
 
     def _ensure_personal_binding(self, account: Account, generation: int) -> None:
