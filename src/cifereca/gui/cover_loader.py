@@ -478,13 +478,11 @@ class CoverLoader:
                         pass
 
                 if error is not None and self.diagnostics is not None:
-                    self.diagnostics.add(
-                        "COVER",
-                        "download",
-                        "error",
-                        duration_ms=elapsed,
-                        detail={"code": _cover_failure_code(error)},
-                        level="detailed",
+                    # Typed Core failure: no provider/loan/HTTP status inferred.
+                    # Visual fallback and cache cooldown remain unchanged.
+                    self.diagnostics.add_core_cover_failure(
+                        _cover_failure_code(error),
+                        duration_ms=min(600000, max(0, elapsed)),
                     )
                 self._maybe_report()
             finally:
