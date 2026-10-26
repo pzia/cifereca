@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from threading import Lock
 from types import SimpleNamespace as NS
 
 import pytest
@@ -148,6 +149,9 @@ def _service_host():
     host.current_account = first
     host.current_identity = NS(identity_id="alice")
     host._account_context_epoch = 1
+    # Production services create this lock in __init__; __new__ bypasses it.
+    host._search_generation_lock = Lock()
+    host.last_loans = []
     host._sessions = {}
     host.identity_by_id = lambda _id: None
     host.last_history = ["existing active history"]
