@@ -55,7 +55,6 @@ def test_closed_cover_failure_reason_renders_distinctly(reason):
     {"code": "http_status", "duration_ms": -1},
     {"code": "http_status", "duration_ms": 600001},
     {"code": "403", "duration_ms": 1},
-    {"code": "http_status", "duration_ms": 1, "url": "PRIVATE"},
     {"code": object(), "duration_ms": 1},
 ])
 def test_invalid_observations_never_claim_a_cover_reason(payload, caplog):
@@ -66,6 +65,10 @@ def test_invalid_observations_never_claim_a_cover_reason(payload, caplog):
     assert public_fields(payload) == {}
     assert diagnostics.snapshot() == []
     assert "couverture ·" not in caplog.text
+
+
+def test_unknown_keys_cannot_extend_cover_schema():
+    assert public_fields({"code": "http_status", "duration_ms": 1, "url": "PRIVATE"}) == {}
 
 
 def test_generic_cover_diagnostic_cannot_attest_http_failure():
