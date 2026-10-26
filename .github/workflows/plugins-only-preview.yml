@@ -65,7 +65,7 @@ jobs:
           cifereca-update-dev "$archive" --dry-run --json
 
       - name: Upload preview only (not a GitHub Release)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
