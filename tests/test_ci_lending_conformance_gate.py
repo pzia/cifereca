@@ -56,6 +56,7 @@ def test_workflow_wires_synthetic_suite_and_core_dependencies():
     assert "steps.scope.outputs.lending_conformance" in source
     assert 'python scripts/ci_lending_conformance_gate.py run' in source
     assert 'steps.scope.outputs.bnf_reader' in source
+    assert "(steps.scope.outputs.plugins == 'true' || steps.scope.outputs.lending_conformance == 'true')" in source
     assert 'python -m pip install --disable-pip-version-check -e .' in source
     step = source.split("- name: Paris/BnF lending conformance", 1)[1].split("\n      - name:", 1)[0]
     assert "PYTHONPATH: ${{ github.workspace }}/src" in step
