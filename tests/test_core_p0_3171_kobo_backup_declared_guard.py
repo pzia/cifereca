@@ -67,7 +67,13 @@ def test_active_declaration_blocks_even_with_unlinked_override_and_second_sync(t
             assert book.read_bytes() == original
             assert has_active_declared_link(service.storage, **scope)
             assert calls == []
-            assert service.storage.acquisitions(provider_id="kobo") == []
+            # backup_put mirrors an attention_required row into the legacy
+            # acquisition ledger. This is NOT a download, receipt or placement.
+            ledger = service.storage.acquisitions(provider_id="kobo")
+            assert all(entry["status"] == "attention_required"
+                       and entry["attempt_count"] == 0
+                       and entry["artifact_id"] is None for entry in ledger)
+            assert service.storage.placements() == []
     finally:
         service.close()
 
