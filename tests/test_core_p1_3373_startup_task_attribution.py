@@ -84,3 +84,51 @@ def test_auto_custom_handler_keeps_its_existing_failure_routing():
         assert not runner.window.show_error.called
     finally:
         runner.close()
+
+
+def test_success_worker_with_failing_gtk_callback_is_not_silent_success(caplog):
+    runner, displayed, flush, logger = _runner()
+    activity_results = []
+    runner.window._activity_result = (
+        lambda text, **kwargs: activity_results.append((text, kwargs))
+    )
+    try:
+        def ui_failure(_value):
+            raise LookupError("cookie=NEVER_LOG")
+        with caplog.at_level(logging.ERROR, logger=logger.name):
+            runner.submit("Opening refresh", lambda: {"sync": "ok"},
+                          ok=ui_failure, kind="opening-sync",
+                          origin="automatic")
+            flush()
+        assert [e for e, _ in displayed] == ["started", "finished"]
+        assert displayed[-1][1][3] is True  # worker completed
+        assert activity_results == [(
+            "Traitement indisponible",
+            {"success": False, "task_id": 1},
+        )]
+        assert not runner.window.show_error.called
+        assert "id=1 kind=opening-sync origin=automatic phase=gtk_ok_callback exception=LookupError" in caplog.text
+        assert "NEVER_LOG" not in caplog.text
+    finally:
+        runner.close()
+
+
+def test_gtk_error_callback_failure_is_diagnostic_not_provider_failure(caplog):
+    runner, displayed, flush, logger = _runner()
+    try:
+        def worker():
+            raise OSError("remote failure")
+        def handler(_payload):
+            raise LookupError("Bearer NEVER_LOG")
+        with caplog.at_level(logging.ERROR, logger=logger.name):
+            runner.submit("Source sync", worker, err=handler,
+                          kind="source-sync", origin="automatic")
+            flush()
+        assert [x for x, _ in displayed] == ["started", "finished"]
+        assert displayed[-1][1][3] is False
+        assert not runner.window.show_error.called
+        assert "phase=worker exception=OSError" in caplog.text
+        assert "phase=gtk_error_callback exception=LookupError" in caplog.text
+        assert "NEVER_LOG" not in caplog.text
+    finally:
+        runner.close()
