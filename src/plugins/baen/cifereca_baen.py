@@ -29,6 +29,30 @@ def _trusted_baen_url(value):
         return False
 
 
+def _listing_product_href(href, attrs, page_html):
+    """Recognize a product-title anchor without mistaking navigation for books.
+
+    Legacy /allbooks/ fixtures stay compatible. Root .html product URLs are
+    accepted only with Free Library listing evidence and a product-item-link
+    class, not on arbitrary search/home pages. Search stays partial.
+    """
+    if '/allbooks/' in href:
+        return True
+    classes = re.search(r'\\bclass\\s*=\\s*["\\']([^"\\']+)["\\']', attrs, re.I)
+    if classes is None or 'product-item-link' not in classes.group(1).split():
+        return False
+    try:
+        parsed = urlsplit(urljoin(BASE, href))
+        if (parsed.query or parsed.fragment
+                or not re.fullmatch(r'/[A-Za-z0-9][A-Za-z0-9_-]*\\.html', parsed.path)):
+            return False
+    except ValueError:
+        return False
+    return bool(re.search(r'\\bFree\\s+Library\\b', page_html, re.I)
+                and re.search(r'\\bShowing\\s+\\d+\\s*-\\s*\\d+\\s+of\\s+\\d+\\b',
+                              page_html, re.I))
+
+
 def _baen_explicit_download_offer(html_text, detail_url):
     """Find a trusted download button and whether its EPUB format is proven.
 
@@ -220,11 +244,15 @@ class BaenSession(ProviderSession):
             # Redirect loops are not evidence of a technical outage.
             raise failure from None
         out=[]; seen=set()
-        for href,body in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S):
+        for attrs,body in re.findall(r'<a\\b([^>]*)>(.*?)</a\\s*>',r.text,re.I|re.S):
+            href_match = re.search(r'\\bhref\\s*=\\s*["\\']([^"\\']+)["\\']', attrs, re.I)
+            if href_match is None: continue
+            href = html.unescape(href_match.group(1))
             plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
-            if not plain or plain.lower() in {'more...','buy'} or '/allbooks/' not in href: continue
+            if not plain or plain.lower() in {'more...','buy'}: continue
             detail=urljoin(BASE,href)
             if not _trusted_baen_url(detail): continue
+            if not _listing_product_href(href, attrs, r.text): continue
             if detail in seen: continue
             seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
             out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
