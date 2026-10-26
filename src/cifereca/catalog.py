@@ -173,6 +173,22 @@ class LocalCatalog:
         identity_hint, provider_hint = self._path_hints(root)
         identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
+        if existing and any((
+            identity_hint and existing.get("identity_id")
+                and identity_hint != existing["identity_id"],
+            provider_hint and existing.get("provider_id")
+                and provider_hint != existing["provider_id"],
+            item_id and existing.get("source_item_id")
+                and item_id != existing["source_item_id"],
+        )):
+            # A bundle rescan (or targeted reindex) cannot silently transfer
+            # ownership merely because an unrelated folder/caller says so.
+            return {"status": "invalid", "path": path_text,
+                    "reason": "placement_scope_conflict", "artifact_kind": "bundle"}
+        if existing:
+            identity_hint = identity_hint or existing.get("identity_id")
+            provider_hint = provider_hint or existing.get("provider_id")
+            item_id = item_id or existing.get("source_item_id")
         now = int(time.time())
         try:
             manifest = load_bundle_manifest(root, verify=True)
@@ -182,10 +198,12 @@ class LocalCatalog:
             # or raw manifest values. Persist only an explicit closed reason.
             reason = "bundle_manifest_invalid"
             self.storage.placement_put({
-                "placement_id": placement_id, "artifact_id": None, "path": path_text,
+                "placement_id": placement_id,
+                "artifact_id": (existing or {}).get("artifact_id"), "path": path_text,
                 "identity_id": identity_hint, "provider_id": provider_hint,
                 "source_item_id": item_id, "state": "invalid", "last_seen_at": now,
-                "metadata": {"invalid_reason": reason, "artifact_kind": "bundle"},
+                "metadata": {**dict((existing or {}).get("metadata") or {}),
+                             "invalid_reason": reason, "artifact_kind": "bundle"},
             })
             return {"status": "invalid", "path": path_text, "reason": reason, "artifact_kind": "bundle"}
 
@@ -511,6 +529,16 @@ class LocalCatalog:
                                      "media_format": media_format},
                     }
                 )
+                # The physical placement is no longer trusted; an old
+                # catalogue projection must not continue to advertise this
+                # file as local/usable while its bytes are invalid.
+                if previous:
+                    for entry in self.storage.catalog_entries():
+                        if (entry.get("placement_id") == previous["placement_id"]
+                                and entry.get("local_state") != "invalid"):
+                            self.storage.catalog_entry_put({
+                                **entry, "local_state": "invalid",
+                            })
                 continue
 
             existing = self.storage.placement_for_path(Path(path_text))
