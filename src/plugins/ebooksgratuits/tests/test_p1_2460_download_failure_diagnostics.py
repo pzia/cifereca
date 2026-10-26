@@ -77,6 +77,8 @@ def test_failed_download_is_exactly_classified_without_retry_or_partial_file(
         with pytest.raises(ProviderError) as exc:
             s.download_direct(row, tmp_path)
         assert str(exc.value) == "Ebooks libres et gratuits : " + expected
+        assert exc.value.__cause__ is None
+        assert exc.value.__context__ is None
         assert len(transport.calls) == 1
         assert transport.calls[0][0]["url"] == DOWNLOAD
         assert not list(tmp_path.rglob("*.epub"))
@@ -95,6 +97,8 @@ def test_transport_error_never_exposes_raw_response_token_or_url(tmp_path):
             s.download_direct(row, tmp_path)
         assert marker not in str(exc.value)
         assert marker not in repr(exc.value)
+        assert exc.value.__cause__ is None
+        assert exc.value.__context__ is None
         assert str(exc.value).endswith("download_invalid_content")
         assert len(transport.calls) == 1
     finally:
@@ -104,12 +108,14 @@ def test_transport_error_never_exposes_raw_response_token_or_url(tmp_path):
 def test_unrecognized_error_does_not_leak_or_claim_http_status(tmp_path):
     marker = "SECRET_USER_PATH_2460"
     for error in (RuntimeError(marker), UnsupportedOperation(marker),
-                  TemporaryUnavailable(marker)):
+                  TemporaryUnavailable(marker), ProviderError(marker)):
         s, transport, row = session(error)
         try:
             with pytest.raises(ProviderError) as exc:
                 s.download_direct(row, tmp_path)
             assert marker not in str(exc.value)
+            assert exc.value.__cause__ is None
+            assert exc.value.__context__ is None
             assert "download_" in str(exc.value)
             assert len(transport.calls) == 1
         finally:
