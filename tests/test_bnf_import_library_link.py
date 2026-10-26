@@ -203,7 +203,16 @@ def test_projection_refuses_inconsistent_import_evidence(bnf_importer, alteratio
     else:
         placement = service.storage.placement_for_path(Path(result['path']))
         placement['provider_id'] = 'manual'
-        service.storage.placement_put(placement)
+        # The public storage API now refuses reassignment to another
+        # provider. Simulate a legacy-corrupt row directly to retain the
+        # independent display/projection regression check.
+        with pytest.raises(ValueError, match='placement_scope_conflict'):
+            service.storage.placement_put(placement)
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                'UPDATE placements SET provider_id=? WHERE placement_id=?',
+                ('manual', placement['placement_id']),
+            )
     rows = service.library_entries(identity_id='default', scan=False)
     assert len(rows) == 2
     assert len([r for r in rows if not r['local']]) == 1
