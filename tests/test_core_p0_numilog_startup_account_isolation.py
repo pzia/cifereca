@@ -60,7 +60,10 @@ def test_two_consenting_accounts_each_get_eight_downloads_not_one_shared_quota(
         session_b.library = lambda: [_row(b.credential_id, i) for i in range(11)]
         acquired = _safe_mock_downloads(monkeypatch, service)
         result = execute(broker, "default", "startup")
-        assert result.ok is True
+        assert not result.ok and result.facts["status"] == "partial"
+        # Both accounts have three purchases left after their independent
+        # eight-attempt quotas; neither can be marked complete.
+        assert result.facts["blocked"] == 2
         assert result.changed == result.facts["downloaded"] == 16
         assert result.facts["attempted"] == 16
         assert [r.source_credential for r in acquired] == (
@@ -68,7 +71,7 @@ def test_two_consenting_accounts_each_get_eight_downloads_not_one_shared_quota(
         )
         for sid in (sid_a, sid_b):
             receipt = broker.numilog_materialization_run_status(sid)
-            assert receipt["status"] == "complete"
+            assert receipt["status"] == "partial"
             assert receipt["downloaded"] == receipt["attempted"] == 8
         assert calls_a == calls_b == []
     finally:
