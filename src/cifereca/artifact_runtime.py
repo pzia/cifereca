@@ -29,6 +29,10 @@ class _DuplicateScopeConflict(Conflict):
     """A fixed UI-safe reason; never include private path or borrower text."""
     code = "placement_not_duplicate"
 
+class _VariantScopeConflict(Conflict):
+    """Deleting a shared SHA is not authority to unlink another book."""
+    code = "artifact_variant_scope_conflict"
+
 
 
 
@@ -670,7 +674,7 @@ class LibraryMaintenanceBrokerImpl:
             # deleting one cannot authorize deletion of the other's bytes.
             if (len(rows) != 1
                     or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
-                raise Conflict("Variante et source non indépendantes", code="artifact_variant_scope_conflict")
+                raise _VariantScopeConflict("Variante et source non indépendantes")
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
@@ -899,7 +903,7 @@ class LibraryMaintenanceBrokerImpl:
             if not rows: return LibraryMutationResult(True,0,"Variante déjà absente")
             if (len(rows) != 1
                     or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
-                raise Conflict("Variante et source non indépendantes", code="artifact_variant_scope_conflict")
+                raise _VariantScopeConflict("Variante et source non indépendantes")
             variant=rows[0]; source_id=str(variant.get("source_artifact_id") or "")
             for placement in [p for p in self.service.storage.placements() if str(p.get("artifact_id") or "") == request.artifact_id]:
                 path=Path(str(placement.get("path") or ""))
