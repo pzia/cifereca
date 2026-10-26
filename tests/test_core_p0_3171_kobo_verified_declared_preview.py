@@ -64,7 +64,8 @@ def test_unverified_preview_does_not_promote_declared_link(tmp_path, monkeypatch
     monkeypatch.setattr(presence, "acquisition_lock_file", lambda: tmp_path / "presence.lock")
     try:
         view = service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert view["counts"]["already_local_declared"] == 0
+        # Offline/unverified views retain their historical schema exactly.
+        assert "already_local_declared" not in view["counts"]
         assert view["counts"]["attention_required"] == 1
         assert book.is_file()
     finally:
