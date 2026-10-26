@@ -124,6 +124,7 @@ class DeclarationActions:
                     'locale confirmée ; la déclaration reste révocable.'
                     if result.get('presence_state') == 'declared_needs_review'
                     else
+                    'Cette correspondance est déjà déclarée par vous. '
                     'Fichier local revérifié (octets et périmètre exact) ; '
                     'association manuelle présente pour le droit enregistré. '
                     'Ceci n’atteste ni achat auprès du fournisseur ni '
