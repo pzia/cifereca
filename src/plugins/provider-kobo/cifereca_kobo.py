@@ -644,6 +644,11 @@ class KoboSession(ProviderSession):
                 self.last_library_rejections.append({
                     "type": "ProviderError", "reason": "normalization_error",
                 })
+        # The first fence only covers the Vault HTTP GET. A close/rebind can
+        # also race normalization (including a custom catalogue adapter).
+        # Never publish rights under an account generation which has changed
+        # while projecting the provider's raw rows.
+        self._ensure_personal_binding(bound_account, generation)
         return rows
 
     def backup_manifest(self) -> list[dict[str, Any]]:
@@ -781,6 +786,9 @@ class KoboSession(ProviderSession):
             "TRACE kobo covers source=backup items=%s with_cover=%s missing=%s",
             len(items), _cover_count, len(items) - _cover_count,
         )
+        # Classification and cover extraction happen after the initial GET
+        # fence; a close/reconnect there must not return a stale backup batch.
+        self._ensure_personal_binding(bound_account, generation)
         return items
 
     def resolve_acquisition(
