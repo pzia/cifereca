@@ -29,6 +29,10 @@ class _DuplicateScopeConflict(Conflict):
     """A fixed UI-safe reason; never include private path or borrower text."""
     code = "placement_not_duplicate"
 
+class _VariantScopeConflict(Conflict):
+    """Deleting a shared SHA is not authority to unlink another book."""
+    code = "artifact_variant_scope_conflict"
+
 
 
 
@@ -212,6 +216,15 @@ class ArtifactExecutionBrokerImpl:
             raise Conflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
         if result.size_bytes and actual_size != int(result.size_bytes):
             raise Conflict("Taille de transformation invalide", code="artifact_output_size_mismatch")
+        # An identity transform has exactly the original content-addressed
+        # artifact_id. Persisting a self-variant would make delete_variant
+        # select and physically unlink the ORIGINAL book placements. The
+        # produced staging file is disposable; preserve the existing source
+        # artifact and do not create a false independent derivative.
+        if actual_sha == source.sha256:
+            path.unlink()
+            lease.active = False
+            return source
         existing = self.service.storage.artifact_variant_find(
             source_sha256=source.sha256, transformer_plugin_id=transformer_plugin_id,
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
@@ -581,6 +594,45 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
     return True
 
 
+def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
+    """Deleting a derived SHA cannot unlink another book sharing its bytes.
+
+    The physical placement table is content-addressed. Only placements
+    explicitly materialized by this variant's source are candidates for
+    global deletion. A generic/local/provider placement with the same SHA,
+    or a derivative now shared across identities, remains independent.
+    """
+    if type(variant) is not dict:
+        return False
+    artifact_id = variant.get("artifact_id")
+    source_id = variant.get("source_artifact_id")
+    if (type(artifact_id) is not str or not artifact_id
+            or type(source_id) is not str or not source_id
+            or artifact_id == source_id):
+        return False
+    placements = [
+        row for row in storage.placements()
+        if row.get("artifact_id") == artifact_id
+    ]
+    scopes = set()
+    for row in placements:
+        metadata = row.get("metadata")
+        scope = tuple(row.get(key) for key in (
+            "identity_id", "provider_id", "source_item_id"
+        ))
+        if (type(metadata) is not dict
+                or metadata.get("variant") is not True
+                or metadata.get("source_artifact_id") != source_id
+                or any(type(value) is not str or not value for value in scope)
+                or row.get("state") != "present"
+                or Path(str(row.get("path") or "")).is_symlink()):
+            return False
+        scopes.add(scope)
+        if len(scopes) > 1:
+            return False
+    return True
+
+
 @dataclass(slots=True)
 class LibraryMaintenanceBrokerImpl:
     service: Any
@@ -616,6 +668,13 @@ class LibraryMaintenanceBrokerImpl:
         if op == "delete_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: raise NotFound("Variante inconnue", code="artifact_variant_not_found")
+            # Content-addressed identity derivatives can exist in historical
+            # stores. Never unlink the source artifact's physical placements.
+            # More than one variant row sharing the hash is also ambiguous:
+            # deleting one cannot authorize deletion of the other's bytes.
+            if (len(rows) != 1
+                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
+                raise _VariantScopeConflict("Variante et source non indépendantes")
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
@@ -842,6 +901,9 @@ class LibraryMaintenanceBrokerImpl:
         if request.operation == "delete_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: return LibraryMutationResult(True,0,"Variante déjà absente")
+            if (len(rows) != 1
+                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
+                raise _VariantScopeConflict("Variante et source non indépendantes")
             variant=rows[0]; source_id=str(variant.get("source_artifact_id") or "")
             for placement in [p for p in self.service.storage.placements() if str(p.get("artifact_id") or "") == request.artifact_id]:
                 path=Path(str(placement.get("path") or ""))
