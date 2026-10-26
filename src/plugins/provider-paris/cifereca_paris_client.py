@@ -417,6 +417,11 @@ class ParisClient:
                 "TRACE paris list-loans phase=response method=GET route=ListLoans upstream=%s http_status=%s content_type=%s",
                 upstream, public_http_status(r.status_code), content_type,
             )
+            # A followed 302/307 must not turn into a successful loan JSON.
+            # Only the original ListLoans response is admissible as inventory.
+            if r.history:
+                raise ParisLoanListError("paris_loans_redirect_unexpected",
+                                         status=r.status_code)
             code = _list_loans_response_error(r)
             if code is not None:
                 raise ParisLoanListError(code, status=r.status_code)
