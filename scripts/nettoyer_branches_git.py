@@ -20,7 +20,12 @@ une simulation --plan conservée, et un plafond --max-delete explicite.
 Le plan est revalidé avant tout push, et chaque suppression vérifie le HEAD
 (force-with-lease). Une PR créée après l'instantané reste un risque résiduel :
 revérifier la liste des PR immédiatement avant --apply.
-Simulation par défaut ; aucune suppression implicite.
+Une ligne !branche dans --exclude (ou une entrée --force-delete-branches)
+permet, à la demande explicite de l'opérateur, de supprimer des branches
+nommées exactement même si elles figurent parmi les exclusions
+ou ne satisfont pas R0/R1. Le plan montre ces suppressions comme FORCÉ,
+mais main, les branches de PR ouvertes et la branche actuellement checkoutée
+restent interdites. Simulation par défaut ; aucune suppression implicite.
 """
 from __future__ import annotations
 
@@ -105,13 +110,40 @@ def open_pr_names(path: str | None) -> set[str]:
     return set(names)
 
 
-def snapshot(main_sha: str, pr_names: set[str], candidates: list[Verdict]) -> dict:
+def exclusion_rules(path: str | None) -> tuple[list[str], set[str]]:
+    """Lignes ordinaires = protéger ; !branche = supprimer malgré les preuves."""
+    retained = []
+    forced = []
+    for line in patterns_from_file(path):
+        if line.startswith("!"):
+            forced.append(line[1:])
+        else:
+            retained.append(line)
+    return retained, validate_forced_names(forced)
+
+
+def validate_forced_names(names: list[str]) -> set[str]:
+    for name in names:
+        if not name or any(ch in name for ch in "*?["):
+            raise RuntimeError(f"Suppression forcée : nom explicite requis, sans glob : {name!r}")
+        if not git_test("check-ref-format", "--branch", name):
+            raise RuntimeError(f"Suppression forcée : nom de branche invalide : {name!r}")
+    return set(names)
+
+
+def force_delete_names(path: str | None) -> set[str]:
+    """Autre fichier de noms exacts, sans préfixe ! ni motifs glob."""
+    return validate_forced_names(patterns_from_file(path))
+
+
+def snapshot(main_sha: str, pr_names: set[str], forced: set[str], candidates: list[Verdict]) -> dict:
     """Données nécessaires pour un consentement explicite sur un ensemble de HEAD."""
     return {
-        "format": 1,
+        "format": 2,
         "repository": REPO,
         "main_sha": main_sha,
         "open_pr_branches": sorted(pr_names),
+        "force_delete_branches": sorted(forced),
         "candidates": [
             {"branch": v.branch, "head": v.head, "category": v.category,
              "evidence": v.evidence}
@@ -283,7 +315,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--remote", default="origin", help="Remote Git (défaut : origin)")
     ap.add_argument("--base", default="main", choices=["main"], help="Branche de base (main uniquement)")
-    ap.add_argument("--exclude", help="Motifs glob de branches à conserver, un par ligne")
+    ap.add_argument("--exclude", help="Règles : branche ou glob = conserver ; !branche exacte = suppression forcée")
+    ap.add_argument("--force-delete-branches", metavar="FILE",
+                    help="Noms EXACTS des branches à supprimer même si exclues/divergentes ; jamais main/PR ouvertes")
     ap.add_argument("--open-pr-branches", help="Fichier de noms EXACTS des branches de PR ouvertes (requis pour --apply)")
     ap.add_argument("--r1-manifest", help="JSON de PR fusionnées pour attester R1 sans API")
     ap.add_argument("--skip-r1-git", action="store_true", help="R1 seulement via manifeste (plus rapide)")
@@ -312,11 +346,19 @@ def main() -> int:
         ap.error(f"Remote inattendu : {url!r} ; attendu github.com/{REPO}")
 
     proofs = load_manifest(args.r1_manifest)
-    protected = [*PROTECTED, *patterns_from_file(args.exclude)]
+    excluded_patterns, forced_from_rules = exclusion_rules(args.exclude)
+    protected = [*PROTECTED, *excluded_patterns]
     protected_prs = open_pr_names(args.open_pr_branches)
+    forced = forced_from_rules | force_delete_names(args.force_delete_branches)
     local = git("branch", "--show-current").stdout.strip()
+    forbidden = {args.base, *protected_prs}
     if local:
+        forbidden.add(local)
         protected.append(local)  # Ne pas détruire la branche actuellement checkoutée.
+    overlap = forced & forbidden
+    if overlap:
+        raise RuntimeError("Suppression forcée interdite pour main, PR ouverte ou "
+                           f"branche checkoutée : {', '.join(sorted(overlap))}")
 
     print("Récupération de l'historique Git et inventaire des refs distantes…")
     # Un clone --single-branch ne récupère pas les objets des autres HEAD avec
@@ -326,6 +368,10 @@ def main() -> int:
     heads = remote_heads(args.remote)
     if args.base not in heads:
         raise RuntimeError(f"Branche distante absente : {args.base}")
+    missing_forced = forced - heads.keys()
+    if missing_forced:
+        raise RuntimeError("Branches demandées en suppression forcée absentes du remote : "
+                           + ", ".join(sorted(missing_forced)))
     main_sha = heads[args.base]
     ref = f"refs/remotes/{args.remote}/{args.base}"
     if git("rev-parse", "--verify", ref).stdout.strip().lower() != main_sha:
@@ -338,7 +384,9 @@ def main() -> int:
     verdicts: list[Verdict] = []
     counts: dict[str, int] = {}
     for name, head in sorted(heads.items()):
-        if (name == args.base or name in protected_prs
+        if name in forced:
+            category, proof = "FORCÉ", "suppression explicite, sans preuve d'intégration R0/R1"
+        elif (name == args.base or name in protected_prs
                 or any(fnmatch.fnmatchcase(name, pattern) for pattern in protected)):
             category, proof = "PROTÉGÉ", "motif d'exclusion"
         elif not commit_available(head):
@@ -361,8 +409,8 @@ def main() -> int:
 
     if args.report:
         export_csv(args.report, verdicts)
-    candidates = [v for v in verdicts if v.category in {"R0", "R1-manifeste", "R1-git"}]
-    plan = snapshot(main_sha, protected_prs, candidates)
+    candidates = [v for v in verdicts if v.category in {"R0", "R1-manifeste", "R1-git", "FORCÉ"}]
+    plan = snapshot(main_sha, protected_prs, forced, candidates)
     if args.plan:
         if args.apply:
             validate_plan(args.plan, plan)
@@ -370,7 +418,7 @@ def main() -> int:
             Path(args.plan).write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
                                        encoding="utf-8")
     print(f"Remote : {args.remote} ({REPO}) | base main : {main_sha[:12]} | total : {len(heads)}")
-    for cat in ("R0", "R1-git", "R1-manifeste", "À_CONSERVER", "PROTÉGÉ", "INCONNU"):
+    for cat in ("R0", "R1-git", "R1-manifeste", "FORCÉ", "À_CONSERVER", "PROTÉGÉ", "INCONNU"):
         print(f"  {cat:15s} {counts.get(cat, 0)}")
     if args.report:
         print(f"Rapport : {args.report}")
@@ -379,7 +427,7 @@ def main() -> int:
     if len(candidates) > args.list_limit:
         print(f"  ... {len(candidates) - args.list_limit} autres candidates ; utiliser --report")
     if not args.apply:
-        print("Aucune suppression. Fournir une liste fraîche des PR ouvertes, --plan et --max-delete avec --apply.")
+        print("Aucune suppression. Vérifier les branches FORCÉ du plan puis fournir --plan, la liste des PR et --max-delete avec --apply.")
         return 0
     if args.max_delete and len(candidates) > args.max_delete:
         raise RuntimeError(f"{len(candidates)} candidates > --max-delete {args.max_delete} : aucune suppression")
@@ -392,7 +440,7 @@ def main() -> int:
     if not args.yes:
         if not sys.stdin.isatty():
             raise RuntimeError("Session non interactive : utiliser --apply --yes après inspection du rapport")
-        answer = input(f"Supprimer {len(candidates)} branches distantes (R0/R1) ? Taper SUPPRIMER : ")
+        answer = input(f"Supprimer {len(candidates)} branches distantes, dont {counts.get('FORCÉ', 0)} forcées ? Taper SUPPRIMER : ")
         if answer != "SUPPRIMER":
             print("Annulé, aucune suppression.")
             return 0
