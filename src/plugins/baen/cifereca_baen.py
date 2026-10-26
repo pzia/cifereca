@@ -255,7 +255,7 @@ class BaenSession(ProviderSession):
             if not _listing_product_href(href, attrs, r.text): continue
             if detail in seen: continue
             seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
-            out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
+            out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format=None,publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
         # Neither cards nor zero markers establish that this legacy route
         # applied q/page/pageSize. Keep every successful response partial
         # until the server search and pagination contract is qualified.
