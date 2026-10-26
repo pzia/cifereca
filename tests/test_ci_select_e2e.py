@@ -190,6 +190,7 @@ class SelectionTests(unittest.TestCase):
             "gtk-llm-settings": "llm_settings_probe.py",
             "gtk-maintenance": "maintenance_tools_probe.py",
             "gtk-diagnostics": "diagnostics_page_probe.py",
+            "gtk-diagnostics-raw-export": "diagnostics_raw_export_probe.py",
             "gtk-diagnostics-states": "diagnostics_states_probe.py",
             "gtk-diagnostics-structured": "diagnostics_structured_probe.py",
             "gtk-diagnostics-volume": "diagnostics_volume_probe.py",
