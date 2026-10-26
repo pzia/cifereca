@@ -94,6 +94,7 @@ def test_listloans_http_denial_is_typed_without_retry_or_secret(status, reason, 
     ("html", "paris_loans_html_unexpected"),
     ("redirect_html", "paris_loans_redirect_unexpected"),
     ("not_json", "paris_loans_non_json"),
+    ("json_list", "paris_loans_json_shape_invalid"),
 ))
 def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
     calls = []
@@ -109,6 +110,8 @@ def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
                                   headers={"content-type": "text/html"})
         if reply == "redirect_html":
             return httpx.Response(302, headers={"location": "/private-login"})
+        if reply == "json_list":
+            return httpx.Response(200, json=[])
         return httpx.Response(200, text="bad json",
                               headers={"content-type": "application/json"})
 
