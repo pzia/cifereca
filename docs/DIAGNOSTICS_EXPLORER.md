@@ -1,5 +1,8 @@
 # Diagnostics P0 — explorateur #1013 et première ergonomie #1011
 
+> **Contrat cible impératif depuis le 25/10/2026 :** [LOGGING-CONTRACT.md](LOGGING-CONTRACT.md) (#2900). Journal brut intact ; un seul champ recherche toutes les sources et pages ; **seulement les valeurs de login/mot de passe sont pseudonymisées dans l'IHM**. Tous les autres champs restent visibles. La copie du texte affiché contient les pseudonymes ; l'export brut est inchangé. Les anciens comportements de copies, résumés « expurgés », filtres et pages décrits ci-dessous sont des **constats historiques**, et non des exigences valables contre cette décision.
+
+
 L'explorateur « Journaux par composant » est inséré dans la **page Diagnostics
 existante** ; il n'installe aucune nouvelle page parallèle. Il consomme
 uniquement `context.broker("diagnostics").events()`, livré par #1010.

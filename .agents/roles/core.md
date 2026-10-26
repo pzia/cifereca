@@ -1,5 +1,7 @@
 # Rôle : core
 
+**Skill journalisation obligatoire :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) · [contrat transverse](../../docs/LOGGING-CONTRACT.md). Les consignes Diagnostics ci-dessous restent prioritaires.
+
 ## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
 
 **Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**

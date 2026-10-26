@@ -1,3 +1,5 @@
+> **ATTENTION — état historique, et non contrat cible.** La décision impérative [LOGGING-CONTRACT.md](LOGGING-CONTRACT.md) du 25/10/2026 ([#2900](https://github.com/pzia/cifereca/issues/2900)) annule toute exigence de listes blanches, expurgations génériques, champs omis et résumés « masqués » décrite ci-dessous. Cible : Core, plugins, fichier, terminal, broker, recherche et export brut conservent toutes les données réellement émises ; **seul le rendu IHM** pseudonymise **login/mot de passe**, sans modifier les autres champs. Les dispositions historiques restent descriptives de l'implémentation existante, **pas des exceptions à la consigne**. La mise en conformité du code reste à réaliser séparément.
+
 # P0 #1010 — Flux public Diagnostics, lecture bornée
 
 Le broker public `context.broker("diagnostics")` expose désormais :

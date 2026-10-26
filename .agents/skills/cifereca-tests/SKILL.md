@@ -5,6 +5,8 @@ description: Concevoir, placer, exécuter ou réorganiser les tests Cifereca en 
 
 # Tests Cifereca
 
+**Contrat des tests de journalisation :** [cifereca-logging](../cifereca-logging/SKILL.md) et [référence](../../../docs/LOGGING-CONTRACT.md) ; tester les traces brutes, pseudonymisation login/password seulement en IHM, et conserver les fixtures synthétiques.
+
 ## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
 
 **Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**

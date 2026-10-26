@@ -15,7 +15,7 @@ Le Core porte les primitives transversales et réutilisables :
 - acquisition générique ;
 - inspection et publication d'artefacts ;
 - cache et single-flight ;
-- diagnostics, health checks et redaction ;
+- journalisation intégrale, diagnostics et health checks ; pseudonymisation **seulement du login/mot de passe dans l'IHM** ([contrat](../../docs/LOGGING-CONTRACT.md)) ;
 - task broker, progression et annulation ;
 - transport et contrats communs ;
 - stockage, ledger et orchestration générique.
@@ -39,7 +39,7 @@ Voir `docs/PLUGIN-BOUNDARIES.md`.
 - Kobo porte son contrat provider dans `src/plugins/provider-kobo/tests/`.
 - Kobo-Adept est un runtime spécialisé séparé du Core.
 - `transport.http` mutualise transport, health check et publication finale d'artefacts.
-- La politique de redaction diagnostics est exposée publiquement et partagée.
+- **[Contrat canonique de logs](../../docs/LOGGING-CONTRACT.md)** : les plugins transmettent leurs événements et détails complets, sans suppression en amont ; seul l'affichage IHM pseudonymise login/mot de passe. Le journal/console/broker et les exports bruts demeurent intacts. Le partage de journaux bruts reste volontaire, jamais automatique.
 
 ## Tests
 

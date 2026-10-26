@@ -5,6 +5,8 @@ description: Créer, modifier ou valider un plugin Cifereca en respectant l'API 
 
 # Plugin Cifereca
 
+**Toute production de journaux fournisseurs applique** [cifereca-logging](../cifereca-logging/SKILL.md) et [le contrat](../../../docs/LOGGING-CONTRACT.md), sans masquer les champs hors affichage IHM.
+
 ## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
 
 **Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**

@@ -4,7 +4,7 @@
 
 ## Consigne Diagnostics prioritaire — 25/10/2026
 
-Le Core et les plugins émettent dans **un journal brut unique**, sans effacer les détails des opérations. Ni le journal, ni la console, ni le broker, ni les exports bruts ne masquent les valeurs (URLs, chemins, comptes, tokens, cookies, titres, etc.). L'IHM Diagnostics est seule à pseudonymiser **les valeurs de login et de mot de passe**, sans masquer d'autre champ. Les tests vérifient la fidélité des valeurs brutes et la pseudonymisation de rendu ; aucun envoi automatique ni dump d'authentification créé uniquement pour les diagnostics. Fichiers locaux 0600, confirmation avant export brut. Ce contrat remplace les anciennes exigences d'expurgation générique des logs. Voir [journal canonique](DIAGNOSTICS_CANONICAL_JOURNAL.md).
+Le Core et les plugins émettent dans **un journal brut unique**, sans effacer les détails des opérations. Ni le journal, ni la console, ni le broker, ni les exports bruts ne masquent les valeurs (URLs, chemins, comptes, tokens, cookies, titres, etc.). L'IHM Diagnostics est seule à pseudonymiser **les valeurs de login et de mot de passe**, sans masquer d'autre champ. Les tests vérifient la fidélité des valeurs brutes et la pseudonymisation de rendu ; aucun envoi automatique ni dump d'authentification créé uniquement pour les diagnostics. Fichiers locaux 0600, confirmation avant export brut. Ce contrat remplace les anciennes exigences d'expurgation générique des logs. Voir [journal canonique](DIAGNOSTICS_CANONICAL_JOURNAL.md) et [contrat transversal](LOGGING-CONTRACT.md).
 
 ## Principe
 
