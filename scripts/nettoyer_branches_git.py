@@ -369,7 +369,7 @@ def main() -> int:
         else:
             Path(args.plan).write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
                                        encoding="utf-8")
-    print(f"Remote : {url} | base main : {main_sha[:12]} | total : {len(heads)}")
+    print(f"Remote : {args.remote} ({REPO}) | base main : {main_sha[:12]} | total : {len(heads)}")
     for cat in ("R0", "R1-git", "R1-manifeste", "À_CONSERVER", "PROTÉGÉ", "INCONNU"):
         print(f"  {cat:15s} {counts.get(cat, 0)}")
     if args.report:
