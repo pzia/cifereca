@@ -5,6 +5,7 @@ Provider reads are synthetic. No actual PNB POST, ADEPT call or rights changes.
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,7 +17,9 @@ from tests.test_core_0984_adept_first_paris_reconcile import setup as adept_setu
 
 
 def _enable_typed(session, *, status="success", loans=(), coverage="unknown"):
+    session.provider_id = "paris"
     session.credential_id = "paris-a"
+    session.capabilities = SimpleNamespace(loans=True)
     calls = []
     def inventory(account):
         calls.append(account.unique_id)
@@ -105,6 +108,7 @@ def test_inflight_typed_return_rejects_changed_context_before_confirming_absence
     loan = _loan()
     session = Session([])
     session.credential_id = "paris-a"
+    session.capabilities = SimpleNamespace(loans=True)
     service = _library(tmp_path, session=session)
     original_accounts = service.accounts
     original_session = service._sessions["paris::paris-a"]
