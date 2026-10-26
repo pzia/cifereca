@@ -46,6 +46,7 @@ jobs:
               echo "python=true"
               echo "bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select --full)"
               echo "lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select --full)"
+              echo "branch_cleanup=$(test -f scripts/nettoyer_branches_git_stream.py && echo true || echo false)"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -66,6 +67,7 @@ jobs:
           packaging=false
           install=false
           dataset=false
+          branch_cleanup=false
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
           lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
@@ -96,6 +98,12 @@ jobs:
 
           if matches '^simulation/'; then
             dataset=true
+          fi
+
+          # Remote branch deletion requires offline safety tests whenever its
+          # script or tests change; they live outside the usual tests/ tree.
+          if matches '^scripts/(nettoyer_branches_git_stream\.py|test_nettoyer_branches_git_stream\.py)$'; then
+            branch_cleanup=true
           fi
 
           # Gate script changes exercise packaging and installed-Core validation.
@@ -145,10 +153,18 @@ jobs:
             echo "python=$python"
             echo "bnf_reader=$bnf_reader"
             echo "lending_conformance=$lending_conformance"
+            echo "branch_cleanup=$branch_cleanup"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check production plugins use Core HTTPX service
         run: python3 scripts/ci_plugin_httpx_boundary.py
+
+      - name: Stream branch cleanup safety tests (local bare Git)
+        if: steps.scope.outputs.branch_cleanup == 'true'
+        run: |
+          test -f scripts/nettoyer_branches_git_stream.py
+          test -f scripts/test_nettoyer_branches_git_stream.py
+          python3 -m unittest -v scripts.test_nettoyer_branches_git_stream
 
       - uses: actions/setup-python@v6
         if: steps.scope.outputs.python == 'true'
