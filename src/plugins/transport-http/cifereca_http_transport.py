@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from cifereca.plugin_api import Conflict, TemporaryUnavailable, UnsupportedOperation, inspect_artifact, publish_artifact_file
 
@@ -93,7 +94,8 @@ class HttpTransport:
         self.timeout_seconds = float(self.config.get("timeout_seconds", 30) or 30)
         self.max_download_bytes = int(self.config.get("max_download_bytes", 256 * 1024 * 1024) or 256 * 1024 * 1024)
         self.max_redirects = int(self.config.get("max_redirects", 8) or 8)
-        self.client = httpx.Client(
+        self.client = HTTPX_TRANSPORT.client(
+            producer="transport.http",
             follow_redirects=False,
             trust_env=False,
             headers={"User-Agent": "cifereca-http-transport/1.0"},
