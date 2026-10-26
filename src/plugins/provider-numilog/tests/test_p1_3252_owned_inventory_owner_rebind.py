@@ -73,15 +73,28 @@ def test_library_rejects_changed_or_revoked_owner_during_http_read(new_owner):
         s.close()
 
 
-def test_library_refuses_unbound_owner_before_network():
+@pytest.mark.parametrize("new_owner", [None, "identity-A"])
+def test_unresolved_owner_keeps_v1_inventory_but_detects_new_binding(new_owner):
     s, broker = session()
     broker.owner = None
     calls = []
-    s._rows = lambda **kwargs: calls.append("meslivres") or [owned_row()]
+
+    def read(**kwargs):
+        calls.append("meslivres")
+        broker.owner = new_owner
+        return [owned_row()]
+
+    s._rows = read
     try:
-        with pytest.raises(ProviderCapabilityError, match="identité propriétaire indisponible"):
-            s.library()
-        assert calls == []
+        if new_owner is None:
+            # Pure library inspection predates the identity broker and must
+            # remain possible. The separate ACSM path REQUIRES an owner.
+            assert len(s.library()) == 1
+        else:
+            with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
+                s.library()
+        assert calls == ["meslivres"]
+        assert broker.calls >= 2
     finally:
         s.close()
 
