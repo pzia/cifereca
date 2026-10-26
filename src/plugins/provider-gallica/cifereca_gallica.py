@@ -20,7 +20,7 @@ from cifereca.plugin_api import (
     ProviderSearchCapabilities,
     ProviderCapabilityError,
     ProviderDescriptor,
-    ProviderError,
+    ProviderError, Cancelled,
     ProviderPlugin,
     ProviderSession, normalize_language_tag, sanitize_filename_component, description_text, description_element,
 )
@@ -706,6 +706,11 @@ class GallicaSession(ProviderSession):
         }
         try:
             path = Path(self.transport.fetch(source, path))
+        except Cancelled:
+            # The caller explicitly aborted the transfer: preserve the
+            # control-flow signal instead of reporting a failed provider.
+            path.unlink(missing_ok=True)
+            raise
         except Exception as exc:
             path.unlink(missing_ok=True)
             if isinstance(exc, ProviderError):
