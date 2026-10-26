@@ -13,6 +13,7 @@ import pytest
 
 from cifereca.core.diagnostic_journal import query_journal
 from cifereca.diagnostics import Diagnostics
+from cifereca.plugin_api import Cancelled
 from cifereca.logging_utils import CanonicalEventFormatter
 from cifereca.providers import ProviderConfigurationError
 from cifereca.services import LibraryService
@@ -138,3 +139,55 @@ def test_broken_diagnostic_explanation_cannot_change_the_existing_refusal():
     assert row["detail"]["status"] == "refused"
     assert row["detail"]["code"] == "unclassified_error"
     assert row["detail"]["phase"] == "admission"
+
+
+@pytest.mark.parametrize("level", ("normal", "errors"))
+def test_cooperative_explicit_cancellation_is_one_warning_not_provider_failure(
+    level, tmp_path,
+):
+    service, loan, checks = setup_service("provider_disconnected", level=level)
+    stopped = Cancelled("synthetic controlled interruption")
+    requests = []
+
+    def cooperative_cancel(_loan):
+        requests.append("one-explicit-recovery")
+        raise stopped
+
+    # Skip provider acquisition entirely: the wrapper must classify the
+    # actual cooperative exception without changing propagation or retrying.
+    service._reacquire_digital_loan_impl = cooperative_cancel
+    log_file = tmp_path / "cifereca.log"
+    logger = logging.getLogger("cifereca")
+    handler = logging.FileHandler(log_file, encoding="utf-8")
+    handler.setFormatter(CanonicalEventFormatter(
+        "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
+    ))
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        with pytest.raises(Cancelled) as raised:
+            service.reacquire_digital_loan(loan)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        handler.close()
+
+    assert raised.value is stopped
+    assert requests == ["one-explicit-recovery"]
+    assert checks == []  # No eligibility read, second attempt or provider GET.
+    (observed,) = service.diagnostics.snapshot()
+    assert observed["verified_loan_download"] is True
+    assert observed["detail"]["status"] == "cancelled"
+    assert observed["detail"]["code"] == "operation_cancelled"
+    assert observed["detail"]["phase"] == "terminal"
+    assert observed["detail"]["provider_id"] == "paris"
+    report = query_journal(log_file, provider_id="paris")
+    assert report["total"] == 1
+    (event,) = report["events"]
+    assert event["severity"] == "warning"
+    assert event["operation"] == "download_loan"
+    assert event["status"] == "cancelled"
+    assert event["detail"]["code"] == "operation_cancelled"
+    assert query_journal(log_file, provider_id="paris", severity="error")["total"] == 0
+    assert query_journal(log_file, provider_id="paris", severity="warning")["total"] == 1
