@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Literal
 
 from cifereca.models import Account, Loan
+from .errors import Cancelled
 
 InventoryStatus = Literal["success", "partial", "failed", "cancelled"]
 InventoryCompleteness = Literal["complete", "partial", "unknown"]
@@ -229,6 +230,13 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
                 scope=scope, loans=(), status="failed", reason_code="scope_changed",
             )
         return legacy_loan_inventory(account, rows)
+    except Cancelled:
+        # An explicit provider/task cancellation is not a network failure.
+        # Keep the envelope empty: partially read positive rows are not an
+        # atomic inventory and no negative entitlement proof is possible.
+        return LoanInventorySnapshot(
+            scope=scope, loans=(), status="cancelled", reason_code="cancelled",
+        )
     except Exception:
         return LoanInventorySnapshot(
             scope=scope, loans=(), status="failed", reason_code="read_failed",
