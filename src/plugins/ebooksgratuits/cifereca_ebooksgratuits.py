@@ -314,7 +314,9 @@ def _public_epub_filename(title, acquisition_url):
     parameters) must never appear in the basename or logs.
     """
     stem = re.sub(r'[^\w .-]', '_', title if type(title) is str else '')
-    stem = stem.strip(' .')[:48].rstrip(' .') or 'Livre'
+    stem = stem.strip(' .')[:48].rstrip(' .')
+    if not any(char.isalnum() for char in stem):
+        stem = 'Livre'
     # Up to 48 Unicode code points cannot exceed the 255-byte component
     # limit once the fixed digest and suffix are added.
     digest = hashlib.sha256(acquisition_url.encode('utf-8')).hexdigest()[:16]
