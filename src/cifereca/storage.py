@@ -1520,6 +1520,20 @@ class Storage:
                             raise ValueError("relocate_variant_context_unavailable")
                         if _mentions_exact_path(value, old_text):
                             raise ValueError("relocate_variant_reference_requires_relink")
+                    # Other canonical rights/bytes/placement records may
+                    # carry this pathname independently of the row being moved.
+                    # Historical vs active JSON paths are not yet typed: block
+                    # rather than silently orphan a surviving reference.
+                    from .core.duplicate_maintenance_guard import (
+                        canonical_metadata_mentions_path,
+                    )
+                    extra_reference = canonical_metadata_mentions_path(
+                        db, old_text,
+                    )
+                    if extra_reference is None:
+                        raise ValueError("relocate_canonical_metadata_unavailable")
+                    if extra_reference:
+                        raise ValueError("relocate_canonical_metadata_requires_relink")
                     # A shared local_path belonging to another provider or
                     # identity must not remain dangling after this move.
                     if db.execute(
