@@ -253,7 +253,10 @@ def query_journal(
             )):
                 continue
         matched.append(event)
-    matched.sort(key=lambda row: (row["timestamp"], row["event_id"]))
+    # Python's stable sort preserves physical log order for timestamps with
+    # the same millisecond. Sorting ties by the SHA-derived event_id scrambles
+    # the actual emission order (including across rotated files).
+    matched.sort(key=lambda row: row["timestamp"])
     state = "partial" if gaps or missing else ("available" if events else "empty")
     source_state = {
         "source": "journal", "status": state,
@@ -287,7 +290,8 @@ def recent_diagnostics_snapshot(log_path: Path, *, limit: int = 100) -> tuple[di
         raise ValueError("invalid journal snapshot limit")
     events, _gaps, _missing = _events(Path(log_path))
     structured = [row for row in events if row.get("operation")]
-    structured.sort(key=lambda row: (row["timestamp"], row["event_id"]))
+    # Keep the same physical tie order as query_journal and raw export.
+    structured.sort(key=lambda row: row["timestamp"])
     result = []
     for event in structured[-limit:]:
         row = {
