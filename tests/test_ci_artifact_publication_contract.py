@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 # Exact path expressions from the reviewed workflows (not globbed directories).
 PUBLIC_ARTIFACT_PATHS = {
+    "gtk-debian13-cache-asset.yml": (
+        ".gtk-publish/gtk4-deb-cache-debian13-trixie-amd64.tar.gz",
+        ".gtk-publish/SHA256SUMS",
+    ),
+
     "e2e-smoke.yml": (
         "${{ runner.temp }}/cifereca-e2e-public/summary.json",
     ),
