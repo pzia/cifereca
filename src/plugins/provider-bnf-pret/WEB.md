@@ -238,3 +238,31 @@ Aucune nouvelle requête, relance, modification de route ou capture de
 formulaire SSO n’est ajoutée. Un échec d’activité ne déclenche pas le GET jeton.
 Les réponses de test sont synthétiques ; la cause HTTP du refus terrain et
 le fulfillment réel restent à qualifier dans #2055.
+
+## Action ACSM signée du portail (0.3.7, #2055)
+
+Après le consentement existant et une relecture positive du prêt/ressource
+sur le compte exact, le plugin extrait le contrôle ACSM de ce même HTML frais.
+Les attributs observés sont les classes `actions-list__link`,
+`actions-list__sublink`, `js-accordeon__item` et
+`aria-controls="{loan_id}-reader-acs"`. Le chemin du href doit désigner
+exactement ce prêt. Ce rattachement explicite ne suppose pas que le contrôle
+est enfant de `.js-loan` ; si une carte le contient, ses identifiants doivent
+également correspondre. Les fixtures couvrent les deux positions, sans
+prétendre attester les parents DOM du portail réel.
+
+Seuls HTTPS sur `pret.bnf.fr/loans/{id}` et les cinq paramètres uniques
+`device_type=reader`, `drm=acs4`, `nonce`, `timestamp`, `token` sont admis.
+Les trois dernières valeurs restent opaques : aucun format de signature,
+recalcul, réordonnancement ou nouvelle sérialisation n'est inventé.
+L'attribut HTML est décodé une fois (`&amp;`) puis la query transmise intacte.
+Un contrôle absent, invalide, contradictoire ou lié à une autre carte est
+refusé avec `url_refused` ; aucun GET non signé de secours n'est exécuté.
+
+Le même client authentifié exécute un seul GET sans suivi de redirection ni
+retry. La session est revérifiée avant/après le réseau et après extraction.
+L'URL ne devient aucun champ de Loan, snapshot d'inventaire, diagnostic ou
+cache ; seul le HTML frais du parcours explicite la fournit. Les validations
+ACSM et le staging privé existants restent suivis du consentement ADEPT
+séparé. Tests synthétiques réussis ne valent pas recette du GET signé réel
+ni preuve de fulfillment ADEPT ; #2055 conserve ces validations terrain.
