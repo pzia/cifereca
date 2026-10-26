@@ -134,28 +134,31 @@ def test_schema_v8_merges_legacy_empty_and_primary_paris_loan_ledger_rows():
         assert rows[0]["account_id"] == "primary"
 
 
-def test_deep_scan_repairs_pdf_misnamed_as_epub_and_updates_ledger():
+def test_deep_scan_reports_misnamed_pdf_without_mutating_files_or_ledger():
+    # Deep Sync is a scan, not authorization to relocate an ADEPT loan.
     with tempfile.TemporaryDirectory() as td:
         service = _service(td)
         try:
             wrong = Path(td) / "EBooks" / "hugues" / "paris" / "Book.epub"
             wrong.parent.mkdir(parents=True, exist_ok=True)
-            wrong.write_bytes(b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+            payload = b"%PDF-1.7\\n1 0 obj\\n<<>>\\nendobj\\n%%EOF\\n"
+            wrong.write_bytes(payload)
             service.storage.acquisition_put({
                 "provider_id": "paris", "credential_id": "p", "account_id": "primary", "identity_id": "default",
                 "item_id": "book-pdf", "title": "Book", "status": "complete", "strategy": "loan_auto", "executor": "kobo-adept",
                 "metadata": {"path": str(wrong), "post_processed": True},
             })
             result = service.catalog_scan(repair_misnamed=True)
-            repaired = wrong.with_suffix(".pdf")
-            assert repaired.exists()
-            assert not wrong.exists()
-            assert result["invalid"] == 0
+            assert result["invalid"] == 1
+            assert wrong.read_bytes() == payload
+            assert not wrong.with_suffix(".pdf").exists()
             ledger = service.storage.acquisitions(provider_id="paris")[0]
-            assert ledger["metadata"]["path"] == str(repaired.resolve())
-            assert ledger["metadata"]["deep_repair"] == "extension_matches_content"
-            entries = service.storage.catalog_entries(state="local")
-            assert any(row["media_format"] == "pdf" and row["metadata"]["path"] == str(repaired.resolve()) for row in entries)
+            assert ledger["metadata"] == {"path": str(wrong), "post_processed": True}
+            placements = [row for row in service.storage.placements()
+                          if row["path"] == str(wrong.resolve())]
+            assert len(placements) == 1
+            assert placements[0]["state"] == "invalid"
+            assert placements[0]["metadata"]["invalid_reason"] == "extension_mismatch"
         finally:
             service.close()
 
