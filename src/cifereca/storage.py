@@ -1499,6 +1499,8 @@ class Storage:
                             value = _json.loads(raw)
                         except (ValueError, TypeError, RecursionError):
                             raise ValueError("relocate_acquisition_context_unavailable") from None
+                        if type(value) is not dict:
+                            raise ValueError("relocate_acquisition_context_unavailable")
                         if _mentions_exact_path(value, old_text):
                             raise ValueError("relocate_acquisition_reference_requires_relink")
                     # A shared local_path belonging to another provider or
