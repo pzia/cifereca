@@ -55,15 +55,21 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
     ref = hashlib.sha256('\0'.join((account.identity_id, account.credential_id,
                                       account.unique_id, loan.id, loan.record_id)).encode()).hexdigest()
     for row in service.storage.acquisitions(provider_id='manual', status='complete'):
+        # Inspect only a record explicitly bound to this identity and loan.
+        # All other manual acquisitions may contain unrelated personal files:
+        # do not stat, open or parse them on each BnF synchronization.
+        if row.get('identity_id') != account.identity_id:
+            continue
         meta = row.get('metadata') or {}
+        if type(meta) is not dict or meta.get('bnf_auto_ref') != ref:
+            continue
         path = Path(str(meta.get('path') or ''))
         try:
             usable = path.is_file() and not path.is_symlink() and inspect_artifact(path).valid is True
         except (OSError, ValueError):
             usable = False
-        if row.get('identity_id') == account.identity_id and meta.get('bnf_auto_ref') == ref:
-            return ({'status': 'unchanged'} if usable else
-                    {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
+        return ({'status': 'unchanged'} if usable else
+                {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
     try:
         session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
         epoch = service._account_context_epoch
