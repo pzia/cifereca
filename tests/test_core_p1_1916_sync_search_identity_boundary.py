@@ -5,7 +5,7 @@ Real service/SQLite with synthetic providers; no HTTP or private library I/O.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import asdict, replace
 import threading
 
 import pytest
@@ -122,11 +122,9 @@ def test_sync_search_cache_hit_respects_profile_generation(tmp_path, monkeypatch
         original = service.search("Progressive Book", force=True)
         assert original
         service.last_search = []
-        original_get = service.storage.cache_get
         def switch_on_cached_read(*args, **kwargs):
-            value = original_get(*args, **kwargs)
             service.select_identity("bob")
-            return value
+            return [asdict(original[0])]
         monkeypatch.setattr(service.storage, "cache_get", switch_on_cached_read)
         assert service.search("Progressive Book") == []
         assert service.last_search == []
