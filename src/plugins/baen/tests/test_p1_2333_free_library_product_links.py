@@ -45,7 +45,8 @@ def test_current_free_library_links_are_not_silently_lost():
         "https://www.baen.com/1632.html",
         "https://www.baen.com/a-desert-called-peace.html",
     ]
-    assert all(row.format is None for row in rows)  # detail alone may attest EPUB\n    assert all(row.source_collection == "public" and not row.owned
+    assert all(row.format is None for row in rows)  # detail alone may attest EPUB
+    assert all(row.source_collection == "public" and not row.owned
                and not row.downloadable and row.download_url is None
                for row in rows)
     assert warnings == [UNVERIFIED_SEARCH_WARNING]
