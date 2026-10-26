@@ -6,7 +6,47 @@ from dataclasses import replace
 import pytest
 
 from cifereca.plugin_api import ProviderConfigurationError
-from tests.test_p1_3252_atomic_snapshot_reconnect import fixture
+from cifereca_bnf_pret import BnfProviderSession
+
+
+HTML = (
+    '<section class="active-loans"><div class="js-loan">'
+    '<a href="/resources/book-synthetic">Synthetic Book</a>'
+    '<a href="/loans/loan-synthetic">Private loan action</a>'
+    '</div></section>'
+)
+
+
+class Client:
+    def __init__(self):
+        self.calls = []
+
+    def login(self, username, password):
+        self.calls.append("login")
+        return HTML
+
+    def activity(self):
+        self.calls.append("activity")
+        return HTML
+
+    def clear(self):
+        self.calls.append("clear")
+
+    def close(self):
+        self.calls.append("close")
+
+
+def fixture():
+    client = Client()
+    session = BnfProviderSession(
+        client=client, credential_id="synthetic-credential",
+        label="Synthetic BnF",
+        credentials={"username": "synthetic", "password": "synthetic"},
+        options={},
+    )
+    (account,) = session.connect()
+    account.identity_id = "synthetic-identity"
+    return session, account, client
 
 
 @pytest.mark.parametrize("change", [
