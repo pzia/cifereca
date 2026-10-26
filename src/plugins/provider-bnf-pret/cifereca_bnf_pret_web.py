@@ -157,7 +157,7 @@ def signed_loan_url(href: str, loan_id: str) -> str | None:
                 set(values) != {"device_type", "drm", "nonce", "timestamp", "token"} or
                 values["device_type"] != "reader" or values["drm"] != "acs4" or
                 re.fullmatch(r"[A-Za-z0-9_-]{8,128}", values["nonce"]) is None or
-                re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z",
+                re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
                              values["timestamp"]) is None or
                 re.fullmatch(r"[A-Za-z0-9_-]{16,256}", values["token"]) is None):
             return None
