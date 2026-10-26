@@ -110,9 +110,11 @@ def test_path_rebound_to_another_placement_after_commit_is_preserved(
     outcome = broker.run(plan)
     assert outcome.ok and outcome.warnings
     assert candidate.read_bytes() == kept.read_bytes() == b"book-data"
-    assert service.storage.placement_get(request.placement_id) is None
     rebound = service.storage.placement_for_path(candidate)
+    # The stable path-derived placement ID may be reused by the new owner.
+    # Its current source coordinates, not the historical ID, are authoritative.
     assert rebound is not None and rebound["identity_id"] == "other-identity"
+    assert rebound["source_item_id"] == "other-edition"
 
 
 def test_normal_duplicate_deletion_still_removes_unreferenced_physical_copy(tmp_path):
