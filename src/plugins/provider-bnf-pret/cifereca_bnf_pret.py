@@ -280,10 +280,22 @@ class BnfProviderSession(ProviderSession):
             self.last_search_warnings = []
             if self._closed:
                 raise ProviderConfigurationError('session_closed')
-            if (scope not in {'all', 'digital'} or field != 'all'
+            # Unhashable scopes (lists/mappings) must be a capability
+            # rejection, not an uncaught TypeError or a fake empty catalogue.
+            if (type(scope) is not str or scope not in {'all', 'digital'}
+                    or type(field) is not str or field != 'all'
                     or type(page) is not int or page != 0):
                 raise ProviderCapabilityError('unsupported_search')
-            if content_types and 'ebook' not in content_types:
+            # The Core may omit this optional filter. Once supplied, it must
+            # be a finite collection of short, typed category labels; never
+            # interpret a string as its iterable characters or try membership
+            # on an integer/foreign mapping.
+            if content_types is None:
+                content_types = ()
+            if (type(content_types) not in (tuple, list, set, frozenset)
+                    or any(type(value) is not str or not 0 < len(value) <= 80
+                           for value in content_types)
+                    or (content_types and 'ebook' not in content_types)):
                 raise ProviderCapabilityError('unsupported_content_type')
             epoch = self._epoch
             try:
