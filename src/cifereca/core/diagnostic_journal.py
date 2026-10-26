@@ -105,12 +105,21 @@ def _make_event(match, identity, offset):
     status = "unknown"
     task_ref = None
     duration_ms = None
+    structured_unreadable = False
     if message.startswith(_DIAGNOSTIC_PREFIX):
         try:
             document = json.loads(message[len(_DIAGNOSTIC_PREFIX):])
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
             document = None
-        if type(document) is dict and document.get("schema_version") == 1:
+        # A broken or unknown DIAG_JSON envelope is still an observed log
+        # occurrence. Keep its RAW text, but do not silently call the
+        # structured history complete: operation, status, task and provider
+        # evidence cannot be recovered from this record.
+        if (type(document) is not dict
+                or type(document.get("schema_version")) is not int
+                or document["schema_version"] != 1):
+            structured_unreadable = True
+        else:
             message = document.get("message") if type(document.get("message")) is str else message
             category = document.get("category") if type(document.get("category")) is str else category
             operation = document.get("operation") if type(document.get("operation")) is str else ""
@@ -148,7 +157,7 @@ def _make_event(match, identity, offset):
         event["task_ref"] = task_ref
     if duration_ms is not None:
         event["duration_ms"] = duration_ms
-    return event
+    return event, structured_unreadable
 
 
 def _events(log_path: Path):
@@ -179,8 +188,10 @@ def _events(log_path: Path):
             if m:
                 current = None
                 try:
-                    current = _make_event(m, identity, offset)
+                    current, structured_unreadable = _make_event(m, identity, offset)
                     events.append(current)
+                    if structured_unreadable and "structured_event_unreadable" not in gaps:
+                        gaps.append("structured_event_unreadable")
                 except (ValueError, OverflowError):
                     gaps.append("timestamp_invalid")
             elif line:
