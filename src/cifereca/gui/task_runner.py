@@ -155,6 +155,25 @@ class TaskRunner:
                 # Instrumentation must never affect a real task or GTK.
                 pass
 
+        def trace_failure(phase: str, exc: BaseException) -> None:
+            # A worker's raw message can contain bearer tokens, cookies or
+            # passwords. The task identity and exception *types* suffice to
+            # correlate the local failure with its terminal task event.
+            def name(value: object) -> str:
+                label = type(value).__name__
+                return label if (
+                    type(label) is str and len(label) <= 64
+                    and label.isidentifier()
+                ) else "UnknownError"
+
+            cause = getattr(exc, "__cause__", None)
+            _TRACE_LOG.error(
+                "TRACE task failure id=%s kind=%s origin=%s phase=%s "
+                "exception=%s cause=%s",
+                task_id, trace_kind, origin, phase,
+                name(exc), name(cause) if cause is not None else "none",
+            )
+
         queued_at = time.monotonic()
         _TRACE_LOG.info(
             "TRACE task submit id=%s priority=%s kind=%s origin=%s",
@@ -193,7 +212,8 @@ class TaskRunner:
 
         try:
             future = self.pool.submit(priority, traced_fn)
-        except RuntimeError:
+        except RuntimeError as exc:
+            trace_failure("enqueue", exc)
             # close() can shut down PriorityExecutor between the window's
             # initial closed gate and enqueue. Balance the activity counter
             # and release the control; never publish exception internals.
@@ -220,7 +240,10 @@ class TaskRunner:
                 failure = RuntimeError("Traitement indisponible")
                 if err:
                     err(failure)
-                else:
+                elif origin != "automatic":
+                    # The activity history already retains this exact failed
+                    # task. Do not open a misleading modal over unrelated
+                    # successful startup/provider synchronizations.
                     self.present_error(failure)
                 return False
 
@@ -233,6 +256,8 @@ class TaskRunner:
                 outcome: tuple[str, Any] = ("ok", value)
             except BaseException as exc:  # noqa: BLE001 - thread/UI boundary
                 outcome = ("error", exc)
+            if outcome[0] == "error":
+                trace_failure("worker", outcome[1])
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
             # until the UI consumes it; close() clears detached reservations.
@@ -304,7 +329,10 @@ class TaskRunner:
                         return False
                     if err:
                         err(payload)
-                    else:
+                    elif origin != "automatic":
+                        # Automatic exceptions are already visible in the
+                        # activity feedback and correlated local diagnostics.
+                        # Only an intentional request gets a blocking modal.
                         self.present_error(payload)
                 return False
 
