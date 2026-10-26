@@ -218,3 +218,23 @@ redirection interdite, absence de mutation et fermeture. Les suites Core et
 CoreUI couvrent le double consentement, l'immuabilité du prêt choisi et la
 validation indépendante de l'ACSM. Ces tests synthétiques ne remplacent ni la
 recette du GET réel, ni celle d'ADEPT.
+
+## Diagnostic des lectures de prêt (0.3.6)
+
+Le journal canonique et Diagnostics reçoivent `BnF HTTP`, filtrable par
+`provider_id=bnf-pret`. Chaque lecture existante de l’activité ou du jeton
+émet `begin`, `response` si des en-têtes ont été reçus, puis `terminal`, avec
+un `request_ref` commun aux observations de cette requête uniquement.
+`logical_endpoint=activity` / `phase=activity_recheck` distingue la relecture
+de `logical_endpoint=loan_token` / `phase=loan_token_get`. Le statut
+`http_status` numérique et le `content_type` reçu sont conservés sans
+reconstruction. Avant réception, le statut HTTP est absent. Une interruption
+de lecture après HTTP 200 reste un échec de transport. Une redirection HTML
+est un résultat partiel `redirect_received`, pas une lecture de contenu achevée.
+
+`http_read_completed` atteste seulement la lecture HTTP bornée : validation
+ACSM, staging Core et fulfillment ADEPT restent des étapes indépendantes.
+Aucune nouvelle requête, relance, modification de route ou capture de
+formulaire SSO n’est ajoutée. Un échec d’activité ne déclenche pas le GET jeton.
+Les réponses de test sont synthétiques ; la cause HTTP du refus terrain et
+le fulfillment réel restent à qualifier dans #2055.

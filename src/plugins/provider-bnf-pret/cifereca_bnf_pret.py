@@ -74,7 +74,7 @@ def _public_code(error):
 class BnfProviderSession(ProviderSession):
     def __init__(self, *, client=None, diagnostics=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
-        self.client = client or ReaderHTTPClient()
+        self.client = client or ReaderHTTPClient(diagnostics=diagnostics)
         self.diagnostics = diagnostics
         self._lock = threading.RLock()
         self._epoch = uuid4().hex
