@@ -38,8 +38,10 @@ def test_existing_local_catalogue_scope_cannot_be_reassigned(tmp_path, changes):
     storage.catalog_entry_put(_entry("original-placement"))
     original = storage.catalog_entry_get("local-book")
 
+    proposed = _entry("original-placement")
+    proposed.update(changes)
     with pytest.raises(ValueError, match="catalog_entry_scope_conflict"):
-        storage.catalog_entry_put(_entry("original-placement", **changes))
+        storage.catalog_entry_put(proposed)
 
     assert storage.catalog_entry_get("local-book") == original
     assert len(storage.catalog_entries()) == 1
