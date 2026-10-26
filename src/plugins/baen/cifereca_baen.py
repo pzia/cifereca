@@ -28,6 +28,19 @@ def _trusted_baen_url(value):
         return False
 
 
+def _public_epub_filename(title, detail_url):
+    """Bounded per-product basename, never a raw provider record_id.
+
+    Multiple Baen products can share a title. Only the previously validated
+    public detail URL differentiates local destinations, without disclosing
+    its query string or letting an arbitrary ID control filesystem paths.
+    """
+    stem = re.sub(r'[^\w .-]', '_', title if type(title) is str else '')
+    stem = stem.strip(' .')[:48].rstrip(' .') or 'Livre'
+    digest = hashlib.sha256(detail_url.encode('utf-8')).hexdigest()[:16]
+    return f'{stem}-{digest}.epub'
+
+
 def _reject_redirect(response):
     # httpx.raise_for_status() is not a safe substitute for disabling
     # redirects: refuse to follow a product/search redirect to another host.
@@ -37,7 +50,7 @@ def _reject_redirect(response):
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Seul le champ général est exposé ; le filtrage serveur de la requête reste non qualifié. Aucun champ spécialisé attesté.','Numéros de page transmis sans preuve de pagination effective ; réponses partielles, y compris une page vide.',)),homepage=BASE,notes=('Couverture de recherche publique non qualifiée ; achats et bibliothèque privée hors périmètre.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.12','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.13','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -183,7 +196,8 @@ class BaenSession(ProviderSession):
                     candidate=proposal; break
         if not candidate: raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
         if self.transport is None: raise ProviderError('Baen : transport.http indisponible')
-        d=Path(target_dir);d.mkdir(parents=True,exist_ok=True);dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
+        d=Path(target_dir);d.mkdir(parents=True,exist_ok=True)
+        dest=d/_public_epub_filename(item.title,item.friendly_url)
         source={
             'url':candidate,
             'headers':{'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2','Referer':item.friendly_url},
