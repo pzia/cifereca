@@ -148,6 +148,12 @@ def test_deep_scan_reports_misnamed_pdf_without_mutating_files_or_ledger():
                 "item_id": "book-pdf", "title": "Book", "status": "complete", "strategy": "loan_auto", "executor": "kobo-adept",
                 "metadata": {"path": str(wrong), "post_processed": True},
             })
+            old_placement = service.storage.placement_put({
+                "artifact_id": "sha256:synthetic-historic-artifact",
+                "path": str(wrong), "identity_id": "default",
+                "provider_id": "paris", "source_item_id": "book-pdf",
+                "state": "present", "metadata": {"historical_evidence": "keep"},
+            })
             result = service.catalog_scan(repair_misnamed=True)
             assert result["invalid"] == 1
             assert wrong.read_bytes() == payload
@@ -159,6 +165,12 @@ def test_deep_scan_reports_misnamed_pdf_without_mutating_files_or_ledger():
             assert len(placements) == 1
             assert placements[0]["state"] == "invalid"
             assert placements[0]["metadata"]["invalid_reason"] == "extension_mismatch"
+            assert placements[0]["placement_id"] == old_placement
+            assert placements[0]["artifact_id"] == "sha256:synthetic-historic-artifact"
+            assert placements[0]["identity_id"] == "default"
+            assert placements[0]["provider_id"] == "paris"
+            assert placements[0]["source_item_id"] == "book-pdf"
+            assert placements[0]["metadata"]["historical_evidence"] == "keep"
         finally:
             service.close()
 
