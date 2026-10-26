@@ -93,6 +93,7 @@ def test_listloans_http_denial_is_typed_without_retry_or_secret(status, reason, 
 @pytest.mark.parametrize(("reply", "reason"), (
     ("html", "paris_loans_html_unexpected"),
     ("redirect_html", "paris_loans_redirect_unexpected"),
+    ("redirect_json", "paris_loans_redirect_unexpected"),
     ("not_json", "paris_loans_non_json"),
     ("json_list", "paris_loans_json_shape_invalid"),
 ))
@@ -101,6 +102,9 @@ def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
     def handler(request):
         calls.append(request.url.path)
         if request.url.path == "/private-login":
+            if reply == "redirect_json":
+                # Valid JSON at a *different* URL is never ListLoans evidence.
+                return _empty()
             return httpx.Response(200, text="<html>login</html>",
                                   headers={"content-type": "text/html"})
         if request.url.params.get("serviceCode") == "SYRACUSE":
@@ -108,7 +112,7 @@ def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
         if reply == "html":
             return httpx.Response(200, text="<html>unauthorized</html>",
                                   headers={"content-type": "text/html"})
-        if reply == "redirect_html":
+        if reply in ("redirect_html", "redirect_json"):
             return httpx.Response(302, headers={"location": "/private-login"})
         if reply == "json_list":
             return httpx.Response(200, json=[])
