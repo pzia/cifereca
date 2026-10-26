@@ -35,7 +35,7 @@ def published_cover_failure(raw: Mapping[str, Any]) -> str | None:
     if not isinstance(raw, Mapping):
         return None
     source = raw.get("source")
-    if source not in {"journal", "core_events"}:
+    if type(source) is not str or source not in {"journal", "core_events"}:
         # app_log/TRACE are not a second failed HTTP attempt.
         return None
     if (raw.get("module") != "COVER" or raw.get("status") != "error"
@@ -69,7 +69,8 @@ def cover_failure_page_summary(rows: list[dict[str, Any]]) -> str:
                 and row.get("module") == "COVER"
                 and row.get("status") == "error"
                 and row.get("message") == _COVER_FAILURE_MESSAGES[code]
-                and row.get("source") in {"journal", "core_events"}):
+                and type(row.get("source")) is str
+                and row["source"] in {"journal", "core_events"}):
             counts[code] += 1
     total = sum(counts.values())
     if total == 0:
