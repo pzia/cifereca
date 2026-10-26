@@ -424,10 +424,13 @@ class NumilogSession(ProviderSession):
             # loading. Pin the owner across GET and normalization; never
             # publish a positive purchase observation under a new identity.
             # Standalone legacy sessions without a broker remain supported.
-            owner = self._enrichment_identity_snapshot()
+            owner = self._inventory_owner_or_none()
             rows = self._rows()
             normalized = [self._normalize(row) for row in rows]
-            self._ensure_enrichment_identity(owner)
+            if self._inventory_owner_or_none() != owner:
+                raise ProviderCapabilityError(
+                    'Numilog : identité propriétaire modifiée ; inventaire arrêté'
+                )
             self._diag('bibliothèque',items=len(normalized))
             return normalized
 
@@ -646,6 +649,21 @@ class NumilogSession(ProviderSession):
         # Re-check links restored from older persisted catalogue objects:
         # they are not proof of a public product URL and may carry tokens.
         item.friendly_url = public_book_url(item.friendly_url, self.library_url)
+
+    def _inventory_owner_or_none(self):
+        """Advisory owner observation for the existing v1 library reader.
+
+        Legacy library discovery must remain possible with an unresolved
+        identity: the *explicit acquisition* has its own mandatory ownership
+        guard and remains denied. Compare the binding on BOTH sides of the
+        read, including a transition from/to unresolved.
+        """
+        if self.identity_broker is None:
+            return None
+        try:
+            return self._identity_id()
+        except Exception:
+            return None
 
     def _enrichment_identity_snapshot(self):
         """Optionally pin the owning identity for ONE explicit metadata read.
