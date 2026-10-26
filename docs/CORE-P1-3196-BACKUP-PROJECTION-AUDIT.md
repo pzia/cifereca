@@ -47,3 +47,25 @@ pas et ne modifie pas ce chemin d'écriture pendant la transition.
    ou de fichier ne relève de cette tranche.
 
 Aucune release ni mutation de bibliothèque réelle.
+
+## Lot complémentaire : UPsert protégé contre la réattribution implicite (#3196)
+
+`Storage.backup_put` conserve temporairement la compatibilité Kobo 0.7.
+Sa clé `(provider_id, credential_id, item_id)` ne contient ni l'identité
+Cifereca ni l'emprunteur exact. Une nouvelle exécution avec un **autre
+propriétaire explicitement enregistré** ne peut désormais plus remplacer les
+champs de ce livre puis propager le changement au ledger.
+
+Les trois étapes d'UPSERT (`backup_items`, `entitlements`,
+`acquisition_ledger`) vérifient leurs propriétaires **dans la commande SQL
+atomique**. Toute collision entraîne un `ValueError` fermé et un **rollback
+de la transaction** : ni projection, ni droit, ni acquisition partiellement
+réattribuée. Les sauvegardes répétées du même propriétaire restent admises.
+La reprise des lignes legacy sans identité explicite reste permise pour
+compatibilité ; elle ne constitue pas en elle-même un droit d'acquisition et
+leur qualification reste sous l'audit `scope_unverified`.
+
+Cette garantie ne supprime pas les écritures de la projection v0.7 ni ne
+migre les anciennes lignes ; elle prépare le retrait du double chemin
+autoritatif. Les références `placements` et les chemins physiques demeurent
+traités séparément par #3185. Les tests ne touchent aucun fournisseur Kobo réel.
