@@ -138,3 +138,62 @@ def test_independent_variant_deletion_retains_original_book(tmp_path):
     assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
     assert not (tmp_path / "library" / "Optimized.epub").exists()
     assert service.storage.placement_get(original_id)["artifact_id"] == source.artifact_id
+
+
+@pytest.mark.parametrize(("foreign_identity", "foreign_metadata"), [
+    ("other-identity", {}),
+    ("id1", {}),
+    ("other-identity", {"variant": True, "source_artifact_id": "SOURCE"}),
+])
+def test_shared_sha_cannot_delete_independent_or_cross_identity_placement(
+    tmp_path, foreign_identity, foreign_metadata,
+):
+    service, source, original_id = make_service(tmp_path)
+    service.plugin_manager = FakeManager(transformer=FakeTransformer())
+    derivative = ArtifactExecutionBrokerImpl(service).execute_transform(
+        TransformRequest(source, "optimize"), control=Control(),
+    )
+    foreign = tmp_path / "independent-copy.epub"
+    foreign.write_bytes((tmp_path / "library" / "Optimized.epub").read_bytes())
+    metadata = {
+        key: source.artifact_id if value == "SOURCE" else value
+        for key, value in foreign_metadata.items()
+    }
+    foreign_id = service.storage.placement_put({
+        "artifact_id": derivative.artifact_id, "path": str(foreign),
+        "identity_id": foreign_identity, "provider_id": "local",
+        "source_item_id": "book-1", "state": "present",
+        "metadata": metadata,
+    })
+    broker = LibraryMaintenanceBrokerImpl(service)
+    with pytest.raises(Conflict) as caught:
+        broker.plan(LibraryMutationRequest("delete_variant", artifact_id=derivative.artifact_id))
+    assert caught.value.code == "artifact_variant_scope_conflict"
+    assert foreign.read_bytes() == (tmp_path / "library" / "Optimized.epub").read_bytes()
+    assert service.storage.placement_get(foreign_id)["artifact_id"] == derivative.artifact_id
+    assert service.storage.placement_get(original_id)["artifact_id"] == source.artifact_id
+    assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
+
+
+def test_new_foreign_placement_after_preview_is_refused_before_any_unlink(tmp_path):
+    service, source, original_id = make_service(tmp_path)
+    service.plugin_manager = FakeManager(transformer=FakeTransformer())
+    derivative = ArtifactExecutionBrokerImpl(service).execute_transform(
+        TransformRequest(source, "optimize"), control=Control(),
+    )
+    broker = LibraryMaintenanceBrokerImpl(service)
+    plan = broker.plan(LibraryMutationRequest(
+        "delete_variant", artifact_id=derivative.artifact_id,
+    ))
+    copied = tmp_path / "foreign.epub"
+    copied.write_bytes((tmp_path / "library" / "Optimized.epub").read_bytes())
+    service.storage.placement_put({
+        "artifact_id": derivative.artifact_id, "path": str(copied),
+        "identity_id": "other-identity", "provider_id": "local",
+        "source_item_id": "book-1", "state": "present", "metadata": {},
+    })
+    with pytest.raises(Conflict) as caught:
+        broker.run(plan, Control())
+    assert caught.value.code == "artifact_variant_scope_conflict"
+    assert copied.is_file() and (tmp_path / "library" / "Optimized.epub").is_file()
+    assert service.storage.placement_get(original_id)["artifact_id"] == source.artifact_id
