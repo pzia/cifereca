@@ -98,7 +98,13 @@ def _paris_loan_presence(rows: list[Loan], loan: Loan) -> bool | None:
     same_id = [row for row in rows if row.id == loan.id]
     if not same_id:
         return False
-    return True if any(row.provider == loan.provider for row in same_id) else None
+    # The same provider-native ID can also occur in an unrelated medium.
+    # Never count a physical row as the continued presence of a digital PNB
+    # right (or conversely), even if its supplier label is identical.
+    return True if any(
+        row.provider == loan.provider and row.medium == loan.medium
+        for row in same_id
+    ) else None
 
 
 def _read_paris_return_presence(self: Any, account: Account, session: Any,
