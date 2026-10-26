@@ -28,13 +28,15 @@ def test_exact_active_declaration_blocks_preview_before_provider_content_io(tmp_
         service.close()
 
 
-def test_revoked_declaration_reopens_preview_even_after_attention_checkpoint(tmp_path, monkeypatch):
+def test_revoked_declaration_reopens_preview_after_verified_sync(tmp_path, monkeypatch):
     service, book, scope, relation = _declared_kobo(tmp_path, monkeypatch)
     try:
         blocked = service.sync_kobo_backup()
         assert blocked["attempted"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "book-1")[
-            "attention_code"] == "declared_link_recorded"
+        assert blocked["already_local_declared"] == 1
+        # A checked declaration must never be mirrored as a Kobo receipt.
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert row is None or row["status"] != "complete"
         observed, = scan_identity_roots({"alice": (book.parents[1],)}).files
         undo = declare_local_link(service, observation=observed, revoke=relation, **scope)
         assert undo.status == "revoke_preview"
