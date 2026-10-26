@@ -676,7 +676,14 @@ class GutenbergSession(ProviderSession):
             raise ProviderCapabilityError("Project Gutenberg : invalid_query")
         query, field, filter_query = _search_facet(query, field)
         if len(query) < 2:
-            _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
+            # A skipped one-letter query is not evidence of zero hits at
+            # Gutenberg. Keep empty-input clearing silent for the UI.
+            if query.strip():
+                self.last_search_warnings.append(
+                    "partial_results : requête trop courte ; Gutenberg non interrogé"
+                )
+            _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query))
+            return []
         self._require_contact(); started = time.perf_counter(); rows_cache=self._page_cache(query)
         cached_indexes=[i for i,u in enumerate(rows_cache) if u and i<=page]
         if cached_indexes:
