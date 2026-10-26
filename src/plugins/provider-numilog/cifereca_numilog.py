@@ -27,7 +27,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 # A descendant of the Core logger shares its canonical journal handler.
 _LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.87'
+VERSION = '0.1.88'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -491,9 +491,20 @@ class NumilogSession(ProviderSession):
         def fold(value):
             return ''.join(c for c in unicodedata.normalize('NFKD',value.casefold()) if not unicodedata.combining(c))
         terms = fold(query).split()
-        matches = [row for row in self.library() if all(t in fold(row.title) for t in terms)]
-        start = page*50
-        return matches[start:start+50]
+        # The library() fence covers HTTP and its own normalization, not
+        # subsequent title matching/pagination on the returned private rows.
+        # Re-check the same owner around the whole search projection so a
+        # Core identity rebind cannot publish stale purchased-book hits.
+        with self.lock:
+            owner = self._inventory_owner_or_none()
+            matches = [row for row in self.library() if all(t in fold(row.title) for t in terms)]
+            start = page*50
+            result = matches[start:start+50]
+            if self._inventory_owner_or_none() != owner:
+                raise ProviderCapabilityError(
+                    'Numilog : identité propriétaire modifiée ; recherche arrêtée'
+                )
+            return result
 
     def enrich_owned_public_listing(self, item):
         """Explicit one-page public enrichment of an attested, fresh owned book.
