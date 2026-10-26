@@ -72,7 +72,7 @@ def test_explicit_source_persists_exact_positive_loan_without_acquisition(
                            item="other-edition")
         service._persist_active_loans("alex", [other_loan])
         result = service.synchronize_account_source(primary)
-        assert result["loans"] == 1 and "status" not in result
+        assert result["loans"] == 1 and result["status"] == "partial"
         row = _right(service, "primary", "edition")
         assert row["entitlement_type"] == "loan"
         assert row["loan_id"] == "loan-edition" and row["state"] == "active"

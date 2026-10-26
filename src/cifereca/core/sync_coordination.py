@@ -152,18 +152,13 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                 result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
                 if any(row['status'] not in {'complete', 'unchanged', 'skipped'} for row in outcomes):
                     result['status'] = 'partial'
-        # Use the same provider partial-inventory signal as opening sync.
-        # BnF HTML observations are deliberately non-exhaustive even when
-        # every request succeeded. Preserve Paris' legacy fail-closed default
-        # when its independent upstream error inventory is missing.
-        if snapshot is not None:
-            if snapshot.status == "partial":
-                result["status"] = "partial"
-        else:
-            errors = getattr(session, "last_loan_errors",
-                             None if account.provider_id == "paris" else ())
-            if type(errors) not in (list, tuple) or errors:
-                result["status"] = "partial"
+        # A v1 loans() list never proves full branch coverage, even when
+        # last_loan_errors is empty or absent. That mutable side channel is
+        # deliberately not an authority for this explicit sync result.
+        # Typed producers may attest a successful observation, but only
+        # explicit branch coverage can authorize a negative rights transition.
+        if snapshot is None or snapshot.status == "partial":
+            result["status"] = "partial"
     if session.capabilities.personal_library:
         # A provider can implement a one-shot iterable: both the entitlement
         # mirror and remote catalog must see the exact same authenticated rows.
