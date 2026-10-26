@@ -81,7 +81,7 @@ def main():
     window = [None]
     page = [None]
     rc = [1]
-    target = out / "synthetic-journal-export.json"
+    target = out / "cifereca-journal-brut.json"
 
     def save():
         (out / "screen.json").write_text(
@@ -213,6 +213,11 @@ def main():
         assert not target.exists()
         assert broker.exports == 0
         report["checks"]["cancel_no_file_no_broker"] = True
+        # Gtk.FileChooserNative forbids changing selections while visible.
+        # Start the second REAL native dialog with an isolated writable HOME
+        # rather than calling set_file/set_current_folder after show().
+        target.write_bytes(b"OLD-SYNTHETIC-NONPRIVATE")
+        os.environ["HOME"] = str(out)
         press(button(), third_press)
 
     def third_press():
@@ -224,25 +229,25 @@ def main():
     def choose_target():
         chooser = plugin._raw_export_chooser
         assert chooser.get_visible()
-        assert chooser.set_current_folder(Gio.File.new_for_path(str(out)))
-        # Native backends may complete folder navigation asynchronously.
-        # A SAVE filename set before that transition can be silently reset.
+        assert chooser.get_transient_for() is window[0]
+        assert chooser.get_action() == Gtk.FileChooserAction.SAVE
+        # Unlike Gtk.FileChooserDialog, the native picker must have its
+        # folder/name set BEFORE show(). No mutating chooser calls here.
         until(lambda: chooser.get_current_folder() is not None
-              and chooser.get_current_folder().get_path() == str(out),
-              lambda: select_target(chooser), seconds=8)
-
-    def select_target(chooser):
-        report["checks"]["target_folder_ready"] = True
-        chooser.set_current_name(target.name)
-        target.write_bytes(b"OLD-SYNTHETIC-NONPRIVATE")
-        assert chooser.set_file(Gio.File.new_for_path(str(target)))
-        # The native picker may apply the selected file asynchronously.
-        until(lambda: chooser.get_file() is not None
-              and chooser.get_file().get_path() == str(target),
+              and chooser.get_current_folder().get_path() == str(out)
+              and chooser.get_current_name() == target.name,
               lambda: accept(chooser), seconds=8)
 
     def accept(chooser):
-        report["checks"]["native_file_selected"] = True
+        report["checks"]["target_folder_ready"] = True
+        # A native SAVE response must resolve the explicit, previously
+        # prepared folder+name. Never bypass an absent target by writing it.
+        selected = chooser.get_file()
+        report["checks"]["native_file_selected"] = bool(
+            selected is not None and selected.get_path() == str(target))
+        if not report["checks"]["native_file_selected"]:
+            fail("native_chooser_selection_not_resolved")
+            return
         chooser.emit("response", Gtk.ResponseType.ACCEPT)
         until(lambda: target.exists() and target.read_bytes() == _PAYLOAD,
               saved, seconds=6)
