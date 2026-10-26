@@ -296,7 +296,9 @@ def recorded_declared_inspection(storage, *, identity_id):
                 scope for scope, count in counts.items() if count == 1
             )
             unique_pairs = frozenset(
-                (scope, row['file']['path'])
+                (scope, row['file']['path'],
+                 row['file']['sha256'], row['file']['size'],
+                 tuple(row['file']['fingerprint']))
                 for scope, row in zip(scopes, records)
                 if scope in unique_scopes and paths[row['file']['path']] == 1
             )
