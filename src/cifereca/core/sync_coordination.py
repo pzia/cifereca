@@ -745,11 +745,16 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 scope for source_id, scope in complete_by_source.items()
                 if source_outcomes.get(source_id) == "success"
             }
-            lifecycle = self._persist_active_loans(
-                identity.identity_id, loans,
-                reconcile_missing=bool(complete_scopes),
-                complete_scopes=complete_scopes or None,
-            )
+            if complete_scopes:
+                # Negative evidence uses the Core helper directly; keep the
+                # LibraryService public method signature unchanged.
+                from . import library_mutation
+                lifecycle = library_mutation._persist_active_loans(
+                    self, identity.identity_id, loans,
+                    reconcile_missing=True, complete_scopes=complete_scopes,
+                )
+            else:
+                lifecycle = self._persist_active_loans(identity.identity_id, loans)
             all_loans.extend(loans)
             for account, session, scope, observed in typed_observations:
                 # Cache is a positive read optimization, never a source of
