@@ -101,3 +101,19 @@ def test_progress_callback_is_still_delivered_unmodified(broker):
     )
     assert task.result(timeout=2) == "done"
     assert actual == [(1, 2, private)]
+
+
+@pytest.mark.parametrize("kind", ("diagnostics", "recommendations", "browser-recorder"))
+def test_installed_plugin_task_kind_has_attributable_private_safe_trace(
+    caplog, broker, kind,
+):
+    """An existing fixed kind remains visible; plugin labels never do."""
+    private = "Bearer PRIVATE_PLUGIN_ACTIVITY"
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        task = broker.for_plugin("plugin.safe").submit(
+            lambda _control: kind, kind=kind, label=private,
+        )
+        assert task.result(timeout=2) == kind
+    assert f"kind={kind}" in caplog.text
+    assert "kind=other" not in caplog.text
+    assert private not in caplog.text
