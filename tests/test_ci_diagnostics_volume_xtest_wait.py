@@ -17,7 +17,9 @@ def test_ctrl_end_xtest_has_bounded_async_scroll_proof_not_fake_position():
     assert "adjustment.get_value()" in section
     assert "seconds=3" in section
     assert "later(lambda: verify_kobo_detail_keyboard_end" not in section
-    # Ignore prose comments; prohibit an actual code statement fabricating\n    # the visual destination instead of observing the XTEST-driven GTK value.\n    assert not re.search(r"(?m)^\\s*adjustment\\.set_value\\(\\s*bottom\\s*\\)", section)
+    # Ignore prose comments; prohibit a real statement fabricating the
+    # visual destination instead of observing the XTEST-driven GTK value.
+    assert not re.search(r"(?m)^\s*adjustment\.set_value\(\s*bottom\s*\)", section)
     # A second independent check must still assert keyboard reachability.
     after = code.split("    def verify_kobo_detail_keyboard_end(", 1)[1]
     assert "assert adjustment.get_value() >= bottom - 5" in after
