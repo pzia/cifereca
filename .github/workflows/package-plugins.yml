@@ -45,7 +45,7 @@ jobs:
           done
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cifereca-plugin-packages
           # Only the two reviewed build products; never archive the entire
