@@ -816,7 +816,37 @@ class LibraryService:
         session = self._session_for_account(account)
         if not session.capabilities.loans:
             return []
-        rows = session.loans(account)
+        typed_reader = callable(getattr(session, "loan_inventory_snapshot", None))
+        if typed_reader:
+            # The GUI refresh must consume the same single, atomic Paris/BnF
+            # snapshot as Sync. A mutable last_loan_errors side channel (or a
+            # second legacy GET) cannot authorize this batch.
+            from .plugin_api.loan_inventory import read_loan_inventory
+            scope = (
+                account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id,
+                self._account_context_epoch,
+            )
+            snapshot = read_loan_inventory(session, account)
+            if snapshot.status in {"failed", "cancelled"}:
+                raise ProviderConfigurationError("loan_inventory_read_unavailable")
+            rows = list(snapshot.loans)
+            # A logout, account switch, or session replacement during HTTP
+            # must never write a now-stale borrower observation to the cache.
+            if (
+                (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id,
+                 self._account_context_epoch) != scope
+                or self._sessions.get(self._session_key(
+                    scope[1], scope[2])) is not session
+                or session.connected is not True
+                or not any(active is account for active in self.accounts)
+            ):
+                raise ProviderConfigurationError("loan_source_scope_changed")
+        else:
+            # Installed v1 providers keep their existing positive-loan API
+            # until a Plugin API migration can remove the legacy adapter.
+            rows = session.loans(account)
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
