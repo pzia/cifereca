@@ -64,17 +64,21 @@ def test_active_declaration_blocks_even_with_unlinked_override_and_second_sync(t
             assert summary["attention_required"] == 0
             assert summary["already_local_declared"] == 1
             assert summary["sources"][0]["already_local_declared"] == 1
-            assert row["status"] == "attention_required"
-            assert row["attention_code"] == "declared_link_recorded"
+            # A current personal declaration is not a Kobo receipt or
+            # even a synthetic backup item in the compatibility table.
+            assert row is None
             assert book.read_bytes() == original
             assert has_active_declared_link(service.storage, **scope)
             assert calls == []
-            # backup_put mirrors an attention_required row into the legacy
-            # acquisition ledger. This is NOT a download, receipt or placement.
+            # Repeated sync cannot fabricate a second entitlement or a
+            # historical Kobo acquisition ledger from this declaration.
             ledger = service.storage.acquisitions(provider_id="kobo")
-            assert all(entry["status"] == "attention_required"
-                       and entry["attempt_count"] == 0
-                       and entry["artifact_id"] is None for entry in ledger)
+            assert ledger == []
+            rights = [
+                item for item in service.storage.entitlements(provider_id="kobo")
+                if item["item_id"] == "book-1"
+            ]
+            assert len(rights) == 1
             assert service.storage.placements() == []
     finally:
         service.close()
