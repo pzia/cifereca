@@ -162,3 +162,24 @@ def test_superseded_synchronous_query_does_not_retry_text_variants(
         )
     finally:
         service.close()
+
+
+def test_provider_discovery_during_profile_switch_cannot_run_under_new_identity(
+    tmp_path, monkeypatch,
+):
+    service = _rig(tmp_path)
+    source = service._sessions["good"]
+    invoked = []
+    source.search = lambda *a, **kw: invoked.append("network") or []
+    def changed_while_discovering(_provider):
+        service.select_identity("bob")
+        return True
+    monkeypatch.setattr(
+        service, "_provider_enabled_for_identity", changed_while_discovering,
+    )
+    try:
+        assert service.search("Maritime Library", force=True) == []
+        assert invoked == []
+        assert service.last_search == []
+    finally:
+        service.close()
