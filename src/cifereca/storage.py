@@ -2946,6 +2946,38 @@ class Storage:
             row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
+    def acquisition_bind_bnf_display_loan(self, acquisition_id: str, *, path: str,
+                                          artifact_id: str, scope: dict[str, str]) -> bool:
+        """Atomically retain one manual import's observed borrower, not a right."""
+        from .core.bnf_import_provenance import scope_key
+        key = scope_key(scope)
+        if key is None:
+            return False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT metadata_json FROM acquisition_ledger WHERE acquisition_id=? "
+                "AND provider_id='manual' AND strategy='manual_acsm' AND status='complete' "
+                "AND identity_id=? AND artifact_id=? AND entitlement_id IS NULL",
+                (acquisition_id, key[0], artifact_id),
+            ).fetchone()
+            if row is None:
+                return False
+            metadata = self._json_load(row[0])
+            if metadata.get('path') != path or metadata.get('bnf_observed_loan', scope) != scope:
+                return False
+            placement = db.execute(
+                "SELECT 1 FROM placements WHERE path=? AND artifact_id=? AND identity_id=? "
+                "AND provider_id='bnf-pret' AND state='present'",
+                (path, artifact_id, key[0]),
+            ).fetchone()
+            if placement is None:
+                return False
+            metadata['bnf_observed_loan'] = dict(scope)
+            db.execute("UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+                       (self._json_dump(metadata), acquisition_id))
+            return True
+
     def acquisition_update_state(
         self,
         acquisition_id: str,

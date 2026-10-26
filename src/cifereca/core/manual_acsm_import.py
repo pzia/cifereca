@@ -36,6 +36,10 @@ def import_acsm(
     if existing and existing.get("status") == "complete":
         path = Path(str(dict(existing.get("metadata") or {}).get("path") or ""))
         if path.is_file():
+            if placement_provider_id == 'bnf-pret' and (
+                    path.is_symlink() or not inspect_artifact(path).valid
+                    or existing.get('artifact_id') != 'sha256:' + sha256_file(path)):
+                raise ProviderConfigurationError("Artefact ACSM importé modifié ; réconciliation nécessaire")
             return {"status": "unchanged", "path": str(path), "acquisition_id": acquisition_id}
 
     work = data_dir() / "acquisition-work" / identity.identity_id / "manual" / source_sha[:16]

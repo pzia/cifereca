@@ -105,6 +105,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             control.check_cancelled()
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
+        from .bnf_import_provenance import observed_loan, remember_import
+        display_scope = observed_loan(loan)
         result = service.import_acsm(candidate, identity_id=account.identity_id,
                                      provider_id='manual', placement_provider_id='bnf-pret',
                                      title=loan.title)
@@ -121,6 +123,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
                 return {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'}
             service.storage.acquisition_update_state(
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
+            remember_import(service, result, display_scope)
         return {'status': result.get('status', 'attention_required')}
     except Cancelled:
         raise
