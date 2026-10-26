@@ -850,9 +850,15 @@ def select_account(self, unique_id: str, provider_id: str | None=None, credentia
             continue
         if credential_id and account.credential_id != credential_id:
             continue
+        # Some callers select a borrower directly, without select_identity.
+        # A cross-profile account change must revoke the prior loan list as
+        # promptly as an explicit profile change does.
+        previous_identity_id = getattr(self.current_identity, "identity_id", None)
         self.current_account = account
         self._account_context_epoch += 1
         self.current_identity = self.identity_by_id(account.identity_id) or self.current_identity
+        if getattr(self.current_identity, "identity_id", None) != previous_identity_id:
+            self.last_loans = []
         key = self._session_key(account.provider_id, account.credential_id)
         if key in self._sessions:
             self._active_session_key = key
