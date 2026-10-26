@@ -1049,7 +1049,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
         "scanned": 0, "malformed_manifest_items": 0, "duplicate_manifest_items": 0,
         "provider_rejected_manifest_items": 0, "attempted": 0, "pending": 0,
-        "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
+        "completed": 0, "downloaded": 0, "unchanged": 0,
+        "already_local_declared": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "items_blocked_by_scope": 0, "attempts_saved": 0,
         "blocked_non_retryable": 0,
@@ -1122,6 +1123,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     prunable_credentials: set[str] = set()
     source_metrics = (
         "scanned", "attempted", "downloaded", "unchanged", "pending",
+        "already_local_declared",
         "attention_required", "errors", "remaining", "reconcile_pending",
         "reconcile_skipped", "items_blocked_by_scope", "blocked_non_retryable",
         "malformed_manifest_items", "duplicate_manifest_items",
@@ -1142,6 +1144,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         processed = 0
         malformed = False
         committed_item_id: str | None = None
+        # One bounded local presence budget for this credential's manifest.
+        presence_budget = [8.0]
 
         def source_delta() -> dict[str, int]:
             return {name: int(summary.get(name, 0)) - initial[name] for name in source_metrics}
@@ -1322,6 +1326,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     unlinked_local_count, adapter_available, adept_state,
                     index, len(manifest), summary, defer_item_event, logger,
                     retry_scope_blocked=retry_scope_blocked,
+                    session=session, presence_budget=presence_budget,
+                    cancelled=cancellation_requested,
                 ):
                     item_committed = True
                     continue
@@ -1552,6 +1558,7 @@ def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, 
 _KOBO_DIAGNOSTIC_METRICS = frozenset({
     "sessions", "manifests_fetched", "manifest_items", "scanned", "attempted",
     "downloaded", "unchanged", "completed", "pending", "attention_required",
+    "already_local_declared",
     "errors", "remaining", "skipped", "metadata_refreshed",
     "malformed_manifest_items", "duplicate_manifest_items",
     "provider_rejected_manifest_items", "reconcile_pending", "reconcile_conflicts", "reconcile_skipped",
@@ -1780,7 +1787,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
-def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False, session=None, presence_budget=None, cancelled=lambda: False):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -1931,6 +1938,43 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             declaration_error = False
         except DeclarationRejected:
             declared, declaration_error = False, True
+        if declared and session is not None and presence_budget and presence_budget[0] > 0:
+            # The outer Kobo sync already owns the acquisition lock. Reuse
+            # the same two SQLite reads, scoped rights and no-follow SHA
+            # check as the explicit preview, without a second nested flock.
+            from .library_declared_presence import verify_declared_presence
+            identity, credential, account = (
+                base_record["identity_id"], base_record["credential_id"],
+                base_record["account_id"],
+            )
+
+            def same_source() -> bool:
+                return bool(
+                    session.connected
+                    and any(value is session for value in self._sessions.values())
+                    and len(session.accounts) == 1
+                    and session.accounts[0].unique_id == account
+                    and self.storage.identity_for_connection("kobo", credential) == identity
+                )
+
+            checked_at = time.monotonic()
+            try:
+                presence = verify_declared_presence(
+                    self, identity_id=identity, provider_id="kobo",
+                    credential_id=credential, account_id=account,
+                    item_id=product_id, source_current=same_source,
+                    cancelled=cancelled, seconds=presence_budget[0],
+                    _acquisition_lock_held=True,
+                )
+            finally:
+                presence_budget[0] = max(
+                    0.0, presence_budget[0] - max(0.0, time.monotonic() - checked_at),
+                )
+            if presence.status == "declared_current":
+                # This is a checked local presence, not a Kobo backup receipt.
+                # Do not fabricate a complete backup_item, ledger or placement.
+                summary["already_local_declared"] += 1
+                return True
         if declared or declaration_error:
             code = ("declared_link_recorded" if declared
                     else "declared_links_unavailable")
