@@ -154,6 +154,8 @@ def test_reopened_inspection_can_discover_and_revoke_existing_declaration(select
         file, = second.unconfirmed_files(limit=10).cases
         view = second.preview_declared_link(right.key, file.key)
         assert view['status'] == 'already_declared' and view['revoke_available']
+        assert view['presence_state'] == 'present_declared'
+        assert view['trust'] == 'user_declaration' and view['read_only'] is True
         assert 'relation_id' not in view
         assert second.preview_declared_link(right.key, file.key, revoke=True)[
             'status'] == 'revoke_preview'
@@ -169,8 +171,10 @@ def test_changed_loan_is_explained_instead_of_silently_redeclared(selected):
     confirm(selected, user_confirmed=True)
     before = records(service)
     service.storage.entitlement_put({**rig[3], 'state': 'expired'})
-    assert preview(selected)['status'] == 'needs_review'
-    assert preview(selected)['revoke_available'] is True
+    changed = preview(selected)
+    assert changed['status'] == 'needs_review'
+    assert changed['presence_state'] == 'declared_needs_review'
+    assert changed['revoke_available'] is True
     assert records(service) == before
     assert preview(selected, revoke=True)['status'] == 'revoke_preview'
     assert confirm(selected, user_confirmed=True)['status'] == 'revoked'
@@ -192,6 +196,7 @@ def test_replaced_file_can_revoke_old_statement_in_a_new_inspection(selected):
         file, = second.unconfirmed_files(limit=10).cases
         view = second.preview_declared_link(right.key, file.key)
         assert view['status'] == 'needs_review' and view['revoke_available']
+        assert view['presence_state'] == 'declared_needs_review'
         assert records(service) == before
         second.preview_declared_link(right.key, file.key, revoke=True)
         assert second.confirm_declared_link(right.key, file.key, user_confirmed=True)[
@@ -302,3 +307,45 @@ def test_history_withdrawal_selection_change_invalidates_token(selected):
     assert session.preview_history_withdrawal('0' * 32)['status'] == 'blocked'
     session.close()
     assert session.preview_history_withdrawal(relation)['status'] == 'unavailable'
+
+
+@pytest.mark.parametrize('rig', ['kobo', 'numilog', 'paris'], indirect=True)
+def test_fresh_declared_pair_is_present_without_a_supplier_receipt(selected):
+    session, right, file, service, rig_data = selected
+    # This remains a user statement even after an explicit, fresh Core check.
+    assert preview(selected)['status'] == 'preview'
+    assert confirm(selected, user_confirmed=True)['status'] == 'declared'
+    before = {table: rows(service, table) for table in (
+        'entitlements', 'acquisition_ledger', 'backup_items', 'artifacts',
+        'placements', 'catalog_entries',
+    )}
+    saved = records(service)
+    initial_files = session.overview()['confirmed_files']
+    observed = preview(selected)
+    assert observed == {
+        'status': 'already_declared', 'presence_state': 'present_declared',
+        'read_only': True, 'trust': 'user_declaration',
+        'revoke_available': True,
+    }
+    assert 'PRIVATE' not in json.dumps(observed)
+    assert session.overview()['confirmed_files'] == initial_files
+    assert {table: rows(service, table) for table in before} == before
+    assert records(service) == saved
+    assert rig_data[1].is_file()
+    assert session.preview_declared_link(right, file, revoke=True)['status'] == 'revoke_preview'
+
+
+@pytest.mark.parametrize('rig', ['kobo', 'numilog'], indirect=True)
+def test_declared_local_presence_downgrades_when_account_is_switched(selected):
+    session, _, _, service, _ = selected
+    assert preview(selected)['status'] == 'preview'
+    assert confirm(selected, user_confirmed=True)['status'] == 'declared'
+    assert preview(selected)['presence_state'] == 'present_declared'
+    before = records(service)
+    service.accounts[0].unique_id = 'new-synthetic-account'
+    outcome = preview(selected)
+    assert outcome['status'] == 'needs_review'
+    assert outcome['presence_state'] == 'declared_needs_review'
+    assert outcome['revoke_available'] is True
+    assert records(service) == before
+    assert rows(service, 'placements') == []

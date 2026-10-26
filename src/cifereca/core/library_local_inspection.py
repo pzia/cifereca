@@ -1434,6 +1434,15 @@ class LocalInspection:
                     self._declared_last = (right_key, file_key, existing.relation_id)
                     return {'status': ('needs_review' if existing.status == 'needs_review'
                                        else 'already_declared'),
+                            # This is the result of the selected pair's fresh
+                            # no-follow file check + exact current SQLite
+                            # right/account review, not supplier attestation.
+                            # Never reuse it as acquisition or placement proof.
+                            'presence_state': (
+                                'present_declared'
+                                if existing.status == 'declared_current'
+                                else 'declared_needs_review'
+                            ),
                             'read_only': True, 'trust': 'user_declaration',
                             'revoke_available': True}
             result = declare_local_link(
