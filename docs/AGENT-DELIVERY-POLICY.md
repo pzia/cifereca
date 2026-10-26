@@ -58,8 +58,10 @@ Distinguer sans ambiguïté :
    corrige pas le produit, ne merge pas et ne transforme pas une observation
    en gate CI. **Cette approbation de tickets n'est pas un gate de merge** :
    l'absence de campagne exploratoire ne bloque pas la clôture.
-7. **Ownership asynchrone explicite** : avant de travailler, lire issue,
-   branches, PR **et fichiers modifiés** et checks actuels. Un seul pilote
+7. **Ownership asynchrone explicite** : avant de travailler, partir de `main`,
+   des issues actives et des PR ouvertes (**fichiers modifiés, HEAD SHA, checks**).
+   Ne consulter les branches hors PR que si une issue, un handoff ou un indice
+   concret de concurrence y renvoie ; aucun inventaire exhaustif par défaut. Un seul pilote
    de la même résolution, même entre agents d'un même rôle, avec handoff
    et dépendances visibles. Selon la [matrice des propriétaires](../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889),
    séparer harnais CI, scénarios exploratoires et assertions fonctionnelles ;
