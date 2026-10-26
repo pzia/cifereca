@@ -516,14 +516,22 @@ class EbooksSession(ProviderSession):
         if opds_item:
             source['redirect_policy']='same_origin'
             source['classify_http_status']=True
-        try: dest=Path(self.transport.fetch(source,dest))
-        except Cancelled: raise
-        except ProviderError: raise
+        failure = None
+        try:
+            dest = Path(self.transport.fetch(source, dest))
+        except Cancelled:
+            raise  # Cancellation is cooperative control flow, never a failed EPUB.
         except (TemporaryUnavailable, UnsupportedOperation, Conflict) as exc:
-            raise _public_download_error(exc) from None
+            failure = _public_download_error(exc)
         except Exception:
-            # Error text can include a private URL, file path or response.
-            raise ProviderError('Ebooks libres et gratuits : download_unavailable') from None
+            # Neither arbitrary ProviderError messages nor transport exception
+            # chains may escape the plugin boundary (signed URL, file path,
+            # response body). The broker uses the typed branches above.
+            failure = ProviderError('Ebooks libres et gratuits : download_unavailable')
+        if failure is not None:
+            # Raise OUTSIDE the handler: "from None" suppresses traceback
+            # display but still retains the private error in __context__.
+            raise failure
         return dest,(detail or item.download_url) if opds_item else (item.friendly_url or self.base_url)
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
