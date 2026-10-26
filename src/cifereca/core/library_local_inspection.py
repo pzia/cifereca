@@ -761,17 +761,17 @@ class LocalInspection:
         )
         # Read declarations for *display only*; file bytes and provider rights
         # remain unverified, even if the user made an exact-scoped statement.
-        recorded_scopes = frozenset()
+        recorded_scopes, recorded_pairs = frozenset(), frozenset()
         if service is not None:
-            from .library_declared_links import recorded_declared_scopes
+            from .library_declared_links import recorded_declared_inspection
             try:
                 current_storage = service.storage
                 if valid():
-                    observed_scopes = recorded_declared_scopes(
+                    observed_scopes, observed_pairs = recorded_declared_inspection(
                         current_storage, identity_id=identity_id,
                     )
                     if valid() and service.storage is current_storage:
-                        recorded_scopes = observed_scopes
+                        recorded_scopes, recorded_pairs = observed_scopes, observed_pairs
             except Exception:
                 # Optional local projection must never interrupt inspection;
                 # unknown evidence is not an active statement or a file proof.
@@ -989,6 +989,42 @@ class LocalInspection:
             self._case_search[f'right:{index}'] = _searchable(
                 ' '.join(search_parts)
             )[:3200]
+        # Mirror the *recorded* declaration on the scanned file side too.
+        # This does not revalidate bytes or grant a supplier receipt/placement.
+        # Require a unique active right in the current identity/account scope;
+        # a missing file, duplicate path/scope or corrupt ledger is not shown
+        # as a positive relation to an arbitrary replacement.
+        if recorded_pairs:
+            visible_scopes = {
+                scope for scope in self._declared_right_scopes.values()
+                if scope in recorded_scopes
+            }
+            declared_paths = {
+                path for scope, path in recorded_pairs if scope in visible_scopes
+            }
+            for index, observation in enumerate(audit.inventory.files):
+                key = f'file:{index}'
+                case = self._cases.get(key)
+                if (observation.identity_id != identity_id
+                        or observation.path not in declared_paths
+                        or case is None or 'confirmed_link' in case.states):
+                    continue
+                # The old snapshot records a *path*, not proof that today's
+                # bytes still match the selected file. Keep the UI explicit.
+                label = 'Association enregistrée (à revérifier) · ' + case.label
+                note = ('Association personnelle enregistrée pour ce chemin et '
+                        'un droit du compte exact. Fichier et droit à revérifier : '
+                        'aucune provenance, acquisition ou présence attestée.')
+                extra = len((label[len(case.label):] + note).encode('utf-8'))
+                if self._bytes + extra > 8 * 1024 * 1024:
+                    self._limited = True
+                    break
+                self._bytes += extra
+                self._cases[key] = replace(
+                    case, label=label,
+                    states=tuple(sorted(set(case.states) | {'declared_link_recorded'})),
+                    details=case.details + '\\n\\n' + note,
+                )
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
                 continue
