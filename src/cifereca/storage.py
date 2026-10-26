@@ -3492,7 +3492,16 @@ class Storage:
             rows = db.execute("SELECT placement_id,path,state FROM placements").fetchall()
             for placement_id, path_text, state in rows:
                 try:
-                    path = Path(str(path_text)).resolve()
+                    # Do not resolve the *stored* leaf or its parents here:
+                    # a previously indexed book replaced by a symlink could
+                    # now point outside the root and incorrectly retain its
+                    # old "present" attestation. The scan's verified
+                    # seen_paths are physical paths; only lexical membership
+                    # of an already stored absolute path is needed.
+                    path = Path(str(path_text))
+                    if (not path.is_absolute() or ".." in path.parts
+                            or path == root_resolved):
+                        continue
                     path.relative_to(root_resolved)
                 except (OSError, ValueError):
                     continue
