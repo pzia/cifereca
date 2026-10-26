@@ -14,7 +14,7 @@ from cifereca.plugin_api import ProviderCapabilityError
 @pytest.mark.parametrize("endpoint", ["search", "detail"])
 def test_invalid_timeout_fails_before_http(monkeypatch, bad, endpoint):
     calls = []
-    monkeypatch.setattr(client.httpx, "Client", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(client.HTTPX_TRANSPORT, "client", lambda **kwargs: calls.append(kwargs))
     with pytest.raises(ProviderCapabilityError, match="invalid_public_timeout"):
         if endpoint == "search":
             client.fetch_public_search_url(

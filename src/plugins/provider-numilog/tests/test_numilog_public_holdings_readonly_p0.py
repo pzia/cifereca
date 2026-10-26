@@ -64,6 +64,7 @@ def test_selected_result_never_starts_public_or_private_http(monkeypatch):
         calls.append(True)
         raise AssertionError("GET/POST during holdings")
     monkeypatch.setattr(httpx, "Client", forbidden)
+    monkeypatch.setattr(client.HTTPX_TRANSPORT, "client", forbidden)
     monkeypatch.setattr(client, "fetch_public_search", forbidden)
     monkeypatch.setattr(client, "fetch_public_detail", forbidden)
     s = session()

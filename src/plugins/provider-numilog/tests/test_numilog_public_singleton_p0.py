@@ -40,7 +40,7 @@ def test_manifest_installs_independent_opt_in_singleton_without_brokers():
     assert catalogue["entrypoint"] == "cifereca_numilog_public_provider:PLUGIN"
     assert catalogue["instantiation"] == "singleton_public"
     assert catalogue["enabled_by_default"] is False
-    assert catalogue["requires_brokers"] == []
+    assert catalogue["requires_brokers"] == ["httpx"]
     assert catalogue["capabilities"] == ["catalog.search", "catalog.detail"]
     assert catalogue["version"] == owned["version"] == PRIVATE_VERSION
 
