@@ -7,6 +7,7 @@ exception seams are injected from LibraryService at call time; public guards and
 branch-local datetime imports remain late imports.
 """
 from __future__ import annotations
+from inspect import getattr_static
 from typing import Any
 from ..models import Account, Loan
 
@@ -19,8 +20,12 @@ def _paris_digital_inventory_complete(session: Any) -> bool:
     cannot attest a complete digital inventory. Inspect only exact types and
     known codes; never stringify or invoke provider-controlled comparisons.
     """
-    errors = getattr(session, "last_loan_errors", None)
-    return type(errors) in (list, tuple) and all(
+    # Do not execute a provider-defined property/descriptor while
+    # deciding whether an absent loan is returned. Only a small, plain
+    # instance-memory list is accepted by this compatibility reader.
+    # Complete negative proof must eventually come from typed branch claims.
+    errors = getattr_static(session, "last_loan_errors", None)
+    return type(errors) in (list, tuple) and len(errors) <= 64 and all(
         type(error) is dict
         and type(error.get("upstream")) is str
         and error["upstream"] == "SYRACUSE"
