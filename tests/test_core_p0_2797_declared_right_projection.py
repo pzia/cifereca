@@ -82,6 +82,27 @@ def test_manual_statement_is_a_separate_unverified_right_facet(rig):
         assert not service.storage.placements()
 
 
+@pytest.mark.parametrize("rig", ["paris"], indirect=True)
+def test_inactive_loan_does_not_label_file_as_current_declaration(rig):
+    service, _book, root, right, options = rig
+    preview = declare_local_link(service, **options)
+    assert declare_local_link(
+        service, confirmation=preview.plan_token, **options,
+    ).status == "declared"
+    service.storage.entitlement_put({**right, "state": "expired"})
+    inspection = _inspect(service, root)
+    try:
+        # Historical consent survives, but the closed loan is not an active
+        # association and cannot mark a current file positively.
+        assert inspection.page(state="declared_link_recorded").total == 0
+        files = [case for case in inspection.page().cases
+                 if case.key.startswith("file:")]
+        assert len(files) == 1
+        assert "declared_link_recorded" not in files[0].states
+    finally:
+        inspection.close()
+
+
 @pytest.mark.parametrize("rig", ["kobo"], indirect=True)
 def test_invalid_declaration_store_does_not_invent_displayed_links(rig):
     service, _book, root, _right, options = rig
