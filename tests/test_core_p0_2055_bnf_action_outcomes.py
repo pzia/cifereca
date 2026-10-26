@@ -146,28 +146,43 @@ def test_import_attribution_does_not_reclassify_manual_acquisition(connected_cor
     def import_acsm(*args,**kwargs):
         calls.append((args,kwargs));return result
     monkeypatch.setattr(service,'import_acsm',import_acsm)
-    source=tmp_path/'synthetic.acsm'
-    assert service.import_bnf_loan_acsm(source,expected_identity_id='default',title='Fiction') is result
-    assert calls==[((source,),{'identity_id':'default','provider_id':'manual','title':'Fiction'})]
-    row,=events(service,tmp_path)
+    source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
+    assert service.import_bnf_loan_acsm(source,expected_identity_id='default',loan=loan,title='Fiction') is result
+    assert calls==[((source,),{'identity_id':'default','provider_id':'manual','title':'Fiction',
+                              'placement_provider_id':'bnf-pret'})]
+    row,=(r for r in events(service,tmp_path) if r['detail']['action']=='import_acsm')
     assert row['detail']['action']=='import_acsm' and row['detail']['phase']=='adept_import'
     assert row['detail']['status']==status and row['detail']['reason_code']==reason
-    assert not downloaded and not service.storage.entitlements()
+    assert len(downloaded)==1 and not service.storage.entitlements()
 
 
 def test_import_error_and_scope_refusal_are_distinct_without_calling_another_profile(connected_core,tmp_path,monkeypatch):
-    service,*_=connected_core
+    service,_,_,loan,*_=connected_core
     calls=[]
     def fail(*args,**kwargs):calls.append(1);raise RuntimeError('SECRET license private path')
     monkeypatch.setattr(service,'import_acsm',fail)
     with pytest.raises(BnfLoanActionError,match='^bnf_loan_scope_unproven$'):
-        service.import_bnf_loan_acsm(tmp_path/'token.acsm',expected_identity_id='alex')
+        service.import_bnf_loan_acsm(tmp_path/'token.acsm',expected_identity_id='alex',loan=loan)
     assert not calls
+    source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
     with pytest.raises(BnfLoanActionError,match='^bnf_import_failed$'):
-        service.import_bnf_loan_acsm(tmp_path/'token.acsm',expected_identity_id='default')
-    rows=events(service,tmp_path)
+        service.import_bnf_loan_acsm(source,expected_identity_id='default',loan=loan)
+    rows=[r for r in events(service,tmp_path) if r['detail']['action']=='import_acsm']
     assert {r['detail']['phase'] for r in rows}=={'admission','adept_import'}
     assert 'SECRET' not in json.dumps(rows)
+
+
+def test_bnf_import_refuses_foreign_candidate_before_adept(connected_core,tmp_path,monkeypatch):
+    service,_,_,loan,*_=connected_core
+    calls=[]
+    monkeypatch.setattr(service,'import_acsm',lambda *a,**kw:calls.append(kw))
+    candidate=Path(service.stage_bnf_loan_acsm(
+        loan,confirmed=True,expected_identity_id='default')['path'])
+    foreign=tmp_path/candidate.name
+    foreign.write_bytes(candidate.read_bytes())
+    with pytest.raises(BnfLoanActionError,match='^bnf_loan_scope_unproven$'):
+        service.import_bnf_loan_acsm(foreign,expected_identity_id='default',loan=loan)
+    assert not calls and not service.storage.acquisitions()
 
 
 def test_generic_diagnostic_cannot_attest_action_or_enter_domain(tmp_path):
@@ -223,17 +238,36 @@ def test_bad_html_and_staging_storage_failure_have_no_success_or_adept(connected
 from tests.test_acsm_import_preservation import importer
 
 
-def test_real_import_orchestration_stays_manual_and_preserves_original(importer,tmp_path):
-    service,requests=importer
-    source=tmp_path/'chosen.acsm'
-    source.write_bytes(b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" fulfillmentType="loan"><format>application/pdf</format></fulfillmentToken>')
+def test_real_import_orchestration_stays_manual_and_preserves_original(connected_core,tmp_path,monkeypatch):
+    import cifereca.services as facade
+    service,_,_,loan,*_=connected_core
+    monkeypatch.setattr(facade,'data_dir',lambda:tmp_path/'data')
+    monkeypatch.setattr(service,'resolve_adept_profile_for_identity',lambda identity:('synthetic','identity'))
+    monkeypatch.setattr(service,'_originating_adept_profile_id',lambda *a:None)
+    requests=[]
+    def fulfill(request):
+        requests.append(request)
+        path=Path(request['destination'])
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(b'%PDF-1.4\n% synthetic document\n%%EOF\n')
+        return {'ok':True,'artifact':{'path':str(path)}}
+    monkeypatch.setattr(service,'execute_acquisition_request',fulfill)
+    source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
     before=source.read_bytes()
     identity=service.current_identity.identity_id
-    result=service.import_bnf_loan_acsm(source,expected_identity_id=identity,title='Synthetic')
+    result=service.import_bnf_loan_acsm(source,expected_identity_id=identity,loan=loan,title='Synthetic')
     assert result['status']=='complete' and Path(result['path']).is_file()
     assert source.read_bytes()==before
     assert len(requests)==1 and requests[0]['source']['provider']=='manual'
     assert all(row['provider_id']=='manual' for row in service.storage.acquisitions())
+    assert '/bnf-pret/acsm-' in result['path']
+    assert any(row['provider_id']=='bnf-pret' for row in service.storage.placements())
     assert not any(row['provider_id']=='bnf-pret' for row in service.storage.entitlements())
-    row,=events(service,tmp_path)
-    assert row['detail']['action']=='import_acsm' and row['detail']['reason_code']=='complete'
+    repeated=service.import_bnf_loan_acsm(source,expected_identity_id=identity,loan=loan,title='Synthetic')
+    assert repeated['status']=='unchanged' and repeated['path']==result['path']
+    assert len(requests)==1 and len(service.storage.acquisitions())==1
+    service.catalog_scan()
+    assert any(row['provider_id']=='bnf-pret' and row['path']==result['path']
+               for row in service.storage.placements())
+    rows=[r for r in events(service,tmp_path) if r['detail']['action']=='import_acsm']
+    assert {r['detail']['reason_code'] for r in rows}=={'complete','unchanged'}

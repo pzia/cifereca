@@ -89,9 +89,9 @@ def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
     Dialog.shown[1].respond("import")
     kwargs = w.service.import_bnf_loan_acsm.call_args
     assert kwargs.args[0].name == "staged.acsm"
-    assert kwargs.kwargs == {
-        "expected_identity_id":"default", "title":"Fiction",
-    }
+    assert kwargs.kwargs["expected_identity_id"] == "default"
+    assert kwargs.kwargs["title"] == "Fiction"
+    assert kwargs.kwargs["loan"].id == "loan-a"
     assert actions == [
         ("Récupération du jeton BnF…", "loan-acquisition"),
         ("Import ADEPT du prêt BnF…", "acsm-import"),
