@@ -101,6 +101,64 @@ def _paris_loan_presence(rows: list[Loan], loan: Loan) -> bool | None:
     return True if any(row.provider == loan.provider for row in same_id) else None
 
 
+def _read_paris_return_presence(self: Any, account: Account, session: Any,
+                                loan: Loan) -> bool:
+    """Read one exact borrower, without promoting a partial typed inventory.
+
+    Typed Paris inventories currently report unknown DILICOM pagination even
+    on HTTP success. The legacy mutable last_loan_errors channel must never
+    override the atomic envelope's explicit lack of negative proof.
+    """
+    epoch = getattr(self, "_account_context_epoch", None)
+    accounts = self.accounts
+    coordinates = (
+        account.identity_id, account.provider_id,
+        account.credential_id, account.unique_id,
+    )
+
+    def still_bound() -> bool:
+        return (
+            getattr(self, "_account_context_epoch", None) == epoch
+            and self.accounts is accounts
+            and sum(item is account for item in accounts) == 1
+            and (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id) == coordinates
+            and self._sessions.get(
+                self._session_key(account.provider_id, account.credential_id)
+            ) is session
+            and getattr(session, "connected", False) is True
+        )
+
+    if not still_bound():
+        raise ValueError("return_inventory_source_changed")
+    typed = callable(getattr(session, "loan_inventory_snapshot", None))
+    if typed:
+        from ..plugin_api.loan_inventory import read_loan_inventory
+        snapshot = read_loan_inventory(session, account)
+        if snapshot.status not in {"success", "partial"}:
+            raise ValueError("return_inventory_unavailable")
+        rows = list(snapshot.loans)
+    else:
+        # Older providers keep their one-read behavior. The mutable
+        # error side channel is never consulted for typed producers.
+        rows = session.loans(account)
+    if not still_bound() or not _paris_inventory_exact_borrower(rows, account):
+        raise ValueError("return_inventory_scope_changed")
+    presence = _paris_loan_presence(rows, loan)
+    if presence is None:
+        raise ValueError("return_inventory_branch_ambiguous")
+    if not presence:
+        if typed:
+            # Positive observations can prove a loan is still present under
+            # partial coverage. Absence requires an explicit end of DILICOM
+            # pagination for this *same* account and process context.
+            if not snapshot.branch_claims_complete("dilicom", "digital"):
+                raise ValueError("return_inventory_not_exhaustive")
+        elif not _paris_digital_inventory_complete(session):
+            raise ValueError("return_inventory_legacy_incomplete")
+    return presence
+
+
 def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     """Re-read the exact borrower with NO cache and NO second POST."""
     from .loan_return_guard import public_return_state, provider_absence_attested, return_ref
@@ -138,16 +196,7 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     status = "verification_unavailable"
     error_type = None
     try:
-        loans = session.loans(account)  # ALWAYS direct provider; bypass cached account reads
-        if not _paris_inventory_exact_borrower(loans, account):
-            raise ValueError("provider inventory has malformed or foreign borrower rows")
-        # A failed SYRACUSE leg is unrelated to digital loans. Any missing
-        # or unrecognized provider error is ambiguous and fails closed.
-        if loan.source_provider == "paris" and not _paris_digital_inventory_complete(session):
-            raise ValueError("Paris digital-loan inventory incomplete")
-        match = _paris_loan_presence(loans, loan)
-        if match is None:
-            raise ValueError("provider_loan_id_conflict")
+        match = _read_paris_return_presence(self, account, session, loan)
         verification = "still_present" if match else "provider_absent"
         status = "still_active" if match else "provider_return_confirmed"
     except Exception:
@@ -175,14 +224,7 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
     except AttentionRequired:
         return {"status": "verification_unavailable", "verification": "unavailable"}
     try:
-        rows = session.loans(account)
-        if not _paris_inventory_exact_borrower(rows, account):
-            raise ValueError("Paris inventory incomplete or foreign borrower")
-        if not _paris_digital_inventory_complete(session):
-            raise ValueError("Paris digital inventory unverified")
-        present = _paris_loan_presence(rows, loan)
-        if present is None:
-            raise ValueError("provider_loan_id_conflict")
+        present = _read_paris_return_presence(self, account, session, loan)
         verification = "still_present" if present else "provider_absent"
     except Exception:
         verification = "unavailable"
