@@ -674,6 +674,28 @@ class SynchronizationBrokerImpl:
         raw = self.service.storage.metadata_get(policy_key(source_id))
         return "on_start" if raw == "1" else "manual"
 
+    def bnf_auto_download_enabled(self, source_id: str) -> bool:
+        from .core.bnf_auto_materialization import enabled
+        account = self._find_account(source_id)
+        return enabled(self.service, account)
+
+    def set_bnf_auto_download(self, source_id: str, value: bool) -> bool:
+        from .core.bnf_auto_materialization import enabled, policy_key
+        account = self._find_account(source_id)
+        if type(value) is not bool or account.provider_id != 'bnf-pret':
+            raise ValueError('unsupported BnF acquisition policy')
+        if value:
+            # Check the binding before granting a persistent acquisition mode.
+            if not self._enabled(source_id) or not self._account_bound_for_bnf(account):
+                raise ValueError('BnF source not eligible')
+        self.service.storage.metadata_set(policy_key(account), '1' if value else '0')
+        self._notify()
+        return enabled(self.service, account)
+
+    def _account_bound_for_bnf(self, account: Any) -> bool:
+        from .core.bnf_auto_materialization import binding_ready
+        return binding_ready(self.service, account)
+
     def set_local_materialization_schedule(self, source_id: str, mode: str) -> str:
         """Explicit, durable, per-source opt-in. No remote operation.
 
