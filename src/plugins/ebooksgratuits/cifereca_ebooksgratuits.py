@@ -473,7 +473,42 @@ class EbooksSession(ProviderSession):
         return out[:self.page_size]
     def _search_opds(self,query,scope='all',page=0,field='all'):
         return _opds_search(self,query,scope=scope,page=page,field=field)
-    def holdings(self,item,search_terms=''): return ItemDetail(record_id=item.record_id,docbase='EBOOKSGRATUITS',title=item.title,author=item.author,type=item.type,year=None,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Téléchargement public EPUB',holdings=[],source_provider=self.provider_id,source_credential=self.credential_id)
+    def holdings(self, item, search_terms=''):
+        """Read-only EPUB-offer evidence, never successful delivery evidence.
+
+        Search and older cached rows may lack a valid EPUB offer. Reuse the
+        download admission predicates without contacting the provider or
+        pretending the file has been retrieved successfully.
+        """
+        url = getattr(item, 'download_url', None)
+        metadata = getattr(item, 'metadata', None)
+        opds = type(metadata) is dict and metadata.get('acquisition_source') == 'opds-calibre'
+        verified = False
+        if (getattr(item, 'source_provider', None) == self.provider_id
+                and type(url) is str
+                and getattr(item, 'format', None) == 'EPUB'
+                and getattr(item, 'downloadable', None) is True):
+            allowed = (_safe_opds_link(self.opds_feed_url, url, 'download')
+                       if opds else _safe_catalog_link(self.base_url, url, 'epub'))
+            if allowed == url:
+                # An old XML OPDS "friendly_url" remains harmless. For the
+                # legacy HTML backend, a claimed detail URL must also be
+                # admissible before the UI can advertise its offer.
+                friendly = getattr(item, 'friendly_url', None)
+                verified = bool(
+                    opds or not friendly
+                    or _safe_catalog_link(self.base_url, friendly, 'detail') == friendly
+                )
+        return ItemDetail(
+            record_id=item.record_id, docbase='EBOOKSGRATUITS',
+            title=item.title, author=item.author, type=item.type,
+            year=None, thumbnail_url=item.thumbnail_url,
+            availability_status='available' if verified else 'unknown',
+            availability_label=('Offre EPUB publiée ; téléchargement non vérifié'
+                                if verified else 'Offre EPUB non vérifiée'),
+            holdings=[], source_provider=self.provider_id,
+            source_credential=self.credential_id,
+        )
     def download_direct(self,item,target_dir):
         if item.source_provider!=self.provider_id or not item.download_url: raise ProviderError('Ebooks libres et gratuits : offre inconnue')
         # A forged or stale record cannot redirect the broker to a foreign host.
