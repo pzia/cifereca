@@ -141,7 +141,7 @@ def test_deep_scan_reports_misnamed_pdf_without_mutating_files_or_ledger():
         try:
             wrong = Path(td) / "EBooks" / "hugues" / "paris" / "Book.epub"
             wrong.parent.mkdir(parents=True, exist_ok=True)
-            payload = b"%PDF-1.7\\n1 0 obj\\n<<>>\\nendobj\\n%%EOF\\n"
+            payload = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
             wrong.write_bytes(payload)
             service.storage.acquisition_put({
                 "provider_id": "paris", "credential_id": "p", "account_id": "primary", "identity_id": "default",
