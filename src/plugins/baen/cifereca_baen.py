@@ -4,7 +4,7 @@ from unicodedata import category
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 import httpx
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
 MAX_REQUESTED_PAGES = 101  # Pages 0..100, never a silently clamped page.
 UNVERIFIED_SEARCH_WARNING = (
@@ -49,10 +49,56 @@ def _reject_redirect(response):
     if 300 <= getattr(response, 'status_code', 200) < 400:
         raise ProviderError('Baen : public_redirect_unverified')
 
+# The transport can include an URL, filename, raw MIME or exception chain in
+# its error. Only allowlisted transport reasons leave this plugin boundary.
+_BAEN_DOWNLOAD_STATUSES = {
+    'auth_required': 'download_auth_required',
+    'access_denied': 'download_access_denied',
+    'not_found': 'download_not_found',
+    'rate_limited': 'download_rate_limited',
+    'service_unavailable': 'download_service_unavailable',
+}
+_BAEN_DOWNLOAD_REJECTIONS = {
+    'transport.http: réponse HTML refusée': 'download_invalid_content',
+    'transport.http: réponse vide': 'download_empty_response',
+    'transport.http: artefact protégé refusé': 'download_protected',
+    'transport.http: fichier trop volumineux': 'download_too_large',
+    'transport.http: redirection hors origine refusée': 'download_redirect_denied',
+    'transport.http: redirection HTTPS vers HTTP refusée': 'download_redirect_denied',
+    'transport.http: destination de redirection invalide': 'download_redirect_denied',
+}
+
+
+def _baen_download_failure(error):
+    """Map only built-in broker exception shapes; never reflect raw strings."""
+    raw = (error.args[0] if len(error.args) == 1 and
+           type(error.args[0]) is str else '')
+    if type(error) is TemporaryUnavailable:
+        prefix = 'transport.http: '
+        code = raw[len(prefix):] if raw.startswith(prefix) else ''
+        result = _BAEN_DOWNLOAD_STATUSES.get(code)
+        if result is None and code in {
+            'redirection sans destination', 'trop de redirections',
+            'redirections non résolues',
+        }:
+            result = 'download_redirect_limit'
+        return ProviderError('Baen : ' + (result or 'download_service_unavailable'))
+    if type(error) is UnsupportedOperation:
+        result = _BAEN_DOWNLOAD_REJECTIONS.get(raw)
+        if result is None and raw.startswith('transport.http: content-type refusé ('):
+            result = 'download_invalid_content'
+        elif result is None and raw.startswith('transport.http: artefact invalide ('):
+            result = 'download_invalid_epub'
+        return ProviderError('Baen : ' + (result or 'download_rejected'))
+    if type(error) is Conflict:
+        return ProviderError('Baen : download_destination_conflict')
+    return ProviderError('Baen : téléchargement inaccessible ou EPUB invalide')
+
+
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Seul le champ général est exposé ; le filtrage serveur de la requête reste non qualifié. Aucun champ spécialisé attesté.','Numéros de page transmis sans preuve de pagination effective ; réponses partielles, y compris une page vide.',)),homepage=BASE,notes=('Couverture de recherche publique non qualifiée ; achats et bibliothèque privée hors périmètre.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.13','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.14','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -185,7 +231,13 @@ class BaenSession(ProviderSession):
             r=self.client.get(item.friendly_url)
             _reject_redirect(r)
             r.raise_for_status()
-        except httpx.HTTPError as e: raise ProviderError('Baen : fiche inaccessible') from e
+        except httpx.HTTPError:
+            # Do not attach a private request URL as a public exception cause.
+            failed = True
+        else:
+            failed = False
+        if failed:
+            raise ProviderError('Baen : fiche inaccessible')
         self._enrich_item_from_detail(item,r.text)
         # Baen exposes a public free-download action on some Free Library fiches.
         links=re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S)
@@ -206,11 +258,23 @@ class BaenSession(ProviderSession):
             'max_bytes':self.maximum,
             'allowed_content_types':('application/epub+zip','application/zip','application/octet-stream'),
             'expected_format':'epub',
+            'classify_http_status':True,
             'overwrite':True,
         }
-        try: dest=Path(self.transport.fetch(source,dest))
-        except ProviderError: raise
-        except Exception as e: raise ProviderError('Baen : téléchargement inaccessible ou EPUB invalide') from e
+        failure = None
+        try:
+            dest = Path(self.transport.fetch(source, dest))
+        except Cancelled:
+            # A user cancellation is not a failed download, and must retain
+            # its cooperative control-flow semantics.
+            raise
+        except Exception as exc:
+            # Build the public, closed error inside the handler, but raise it
+            # OUTSIDE the handler: no implicit __context__/__cause__ back to
+            # a signed URL, filename or response from transport.http.
+            failure = _baen_download_failure(exc)
+        if failure is not None:
+            raise failure
         return dest,item.friendly_url
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
