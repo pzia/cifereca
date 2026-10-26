@@ -18,21 +18,49 @@ def make_log(path: Path, *lines: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_missing_sources_are_explicit_and_offline(tmp_path, monkeypatch):
-    diag = Diagnostics(enabled=False)
-    def forbidden():
-        raise AssertionError("no provider or network operations in Diagnostics")
-    service = SimpleNamespace(diagnostics=diag, connect_configured=forbidden)
+def test_legacy_source_aliases_use_only_unavailable_physical_journal(tmp_path, monkeypatch):
+    class ForbiddenMemory:
+        enabled = False
+
+        def snapshot(self):
+            raise AssertionError("broker must never consult the memory cache")
+
+    service = SimpleNamespace(diagnostics=ForbiddenMemory())
     monkeypatch.setattr("cifereca.paths.log_file", lambda: tmp_path / "cifereca.log")
     broker = DiagnosticsBrokerImpl(service)
     assert isinstance(broker, DiagnosticsBroker)
-    result = broker.events()
-    assert result["events"] == []
-    assert result["status"] == "unavailable"
-    assert [(x["source"], x["status"]) for x in result["sources"]] == [
-        ("core_events", "disabled"), ("app_log", "unavailable"),
-    ]
-    assert result["read_only"] and result["bounded"]
+    canonical = broker.events(source="journal")
+    assert canonical["events"] == []
+    assert canonical["status"] == "partial"
+    assert canonical["sources"][0]["source"] == "journal"
+    assert canonical["sources"][0]["reason"] == "active_log_missing"
+    for source in ("all", "core_events", "app_log"):
+        assert broker.events(source=source) == canonical
+
+
+
+def test_broker_defaults_to_physical_journal_not_memory_union(tmp_path, monkeypatch):
+    log_path = tmp_path / "cifereca.log"
+    log_path.write_text(
+        "2026-10-25 10:00:00,000 ERROR cifereca [MainThread] "
+        "BNF import failure 403\n"
+    )
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: log_path)
+
+    class ForbiddenMemory:
+        enabled = True
+        def snapshot(self):
+            raise AssertionError("canonical query must not access memory")
+
+    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=ForbiddenMemory()))
+    default = broker.events(search="BNF import failure")
+    explicit = broker.events(source="journal", search="BNF import failure")
+    assert default == explicit
+    assert default["total"] == 1
+    assert default["events"][0]["severity"] == "error"
+    assert default["sources"][0]["source"] == "journal"
+    for legacy_source in ("all", "core_events", "app_log"):
+        assert broker.events(source=legacy_source, search="BNF import failure") == default
 
 
 def test_structured_events_do_not_expose_personal_info_or_details(tmp_path):

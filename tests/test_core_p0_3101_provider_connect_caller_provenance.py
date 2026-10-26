@@ -109,3 +109,69 @@ def test_caller_is_snapshot_at_submission_not_worker_state():
     assert scheduled[0]() == "startup/connect_configured"
     startup_coordinator.connect_configured_sources(window, idle_add=lambda fn: None)
     assert scheduled[1]() == "explicit_refresh"
+
+@pytest.mark.parametrize("hint,expected", (
+    ("plugin_activation", "plugin_activation"),
+    ("PRIVATE_ACCOUNT", "explicit_refresh"),
+    (None, "explicit_refresh"),
+))
+def test_only_known_reload_marker_changes_the_gui_caller(hint, expected):
+    submitted = []
+    window = NS(
+        _closed=False,
+        _source_inventory_startup_connection_seen=True,
+        _provider_connect_caller_hint=hint,
+        service=NS(
+            connect_configured=lambda: None,
+            connect_configured_with_caller=lambda *, caller_category: caller_category,
+        ),
+        runner=NS(submit=lambda *args, **kwargs: submitted.append(args[1])),
+    )
+    startup_coordinator.connect_configured_sources(window, idle_add=lambda fn: None)
+    assert len(submitted) == 1
+    assert submitted[0]() == expected
+    assert "PRIVATE_ACCOUNT" not in repr(submitted[0].keywords)
+
+
+def test_plugin_reload_marks_only_its_own_connection_submission():
+    from cifereca.gui.plugin_reload_controller import plugins_changed
+    from tests.test_core_ui_1130_plugin_reload_controller import _window
+
+    window, calls, _initial, _updated = _window()
+    submitted = []
+    window._source_inventory_startup_connection_seen = True
+    window.service.connect_configured = lambda: None
+    window.service.connect_configured_with_caller = (
+        lambda *, caller_category: caller_category
+    )
+    window.runner = NS(submit=lambda *args, **kwargs: submitted.append(args[1]))
+    window._connect_sources_if_open = lambda: startup_coordinator.connect_configured_sources(
+        window, idle_add=lambda fn: None,
+    )
+
+    plugins_changed(window)
+    assert [call() for call in submitted] == ["plugin_activation"]
+    assert getattr(window, "_provider_connect_caller_hint", None) is None
+
+    window._connect_sources_if_open()
+    assert [call() for call in submitted] == [
+        "plugin_activation", "explicit_refresh",
+    ]
+
+
+def test_plugin_reload_restores_prior_marker_even_when_reconnect_raises():
+    from cifereca.gui.plugin_reload_controller import plugins_changed
+    from tests.test_core_ui_1130_plugin_reload_controller import _window
+
+    window, _calls, _initial, _updated = _window()
+    window._source_inventory_startup_connection_seen = True
+    window._provider_connect_caller_hint = "profile_change"
+
+    def failed_submission():
+        assert window._provider_connect_caller_hint == "plugin_activation"
+        raise RuntimeError("synthetic local dispatch failure")
+
+    window._connect_sources_if_open = failed_submission
+    with pytest.raises(RuntimeError, match="synthetic local dispatch failure"):
+        plugins_changed(window)
+    assert window._provider_connect_caller_hint == "profile_change"

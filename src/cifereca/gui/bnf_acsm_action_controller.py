@@ -15,7 +15,14 @@ def bnf_action_error_message(error, *, importing=False):
     allowed = IMPORT_CODES if importing else STAGE_CODES
     if type(code) is not str or code not in allowed:
         code = 'bnf_import_failed' if importing else 'bnf_action_failed'
-    if code in {'bnf_loan_scope_unproven', 'bnf_loan_not_observed'}:
+    if code.startswith('bnf_activity_'):
+        if code in {'bnf_activity_auth_required', 'bnf_activity_url_refused'}:
+            message = "Impossible de revérifier les emprunts BnF : reconnectez le compte puis actualisez les prêts. Aucun GET ACSM n'a été lancé."
+        elif code in {'bnf_activity_rate_limited', 'bnf_activity_operation_timeout'}:
+            message = "La revérification des emprunts BnF est temporairement indisponible. Réessayez plus tard ; aucun GET ACSM n'a été lancé."
+        else:
+            message = "Échec de relecture des emprunts BnF avant le téléchargement. Aucun GET ACSM ni import ADEPT n'a été lancé."
+    elif code in {'bnf_loan_scope_unproven', 'bnf_loan_not_observed'}:
         message = "Actualisez les prêts du compte BnF de cette identité, puis sélectionnez de nouveau le prêt."
     elif code in {'bnf_auth_required', 'bnf_session_closed'}:
         message = "Reconnectez le compte BnF de cette identité puis actualisez ses prêts. Aucun import ADEPT n'a été lancé."
@@ -96,7 +103,7 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
                 # ADEPT import, NOT an automatically proven BnF acquisition.
                 return window.service.import_bnf_loan_acsm(
                     Path(path), expected_identity_id=identity_id,
-                    title=loan.title,
+                    loan=loan, title=loan.title,
                 )
 
             def imported(result):
@@ -118,8 +125,8 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
                         "Import BnF",
                     )
                     return
-                window._activity_result("ACSM importé via ADEPT" if result.get("status") == "complete"
-                                        else "ACSM déjà importé")
+                window._activity_result("Fichier importé via ADEPT (source BnF ; droit non attesté)"
+                                        if result.get("status") == "complete" else "ACSM déjà importé")
                 window.refresh_library(False)
 
             window.runner.submit(

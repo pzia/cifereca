@@ -64,5 +64,5 @@ def test_event_detail_is_safe_and_opt_in_so_ai_does_not_inherit_it():
     source = {"events": [raw]}
     assert "detail" not in sanitized_rows(source)[0]
     detail = sanitized_rows(source, include_detail=True)[0]["detail"]
-    assert detail["reason"] == "provider_timeout" and detail["token"] != "PRIVATE"
+    assert detail["reason"] == "provider_timeout" and detail["token"] == "PRIVATE"
     assert raw["detail"]["token"] == "PRIVATE"  # Input is not mutated.

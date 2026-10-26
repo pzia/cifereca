@@ -90,6 +90,115 @@ class Storage:
             values[item]=value
             db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,json.dumps(values)))
 
+    @staticmethod
+    def _loan_renewal_checkpoint_key_valid(key: object) -> bool:
+        # Key is a digest, never a borrower, title, token or signed URL.
+        return (
+            type(key) is str and key.startswith("loan.renew.v1:")
+            and len(key) == len("loan.renew.v1:") + 64
+            and all(character in "0123456789abcdef"
+                    for character in key[len("loan.renew.v1:"):])
+        )
+
+    def loan_renewal_state(self, key: str) -> dict[str, Any] | None:
+        """Read a bounded durable at-most-once renewal receipt (never a right)."""
+        if not self._loan_renewal_checkpoint_key_valid(key):
+            return None
+        raw = self.metadata_get(key)
+        if type(raw) is not str or not 0 < len(raw) <= 4096:
+            return None
+        try:
+            row = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if (type(row) is not dict or row.get("schema") != 1
+                or row.get("operation") != "loan.renew"
+                or type(row.get("status")) is not str
+                or row.get("status") not in {
+                    "request_sent", "submitted", "verification_unavailable",
+                    "blocked",
+                }
+                or type(row.get("operation_id")) is not str
+                or not row["operation_id"]):
+            return None
+        return row
+
+    def loan_renewal_claim_once(
+        self, key: str, operation_id: str,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Reserve a renewal *before* the POST, atomically across processes.
+
+        An existing key is never automatically reopened, even if the first
+        network operation timed out or its metadata became malformed.
+        Another renewal needs a separately attested upstream cycle; a
+        repeated click on the same loan cannot replay the mutation.
+        """
+        from datetime import datetime, timezone
+        if (not self._loan_renewal_checkpoint_key_valid(key)
+                or type(operation_id) is not str or not operation_id
+                or len(operation_id) > 128):
+            raise ValueError("loan_renewal_claim_invalid")
+        row = {
+            "schema": 1, "operation": "loan.renew",
+            "status": "request_sent", "operation_id": operation_id,
+            "request_accepted": False, "verification": "not_checked",
+            "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO NOTHING",
+                (key, json.dumps(row, sort_keys=True, separators=(",", ":"))),
+            )
+            if cursor.rowcount == 1:
+                return True, row
+            # Never retry over corrupt checkpoint bytes or a prior dispatch.
+            return False, {"status": "verification_unavailable"}
+
+    def loan_renewal_finish(
+        self, key: str, operation_id: str, *,
+        status: str, accepted: bool = False,
+    ) -> dict[str, Any] | None:
+        """CAS after the POST; stale workers cannot alter later operations."""
+        if (not self._loan_renewal_checkpoint_key_valid(key)
+                or type(operation_id) is not str
+                or type(status) is not str
+                or status not in {
+                    "submitted", "verification_unavailable", "blocked",
+                }
+                or type(accepted) is not bool):
+            raise ValueError("loan_renewal_transition_invalid")
+        from datetime import datetime, timezone
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            if row is None or type(row[0]) is not str or len(row[0]) > 4096:
+                return None
+            try:
+                previous = json.loads(row[0])
+            except (TypeError, ValueError):
+                return None
+            if (type(previous) is not dict
+                    or previous.get("schema") != 1
+                    or previous.get("operation") != "loan.renew"
+                    or previous.get("operation_id") != operation_id
+                    or previous.get("status") != "request_sent"):
+                return None
+            previous["status"] = status
+            previous["request_accepted"] = accepted
+            previous["verification"] = "not_checked" if accepted else "unavailable"
+            previous["checked_at"] = datetime.now(timezone.utc).isoformat(
+                timespec="seconds",
+            )
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (json.dumps(previous, sort_keys=True, separators=(",", ":")), key),
+            )
+            return previous
+
     def loan_return_state(self, key: str) -> dict[str, Any] | None:
         """Read a bounded operation checkpoint; invalid bytes never authorize POST."""
         raw = self.metadata_get(key)
@@ -2836,6 +2945,38 @@ class Storage:
         for record in values:
             row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(row)
         return out
+
+    def acquisition_bind_bnf_display_loan(self, acquisition_id: str, *, path: str,
+                                          artifact_id: str, scope: dict[str, str]) -> bool:
+        """Atomically retain one manual import's observed borrower, not a right."""
+        from .core.bnf_import_provenance import scope_key
+        key = scope_key(scope)
+        if key is None:
+            return False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT metadata_json FROM acquisition_ledger WHERE acquisition_id=? "
+                "AND provider_id='manual' AND strategy='manual_acsm' AND status='complete' "
+                "AND identity_id=? AND artifact_id=? AND entitlement_id IS NULL",
+                (acquisition_id, key[0], artifact_id),
+            ).fetchone()
+            if row is None:
+                return False
+            metadata = self._json_load(row[0])
+            if metadata.get('path') != path or metadata.get('bnf_observed_loan', scope) != scope:
+                return False
+            placement = db.execute(
+                "SELECT 1 FROM placements WHERE path=? AND artifact_id=? AND identity_id=? "
+                "AND provider_id='bnf-pret' AND state='present'",
+                (path, artifact_id, key[0]),
+            ).fetchone()
+            if placement is None:
+                return False
+            metadata['bnf_observed_loan'] = dict(scope)
+            db.execute("UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+                       (self._json_dump(metadata), acquisition_id))
+            return True
 
     def acquisition_update_state(
         self,

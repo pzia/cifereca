@@ -6,6 +6,7 @@ runner, current-identity and UI-thread semantics. Do not import MainWindow here.
 from __future__ import annotations
 
 from typing import Any
+from copy import copy
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -20,6 +21,7 @@ from .master_detail import MasterDetailPage
 from .query_controls import MultiSelect
 from .task_runner import TaskPriority
 from .return_feedback import loan_return_feedback
+from .loan_renewal_feedback import loan_renewal_feedback
 from .detail_model import fr_date
 
 
@@ -64,6 +66,11 @@ def _loan_filter_toggled(self, button: Gtk.ToggleButton) -> None:
 
 
 def _populate_loans(self, rows: list[Loan]) -> None:
+    # Defense in depth: a late global opening-sync callback or cross-profile
+    # service snapshot must not be rendered under the selected identity.
+    identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    rows = [row for row in rows if type(row) is Loan
+            and identity_id is not None and row.identity_id == identity_id]
     self.service.last_loans = rows
     # The same upstream loan can be visible under two Paris credentials.
     # Preserve both source-bound rows instead of overwriting by loan.id.
@@ -76,7 +83,12 @@ def _populate_loans(self, rows: list[Loan]) -> None:
 def _render_loans(self) -> None:
     if not hasattr(self, "loan_page"):
         return
-    all_loans = list(self.service.last_loans)
+    # Service cache/async writers can be updated independently of GTK; never
+    # trust a mixed-identity last_loans projection at display time.
+    identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    all_loans = [loan for loan in self.service.last_loans
+                 if type(loan) is Loan and identity_id is not None
+                 and loan.identity_id == identity_id]
     counts = loan_medium_counts(all_loans)
     if hasattr(self, "loan_filter_buttons"):
         for key, button in self.loan_filter_buttons.items():
@@ -139,9 +151,14 @@ def _loan_selected(self, row: BookListItem | None) -> None:
 def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -> None:
     identity = self.service.current_identity
     identity_id = identity.identity_id if identity else None
+    # An A -> B -> A round trip has the same identity ID but invalidates an
+    # earlier refresh. Guard the GTK callback by the Core account epoch too.
+    account_epoch = getattr(self.service, "_account_context_epoch", None)
     def done(rows):
         current = self.service.current_identity
         if (current.identity_id if current else None) == identity_id:
+            if getattr(self.service, "_account_context_epoch", None) != account_epoch:
+                return
             self._loans_refreshed(rows)
     self.runner.submit(
         "Actualisation des emprunts…",
@@ -175,17 +192,56 @@ def _loans_refreshed(self, rows):
 
 
 def confirm_renew(self, loan: Loan, control: Gtk.Widget) -> None:
-    dialog = Adw.MessageDialog.new(self, "Prolonger ce prêt ?", loan.title)
-    dialog.add_response("cancel", "Annuler"); dialog.add_response("ok", "Prolonger")
+    # Consent applies to the loan *selected when the dialog opens*, not a
+    # mutable DTO reused by a later refresh or identity switch.
+    selected = copy(loan)
+    owner = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    generation = getattr(self.service, "_account_context_epoch", None)
+    dialog = Adw.MessageDialog.new(
+        self, "Prolonger ce prêt ?",
+        "Une demande sera envoyée au fournisseur pour ce compte et ce prêt. "
+        "La réponse ne garantit pas encore la nouvelle date d'échéance.",
+    )
+    dialog.add_response("cancel", "Annuler")
+    dialog.add_response("ok", "Demander la prolongation")
     dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-    dialog.connect("response", lambda _d, response: self._renew(loan, control) if response == "ok" else None)
+
+    def on_response(_dialog, response):
+        if response != "ok":
+            return
+        current = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+        if (current != owner or owner != selected.identity_id
+                or getattr(self.service, "_account_context_epoch", None) != generation):
+            self.show_attention(
+                "Le compte a changé : sélectionnez de nouveau le prêt.",
+                code="loan_scope_changed",
+            )
+            return
+        self._renew(selected, control)
+
+    dialog.connect("response", on_response)
     dialog.present()
+
+
+def _renew_result(self, result: Any) -> None:
+    kind, message, code = loan_renewal_feedback(result)
+    # A fresh inventory can display the new due date but cannot rewrite the
+    # durable remote-attempt receipt or auto-submit a second RenewLoans POST.
+    if kind == "submitted":
+        self.toast(message, 6)
+        self.refresh_loans(True)
+    else:
+        self.show_attention(message, code=code)
+        if type(result) is dict and result.get("status") == "verification_unavailable":
+            self.refresh_loans(True)
 
 
 def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
     self.runner.submit(
-        "Prolongation du prêt…", lambda: self.service.renew(loan), lambda _r: self.refresh_loans(True),
-        control=control, success_toast="Prêt prolongé", priority=TaskPriority.USER_ACTION, kind="loan-renew",
+        "Demande de prolongation…",
+        lambda: self.service.renew(loan, confirmed=True),
+        self._renew_result,
+        control=control, priority=TaskPriority.USER_ACTION, kind="loan-renew",
     )
 
 

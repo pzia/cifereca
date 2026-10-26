@@ -674,6 +674,28 @@ class SynchronizationBrokerImpl:
         raw = self.service.storage.metadata_get(policy_key(source_id))
         return "on_start" if raw == "1" else "manual"
 
+    def bnf_auto_download_enabled(self, source_id: str) -> bool:
+        from .core.bnf_auto_materialization import enabled
+        account = self._find_account(source_id)
+        return enabled(self.service, account)
+
+    def set_bnf_auto_download(self, source_id: str, value: bool) -> bool:
+        from .core.bnf_auto_materialization import enabled, policy_key
+        account = self._find_account(source_id)
+        if type(value) is not bool or account.provider_id != 'bnf-pret':
+            raise ValueError('unsupported BnF acquisition policy')
+        if value:
+            # Check the binding before granting a persistent acquisition mode.
+            if not self._enabled(source_id) or not self._account_bound_for_bnf(account):
+                raise ValueError('BnF source not eligible')
+        self.service.storage.metadata_set(policy_key(account), '1' if value else '0')
+        self._notify()
+        return enabled(self.service, account)
+
+    def _account_bound_for_bnf(self, account: Any) -> bool:
+        from .core.bnf_auto_materialization import binding_ready
+        return binding_ready(self.service, account)
+
     def set_local_materialization_schedule(self, source_id: str, mode: str) -> str:
         """Explicit, durable, per-source opt-in. No remote operation.
 
@@ -1421,24 +1443,43 @@ class DiagnosticsBrokerImpl:
     service: Any
 
     def snapshot(self):
-        return tuple(self.service.diagnostics.snapshot())
+        """Recent structured events from the one persistent journal."""
+        from .core.diagnostic_journal import recent_diagnostics_snapshot
+        from .paths import log_file
+        return recent_diagnostics_snapshot(log_file())
 
     def events(
-        self, *, source: str = "all", module: str = "", severity: str = "",
+        self, *, source: str = "journal", module: str = "", severity: str = "",
         provider_id: str = "", domain: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
+        search: str = "",
     ) -> dict[str, Any]:
-        """Read-only, bounded public feed; filesystem paths are Core-owned."""
-        from .core.diagnostic_event_feed import query_diagnostic_events
+        """Read only the canonical physical journal, never the memory cache.
+
+        Historical source spellings are temporary aliases, not distinct feeds
+        and cannot cause another read or duplicate physical occurrences.
+        """
+        from .core.diagnostic_journal import query_journal
         from .paths import log_file
-        return query_diagnostic_events(
-            self.service.diagnostics, log_path=log_file(),
-            source=source, module=module, severity=severity,
-            provider_id=provider_id, domain=domain,
-            since=since, until=until, limit=limit, offset=offset,
-            reason_code=reason_code,
+
+        if source not in ("journal", "all", "core_events", "app_log"):
+            raise ValueError("unknown diagnostic source")
+        if domain or reason_code:
+            raise ValueError(
+                "legacy domain/reason filters unavailable on canonical journal"
+            )
+        return query_journal(
+            log_file(), search=search, module=module, severity=severity,
+            provider_id=provider_id, since=since, until=until,
+            limit=limit, offset=offset,
         )
+
+    def export_raw_journal(self) -> bytes:
+        """Explicit local export; no provider interaction, no GUI masking."""
+        from .core.diagnostic_journal import export_raw_journal
+        from .paths import log_file
+        return export_raw_journal(log_file())
 
     def system_status(self):
         from .system_status import system_status
@@ -1446,7 +1487,6 @@ class DiagnosticsBrokerImpl:
 
     def inventory(self) -> tuple[dict[str, Any], ...]:
         """Return the versions and states of the plugin manifests actually loaded."""
-        from .diagnostics import redact
         manager = getattr(self.service, "plugin_manager", None) or getattr(self.service, "_plugin_manager", None)
         if manager is None:
             return ()
@@ -1469,12 +1509,11 @@ class DiagnosticsBrokerImpl:
                 "reason_code": str(raw.get("reason_code") or ""),
                 "capabilities": tuple(str(value) for value in (raw.get("capabilities") or ())),
             }
-            rows.append(redact(row))
+            rows.append(row)
         return tuple(rows)
 
     def runtime_diagnostic(self, plugin_id: str) -> dict[str, Any]:
-        """Expose only bounded process metadata, never raw runtime streams or IDs."""
-        from .diagnostics import redact, redact_text
+        """Expose bounded process metadata without changing its original values."""
         getter = getattr(self.service, "runtime_diagnostic", None)
         if not callable(getter):
             return {}
@@ -1492,14 +1531,12 @@ class DiagnosticsBrokerImpl:
                 continue
             value = raw[key]
             if isinstance(value, str):
-                bounded[key] = redact_text(value)[:240]
+                bounded[key] = value[:240]
             elif isinstance(value, (int, float, bool)) or value is None:
                 bounded[key] = value
-        return dict(redact(bounded))
+        return bounded
 
     def active_checks(self) -> tuple[HealthCheckResult, ...]:
-        from .diagnostics import redact, redact_text
-
         rows: list[HealthCheckResult] = []
         try:
             sources = SynchronizationBrokerImpl(self.service).sources()
@@ -1522,14 +1559,14 @@ class DiagnosticsBrokerImpl:
                     str(source.provider_id or "sync"),
                     status,
                     "Source " + str(source.label or source.provider_id or "configurée"),
-                    redact({
+                    {
                         "provider_id": source.provider_id,
                         "connected": connected,
                         "sync_capable": capable,
                         "enabled": bool(source.enabled),
                         "last_success": source.last_success,
                         "error": error[:240] if error else "",
-                    }),
+                    },
                     "core",
                 ))
         except Exception:
@@ -1616,18 +1653,21 @@ class DiagnosticsBrokerImpl:
                     continue
                 status = item.status if item.status in allowed_status else "unknown"
                 rows.append(HealthCheckResult(
-                    redact_text(str(item.check_id or resolved.plugin_id))[:160],
-                    redact_text(str(item.component or resolved.plugin_id))[:160],
+                    str(item.check_id or resolved.plugin_id)[:160],
+                    str(item.component or resolved.plugin_id)[:160],
                     status,
-                    redact_text(str(item.message or item.component or resolved.plugin_id))[:300],
-                    redact(dict(item.detail or {})),
+                    str(item.message or item.component or resolved.plugin_id)[:300],
+                    dict(item.detail or {}),
                     str(item.scope or "plugin")[:80],
                 ))
         return tuple(rows)
 
     def export_text(self) -> str:
+        """Legacy text endpoint, backed by the unmodified persistent journal."""
         from . import __version__
-        return self.service.diagnostics.text(__version__, {"plugins": len(getattr(getattr(self.service, "plugin_manager", None), "statuses", lambda: [])())})
+        from .core.diagnostic_journal import journal_text_export
+        from .paths import log_file
+        return journal_text_export(log_file(), version=__version__)
 
     def support_report(
         self, *, verbose: bool = False, include_checks: bool = True,

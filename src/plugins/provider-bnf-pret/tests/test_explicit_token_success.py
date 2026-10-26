@@ -20,6 +20,9 @@ def test_exact_observed_loan_stages_private_acsm(tmp_path):
         assert downloaded[0].method == "GET"
         assert downloaded[0].url.path == "/loans/loan-a"
         assert downloaded[0].url.host == "pret.bnf.fr"
+        assert downloaded[0].url.params['device_type'] == 'reader'
+        assert downloaded[0].url.params['drm'] == 'acs4'
+        assert downloaded[0].url.params['token'] == '0123456789abcdef0123456789abcdef01234567'
         assert list(path.parent.glob("*.part")) == []
         assert not session.capabilities.borrow
         assert not session.capabilities.digital_download
@@ -73,11 +76,50 @@ def test_stale_account_page_revokes_download_but_not_persisted_loans(tmp_path):
 def test_closed_session_never_publishes_inflight_token(tmp_path):
     session, account, loan, _, _, _ = connected()
     previous = session.client.loan_token
-    def closing(value):
-        token = previous(value)
+    def closing(value, url):
+        token = previous(value, url)
         session.close()
         return token
     session.client.loan_token = closing
     with pytest.raises(ProviderError, match="session_closed"):
         session.download_digital(loan, account, tmp_path, explicit_user_action=True)
     assert not list(tmp_path.rglob("*.acsm"))
+
+
+def test_unsigned_activity_loan_link_is_rejected_without_network(tmp_path):
+    """The old reconstructed /loans/{id} path must never be requested."""
+    from test_http_provider import ACT, FAKE_SIGNED_HREF
+    session, account, loan, state, _, downloaded = connected()
+    try:
+        state['activity'] = ACT.replace(FAKE_SIGNED_HREF, '/loans/loan-a')
+        with pytest.raises(ProviderError, match='^url_refused$'):
+            session.download_digital(loan, account, tmp_path,
+                                     explicit_user_action=True)
+        assert downloaded == [] and not list(tmp_path.rglob('*.acsm'))
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('wrong', [
+    '/loans/loan-b?device_type=reader&drm=acs4&nonce=syntheticNonce123&timestamp=2026-10-26T00%3A00%3A00Z&token=0123456789abcdef0123456789abcdef01234567',
+    'https://evil.invalid/loans/loan-a?device_type=reader&drm=acs4&nonce=syntheticNonce123&timestamp=2026-10-26T00%3A00%3A00Z&token=0123456789abcdef0123456789abcdef01234567',
+    '/loans/loan-a?device_type=reader&drm=acs4&nonce=syntheticNonce123&timestamp=2026-10-26T00%3A00%3A00Z&token=0123456789abcdef0123456789abcdef01234567&unexpected=x',
+    '/loans/loan-a?device_type=reader&drm=acs4&nonce=syntheticNonce123&timestamp=2026-10-26T00%3A00%3A00Z&token=0123456789abcdef0123456789abcdef01234567&token=duplicate',
+    '/loans/loan-a?device_type=reader&drm=acs4&nonce=syntheticNonce123&timestamp=2026-10-26T00%3A00%3A00Z',
+    '/loans/loan-a',
+])
+def test_signed_link_parser_refuses_foreign_loan_and_malformed_query(wrong):
+    from cifereca_bnf_pret_signed_action import signed_loan_url
+    assert signed_loan_url(wrong, 'loan-a') is None
+
+
+def test_signed_link_in_fresh_activity_is_not_exported_to_core():
+    from dataclasses import asdict
+    from test_http_provider import ACT
+    from cifereca_bnf_pret_web import parse_loans, ProfileScope, ORIGIN
+    scope = ProfileScope('profile-a', 'credential-a', 'synthetic-epoch')
+    snapshot = parse_loans(ACT, page_url=ORIGIN + '/my_profile/activity',
+                           expected=scope, observed=scope)
+    assert len(snapshot.loans) == 1
+    assert 'token=' not in repr(snapshot)
+    assert 'nonce=' not in repr(asdict(snapshot))

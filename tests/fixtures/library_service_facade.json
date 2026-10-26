@@ -337,7 +337,7 @@
   },
   "renew": {
     "kind": "method",
-    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+    "signature": "(self, loan: 'Loan', *, confirmed: 'bool' = False) -> 'dict[str, Any]'"
   },
   "_return_loan_identity": {
     "kind": "method",
@@ -465,11 +465,11 @@
   },
   "_import_acsm_impl": {
     "kind": "method",
-    "signature": "(self, source: 'Path', *, identity_id: 'str | None' = None, provider_id: 'str' = 'manual', title: 'str | None' = None) -> 'dict[str, Any]'"
+    "signature": "(self, source: 'Path', *, identity_id: 'str | None' = None, provider_id: 'str' = 'manual', title: 'str | None' = None, placement_provider_id: 'str | None' = None) -> 'dict[str, Any]'"
   },
   "import_acsm": {
     "kind": "method",
-    "signature": "(self, source: 'Path', *, identity_id: 'str | None' = None, provider_id: 'str' = 'manual', title: 'str | None' = None) -> 'dict[str, Any]'"
+    "signature": "(self, source: 'Path', *, identity_id: 'str | None' = None, provider_id: 'str' = 'manual', title: 'str | None' = None, placement_provider_id: 'str | None' = None) -> 'dict[str, Any]'"
   },
   "runtime_diagnostic": {
     "kind": "method",

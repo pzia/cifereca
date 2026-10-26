@@ -285,6 +285,8 @@ def _refresh_sync_page(self) -> None:
             # a catalogue in this read-only section.
             row.set_title(
                 "Bibliothèques de Paris" if item.provider_id == "paris"
+                else "Kobo — Catalogue" if item.provider_id == "kobo"
+                else "Numilog — Catalogue public" if item.provider_id == "numilog-catalog"
                 else item.provider_id
             )
             availability = (
@@ -990,6 +992,29 @@ def _refresh_sync_page(self) -> None:
 
         else:
             group.add(sync_action_row(row))
+
+        if source.provider_id == 'bnf-pret' and source.sync_capable:
+            auto_row = Adw.ActionRow()
+            auto_row.set_title('Télécharger automatiquement les prêts BnF')
+            auto_row.set_subtitle(
+                'À la synchronisation et au démarrage : récupérer les ACSM des prêts actifs '
+                'puis produire les EPUB/PDF via le profil ADEPT de cette identité.'
+            )
+            auto_toggle = Gtk.Switch()
+            auto_toggle.set_valign(Gtk.Align.CENTER)
+            auto_toggle.set_active(broker.bnf_auto_download_enabled(source.source_id))
+            auto_toggle.set_sensitive(bool(source.enabled and source.connected))
+            def changed_bnf(widget, _param, sid=source.source_id):
+                if not sync_action_scope_current(self, scope):
+                    return
+                try:
+                    broker.set_bnf_auto_download(sid, widget.get_active())
+                except Exception:
+                    widget.set_active(False)
+                    self.show_error('Activation du téléchargement BnF indisponible.', 'Synchronisation')
+            auto_toggle.connect('notify::active', changed_bnf)
+            auto_row.add_suffix(auto_toggle)
+            group.add(auto_row)
 
         if source.provider_id == "numilog":
             # Offline evidence only, including disconnected accounts. Neither

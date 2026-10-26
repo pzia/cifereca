@@ -83,6 +83,55 @@ class ParisSummaryHTTPError(ParisError):
         self.code = code
 
 
+
+# Bounded evidence for a ListLoans *read*. Do not derive loan absence from HTTP
+# errors, redirects, non-JSON bodies or a successful sibling branch (#3222).
+PARIS_LOAN_ERROR_CODES = frozenset({
+    "paris_loans_http_not_found",
+    "paris_loans_http_unauthorized",
+    "paris_loans_http_forbidden",
+    "paris_loans_http_rate_limited",
+    "paris_loans_http_unavailable",
+    "paris_loans_http_other",
+    "paris_loans_redirect_unexpected",
+    "paris_loans_html_unexpected",
+    "paris_loans_non_json",
+    "paris_loans_json_shape_invalid",
+    "paris_loans_transport_timeout",
+    "paris_loans_transport_failed",
+})
+
+
+class ParisLoanListError(ParisError):
+    """Typed ListLoans read failure, never a positive/empty inventory."""
+
+    def __init__(self, code: str, *, status: int | None = None):
+        if code not in PARIS_LOAN_ERROR_CODES:
+            raise ValueError("paris_loans_reason_invalid")
+        super().__init__(code)
+        self.code = code
+        self.http_status = public_http_status(status)
+
+
+def _list_loans_response_error(response: httpx.Response) -> str | None:
+    status = response.status_code
+    if status == 404:
+        return "paris_loans_http_not_found"
+    if status == 401:
+        return "paris_loans_http_unauthorized"
+    if status == 403:
+        return "paris_loans_http_forbidden"
+    if status == 429:
+        return "paris_loans_http_rate_limited"
+    if 500 <= status <= 599:
+        return "paris_loans_http_unavailable"
+    if 300 <= status <= 399:
+        return "paris_loans_redirect_unexpected"
+    if not response.is_success:
+        return "paris_loans_http_other"
+    return None
+
+
 class ParisClient:
     def __init__(self, base_url: str = BASE_URL, timeout: float = 25.0, diagnostics: Any | None = None,
                  client_factory: Callable[[], httpx.Client] | None = None):
@@ -236,6 +285,14 @@ class ParisClient:
             if (category == "API" and operation.startswith("summary ")
                     and isinstance(exc, ParisSummaryHTTPError)):
                 detail["code"] = exc.code
+            if (category == "API" and operation.startswith("loans ")):
+                if isinstance(exc, ParisLoanListError):
+                    detail["code"] = exc.code
+                    detail["http_status"] = exc.http_status
+                elif isinstance(exc, httpx.TimeoutException):
+                    detail["code"] = "paris_loans_transport_timeout"
+                elif isinstance(exc, httpx.RequestError):
+                    detail["code"] = "paris_loans_transport_failed"
             if not private_operation:
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
@@ -351,7 +408,32 @@ class ParisClient:
     def loans(self, provider: str, uid: str = "") -> list[Loan]:
         def work():
             r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/ListLoans", params=self._params(provider, uid), headers=self._api_headers())
-            data = self._json(r, f"loans {provider}")
+            upstream = provider if provider in ("DILICOM", "SYRACUSE") else "unknown"
+            content_type = public_content_type(r.headers.get("content-type"))
+            # Only fixed route and upstream codes: never request URLs, query
+            # strings, account identifiers, cookies or upstream bodies.
+            _TRACE_LOG.info(
+                "TRACE paris list-loans phase=response method=GET route=ListLoans upstream=%s http_status=%s content_type=%s",
+                upstream, public_http_status(r.status_code), content_type,
+            )
+            code = _list_loans_response_error(r)
+            if code is not None:
+                raise ParisLoanListError(code, status=r.status_code)
+            if content_type == "text/html":
+                raise ParisLoanListError(
+                    "paris_loans_redirect_unexpected" if r.history
+                    else "paris_loans_html_unexpected",
+                    status=r.status_code,
+                )
+            try:
+                data = r.json()
+            except (ValueError, TypeError):
+                raise ParisLoanListError("paris_loans_non_json", status=r.status_code) from None
+            if type(data) is not dict:
+                raise ParisLoanListError("paris_loans_json_shape_invalid", status=r.status_code)
+            if data.get("success") is not True:
+                # Preserve the existing structured upstream-error contract.
+                self._json(r, f"loans {provider}")
             # A malformed/partial ListLoans response is NOT evidence of zero
             # loans. Preserve earlier rights instead of silently dropping rows.
             envelope = data.get("d")

@@ -15,6 +15,7 @@ from typing import Callable, Iterator, TextIO
 import secrets
 import json
 import sys
+import re
 
 STAGES = frozenset({
     "operation", "resolve_archive", "resolve_github", "clone", "fetch",
@@ -23,7 +24,8 @@ STAGES = frozenset({
     "core_activation", "plugin_activation", "transaction_finalize",
     "cleanup", "rollback", "snapshot_copy", "snapshot_sha", "snapshot_extract",
     "manifest_validation", "plugin_backup", "plugin_install",
-    "plugin_verification", "restart",
+    "plugin_verification", "restart", "plugin_inspect", "plugin_unpack",
+    "plugin_dependencies", "plugin_enable",
 })
 METHODS = frozenset({
     "github", "archive", "source", "rollback", "dev_snapshot",
@@ -98,7 +100,7 @@ class UpdateProgress:
         # the caller thread. Nested phases keep the innermost active stage.
         self.heartbeat_seconds = max(0.005, float(heartbeat_seconds))
         self._stage_lock = RLock()
-        self._stage_stack: list[tuple[str, float]] = []
+        self._stage_stack: list[tuple[str, float, dict[str, object]]] = []
         self._stop_heartbeat = Event()
         self._heartbeat: Thread | None = None
 
@@ -123,15 +125,16 @@ class UpdateProgress:
         while not self._stop_heartbeat.wait(self.heartbeat_seconds):
             with self._stage_lock:
                 if self._stage_stack and not self._stop_heartbeat.is_set():
-                    stage, started = self._stage_stack[-1]
+                    stage, started, metadata = self._stage_stack[-1]
                     # Periodic RUNNING means only "still in stage": never
                     # claim a measured percent, a complete subprocess or
                     # a count of successfully installed plugins.
-                    self.emit(stage, "RUNNING", since=started)
+                    self.emit(stage, "RUNNING", since=started, **metadata)
 
     def emit(self, stage: str, status: str, *, since: float | None = None,
              outcome: str | None = None, reason_code: str | None = None,
              plugin_index: int | None = None, plugin_total: int | None = None,
+             package_id: str | None = None, package_version: str | None = None,
              smoke_counts: dict[str, int] | None = None) -> None:
         if stage not in STAGES or status not in STATES:
             raise ValueError("invalid_update_event")
@@ -164,6 +167,14 @@ class UpdateProgress:
                 and 1 <= plugin_index <= plugin_total <= 2048):
             event["plugin_index"] = plugin_index
             event["plugin_total"] = plugin_total
+            # Only identities read from validated release ZIP manifests are
+            # supplied by the dev updater, never from CLI stderr.
+            if (type(package_id) is str and len(package_id) <= 128
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", package_id)):
+                event["package_id"] = package_id
+                if (type(package_version) is str and len(package_version) <= 64
+                        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]*", package_version)):
+                    event["package_version"] = package_version
         if outcome in {"success", "failed"} and status == "DONE":
             event["outcome"] = outcome
         # Observability must not change the installation's outcome. A GUI
@@ -184,6 +195,8 @@ class UpdateProgress:
                     + (f" reason={event['reason_code']}" if "reason_code" in event else "")
                     + (f" plugin={event['plugin_index']}/{event['plugin_total']}"
                        if "plugin_index" in event else "")
+                    + (f" package={event['package_id']}@{event['package_version']}"
+                       if "package_version" in event else "")
                     + ((" smoke_errors=" + str(event["smoke_counts"]["contributions_error"])
                         + " smoke_incompatible=" + str(event["smoke_counts"]["contributions_incompatible"])
                         + " smoke_missing=" + str(event["smoke_counts"]["active_packages_missing"]))
@@ -197,14 +210,16 @@ class UpdateProgress:
     @contextmanager
     def phase(
         self, stage: str, *, plugin_index: int | None = None,
-        plugin_total: int | None = None,
+        plugin_total: int | None = None, package_id: str | None = None,
+        package_version: str | None = None,
     ) -> Iterator[None]:
         if stage not in STAGES:
             raise ValueError("invalid_update_stage")
         started = self.clock()
-        ordinal = {"plugin_index": plugin_index, "plugin_total": plugin_total}
+        ordinal = {"plugin_index": plugin_index, "plugin_total": plugin_total,
+                   "package_id": package_id, "package_version": package_version}
         with self._stage_lock:
-            self._stage_stack.append((stage, started))
+            self._stage_stack.append((stage, started, ordinal))
             self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING", **ordinal)
         try:
             yield
@@ -256,7 +271,8 @@ def update_operation(
 @contextmanager
 def update_phase(
     stage: str, *, plugin_index: int | None = None,
-    plugin_total: int | None = None,
+    plugin_total: int | None = None, package_id: str | None = None,
+    package_version: str | None = None,
 ) -> Iterator[None]:
     """Zero-I/O in API calls which did not opt in to progress reporting."""
     current = _CURRENT.get()
@@ -265,6 +281,7 @@ def update_phase(
     else:
         with current.phase(
             stage, plugin_index=plugin_index, plugin_total=plugin_total,
+            package_id=package_id, package_version=package_version,
         ):
             yield
 

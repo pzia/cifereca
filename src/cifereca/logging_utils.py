@@ -1,6 +1,9 @@
 from __future__ import annotations
+import errno
+import json
 import logging
-import re
+import os
+import stat
 import sys
 from logging.handlers import RotatingFileHandler
 from .paths import log_file
@@ -8,72 +11,147 @@ from .paths import log_file
 
 _diagnostic_level = "normal"
 
-# Last-resort protection for *local* unstructured logs. The generic
-# diagnostics.redact() contract is shared with the book UI and deliberately
-# preserves book titles and some identifiers. Local logs must not retain
-# borrower or account references, even when a plugin formats them as text.
-# Do not mask provider_id, site or public book_id.
-_PRIVATE_LOG_IDENTIFIERS = re.compile(
-    r"""(?i)\b(?P<name>loan_id|account_key|account_id|source_account_id|"""
-    r"""identity_id|credential_id|profile_id|reader_id|user_id|username|uid|"""
-    r"""identity|credential|profile|account|borrower|source_credential|source_item_id|"""
-    r"""email|account_name|profile_name|reader_name|user_name|full_name|"""
-    r"""api_key|client_secret|private_key|access_key|secret_key|"""
-    r"""access_token|refresh_token|id_token|session_id|session_key)\b"""
-    r"""['"]?\s*[:=]\s*(?:"(?:\\[^\r\n]|[^"\\\r\n])*(?:"|(?=\r|\n|$))"""
-    r"""|'(?:\\[^\r\n]|[^'\\\r\n])*(?:'|(?=\r|\n|$))|[^\s,;}'"]+)"""
-)
-_LOG_URL = re.compile(r"https?://[^\s<>\"']+", re.I)
+# The persistent log and its console mirror carry the ORIGINAL event values.
+# Only the Diagnostics GTK presentation may pseudonymize login/password.
+# Keep the filter class for compatibility with installed file handlers.
 
 
-def _redact_log_identifiers(value: str) -> str:
-    return _PRIVATE_LOG_IDENTIFIERS.sub(
-        lambda match: match.group("name") + "=<redacted>", value,
-    )
+def _ensure_trace_console(logger: logging.Logger, *, force: bool = False) -> None:
+    """Mirror the same filtered records to an attached terminal, at most once."""
+    if any(getattr(handler, "_cifereca_trace_console", False) for handler in logger.handlers):
+        return
+    if not force and not getattr(sys.stderr, "isatty", lambda: False)():
+        return
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(logging.DEBUG)
+    console.setFormatter(CanonicalEventFormatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s"))
+    console.addFilter(RedactionFilter())
+    console._cifereca_trace_console = True
+    logger.addHandler(console)
 
 
-def _redact_local_log_text(value: str) -> str:
-    from .diagnostics import redact_text
-    # A hostname/path is not inherently public: legacy URL text may contain
-    # user-specific subdomains or opaque delivery secrets without a query.
-    # Trusted producers publish site separately through their closed schema.
-    return _redact_log_identifiers(redact_text(_LOG_URL.sub("<redacted-url>", value)))
+
+def _share_canonical_handlers(core: logging.Logger) -> None:
+    """Compatibility for older installed Numilog provider packages.
+
+    New Numilog versions use 'cifereca.plugin.provider.numilog' and propagate
+    to the canonical Core logger directly. Older 'cifereca_numilog' instances
+    reuse the exact file/console handlers, never creating a second journal.
+    """
+    numilog = logging.getLogger("cifereca_numilog")
+    numilog.setLevel(core.level)
+    numilog.propagate = False
+    for handler in core.handlers:
+        if handler not in numilog.handlers:
+            numilog.addHandler(handler)
 
 
 def set_diagnostics_level(level):
+    """Switch the effective file/console logger verbosity without restart."""
     global _diagnostic_level
+    level = "verbose" if level == "detailed" else level
+    if level not in {"errors", "normal", "verbose", "trace"}:
+        raise ValueError("Niveau de diagnostic inconnu")
     _diagnostic_level = level
-    logging.getLogger("cifereca").setLevel(logging.DEBUG if level in {"verbose", "detailed", "trace"} else logging.INFO)
+    logger = logging.getLogger("cifereca")
+    logger.setLevel(logging.DEBUG if level in {"verbose", "trace"} else logging.INFO)
+    if level == "trace" and logger.handlers:
+        _ensure_trace_console(logger)
+    _share_canonical_handlers(logger)
 
 
 class RedactionFilter(logging.Filter):
+    """Select severity/trace without rewriting records or exception details.
+
+    This compatibility name used to redact non-credential fields, even from
+    the local authoritative log. The GUI owns any display pseudonymization.
+    Do not mutate a LogRecord shared by the file and console handlers.
+    """
     def filter(self, record):
-        from .diagnostics import redact
         if _diagnostic_level == "errors" and record.levelno < logging.WARNING:
             return False
         message = record.getMessage()
         from .core.diagnostic_log_policy import is_public_core_observation
         if message.startswith(("TRACE ", "EVENT ")) and is_public_core_observation(record.name, message):
-            # Only an exact closed Core event is already public, including
-            # longer reconciliation audit records. Keep its canonical
-            # serialization intact instead of rewriting/truncating arguments.
-            # The validation does not attest any attached traceback/stack.
-            record.msg, record.args = message, ()
-            record.exc_info = record.exc_text = record.stack_info = None
             return True
         if message.startswith("TRACE") and _diagnostic_level != "trace":
             return False
-        record.args = redact(record.args) if isinstance(record.args, dict) else tuple(redact(value) for value in (record.args or ()))
-        record.msg = _redact_local_log_text(record.getMessage())
-        record.args = ()
-        if record.exc_info:
-            import traceback
-            record.exc_text = _redact_local_log_text("".join(traceback.format_exception(*record.exc_info)))
-        elif record.exc_text:
-            record.exc_text = _redact_local_log_text(record.exc_text)
-        if record.stack_info:
-            record.stack_info = _redact_local_log_text(record.stack_info)
         return True
+
+
+class CanonicalEventFormatter(logging.Formatter):
+    """Serialize typed Core facts inside their original log occurrence.
+
+    Core producers attach _cifereca_journal_payload to a LogRecord. File and
+    console share canonical JSON while independent handlers receive the
+    unchanged legacy message. Neither extra emission nor redaction occurs.
+    """
+
+    def format(self, record):
+        payload = getattr(record, "_cifereca_journal_payload", None)
+        if type(payload) is not dict:
+            return super().format(record)
+        try:
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False,
+                              separators=(",", ":"))
+        except (TypeError, ValueError, OverflowError):
+            # Invalid optional metadata must never hide an actual error.
+            return super().format(record)
+        clone = logging.makeLogRecord(record.__dict__.copy())
+        clone.msg = "DIAG_JSON " + body
+        clone.args = ()
+        clone.exc_text = None
+        return super().format(clone)
+
+
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """Create and rotate a local raw journal readable only by its owner."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self._secure_retained_rotations()
+        except BaseException:
+            self.close()
+            raise
+
+    def _secure_retained_rotations(self):
+        """Tighten legacy backups, including copies created before raw logs.
+
+        Never follow a symbolic link: a retained filename may point outside
+        Cifereca's state directory and must not affect that other file.
+        """
+        if not hasattr(os, "O_NOFOLLOW"):
+            return
+        for index in range(1, self.backupCount + 1):
+            name = f"{self.baseFilename}.{index}"
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    continue  # Do not change an external symlink target.
+                raise
+            try:
+                if stat.S_ISREG(os.fstat(fd).st_mode):
+                    os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
+
+    def _open(self):
+        # Creating with a mode argument avoids a transient world-readable
+        # file on common umasks. Tighten existing files as well.
+        flags = os.O_CREAT | os.O_APPEND | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(self.baseFilename, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            return os.fdopen(fd, self.mode, encoding=self.encoding, errors=self.errors)
+        except BaseException:
+            os.close(fd)
+            raise
 
 
 def configure_logging(*, verbose: bool = False) -> logging.Logger:
@@ -82,16 +160,15 @@ def configure_logging(*, verbose: bool = False) -> logging.Logger:
     if logger.handlers:
         if verbose:
             logger.setLevel(logging.DEBUG)
+            _ensure_trace_console(logger, force=True)
+        _share_canonical_handlers(logger)
         return logger
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
-    handler = RotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"))
+    handler = PrivateRotatingFileHandler(log_file(), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    handler.setFormatter(CanonicalEventFormatter("%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"))
     handler.addFilter(RedactionFilter())
     logger.addHandler(handler)
     if verbose:
-        console = logging.StreamHandler(sys.stderr)
-        console.setLevel(logging.DEBUG)
-        console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s"))
-        console.addFilter(RedactionFilter())
-        logger.addHandler(console)
+        _ensure_trace_console(logger, force=True)
+    _share_canonical_handlers(logger)
     return logger

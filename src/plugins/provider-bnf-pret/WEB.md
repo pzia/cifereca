@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.4.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.8.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -89,16 +89,15 @@ La fiche publique de certains livres propose une image sur
 `imagedelivery.net` ; cela ne qualifie pas les images des cartes de prêt.
 Ce travail n'ajoute aucun achat, droit, URL de téléchargement ni mutation.
 
-## Correctif couverture 0.3.4 — variante CDN publique /default (#3104)
+## Correctif couverture 0.3.8 — variante CDN publique /default (#3104)
 
-Une fiche publique BnF réelle utilise la variante `imagedelivery.net/.../default`.
-La version 0.3.3 la rejetait malgré un hôte et un chemin publics valides.
-La 0.3.4 accepte également **`default`** pour les seuls CDN connus,
-avec le même rattachement impératif à l'ancre de ressource exacte du prêt,
-sans URL signée ou lien privé. Cela corrige un rejet prouvé, mais **ne garantit
-pas** l'affichage si la page privée ne contient pas d'image dans l'ancre :
-la recette utilisateur demeure nécessaire. Après installation de la 0.3.4,
-relancer Cifereca et actualiser les prêts.
+La variante `imagedelivery.net/.../default` identifiée sur une fiche BnF
+publique est désormais admise, avec le même rattachement impératif à l'ancre
+de ressource exacte du prêt. Hôtes, structure de chemin et refus des URL
+privées/signées, queries et fragments restent inchangés. Une image hors
+de l'ancre ne devient pas une couverture attestée. Aucun GET supplémentaire
+ni date n'est inventé. La présence réelle de cette image dans la carte privée
+reste non qualifiée ; ce correctif seul ne clôture pas #3104.
 
 ## Préparation du téléchargement explicite — 0.3.1
 
@@ -155,6 +154,28 @@ le XML ACSM, les cookies, les credentials, le HTML privé ou les chemins locaux.
 Ces nouveaux événements ne permettent pas de déterminer rétrospectivement
 la cause des deux échecs du 25 octobre 2026.
 
+### BnF-Prêt 0.3.4 — localiser le refus avant le GET ACSM (#2055)
+
+Le parcours sous double consentement conserve ses garanties précédentes. Le
+fournisseur distingue maintenant les échecs de **relecture d'activité**
+(`activity_http_unavailable`, `activity_access_denied`,
+`activity_unrecognized_loans`, etc.) des échecs au **GET du jeton ACSM**
+(`http_unavailable`, `access_denied`, `invalid_loan_token`, etc.).
+Le Core publie les mêmes raisons fermées avec le préfixe `bnf_` dans
+`reason_code`. Une raison `bnf_activity_*` prouve que le GET ACSM **n'a pas
+été déclenché par cette tentative**. `provider_delivery` reste la phase
+englobante : ce seul libellé n'atteste pas le GET. Le cas de prêt disparu
+demeure `bnf_loan_not_observed`, lui aussi **avant** le GET.
+
+La révocation de session durant la relecture est désormais vérifiée **avant**
+la requête de téléchargement ; cela refuse le GET et ne produit ni jeton
+ni import. Aucune nouvelle requête, aucune réponse privée ni URL n'entre
+dans les événements. Les anciens plugins 0.3.3 restent compatibles : leur
+code `bnf_http_unavailable` en `provider_delivery` ne permet toujours pas
+de déduire quelle requête a échoué. Cette distinction n'est vérifiée qu'en
+tests HTTPX synthétiques ; la réponse réelle du serveur et ADEPT restent à
+qualifier sur un prêt choisi manuellement.
+
 ## Catalogue et fiches en lecture seule
 
 Dans le Core, après configuration et connexion du compte BnF, sélectionner
@@ -207,3 +228,51 @@ redirection interdite, absence de mutation et fermeture. Les suites Core et
 CoreUI couvrent le double consentement, l'immuabilité du prêt choisi et la
 validation indépendante de l'ACSM. Ces tests synthétiques ne remplacent ni la
 recette du GET réel, ni celle d'ADEPT.
+
+## Diagnostic des lectures de prêt (0.3.6)
+
+Le journal canonique et Diagnostics reçoivent `BnF HTTP`, filtrable par
+`provider_id=bnf-pret`. Chaque lecture existante de l’activité ou du jeton
+émet `begin`, `response` si des en-têtes ont été reçus, puis `terminal`, avec
+un `request_ref` commun aux observations de cette requête uniquement.
+`logical_endpoint=activity` / `phase=activity_recheck` distingue la relecture
+de `logical_endpoint=loan_token` / `phase=loan_token_get`. Le statut
+`http_status` numérique et le `content_type` reçu sont conservés sans
+reconstruction. Avant réception, le statut HTTP est absent. Une interruption
+de lecture après HTTP 200 reste un échec de transport. Une redirection HTML
+est un résultat partiel `redirect_received`, pas une lecture de contenu achevée.
+
+`http_read_completed` atteste seulement la lecture HTTP bornée : validation
+ACSM, staging Core et fulfillment ADEPT restent des étapes indépendantes.
+Aucune nouvelle requête, relance, modification de route ou capture de
+formulaire SSO n’est ajoutée. Un échec d’activité ne déclenche pas le GET jeton.
+Les réponses de test sont synthétiques ; la cause HTTP du refus terrain et
+le fulfillment réel restent à qualifier dans #2055.
+
+## Action ACSM signée du portail (0.3.7, #2055)
+
+Après le consentement existant et une relecture positive du prêt/ressource
+sur le compte exact, le plugin extrait le contrôle ACSM de ce même HTML frais.
+Les attributs observés sont les classes `actions-list__link`,
+`actions-list__sublink`, `js-accordeon__item` et
+`aria-controls="{loan_id}-reader-acs"`. Le chemin du href doit désigner
+exactement ce prêt. Ce rattachement explicite ne suppose pas que le contrôle
+est enfant de `.js-loan` ; si une carte le contient, ses identifiants doivent
+également correspondre. Les fixtures couvrent les deux positions, sans
+prétendre attester les parents DOM du portail réel.
+
+Seuls HTTPS sur `pret.bnf.fr/loans/{id}` et les cinq paramètres uniques
+`device_type=reader`, `drm=acs4`, `nonce`, `timestamp`, `token` sont admis.
+Les trois dernières valeurs restent opaques : aucun format de signature,
+recalcul, réordonnancement ou nouvelle sérialisation n'est inventé.
+L'attribut HTML est décodé une fois (`&amp;`) puis la query transmise intacte.
+Un contrôle absent, invalide, contradictoire ou lié à une autre carte est
+refusé avec `url_refused` ; aucun GET non signé de secours n'est exécuté.
+
+Le même client authentifié exécute un seul GET sans suivi de redirection ni
+retry. La session est revérifiée avant/après le réseau et après extraction.
+L'URL ne devient aucun champ de Loan, snapshot d'inventaire, diagnostic ou
+cache ; seul le HTML frais du parcours explicite la fournit. Les validations
+ACSM et le staging privé existants restent suivis du consentement ADEPT
+séparé. Tests synthétiques réussis ne valent pas recette du GET signé réel
+ni preuve de fulfillment ADEPT ; #2055 conserve ces validations terrain.

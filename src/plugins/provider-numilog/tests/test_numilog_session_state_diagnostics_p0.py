@@ -35,7 +35,7 @@ def test_successful_login_then_library_redirect_explains_disconnection(caplog):
                 return httpx.Response(200, text='<table id="myTable"></table>')
             return httpx.Response(302, headers={'location': '/Login.Aspx?auth=' + SECRET})
         return httpx.Response(200, text=SECRET)
-    caplog.set_level(logging.INFO, logger='cifereca_numilog')
+    caplog.set_level(logging.INFO, logger='cifereca.plugin.provider.numilog')
     session = session_for(handler)
     try:
         assert len(session.connect()) == 1 and session.connected is True
@@ -64,7 +64,7 @@ def test_library_failure_does_not_invent_a_disconnected_session(caplog, failure)
         if failure == 'forbidden':
             return httpx.Response(403, text=SECRET)
         return httpx.Response(200, text='<html>' + SECRET + '</html>')
-    caplog.set_level(logging.INFO, logger='cifereca_numilog')
+    caplog.set_level(logging.INFO, logger='cifereca.plugin.provider.numilog')
     session = session_for(handler)
     session.connected = True
     try:
@@ -84,7 +84,7 @@ def test_authentication_failure_logs_only_fixed_state(caplog):
         if request.method == 'POST':
             return httpx.Response(200, json={'d': {'AuthSuccess': False, 'error': SECRET}})
         return httpx.Response(200, text=SECRET)
-    caplog.set_level(logging.INFO, logger='cifereca_numilog')
+    caplog.set_level(logging.INFO, logger='cifereca.plugin.provider.numilog')
     session = session_for(handler)
     try:
         with pytest.raises(ProviderError, match='connexion refusée'):
@@ -102,7 +102,7 @@ def test_diagnostics_and_log_handlers_cannot_break_session_state(monkeypatch, ca
             raise RuntimeError(SECRET)
     session = session_for(lambda request: httpx.Response(200), diagnostics=Broken())
     try:
-        caplog.set_level(logging.INFO, logger='cifereca_numilog')
+        caplog.set_level(logging.INFO, logger='cifereca.plugin.provider.numilog')
         session._session_event(SECRET)
         assert 'reason=unknown' in caplog.text and SECRET not in caplog.text
         monkeypatch.setattr('cifereca_numilog._LOG.log', lambda *a, **k: (_ for _ in ()).throw(RuntimeError(SECRET)))
@@ -110,3 +110,11 @@ def test_diagnostics_and_log_handlers_cannot_break_session_state(monkeypatch, ca
         assert session.connected is False and not session.credentials
     finally:
         session.close()
+
+
+def test_numilog_module_logger_propagates_to_the_single_core_journal():
+    from cifereca_numilog import _LOG
+
+    assert _LOG.name == "cifereca.plugin.provider.numilog"
+    assert _LOG.propagate is True
+    assert not _LOG.handlers  # Core owns the one journal handler.

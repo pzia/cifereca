@@ -43,7 +43,7 @@ class CiferecaCore:
     ) -> Self:
         config = Config(config_path) if config_path is not None else Config()
         diagnostics = Diagnostics(
-            enabled=bool(config.get("diagnostics.enabled", True)) if diagnostics_enabled is None else diagnostics_enabled,
+            enabled=True if diagnostics_enabled is None else bool(diagnostics_enabled),
             level=str(config.get("diagnostics.level", "normal")) if diagnostics_level is None else diagnostics_level,
         )
         storage = Storage(database_path) if database_path is not None else Storage()

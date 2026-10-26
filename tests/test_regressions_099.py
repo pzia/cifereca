@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 import httpx
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.search_failures import is_technical_search_error
 from cifereca.gui.sync_issues import sync_issues_text
 from cifereca.gui.query_model import QueryState,FIELDS
@@ -123,7 +124,7 @@ class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
         gtk=NS(Label=Widget,Spinner=Widget,Box=Widget,Button=Widget,Orientation=NS(VERTICAL=1),Align=NS(START=1));adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
         helpers=functions('main_window.py',{'book_detail_presentation','compact_detail_rows','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation,'detail_metadata_items':lambda _metadata:(), 'safe_detail_value':lambda value:str(value or '')})
-        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'compact_detail_rows':helpers['compact_detail_rows'],'text_or_dash':helpers['text_or_dash'],'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'document_links':lambda _row:(),'result_row':lambda _item:{},'Pango':NS(WrapMode=NS(WORD_CHAR=0),EllipsizeMode=NS(END=1,NONE=0))})
+        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'compact_detail_rows':helpers['compact_detail_rows'],'text_or_dash':helpers['text_or_dash'],'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'document_links':lambda _row:(),'result_row':lambda _item:{},'_commercial_search_usage':lambda _item, _service=None:'','Pango':NS(WrapMode=NS(WORD_CHAR=0),EllipsizeMode=NS(END=1,NONE=0))})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
         host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,_focused_action_key=lambda:'',content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a, **k:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
@@ -164,10 +165,10 @@ class NativeChooserLifecycle(unittest.TestCase):
         self.window.show_error.assert_called_once();self.host.manager.inspect_archive.assert_not_called()
 
 class SyncIssues(unittest.TestCase):
-    def test_four_errors_show_four_titles_and_redact_secret(self):
+    def test_four_errors_show_four_titles_and_raw_causes(self):
         report={'detail':{'acquisition_errors':[{'title':f'Sapiens {i}','status':'retryable_error','error':'Failed https://example.test/file?token=SECRET'} for i in range(1,5)]}}
         text=sync_issues_text(report)
-        self.assertEqual(text.count('Sapiens'),4);self.assertNotIn('SECRET',text)
+        self.assertEqual(text.count('Sapiens'),4);self.assertEqual(text.count('SECRET'),4)
     def test_old_runs_explain_absent_details(self):self.assertIn('ancienne synchronisation',sync_issues_text({}))
 
 class ModernChooserLifecycle(unittest.TestCase):
@@ -187,7 +188,7 @@ class ModernChooserLifecycle(unittest.TestCase):
         review.assert_not_called();host.window.show_error.assert_not_called();self.assertIsNone(host.window._plugin_archive_chooser)
 
 class PersistedAcquisitionErrors(unittest.TestCase):
-    def test_sync_counter_has_one_redacted_cause_per_failed_loan(self):
+    def test_sync_counter_has_one_original_cause_per_failed_loan(self):
         from cifereca.models import Account,Loan
         with tempfile.TemporaryDirectory() as tmp:
             service=_service(tmp)
@@ -197,8 +198,9 @@ class PersistedAcquisitionErrors(unittest.TestCase):
                 service._loans_for_account=lambda *a,**kw:loans
                 service._acquire_active_loan_automatically=lambda loan:{'status':'retryable_error','code':'timeout','error':'Failure https://example.test/file?token=SECRET'}
                 service.catalog_scan=lambda:{'scanned':0};service.kobo_backup_enabled=lambda:False
+                enable_synthetic_paris_opening(service)
                 service.opening_sync()
                 saved=service.storage.latest_sync_run('default')
                 self.assertEqual(saved['errors'],4);self.assertEqual(len(saved['detail']['acquisition_errors']),4)
-                self.assertNotIn('SECRET',sync_issues_text(saved))
+                self.assertEqual(sync_issues_text(saved).count('SECRET'),4)
             finally:service.close()

@@ -1,12 +1,17 @@
 """HTTP reader session. No browser, private API or exported SSO state."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import json
+import logging
 import re
+from uuid import uuid4
 import time
 from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca_bnf_pret_web import _DOM, MAX_HTML_BYTES, WebParseError
 from cifereca_bnf_pret_paging import _params
+from cifereca_bnf_pret_signed_action import signed_loan_url
 
 ORIGIN = 'https://pret.bnf.fr'
 ACTIVITY = ORIGIN + '/my_profile/activity'
@@ -76,10 +81,61 @@ def form_fields(form):
 
 
 class ReaderHTTPClient:
-    def __init__(self, *, transport=None):
+    def __init__(self, *, transport=None, diagnostics=None):
+        self.diagnostics = diagnostics
         self.http = httpx.Client(timeout=httpx.Timeout(15, connect=10),
                                  follow_redirects=False, trust_env=False,
                                  transport=transport)
+
+    def _observe(self, detail, status, started):
+        """One canonical journal event; optional diagnostics cannot affect I/O."""
+        duration_ms = max(0, int((time.monotonic() - started) * 1000))
+        try:
+            if self.diagnostics is not None:
+                self.diagnostics.add('API', 'BnF HTTP', status,
+                                     duration_ms=duration_ms, detail=detail)
+            else:
+                payload = dict(schema_version=1, category='API', operation='BnF HTTP',
+                               message='BnF HTTP', status=status,
+                               duration_ms=duration_ms, detail=detail)
+                logging.getLogger('cifereca').log(
+                    logging.ERROR if status == 'failed' else logging.INFO,
+                    'DIAG_JSON %s', json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            pass
+
+    @contextmanager
+    def _stream(self, method, url, *, logical_endpoint=None, **kwargs):
+        # Observe only existing activity/token reads, never SSO form traffic.
+        if logical_endpoint is None:
+            with self.http.stream(method, url, **kwargs) as response:
+                yield response
+            return
+        started = time.monotonic()
+        detail = dict(provider_id='bnf-pret', logical_endpoint=logical_endpoint,
+                      phase=('activity_recheck' if logical_endpoint == 'activity'
+                             else 'loan_token_get'), method=method,
+                      request_ref=uuid4().hex)
+        self._observe(dict(detail, event='begin'), 'running', started)
+        try:
+            with self.http.stream(method, url, **kwargs) as response:
+                detail.update(http_status=response.status_code,
+                              content_type=response.headers.get('content-type', ''))
+                self._observe(dict(detail, event='response'), 'running', started)
+                yield response
+        except Exception as exc:
+            code = (str(exc) if isinstance(exc, ReaderHTTPError) else
+                    'transport_unavailable' if isinstance(exc, (httpx.HTTPError, UnicodeError))
+                    else 'unexpected_failure')
+            self._observe(dict(detail, event='terminal', code=code), 'failed', started)
+            raise
+        else:
+            # This says only that the bounded HTTP read completed, not that
+            # the XML is valid, a right exists, or ADEPT succeeded.
+            redirect = 300 <= detail['http_status'] < 400
+            self._observe(dict(detail, event='terminal',
+                               code='redirect_received' if redirect else 'http_read_completed'),
+                          'partial' if redirect else 'success', started)
 
     def close(self):
         self.http.close()
@@ -96,7 +152,8 @@ class ReaderHTTPClient:
             if method == 'POST' and not authenticating:
                 raise ReaderHTTPError('mutation_refused')
             try:
-                with self.http.stream(method, url, data=data,
+                with self._stream(method, url, data=data,
+                                      logical_endpoint=('activity' if url == ACTIVITY and not authenticating else None),
                                       headers={'Accept': 'text/html'},
                                       timeout=min(15, max(0.1, deadline-time.monotonic()))) as r:
                     if r.status_code in {301, 302, 303, 307, 308}:
@@ -128,7 +185,7 @@ class ReaderHTTPClient:
                 raise ReaderHTTPError('transport_unavailable') from None
         raise ReaderHTTPError('redirect_limit')
 
-    def loan_token(self, loan_id: str) -> bytes:
+    def loan_token(self, loan_id: str, signed_url: str) -> bytes:
         """One non-retried GET for a loan previously checked by its session.
 
         Unlike HTML requests, this never follows a redirect (even to BnF).
@@ -137,14 +194,16 @@ class ReaderHTTPClient:
         """
         from cifereca_bnf_pret_download import MAX_TOKEN_BYTES, exact_loan_id
         loan_id = exact_loan_id(loan_id)
-        url = ORIGIN + '/loans/' + loan_id
-        # Enforce a second, narrow URL boundary independent of auth/login.
-        if not re.fullmatch(r'/loans/[A-Za-z0-9_-]{1,128}', urlsplit(url).path):
+        # Use the signed action observed in the fresh authenticated page.
+        # Never construct nonce/timestamp/token or reuse a signed URL from
+        # another loan: take the link directly from fresh activity HTML.
+        url = signed_loan_url(signed_url, loan_id)
+        if url is None or url != signed_url:
             raise ReaderHTTPError('url_refused')
         deadline = time.monotonic() + 30
         try:
-            with self.http.stream(
-                'GET', url, headers={'Accept': 'application/vnd.adobe.adept+xml, application/octet-stream'},
+            with self._stream(
+                'GET', url, logical_endpoint='loan_token', headers={'Accept': 'application/vnd.adobe.adept+xml, application/octet-stream'},
                 timeout=min(15, max(0.1, deadline - time.monotonic())),
             ) as response:
                 if 300 <= response.status_code < 400:

@@ -79,7 +79,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             continue
         account, session, roots = bound
         trace = StartupTrace(broker.service, source_id)
-        previous = (total, attempts, skipped, failures)
+        previous = (total, attempts, skipped, failures, blocked)
 
         def observe(phase, code="started"):
             trace.counts.update(downloaded=total - previous[0], attempted=attempts - previous[1],
@@ -275,6 +275,12 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     break
                 observe("preflight")
                 prior = broker.preflight_numilog_purchase(source_id, row.record_id)
+                if prior.facts.get('status') == 'declared_link_recorded':
+                    # A recorded user association requires local verification,
+                    # not a duplicate download or a successful "0 attempted".
+                    blocked += 1
+                    trace.fail('preflight_failed')
+                    continue
                 if (prior.ok is not True
                         or prior.facts.get("status") != "candidate_unverified"):
                     skipped += 1
@@ -339,10 +345,11 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 own_attempted = attempts - previous[1]
                 own_skipped = skipped - previous[2]
                 own_failed = failures - previous[3]
+                own_blocked = blocked - previous[4]
                 result_status = (
-                    "partial" if own_downloaded and (own_failed or interrupted)
+                    "partial" if own_downloaded and (own_failed or own_blocked or interrupted)
                     else "failed" if own_failed
-                    else "blocked" if interrupted or not manifest_ready
+                    else "blocked" if own_blocked or interrupted or not manifest_ready
                     else "complete"
                 )
                 observe("receipt_finalization")

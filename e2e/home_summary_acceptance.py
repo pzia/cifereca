@@ -27,8 +27,9 @@ def check_home_summary(window, *, later, capture, report, done):
 
     cases = (
         ("store", ("numilog", "kobo"), 0, 0, 5),
+        ("catalog", ("numilog-catalog",), 0, None, None),
         ("loans", ("paris",), 0, 2, 0),
-        ("mixed", ("paris", "numilog", "kobo"), 2, 1, 3),
+        ("mixed", ("paris", "numilog", "kobo", "numilog-catalog"), 2, 1, 3),
         ("unknown", ("numilog",), 0, None, None),
     )
     snapshot = []
@@ -76,7 +77,7 @@ def check_home_summary(window, *, later, capture, report, done):
         widgets = list(walk(page))
         labels = [node for node in widgets if isinstance(node, Gtk.Label)]
         text = [node.get_text() for node in labels]
-        no_lending_source = name in {"store", "unknown"}
+        no_lending_source = name in {"store", "catalog", "unknown"}
         loan_label = (
             "aucune source de prêt configurée" if no_lending_source
             else f"prêts de bibliothèque connus : {loans if loans is not None else '—'}"
@@ -107,7 +108,16 @@ def check_home_summary(window, *, later, capture, report, done):
             ), (name, text)
             report["checks"]["P1_1867_no_false_loan_alert_" + name] = True
         if "numilog" in providers:
-            assert any(value.startswith("Numilog ·") for value in text), text
+            assert any(value.startswith("Numilog — Mes achats (compte) ·")
+                       for value in text), text
+        if "numilog-catalog" in providers:
+            assert any(value.startswith("Numilog — Catalogue public ·")
+                       and "sans achat attesté" in value for value in text), text
+            # Anonymous offers cannot imply credentials or ownership.
+            assert not any("Numilog — Catalogue public" in value
+                           and ("connectée" in value or "connexion requise" in value)
+                           for value in text), text
+            report["checks"]["P1_1867_public_numilog_not_owned_" + name] = True
         report.setdefault("home_summary_allocations", {})[name] = allocations
         report["checks"]["P1_1867_home_real_gtk_" + name] = True
         capture("00-home-summary-" + name)
@@ -116,6 +126,50 @@ def check_home_summary(window, *, later, capture, report, done):
             render_next()
             return
         assert len(calls) == len(cases) + 1  # initial build + explicit snapshots
+        native_store_filters()
+
+    def native_store_filters():
+        """Validate the actual GTK source selector without reparenting the UI.
+
+        A detached temporary QueryControls previously altered the visible
+        Accueil geometry during the MainWindow baseline recipe. MultiSelect
+        is the same native widget used by that controller; exercising it
+        detached avoids changing focus, navigation or asynchronous tasks.
+        """
+        from cifereca.gui.query_controls import MultiSelect
+        from cifereca.gui.query_widget_factory_controller import _provider_choices
+
+        live = [
+            ("kobo", "Kobo"), ("numilog", "Numilog"),
+            ("numilog-catalog", "Numilog — Catalogue public"),
+        ]
+        source = SimpleNamespace(service=SimpleNamespace(
+            searchable_providers=lambda: list(live),
+        ))
+        choices = _provider_choices(source)
+        assert set(dict(choices)) == {"kobo", "numilog", "numilog-catalog", "local"}
+        selection_changes = []
+        selector = MultiSelect("Source", choices, lambda: selection_changes.append(True))
+        options = selector.buttons
+        assert options["numilog"].get_label() == "Numilog — Mes achats (compte)"
+        assert options["numilog-catalog"].get_label() == "Numilog — Catalogue public"
+        assert options["kobo"].get_label() == "Kobo — Catalogue et compte"
+
+        selector.set_values(("numilog-catalog",))
+        assert selector.values() == ("numilog-catalog",)
+        live[:] = [("kobo", "Kobo"), ("numilog", "Numilog")]
+        selector.set_choices(_provider_choices(source))
+        assert "numilog-catalog" not in selector.buttons
+        assert selector.values() == ()
+        selector.set_values(("numilog",))
+        assert selector.values() == ("numilog",)
+        live.append(("numilog-catalog", "Numilog — Catalogue public"))
+        selector.set_choices(_provider_choices(source))
+        assert selector.values() == ("numilog",)
+        assert not selector.buttons["numilog-catalog"].get_active()
+        assert selection_changes
+        report["checks"]["P1_1867_native_store_filter_roles_and_opt_in"] = True
+
         window.view_stack.set_visible_child_name(previous)
         window.view_stack.remove(page)
         for controller in controllers:

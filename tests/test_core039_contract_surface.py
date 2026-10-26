@@ -122,9 +122,18 @@ def test_acquisition_requires_explicit_account_when_ambiguous():
     assert result["credential"] == "card-2"
 
 
-def test_diagnostics_and_naming_are_public_brokers():
+def test_diagnostics_and_naming_are_public_brokers(tmp_path, monkeypatch):
+    journal = tmp_path / "cifereca.log"
+    journal.write_text(
+        '2026-10-25 13:00:00,000 INFO cifereca DIAG_JSON '
+        '{"schema_version":1,"category":"TEST","operation":"public_broker",'
+        '"status":"ok","message":"ready"}\n'
+    )
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: journal)
     service = FakeService(); brokers = build_public_brokers(service)
-    assert brokers["diagnostics"].snapshot()[0]["status"] == "ok"
+    snapshot = brokers["diagnostics"].snapshot()
+    assert len(snapshot) == 1 and snapshot[0]["status"] == "ok"
+    assert snapshot[0]["source"] == "journal"
     assert brokers["library.naming"].preview(title="Titre", author="Auteur") == "Auteur - Titre.epub"
 
 

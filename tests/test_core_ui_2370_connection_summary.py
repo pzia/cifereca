@@ -6,6 +6,7 @@ from types import SimpleNamespace as NS
 from cifereca.gui.connection_failure_summary import connection_failure_summary
 from cifereca.gui.startup_coordinator import connect_configured_sources
 from cifereca.gui.settings_diagnostics_refresh_controller import refresh_settings_diagnostics
+from cifereca.gui import settings_diagnostics_refresh_controller as refresh_controller
 from tests.test_core_ui_1127_settings_diagnostics_refresh_controller import make_context
 
 
@@ -100,7 +101,9 @@ def test_connection_banner_retains_generic_message_without_safe_projection():
     assert messages[0][0] == "0 source(s) connectée(s), 1 en erreur"
 
 
-def test_diagnostics_summary_includes_live_connection_failures_without_network():
+def test_diagnostics_summary_includes_live_connection_failures_without_network(monkeypatch):
+    monkeypatch.setattr(refresh_controller, "DiagnosticsBrokerImpl",
+                        lambda service: NS(snapshot=service._journal_snapshot))
     host, args, calls, report = make_context(ready=5, attention=0)
     snapshot = {
         "errors": {"connect_failed": 1},
@@ -118,5 +121,5 @@ def test_diagnostics_summary_includes_live_connection_failures_without_network()
     assert "provider.kobo [provider_connect_failed]" in label
     assert "Aucune anomalie bloquante" not in label
     assert len(counter) == 1
-    assert next(e[2] for e in calls if e[0] == "report")["providers"] is snapshot
-    assert report.text == "texte expurgé"
+    assert '"provider_id": "provider.kobo"' in report.text
+    assert "Source: journal canonique local" in report.text

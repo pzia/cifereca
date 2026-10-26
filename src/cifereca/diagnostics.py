@@ -1,76 +1,17 @@
 from __future__ import annotations
 import json
 import logging
-import re
 import threading
 from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from .diagnostic_task_context import numilog_task_reference
+from .diagnostic_task_context import diagnostic_task_reference
 
-# Public redact()/redact_text() is also used by book/sync UI. Its legacy
-# contract must not mask a book title or a non-sensitive presence boolean.
-SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
-
-# Additional *generic diagnostic collector* guard only. This never modifies
-# the public redaction helper used by Library and Synchronisation views.
-# Generic diagnostic text is NOT a trusted public site field. URL-like
-# strings may carry opaque account/loan identifiers even without a query.
-# Leave redact_text() alone: other views legitimately show public URLs.
-_GENERIC_DIAGNOSTIC_URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\x22']+")
-
-
-def _redact_generic_diagnostic_text(value: str) -> str:
-    return redact_text(_GENERIC_DIAGNOSTIC_URL.sub("<redacted-url>", value))
-
-
-_DIAGNOSTIC_PRIVATE_KEYS = re.compile(
-    r"(?:^|[_-])(?:credential(?:[_-]?id)?|account[_-]?id|identity[_-]?id"
-    r"|profile[_-]?id|loan[_-]?id|source[_-]?item[_-]?id|book[_-]?title"
-    r"|title|filename|file[_-]?path|local[_-]?path|acsm|license|licence"
-    r"|signed[_-]?url|delivery[_-]?url|source[_-]?url|headers?|api[_-]?key)"
-    r"(?:$|[_-])",
-    re.I,
-)
-
-
-def _redact_generic_diagnostic_detail(detail: dict) -> dict:
-    """Fail closed on private values of otherwise well-formed free-form keys.
-
-    This is supplementary to each producer's typed public projection. Pure
-    booleans ending in _present are non-identifying existence observations;
-    preserve these for established ADEPT diagnostics without retaining IDs.
-    """
-    def guard(value, depth=0):
-        if depth > 5:
-            return "<redacted>"
-        if type(value) is dict:
-            result = {}
-            for key, item in list(value.items())[:64]:
-                # A dict key is data as well: never retain a URL, email,
-                # private path or hostile object disguised as a field name.
-                if (type(key) is not str or len(key) > 64 or
-                        re.fullmatch(r"[a-z][a-z0-9_]*", key, re.ASCII) is None):
-                    continue
-                if (_DIAGNOSTIC_PRIVATE_KEYS.search(key)
-                        and not (key.endswith("_present") and type(item) is bool)):
-                    result[key] = "<redacted>"
-                else:
-                    result[key] = guard(item, depth + 1)
-            return result
-        if type(value) is list:
-            return [guard(item, depth + 1) for item in value[:100]]
-        if type(value) is str:
-            return _redact_generic_diagnostic_text(value)
-        if type(value) in (bool, int, float) or value is None:
-            return value
-        return "<redacted>"
-
-    return guard(redact(detail))
-
-
+# Backwards-compatible API names. Only GTK Diagnostics pseudonymizes explicit
+# login/password values in its presentation layer; the Core and plugins must
+# never alter source evidence in the journal, UI or exports.
 _GENERIC_STATUSES = frozenset({
     "ok", "error", "warning", "failed", "success", "partial", "running",
     "complete", "completed", "attention_required", "retryable_error",
@@ -78,67 +19,37 @@ _GENERIC_STATUSES = frozenset({
 })
 
 
-def _legacy_text_key(value: object) -> str:
-    """Never render free-form dictionary keys into the support text export."""
-    if (type(value) is str and len(value) <= 64
-            and re.fullmatch(r"[a-z][a-z0-9_]*", value, re.ASCII)):
-        return value
-    return "[champ masqué]"
-
-
-
 def redact_text(text: str) -> str:
-    # The redactor is a last-resort guard for free-text coming from providers,
-    # exceptions or plugin logs. It cannot replace typed, closed diagnostics.
-    # Never print signed URLs, private filesystem locations or email addresses.
-    text = re.sub(r"https?://[^\s<>\"']+", lambda m: _redact_url(m.group()), text, flags=re.I)
-    text = re.sub(r"(?i)file://[^\s<>\"']+", "<redacted-path>", text)
-    text = re.sub(
-        r"(?i)(?<![\w:/])/(?:home|users|root|tmp|var|mnt|media|run)/[^\s,;:\"'<>)}\]]+",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)\b[a-z]:[\\/](?:[^\s,;:\"'<>)}\]]+)",
-        "<redacted-path>", text,
-    )
-    text = re.sub(
-        r"(?i)(?<![\w.+-])[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}(?![\w.-])",
-        "<redacted-email>", text,
-    )
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
-    text = re.sub(r"(?i)\b(password|cookie|token|secret|authorization|session|barcode|readerid)\b\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)
-    text = re.sub(r"(?i)([\"']?(?:password|cookie|token|secret|authorization|session|barcode|readerid)[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;}]+)", r"\1<redacted>", text)
+    """Deprecated name; return original evidence without masking."""
     return text
 
 
-def _redact_url(url):
-    from urllib.parse import urlsplit
-    try:
-        parsed = urlsplit(url)
-        # Preserve non-sensitive public URLs (historical Plugin API contract)
-        # while hiding known borrower/account routes even without a query.
-        private_route = re.search(
-            r"(?i)/(?:LOAN|reader|account|users?|private(?:[-_][^/]+)?|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\.acsm)(?:/|$)",
-            parsed.path,
-        )
-        if parsed.query or parsed.fragment or parsed.username or private_route:
-            return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
-        return url
-    except ValueError:
-        return "<redacted-url>"
-
-
 def redact(value: Any, key: str = "") -> Any:
-    if SENSITIVE_KEYS.search(key):
-        return "<redacted>"
-    if isinstance(value, dict):
-        return {k: redact(v, str(k)) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(v, key) for v in value]
-    if isinstance(value, str):
-        text = redact_text(value)
-        return text[:500] + "…" if len(text) > 500 else text
+    """Deprecated name; return original data without mutation or masking."""
     return value
+
+
+def _core_journal_record(category: str, operation: str, status: str,
+                         message: str, fields: dict[str, Any], *,
+                         duration_ms: int | None = None) -> dict[str, Any]:
+    """Carry an attested Core event on its existing logger call, once.
+
+    The Core-owned file/console formatter serializes this extra metadata as
+    DIAG_JSON; legacy handlers receive the original message unchanged.
+    Values are never redacted by this logging path. The optional in-memory
+    snapshot remains a temporary compatibility view, not a second writer.
+    """
+    payload: dict[str, Any] = {
+        "schema_version": 1, "category": category,
+        "operation": operation, "status": status,
+        "message": message, "detail": dict(fields),
+    }
+    if type(fields.get("task_ref")) is str:
+        payload["task_ref"] = fields["task_ref"]
+    measured_ms = duration_ms if duration_ms is not None else fields.get("duration_ms")
+    if type(measured_ms) is int and 0 <= measured_ms <= 86_400_000:
+        payload["duration_ms"] = measured_ms
+    return {"_cifereca_journal_payload": payload}
 
 
 @dataclass
@@ -163,6 +74,7 @@ class DiagnosticEntry:
     verified_reconciliation: bool = False
     verified_loan_download: bool = False
     verified_bnf_loan_action: bool = False
+    verified_cover_failure: bool = False
 
 
 class Diagnostics:
@@ -178,28 +90,72 @@ class Diagnostics:
             detail: dict[str, Any] | None = None, level: str = "normal") -> None:
         if not self.enabled:
             return
-        if self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
+        # The errors-only level must not discard an actual failure merely
+        # because its producer normally reports at the "normal" level.
+        # This is a severity filter, not a switch disabling error capture.
+        if self.level == "errors":
+            if type(status) is str and status not in {
+                "error", "failed", "warning", "attention_required",
+                "retryable_error", "blocked", "cancelled", "timeout",
+                "partial",
+            }:
+                return
+        elif self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
             return
-        if self.level == "errors" and type(status) is str and status == "ok":
-            return
-        # The generic collector is optional. Malformed plugin data must not
-        # crash a workflow or gain a printable representation of a private
-        # object by way of its __str__/__bool__/__eq__ hooks.
+        # The compatibility snapshot must agree with the canonical journal.
+        # Never mask outside GTK; reject unsupported plugin objects without
+        # invoking their __str__, __repr__, __bool__ or __eq__ hooks.
         try:
-            safe_detail = _redact_generic_diagnostic_detail(detail) if type(detail) is dict else {}
+            from .core.diagnostic_journal import journal_payload
+            raw_detail = journal_payload(detail) if type(detail) is dict else {}
         except Exception:
-            safe_detail = {}
+            raw_detail = {}
+        # BnF HTTP observations belong to the actual worker executing the GET.
+        # This reference is Core-owned; request_ref and plugin-supplied detail
+        # cannot claim task provenance. Leave unrelated generic events alone.
+        bnf_http = (type(category) is str and category == "API"
+                    and type(operation) is str and operation == "BnF HTTP"
+                    and type(raw_detail.get("provider_id")) is str
+                    and raw_detail["provider_id"] == "bnf-pret")
+        correlate = bnf_http or (type(category) is str and category == "NUMILOG")
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            category=_redact_generic_diagnostic_text(category)[:160] if type(category) is str else "DIAGNOSTICS",
-            operation=_redact_generic_diagnostic_text(operation)[:160] if type(operation) is str else "[opération masquée]",
+            category=category[:160] if type(category) is str else "DIAGNOSTICS",
+            operation=operation[:160] if type(operation) is str else "[opération masquée]",
             status=status if type(status) is str and status in _GENERIC_STATUSES else "unknown",
             duration_ms=duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000 else None,
-            detail=safe_detail,
-            task_ref=numilog_task_reference() if type(category) is str and category == "NUMILOG" else None,
+            detail=raw_detail,
+            task_ref=diagnostic_task_reference() if correlate else None,
         )
         with self._lock:
             self._items.append(entry)
+        # The new canonical consumer reads exactly one physical log entry.
+        # Preserve original JSON-compatible input; legacy in-memory snapshots
+        # remain available for plugins not yet migrated to source='journal'.
+        try:
+            from .core.diagnostic_journal import journal_payload
+            raw = {
+                "schema_version": 1,
+                "category": category if type(category) is str else "DIAGNOSTICS",
+                "operation": operation if type(operation) is str else "",
+                "status": status if type(status) is str else "unknown",
+                "message": operation if type(operation) is str else "diagnostic",
+                "detail": journal_payload(detail) if type(detail) is dict else {},
+                **({"duration_ms": entry.duration_ms} if entry.duration_ms is not None else {}),
+                **({"task_ref": entry.task_ref} if entry.task_ref else {}),
+            }
+            payload = json.dumps(raw, ensure_ascii=False, allow_nan=False)
+            severity = logging.ERROR if status in {"error", "failed", "timeout"} else (
+                logging.WARNING if status in {
+                    "warning", "cancelled", "attention_required", "retryable_error",
+                    "blocked", "partial",
+                } else logging.INFO
+            ) if type(status) is str else logging.WARNING
+            logging.getLogger("cifereca").log(severity, "DIAG_JSON %s", payload)
+        except Exception:
+            # The persistent write can fail independently, but must never
+            # change the provider/business result or stringify hostile data.
+            pass
 
     def add_core_bnf_loan_action(self, event: object) -> None:
         """Core-attested terminal fact, never a generic plugin diagnostic."""
@@ -220,7 +176,14 @@ class Diagnostics:
                 self._items.append(entry)
         try:
             severity = logging.INFO if status == 'success' else logging.ERROR if status == 'failed' else logging.WARNING
-            logging.getLogger('cifereca').log(severity, '%s', log_message(fields))
+            message = log_message(fields)
+            logging.getLogger('cifereca').log(
+                severity, '%s', message,
+                extra=_core_journal_record(
+                    'LOAN', 'bnf_loan_action',
+                    'ok' if status == 'success' else status, message, fields,
+                ),
+            )
         except Exception:
             pass
 
@@ -251,7 +214,15 @@ class Diagnostics:
         try:
             logger = logging.getLogger("cifereca")
             if logger.isEnabledFor(severity):
-                logger.log(severity, "%s", log_message(fields))
+                message = log_message(fields)
+                logger.log(
+                    severity, "%s", message,
+                    extra=_core_journal_record(
+                        "PNB" if fields["provider_id"] == "paris" else "LOAN",
+                        "download_loan", "ok" if status == "success" else status,
+                        message, fields,
+                    ),
+                )
         except Exception:
             # Diagnostics are never allowed to alter an acquisition result.
             pass
@@ -292,6 +263,67 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+        # This Core-attested Browser Recorder outcome previously existed only
+        # in the volatile snapshot. Publish it once in the same physical
+        # journal consumed by Diagnostics; never infer a provider or task ref.
+        try:
+            payload = {
+                "schema_version": 1,
+                "category": "PLUGIN",
+                "operation": fields["operation"],
+                "status": status,
+                "message": OPERATIONS[fields["operation"]],
+                "detail": {"domain": "browser_recorder", **fields},
+                **({"duration_ms": fields["duration_ms"]} if "duration_ms" in fields else {}),
+            }
+            severity = (
+                logging.ERROR if status == "error" else
+                logging.WARNING if status == "warning" else logging.INFO
+            )
+            logging.getLogger("cifereca").log(
+                severity, "DIAG_JSON %s",
+                json.dumps(payload, ensure_ascii=False, allow_nan=False),
+            )
+        except Exception:
+            # Diagnostics must never alter the plugin operation's result.
+            pass
+
+
+    def add_core_cover_failure(self, code: str, *, duration_ms: int) -> None:
+        """One attested image-download failure, not an EPUB acquisition.
+
+        A generic plugin diagnostic cannot attest a cover failure reason.
+        Publish a single Core-owned canonical journal occurrence; the
+        in-memory snapshot remains read-only legacy compatibility.
+        """
+        from .core.diagnostic_cover_failure import public_fields, public_message
+        fields = public_fields({"code": code, "duration_ms": duration_ms})
+        if not fields or not self.enabled:
+            return
+        message = public_message(fields)
+        if message is None:
+            return
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="COVER", operation="download", status="error",
+            duration_ms=fields["duration_ms"], detail={"code": fields["code"]},
+            verified_cover_failure=True,
+        )
+        with self._lock:
+            self._items.append(entry)
+        try:
+            logger = logging.getLogger("cifereca")
+            if logger.isEnabledFor(logging.ERROR):
+                logger.log(
+                    logging.ERROR, "%s", message,
+                    extra=_core_journal_record(
+                        "COVER", "cover_download_failure", "error", message,
+                        {"code": fields["code"]}, duration_ms=fields["duration_ms"],
+                    ),
+                )
+        except Exception:
+            # Observability cannot interfere with the visual fallback.
+            pass
 
     def add_core_provider_connection_attempt(self, event: object) -> None:
         """P0 #3101: a single Core request emits attested phase records.
@@ -329,7 +361,16 @@ class Diagnostics:
             message = log_message(fields)
             logger = logging.getLogger("cifereca")
             if message is not None and logger.isEnabledFor(severity):
-                logger.log(severity, "%s", message)
+                logger.log(
+                    severity, "%s", message,
+                    extra=_core_journal_record(
+                        "PLUGIN", "provider_connect",
+                        "error" if fields["status"] == "failed"
+                        else "warning" if fields["status"] in {"skipped", "cancelled"}
+                        else "ok" if fields["status"] == "success" else "unknown",
+                        message, fields,
+                    ),
+                )
         except Exception:
             pass
 
@@ -361,9 +402,9 @@ class Diagnostics:
         if not fields:
             return
         logger = logging.getLogger("cifereca")
+        time_ms = (duration_ms if type(duration_ms) is int
+                   and 0 <= duration_ms <= 600000 else None)
         if self.enabled:
-            time_ms = (duration_ms if type(duration_ms) is int
-                       and 0 <= duration_ms <= 600000 else None)
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 category="PLUGIN",
@@ -376,7 +417,15 @@ class Diagnostics:
                 self._items.append(entry)
         try:
             if logger.isEnabledFor(logging.ERROR):
-                logger.error(public_connection_log_message(fields))
+                message = public_connection_log_message(fields)
+                logger.error(
+                    "%s", message,
+                    extra=_core_journal_record(
+                        "PLUGIN",
+                        "public provider connect" if singleton else "provider connect",
+                        "error", message, fields, duration_ms=time_ms,
+                    ),
+                )
         except Exception:
             # Optional logging is never allowed to turn a connection failure
             # into a different outcome or leak the handler's private message.
@@ -422,7 +471,16 @@ class Diagnostics:
         try:
             logger = logging.getLogger("cifereca")
             if logger.isEnabledFor(logging.INFO):
-                logger.info("%s", public_connection_success_log_message(fields))
+                message = public_connection_success_log_message(fields)
+                logger.info(
+                    "%s", message,
+                    extra=_core_journal_record(
+                        "PLUGIN",
+                        "public provider connected" if singleton else "provider connected",
+                        "ok", message, fields,
+                        duration_ms=duration_ms,
+                    ),
+                )
         except Exception:
             pass
 
@@ -499,8 +557,10 @@ class Diagnostics:
         from .diagnostic_task_context import diagnostic_task_reference
         logger = logging.getLogger("cifereca")
         severity = logging.ERROR if status == "failed" else (
-            logging.WARNING if status == "cancelled" else logging.INFO)
-        record = self.enabled and (self.level != "errors" or status in {"failed", "cancelled"})
+            logging.WARNING if status in {"cancelled", "partial"} else logging.INFO)
+        record = self.enabled and (
+            self.level != "errors" or status in {"failed", "cancelled", "partial"}
+        )
         if not record and not logger.isEnabledFor(severity):
             return
         fields = dict(schema_version=1, provider_id=provider_id,
@@ -537,7 +597,13 @@ class Diagnostics:
             with self._lock:
                 self._items.append(entry)
         try:
-            logger.log(severity, "%s", log_message(fields))
+            message = log_message(fields)
+            logger.log(
+                severity, "%s", message,
+                extra=_core_journal_record(
+                    "SYNC", "source sync", status, message, fields,
+                ),
+            )
         except Exception:
             pass
 
@@ -570,7 +636,13 @@ class Diagnostics:
             with self._lock:
                 self._items.append(entry)
         try:
-            logger.log(severity, "%s", log_message(fields))
+            message = log_message(fields)
+            logger.log(
+                severity, "%s", message,
+                extra=_core_journal_record(
+                    "ADEPT", "kobo adept", fields["status"], message, fields,
+                ),
+            )
         except Exception:
             pass
 
@@ -610,7 +682,13 @@ class Diagnostics:
                             else logging.WARNING)
                 logger = logging.getLogger("cifereca")
                 if logger.isEnabledFor(severity):
-                    logger.log(severity, "%s", message)
+                    logger.log(
+                        severity, "%s", message,
+                        extra=_core_journal_record(
+                            "LIBRARY", "library_reconciliation_audit",
+                            "ok" if status == "complete" else status, message, fields,
+                        ),
+                    )
         except Exception:
             # Diagnostic persistence cannot alter a read-only audit.
             pass
@@ -639,9 +717,23 @@ class Diagnostics:
                     row.pop("verified_reconciliation", None)
                 if row.get("verified_loan_download") is False:
                     row.pop("verified_loan_download", None)
+                if row.get("verified_cover_failure") is False:
+                    row.pop("verified_cover_failure", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
+        """Legacy local text export: retain all JSON-compatible values raw.
+
+        Only the GTK Diagnostics presentation may pseudonymize explicit
+        login/password values; this export must not perform any masking.
+        """
+        from .core.diagnostic_journal import journal_payload
+
+        def display(value: Any) -> str:
+            raw = journal_payload(value)
+            return (json.dumps(raw, ensure_ascii=False, allow_nan=False)
+                    if type(raw) in (dict, list) else str(raw))
+
         lines = [
             f"cifereca v{version}",
             f"Generated: {datetime.now(timezone.utc).isoformat(timespec='milliseconds')}",
@@ -649,15 +741,8 @@ class Diagnostics:
         ]
         if type(extra) is dict:
             for key, value in extra.items():
-                safe_key = _legacy_text_key(key)
-                if safe_key == "[champ masqué]":
-                    lines.append("[champ masqué]: <redacted>")
-                    continue
-                try:
-                    safe_value = redact(value, safe_key)
-                except Exception:
-                    safe_value = "<redacted>"
-                lines.append(f"{safe_key}: {safe_value}")
+                if type(key) is str:
+                    lines.append(f"{key}: {display(value)}")
         lines.append("")
         for item in self.snapshot():
             lines.append(f"[{item['timestamp']}] {item['category']} {item['operation']} status={item['status']}")
@@ -666,12 +751,8 @@ class Diagnostics:
             if item.get("duration_ms") is not None:
                 lines.append(f"duration={item['duration_ms']}ms")
             detail = item.get("detail") or {}
-            if detail:
-                for k, v in detail.items():
-                    safe_key = _legacy_text_key(k)
-                    if safe_key == "[champ masqué]":
-                        lines.append("[champ masqué]=<redacted>")
-                        continue
-                    lines.append(f"{safe_key}={json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v}")
+            for key, value in detail.items():
+                if type(key) is str:
+                    lines.append(f"{key}={display(value)}")
             lines.append("")
         return "\n".join(lines).rstrip() + "\n"

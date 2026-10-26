@@ -1,4 +1,4 @@
-"""P0 #1051: sync issue dialog redaction, account scope and GTK lifetime."""
+"""P0 #1051 / #3133: original sync causes, account scope and GTK lifetime."""
 from __future__ import annotations
 
 import ast
@@ -78,7 +78,7 @@ def test_module_is_gtk_free_and_mainwindow_facade_preserves_signature():
     assert "Adw=Adw" in ast.unparse(facade)
 
 
-def test_report_title_and_exact_redacted_body_are_preserved():
+def test_report_title_and_exact_original_body_are_preserved():
     window, adw, events, dialogs = _host()
     card = {
         "label": "Compte Paris",
@@ -101,7 +101,7 @@ def test_report_title_and_exact_redacted_body_are_preserved():
     assert dialog.title == "Synchronisation · Compte Paris"
     assert dialog.body == sync_issues_text(card["sync"])
     assert "Édition A" in dialog.body
-    assert "SECRET" not in dialog.body
+    assert "SECRET" in dialog.body
     assert dialog.responses == [
         ("settings", "Paramètres des identités"),
         ("close", "Fermer"),

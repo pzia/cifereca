@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
+from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -332,9 +334,17 @@ def main(argv: list[str] | None = None) -> int:
                 rows = manager.diagnostic(a.plugin_id)
                 result = rows[0] if rows else {}
             elif a.plugin_cmd == "install":
-                archive = resolve_archive(a.archive)
-                manifest = manager.inspect_archive(archive)
-                installed = manager.install(archive, activate=not a.no_activate, replace=a.replace)
+                # An updater-launched CLI reports bounded phase transitions on
+                # stderr. Ordinary interactive plugin installs remain unchanged.
+                from .update_child import PROGRESS_ENV
+                from .update_progress import update_operation, update_phase, jsonl_progress_writer
+                capture = (update_operation("dev_snapshot", callback=jsonl_progress_writer(sys.stderr))
+                           if os.environ.get(PROGRESS_ENV) == "1" else nullcontext())
+                with capture:
+                    with update_phase("plugin_inspect"):
+                        archive = resolve_archive(a.archive)
+                        manifest = manager.inspect_archive(archive)
+                    installed = manager.install(archive, activate=not a.no_activate, replace=a.replace)
                 result = {
                     "package_id": installed.manifest.package.id, "version": installed.manifest.package.version,
                     "sha256": installed.sha256, "active": manager.packages.active_version(installed.manifest.package.id),

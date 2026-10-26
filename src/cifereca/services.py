@@ -223,11 +223,11 @@ class LibraryService:
         if level not in {"errors", "normal", "verbose", "trace"}:
             raise ValueError("Niveau de diagnostic inconnu")
         draft = deepcopy(self.config)
-        draft.set("diagnostics.enabled", bool(enabled))
+        draft.set("diagnostics.enabled", True)
         draft.set("diagnostics.level", level)
         draft.save()
         self.config.data = draft.data
-        self.diagnostics.enabled = bool(enabled)
+        self.diagnostics.enabled = True
         self.diagnostics.level = level
         set_diagnostics_level(level)
 
@@ -292,12 +292,13 @@ class LibraryService:
         return result
 
     def import_bnf_loan_acsm(
-        self, source: Path, *, expected_identity_id: str, title: str | None = None,
+        self, source: Path, *, expected_identity_id: str, loan: Loan,
+        title: str | None = None,
     ) -> dict[str, Any]:
-        """Separate consented ADEPT action; its result remains a manual import.
+        """Import the exact staged loan token with manual ADEPT attestation.
 
-        Diagnostic attribution to the BnF action never changes acquisition
-        provenance, establishes a BnF right, or selects another Adobe profile.
+        Physical placement identifies BnF as the observed source. The ledger
+        and DRM execution remain manual; neither establishes a BnF right.
         """
         from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
         observation = ActionObservation(self, 'import_acsm')
@@ -306,9 +307,38 @@ class LibraryService:
                     or self.current_identity is None
                     or self.current_identity.identity_id != expected_identity_id):
                 raise BnfLoanActionError('bnf_loan_scope_unproven')
+            if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
+                    or loan.identity_id != expected_identity_id
+                    or loan.medium != 'digital' or loan.state != 'active'
+                    or not loan.id or not loan.record_id or not loan.source_credential
+                    or not loan.source_account_id
+                    or self.storage.identity_for_connection(
+                        'bnf-pret', loan.source_credential) != expected_identity_id):
+                raise BnfLoanActionError('bnf_loan_scope_unproven')
+            try:
+                account = self._account_for_loan(loan)
+                expected = self._acquisition_work_dir(expected_identity_id, 'bnf-pret', loan.id)
+                candidate = Path(source)
+                if (account.provider_id != 'bnf-pret'
+                        or account.unique_id != loan.source_account_id
+                        or account.credential_id != loan.source_credential
+                        or account.identity_id != expected_identity_id
+                        or expected.is_symlink() or candidate.is_symlink()
+                        or candidate.parent.resolve() != expected.resolve()
+                        or not candidate.name.startswith('bnf-loan-')
+                        or candidate.suffix.casefold() != '.acsm'):
+                    raise BnfLoanActionError('bnf_loan_scope_unproven')
+            except BnfLoanActionError:
+                raise
+            except Exception:
+                raise BnfLoanActionError('bnf_loan_scope_unproven') from None
+            from .core.bnf_import_provenance import observed_loan, remember_import
+            display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
-                                      provider_id='manual', title=title)
+                                      provider_id='manual', title=title,
+                                      placement_provider_id='bnf-pret')
+            remember_import(self, result, display_scope)
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
@@ -510,6 +540,9 @@ class LibraryService:
             self._search_generation += 1
             self.last_search = []
             self.last_search_warnings = []
+            # The Loans page reads this projection synchronously. Retire the
+            # old profile's loans before any asynchronous refresh can arrive.
+            self.last_loans = []
         # History and bookings are identity-scoped snapshots. Invalidate them
         # at the service boundary so non-UI callers cannot observe data that
         # belonged to the previously selected identity.
@@ -828,6 +861,7 @@ class LibraryService:
 
     def refresh_identity_loans(self, force: bool = False, identity_id: str | None = None) -> list[Loan]:
         identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+        request_epoch = self._account_context_epoch
         rows: list[Loan] = []
         seen: set[tuple[str, str, str, str]] = set()
         accounts = self.accounts_for_identity(identity_id)
@@ -843,7 +877,13 @@ class LibraryService:
                 if key not in seen:
                     seen.add(key); rows.append(loan)
         rows.sort(key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-        self.last_loans = rows
+        # A worker for Alice may finish after switching Alice -> Bob -> Alice.
+        # Its private result is returned to the guarded caller, but must never
+        # overwrite the current profile projection after an epoch transition.
+        with self._search_generation_lock:
+            if (self._account_context_epoch == request_epoch
+                    and getattr(self.current_identity, "identity_id", None) == identity_id):
+                self.last_loans = rows
         if force and identity_id:
             self.refresh_adept_inventory(identity_id)
         return rows
@@ -1383,19 +1423,39 @@ class LibraryService:
         self.storage.cache_put("holdings", key, asdict(detail), ttl)
         return detail
 
-    def renew(self, loan: Loan) -> dict[str, Any]:
-        # Mutations must follow the borrower carried by the loan, not whichever
-        # account happens to be selected in the GUI when the user clicks.
-        account = self._account_for_loan(loan)
-        session = self._session_for_source(loan.source_provider, loan.source_credential)
-        # Les objets bruts Syracuse ne sont volontairement pas persistés dans le cache.
-        # Recharge donc le prêt depuis le bon compte si nécessaire.
-        if not loan.raw and session.capabilities.loans:
-            fresh = session.loans(account)
-            loan = next((x for x in fresh if x.id == loan.id), loan)
-        result = session.renew(loan, account)
-        self.storage.cache_delete_namespace("account")
-        return result
+    def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
+        """Manual Paris renewal; at-most-once remote POST per exact loan.
+
+        A GUI button, a cached CanRenew flag or a truthy confirmation is not
+        sufficient. Preserve the existing cross-process loan mutation lock
+        shared with provider/ADEPT return; no operation is retried on timeout.
+        """
+        if confirmed is not True:
+            return {
+                "status": "blocked", "code": "renewal_confirmation_required",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
+        if (type(loan) is not Loan
+                or type(loan.source_provider) is not str
+                or type(loan.id) is not str or not loan.id
+                or type(loan.source_credential) is not str
+                or type(loan.source_account_id) is not str):
+            return {
+                "status": "blocked", "code": "loan_scope_unverified",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
+        from .core.provider_loan_renewal import renew as scoped_renew
+        try:
+            with InterProcessLock(self._return_operation_lock_file(loan)):
+                return scoped_renew(self, loan)
+        except LockBusyError:
+            return {
+                "status": "blocked", "code": "loan_action_busy",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
 
     def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
         """Require *exact* Paris borrower provenance before mutating anything."""
@@ -1896,10 +1956,12 @@ class LibraryService:
 
     def _import_acsm_impl(
         self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
+        placement_provider_id: str | None = None,
     ) -> dict[str, Any]:
         """Import a user ACSM without deleting the original file."""
         return manual_acsm_import.import_acsm(
             self, source, identity_id=identity_id, provider_id=provider_id, title=title,
+            placement_provider_id=placement_provider_id,
             Path=Path, ProviderConfigurationError=ProviderConfigurationError,
             sha256_file=sha256_file, hashlib=hashlib, data_dir=data_dir, shutil=shutil,
             detect_acsm_format=detect_acsm_format, AdeptProfileResolutionError=AdeptProfileResolutionError,
@@ -1908,6 +1970,7 @@ class LibraryService:
 
     def import_acsm(
         self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
+        placement_provider_id: str | None = None,
     ) -> dict[str, Any]:
         identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
         iid = identity.identity_id if identity else identity_id
@@ -1921,7 +1984,8 @@ class LibraryService:
                 with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
                     from .core.numilog_startup_diagnostics import adept_stage
                     with adept_stage(provider_id) as startup_trace:
-                        result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id, title=title)
+                        result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id,
+                                                        title=title, placement_provider_id=placement_provider_id)
                         if startup_trace is not None and result.get("status") not in {"complete", "unchanged"}:
                             startup_trace.fail("adept_failed")
             except LockBusyError:
@@ -2124,17 +2188,69 @@ class LibraryService:
         )
 
     def can_direct_download(self, item: SearchResult) -> bool:
-        """Whether Paris can execute an acquisition with the published contracts."""
+        """Can this *exact* remote offer show a consented direct-download action?
+
+        An unauthenticated Kobo catalogue owned=True flag is not a purchase.
+        Require active, identity/credential/item-bound Core rights before
+        inspecting the provider's executable acquisition capabilities.
+        This read-only check never refreshes, downloads or writes rights.
+        """
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             return False
         try:
+            if item.source_provider in {"numilog", "numilog-catalog"}:
+                # A private Numilog session has direct_download=True, but that
+                # capability is NOT a per-notice download offer. Public search
+                # results (including those returned from a logged-in account's
+                # scope=catalog) have no purchase/variant authority.
+                if item.source_provider != "numilog":
+                    return False
+                if (item.source_collection != "library"
+                        or item.scenario != "NUMILOG_LIBRARY"
+                        or item.owned is not True
+                        or item.downloadable is not True
+                        or item.download_url is not None
+                        or item.medium != "digital"
+                        or type(item.source_credential) is not str
+                        or not item.source_credential
+                        or item.source_credential == "__public__"):
+                    return False
+                from .core.numilog_manifest_rights import _scoped_record_id
+                if _scoped_record_id(item.record_id, item.source_credential) is None:
+                    return False
+                # A private notice from another family member's credentials
+                # must not show a download on the selected profile, even when
+                # the old query is still loaded during a profile transition.
+                identity = getattr(getattr(self, "current_identity", None), "identity_id", None)
+                if type(identity) is not str or not identity:
+                    return False
+                matching_accounts = [
+                    account for account in self.accounts
+                    if getattr(account, "provider_id", None) == "numilog"
+                    and getattr(account, "credential_id", None) == item.source_credential
+                ]
+                if (len(matching_accounts) != 1
+                        or matching_accounts[0].identity_id != identity):
+                    return False
+                # This is only a read-only visibility hint; the locked
+                # acquisition still re-attests the exact account and edition.
+            if item.source_provider == "kobo":
+                identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
+                if (type(identity_id) is not str or not identity_id
+                        or type(item.source_credential) is not str
+                        or not item.source_credential
+                        or item.source_credential == "__public__"
+                        or type(item.record_id) is not str or not item.record_id
+                        or item.owned is not True or item.downloadable is False):
+                    return False
+                if (self.kobo_personal_right_states(identity_id).get(
+                    (item.source_credential, item.record_id)
+                ) != "active"):
+                    return False
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
-                # Kobo catalogue entries that are not owned must never expose a
-                # local download action.  Execution is possible only through the
-                # published Vault acquisition + Adept v8+ interface.
-                if not item.owned or item.downloadable is False:
-                    return False
+                # A verified right still needs an explicit Vault offer and a
+                # working Adept runtime; a local file is never implied.
                 if not hasattr(session, "resolve_acquisition"):
                     return False
                 state = self.kobo_adept_state()

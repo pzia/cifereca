@@ -17,7 +17,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
     global_cmd_row = download_settings.global_cmd_row
     global_post_row = download_settings.global_post_row
     provider_download_editors = download_settings.provider_download_editors
-    diag_switch = application_ui.diagnostics_switch
     exp_switch = application_ui.experimental_switch
     level_drop = application_ui.level_dropdown
     levels = application_ui.levels
@@ -68,7 +67,7 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
         values["backup_directory"] = backup_dir_row.get_text()
         values["backup_interval"] = backup_interval_row.get_text()
         values["backup_enabled"] = backup_switch.get_active()
-        values["diagnostics_enabled"] = diag_switch.get_active()
+        values["diagnostics_enabled"] = True
         values["experimental_actions"] = exp_switch.get_active()
         values["audiobook_directory"] = global_audio_row.get_text()
         values["download_command"] = global_cmd_row.get_text()
@@ -108,7 +107,7 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
         def ok(result):
             if not page_lifetime.alive:
                 return
-            self.diagnostics.enabled = bool(staged["diagnostics"]["enabled"])
+            self.diagnostics.enabled = True
             self.diagnostics.level = staged["diagnostics"]["level"]
             from ..logging_utils import set_diagnostics_level
             set_diagnostics_level(self.diagnostics.level)

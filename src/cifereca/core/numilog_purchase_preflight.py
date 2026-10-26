@@ -119,6 +119,23 @@ def preflight(broker: Any, account: Any, source_id: str, item_id: Any) -> SyncRe
         # Numilog placement. Both require offline reconciliation, never a
         # new signed URL / duplicate file / misleading "acquirable" preview.
         return _response("needs_reconciliation")
+    from .library_declared_links import has_active_declared_link
+    try:
+        declared = has_active_declared_link(
+            service.storage, identity_id=account.identity_id,
+            provider_id='numilog', credential_id=account.credential_id,
+            account_id=account.unique_id, item_id=item_id,
+        )
+    except Exception:
+        return _response('evidence_unavailable')
+    if (not _valid_binding(broker, account, source_id)
+            or connected_session() is not session):
+        return _response('source_changed')
+    if declared:
+        # Presence is not checked by this passive SQLite-only operation.
+        # Never turn a recorded statement into either a receipt or a fresh
+        # missing-file candidate just because it has no acquisition ledger.
+        return _response('declared_link_recorded')
     if metadata.get("downloadable") is False:
         return _response("not_downloadable")
     return _response("candidate_unverified", valid_candidate=True)

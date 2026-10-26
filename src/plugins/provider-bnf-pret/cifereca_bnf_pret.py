@@ -8,10 +8,12 @@ from cifereca.plugin_api import (
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
     ProviderCapabilityError, ProviderError, normalize_language_tag,
+    LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
 )
 from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
 from cifereca_bnf_pret_catalog import read_search, read_detail, MAX_SEARCH_PAGES, resource_url
+from cifereca_bnf_pret_signed_action import signed_acsm_action
 from cifereca_bnf_pret_download import save_private_loan_token, validate_loan_token
 
 DESCRIPTOR = ProviderDescriptor(
@@ -50,6 +52,21 @@ _PUBLIC_CODES = frozenset({
 })
 
 
+# A failed *fresh inventory read* is not a failed ACSM GET. Preserve an
+# explicit, finite phase-qualified reason without exposing response details.
+# The unprefixed codes remain the token GET/validation reasons for v0.3.3
+# compatibility. Do not prefix loan_not_observed: it already says the GET was
+# blocked by a negative fresh observation.
+_ACTIVITY_ERRORS = frozenset({
+    'access_denied', 'auth_required', 'rate_limited', 'http_unavailable',
+    'transport_unavailable', 'operation_timeout', 'url_refused',
+    'redirect_invalid', 'redirect_limit', 'unexpected_content',
+    'html_limit', 'invalid_dom', 'dom_limit', 'unrecognized_loans',
+    'ambiguous_loans', 'invalid_activity_page', 'scope_mismatch',
+})
+_PUBLIC_CODES = _PUBLIC_CODES | frozenset('activity_' + code for code in _ACTIVITY_ERRORS) | {'activity_unavailable'}
+
+
 def _public_code(error):
     code = str(error)
     return code if code in _PUBLIC_CODES else 'bnf_reader_failed'
@@ -58,7 +75,7 @@ def _public_code(error):
 class BnfProviderSession(ProviderSession):
     def __init__(self, *, client=None, diagnostics=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
-        self.client = client or ReaderHTTPClient()
+        self.client = client or ReaderHTTPClient(diagnostics=diagnostics)
         self.diagnostics = diagnostics
         self._lock = threading.RLock()
         self._epoch = uuid4().hex
@@ -137,6 +154,27 @@ class BnfProviderSession(ProviderSession):
                          state='active', can_return=False, renewable=False,
                          raw={'inventory_exhaustive': False}) for row in snapshot.loans]
 
+    def loan_inventory_snapshot(self, account):
+        """Optional v1 inventory evidence: BnF HTML never attests completeness.
+
+        Calls exactly one existing scoped loans() read. A successful GET/empty
+        HTML section is still only a partial view of the active-loan corpus.
+        This method never retrieves private loan tokens or starts ADEPT.
+        """
+        rows = self.loans(account)
+        if not self.connected or self._closed:
+            raise ProviderConfigurationError('session_closed')
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account),
+            loans=tuple(rows),
+            status='partial',
+            branches=(LoanBranchCoverage(
+                upstream='bnf_html', medium='digital',
+                completeness='partial', reason_code='inventory_not_exhaustive',
+            ),),
+            reason_code='inventory_not_exhaustive',
+        )
+
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
                          *, explicit_user_action: bool = False):
         """Explicit candidate ACSM fetch; the automatic Core path stays denied.
@@ -164,11 +202,34 @@ class BnfProviderSession(ProviderSession):
             try:
                 # No stale loan can trigger the GET: re-read the exact Web
                 # account and demand the same loan/resource pair right now.
-                fresh = self._snapshot(self.client.activity())
-                if not any(row.loan_id == loan.id and row.resource_id == loan.record_id
-                           for row in fresh.loans):
+                try:
+                    activity_html = self.client.activity()
+                    fresh = self._snapshot(activity_html)
+                except (ReaderHTTPError, WebParseError) as error:
+                    # Do not conflate a failed fresh inventory read with an
+                    # ACSM transfer: the token endpoint has NOT been called.
+                    code = _public_code(error)
+                    raise ReaderHTTPError(
+                        'activity_' + code if code in _ACTIVITY_ERRORS
+                        else 'activity_unavailable'
+                    ) from None
+                # close() revokes the epoch before acquiring _lock. In
+                # particular, it may run while activity() is in flight.
+                # Invalidate BEFORE the token GET, not only after it.
+                if self._closed or epoch != self._epoch or not self.connected:
+                    raise ReaderHTTPError('session_closed')
+                matching = [row for row in fresh.loans
+                            if row.loan_id == loan.id and row.resource_id == loan.record_id]
+                if len(matching) != 1:
                     raise ReaderHTTPError('loan_not_observed')
-                token = self.client.loan_token(loan.id)
+                # Do not downgrade to unsigned GET when BnF's signed action
+                # is absent or synthesized outside this HTML page.
+                signed_url = signed_acsm_action(activity_html, loan.id, loan.record_id)
+                if signed_url is None:
+                    raise ReaderHTTPError('url_refused')
+                if self._closed or epoch != self._epoch or not self.connected:
+                    raise ReaderHTTPError('session_closed')
+                token = self.client.loan_token(loan.id, signed_url)
                 validate_loan_token(token)
                 if self._closed or epoch != self._epoch:
                     raise ReaderHTTPError('session_closed')

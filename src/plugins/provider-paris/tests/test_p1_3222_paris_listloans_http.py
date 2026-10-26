@@ -1,0 +1,180 @@
+"""P1 #3222: Paris ListLoans 404 is an HTTP failure, NEVER an empty loan manifest.
+
+All responses use httpx.MockTransport; there is no real account, network,
+ADEPT operation, loan mutation or bearer token.
+"""
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from cifereca.plugin_api import Account, ProviderConfigurationError
+from cifereca_paris import ParisProviderSession
+from cifereca_paris_client import ParisClient, ParisLoanListError
+
+PRIVATE = "SECRET_PRIVATE_ACCOUNT_3222"
+
+
+class Diagnostics:
+    def __init__(self):
+        self.events = []
+
+    def add(self, *args, **kwargs):
+        self.events.append((args, kwargs))
+
+
+class Config:
+    def get(self, _name, default=None):
+        return default
+
+
+def _fixture(handler):
+    diagnostics = Diagnostics()
+    session = ParisProviderSession(
+        credential_id="reader-private", label="Paris",
+        credentials={"username": "private-login", "password": "private-password"},
+        options={}, config=Config(), diagnostics=diagnostics,
+    )
+    account = Account(
+        display_name="Private account", unique_id=PRIVATE, provider_id="paris",
+        credential_id="reader-private", identity_id="identity-A",
+    )
+    old = session.client.client
+    session.client.client = httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=True,
+    )
+    old.close()
+    session.connected = True
+    session._accounts = [account]
+    return session, account, diagnostics
+
+
+def _empty():
+    return httpx.Response(200, json={"success": True, "d": {"Loans": []}})
+
+
+@pytest.mark.parametrize(("status", "reason"), (
+    (404, "paris_loans_http_not_found"),
+    (401, "paris_loans_http_unauthorized"),
+    (403, "paris_loans_http_forbidden"),
+    (429, "paris_loans_http_rate_limited"),
+    (503, "paris_loans_http_unavailable"),
+))
+def test_listloans_http_denial_is_typed_without_retry_or_secret(status, reason, caplog):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        assert request.method == "GET"
+        assert request.url.path.endswith("/ListLoans")
+        assert request.url.params.get("serviceCode") in ("DILICOM", "SYRACUSE")
+        assert request.url.params.get("userUniqueIdentifier") == PRIVATE
+        return httpx.Response(status, text="<html>" + PRIVATE + "</html>",
+                              headers={"content-type": "text/html"})
+
+    session, account, diag = _fixture(handler)
+    try:
+        with pytest.raises(ProviderConfigurationError):
+            session.loans(account)
+        assert len(requests) == 2  # no automatic retry on a 404/other denial
+        assert session.last_loan_errors == [
+            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed",
+             "reason_code": reason},
+            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed",
+             "reason_code": reason},
+        ]
+        events = repr(diag.events)
+        assert reason in events
+        assert PRIVATE not in events
+        assert PRIVATE not in caplog.text
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(("reply", "reason"), (
+    ("html", "paris_loans_html_unexpected"),
+    ("redirect_html", "paris_loans_redirect_unexpected"),
+    ("not_json", "paris_loans_non_json"),
+    ("json_list", "paris_loans_json_shape_invalid"),
+))
+def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/private-login":
+            return httpx.Response(200, text="<html>login</html>",
+                                  headers={"content-type": "text/html"})
+        if request.url.params.get("serviceCode") == "SYRACUSE":
+            return _empty()
+        if reply == "html":
+            return httpx.Response(200, text="<html>unauthorized</html>",
+                                  headers={"content-type": "text/html"})
+        if reply == "redirect_html":
+            return httpx.Response(302, headers={"location": "/private-login"})
+        if reply == "json_list":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, text="bad json",
+                              headers={"content-type": "application/json"})
+
+    session, account, diag = _fixture(handler)
+    try:
+        snapshot = session.loan_inventory_snapshot(account)
+        assert snapshot.status == "partial"
+        assert snapshot.loans == ()
+        assert [(b.upstream, b.completeness) for b in snapshot.branches] == [
+            ("dilicom", "partial"), ("syracuse", "unknown"),
+        ]
+        assert session.last_loan_errors == [{
+            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
+            "reason_code": reason,
+        }]
+        assert sum(path.endswith("/ListLoans") for path in calls) == 2
+        assert reason in repr(diag.events)
+    finally:
+        session.close()
+
+
+def test_both_404_then_upstream_recovers_without_claiming_absence():
+    broken = {"value": True}
+    def handler(request):
+        if broken["value"]:
+            return httpx.Response(404, text="<html>absent</html>")
+        return _empty()
+
+    session, account, diag = _fixture(handler)
+    try:
+        with pytest.raises(ProviderConfigurationError):
+            session.loan_inventory_snapshot(account)
+        assert len(session.last_loan_errors) == 2
+        broken["value"] = False
+        snapshot = session.loan_inventory_snapshot(account)
+        assert snapshot.status == "success"
+        assert snapshot.loans == ()
+        # Even a valid empty Paris response does not attest exhaustive absence.
+        assert all(branch.completeness == "unknown" for branch in snapshot.branches)
+        assert session.last_loan_errors == []
+    finally:
+        session.close()
+
+
+def test_listloans_transport_error_is_not_an_empty_manifest():
+    def handler(request):
+        if request.url.params.get("serviceCode") == "DILICOM":
+            raise httpx.ConnectTimeout("timeout-private", request=request)
+        return _empty()
+
+    session, account, diag = _fixture(handler)
+    try:
+        result = session.loan_inventory_snapshot(account)
+        assert result.status == "partial"
+        assert result.loans == ()
+        assert session.last_loan_errors == [{
+            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
+            "reason_code": "paris_loans_transport_timeout",
+        }]
+    finally:
+        session.close()
+
+
+def test_listloans_error_type_cannot_carry_arbitrary_message():
+    with pytest.raises(ValueError, match="paris_loans_reason_invalid"):
+        ParisLoanListError("private-login=" + PRIVATE, status=404)

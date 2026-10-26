@@ -53,16 +53,17 @@ from .diagnostic_adept import (
     public_message as public_adept_message,
 )
 from ..diagnostics import Diagnostics
+from .diagnostic_cover_failure import (
+    public_fields as public_cover_failure_fields,
+    public_message as public_cover_failure_message,
+)
 from .diagnostic_reconciliation import (
     known_reason_code, public_fields as public_reconciliation_fields,
     public_reconciliation_log_fields,
 )
 
-_LOG_LINE = re.compile(
-    r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
-    r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) "
-    r"(?P<logger>[\w.-]{1,90}) (?:\[[^\]]{0,80}\] )?(?P<body>.*)$"
-)
+from .diagnostic_log_line import _LOG_LINE
+
 _TASK_CORRELATION = re.compile(
     r"TRACE task correlation task_ref=([0-9a-f]{12}) status=(success|failed|cancelled)"
 )
@@ -100,7 +101,7 @@ _STRUCTURED_TERMS = frozenset({
 })
 _CATEGORIES = frozenset({
     "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
-    "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "NUMILOG", "LOAN",
+    "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "NUMILOG", "LOAN", "COVER",
 })
 
 
@@ -214,6 +215,11 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 match["logger"] in {"cifereca", "cifereca_numilog"}
                 or match["logger"].startswith("cifereca.")
             ):
+                continue
+            # During migration, DIAG_JSON belongs exclusively to the
+            # canonical physical journal; the legacy dual-channel facade
+            # must not count this additional emission a second time.
+            if match["body"].startswith("DIAG_JSON "):
                 continue
             # Raw log messages may contain arbitrary PII or ACSM/licence URLs.
             # Export only known machine-generated TRACE categories and small
@@ -473,6 +479,21 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         # Only a validated Core producer may assign this closed domain.
         # Generic PLUGIN/LIBRARY messages must not become provenance.
         business_domain = None
+        # Only the dedicated Core cover worker can attest a failure reason.
+        # Legacy generic COVER/download emissions carry no provenance marker;
+        # they remain readable but cannot acquire a typed failure label.
+        if (category == "COVER" and operation == "download" and status == "error"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_cover_failure") is True):
+            raw_detail = row.get("detail")
+            candidate = public_cover_failure_fields({
+                "code": (raw_detail["code"] if type(raw_detail) is dict
+                         and set(raw_detail) == {"code"} else None),
+                "duration_ms": row.get("duration_ms"),
+            })
+            if candidate:
+                public_detail = {"code": candidate["code"]}
+                message = public_cover_failure_message(candidate)
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.

@@ -1,6 +1,7 @@
 """Known guard refusals remain distinct from acquired loans in sync summaries."""
 from types import SimpleNamespace as NS
 import pytest
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.models import Account, Loan
 from tests.test_sync_state_contract import _service
 from tests.test_core_ui_1132_opening_sync_close_gate import _method, _host
@@ -31,6 +32,7 @@ def test_real_guards_are_counted_and_persisted_without_fulfillment(tmp_path, mon
         monkeypatch.setattr(service, 'acquire_digital_loan', lambda *_a, **_kw: pytest.fail('guard cannot fetch ACSM'))
         monkeypatch.setattr(service, 'execute_acquisition_request', lambda *_a: pytest.fail('guard cannot fulfill'))
         events = []
+        enable_synthetic_paris_opening(service)
         summary = service.opening_sync(progress=events.append)
         rows = {r['identity_id']: r for r in summary['identities']}
         first, sibling = rows['default'], rows['alex']
@@ -103,6 +105,7 @@ def test_two_identity_field_scenario_reports_eight_refusals_without_acquisition(
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, 'acquire_digital_loan', lambda *_a, **_kw: pytest.fail('refusal must prevent ACSM acquisition'))
         monkeypatch.setattr(service, 'execute_acquisition_request', lambda *_a: pytest.fail('refusal must prevent fulfillment'))
+        enable_synthetic_paris_opening(service)
         summary = service.opening_sync()
         rows = {r['identity_id']: r for r in summary['identities']}
         assert rows['default']['skipped_borrower_binding'] == 4
@@ -143,6 +146,7 @@ def test_only_exact_attention_guard_codes_contribute(tmp_path, monkeypatch, stat
         monkeypatch.setattr(service, '_kobo_adapter', lambda: NS(available=lambda: False))
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, '_acquire_active_loan_automatically', lambda _: {'status': status, 'code': code})
+        enable_synthetic_paris_opening(service)
         rows = service.opening_sync()['identities']
         assert all(r['skipped_borrower_binding'] == r['skipped_cross_identity'] == 0 for r in rows)
     finally:

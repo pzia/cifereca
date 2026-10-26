@@ -59,6 +59,102 @@ def event(message="TRACE sync status=partial", ref="event-1"):
     }
 
 
+def test_journal_ai_preview_retains_physical_event_provenance():
+    """The default GTK source must be accepted, with its attested event ID."""
+    class Citing(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible", model="qa-llm",
+                text="Hypothèse sur ref-journal-3133 uniquement.",
+            )
+
+    model = Citing()
+    row = {**event("BNF ACSM error 403", "ref-journal-3133"), "source": "journal"}
+    broker = FakeBroker([row])
+    preview = prepare_analysis(model, broker)
+    assert broker.filters[0]["source"] == "journal"
+    assert preview["scope"]["source"] == "journal"
+    assert '"source": "journal"' in preview["prompt"]
+    assert '"event_id": "ref-journal-3133"' in preview["prompt"]
+    assert preview["source_states"] == [{"source": "app_log", "status": "partial", "reason": ""}]
+    assert model.calls == 0
+
+    response = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert response["references_matched"] == [{
+        "event_id": "ref-journal-3133",
+        "timestamp": "2026-10-11T05:20:00+00:00",
+        "source": "journal",
+    }]
+    assert response["references_unknown"] == []
+
+
+def test_ai_structured_journal_opt_in_retains_source_not_another_channel():
+    class SnapshotBroker(FakeBroker):
+        def snapshot(self):
+            return [{
+                "event_id": "ref-journal", "source": "journal",
+                "timestamp": "2026-10-11T05:21:00+00:00",
+                "category": "LOAN", "operation": "provider_connect",
+                "status": "error", "severity": "error",
+                "detail": {"code": "provider_connect_failed"},
+            }]
+
+    preview = prepare_analysis(
+        FakeLLM(), SnapshotBroker([{
+            **event("BNF error", "ref-physical"), "source": "journal",
+        }]), source="journal", include_snapshot=True,
+    )
+    assert preview["structured_count"] == 1
+    assert '"source": "journal"' in preview["prompt"]
+    assert "ref-physical" in preview["prompt"]
+
+
+def test_opt_in_snapshot_deduplicates_only_identical_physical_journal_ids():
+    class CanonicalSnapshot(FakeBroker):
+        def snapshot(self):
+            baseline = {
+                "source": "journal",
+                "timestamp": "2026-10-11T05:20:00+00:00",
+                "operation": "provider_connect",
+                "status": "error", "severity": "error",
+                "detail": {"phase": "fetch"},
+            }
+            return [
+                {**baseline, "event_id": "ref-shared"},
+                {**baseline, "event_id": "ref-independent"},
+                # Reused text and timestamp do not imply the same occurrence.
+                # Legacy source with a colliding ID remains distinct.
+                {**baseline, "source": "core_events", "event_id": "ref-shared"},
+            ]
+
+    broker = CanonicalSnapshot([{
+        **event("BNF error 403", "ref-shared"), "source": "journal",
+    }])
+    preview = prepare_analysis(FakeLLM(), broker, include_snapshot=True)
+    assert preview["count"] == 1
+    assert preview["structured_count"] == 2
+    assert preview["prompt"].count('"event_id": "ref-shared"') == 1
+    assert '"event_id": "ref-independent"' in preview["prompt"]
+    assert '"source": "core_events"' in preview["prompt"]
+
+
+def test_invalid_structured_journal_event_id_is_not_attested():
+    class MalformedSnapshot(FakeBroker):
+        def snapshot(self):
+            return [{
+                "source": "journal",
+                "timestamp": "2026-10-11T05:20:00+00:00",
+                "event_id": "PRIVATE VALUE WITH WHITESPACE",
+                "status": "error",
+            }]
+    preview = prepare_analysis(
+        FakeLLM(), MalformedSnapshot([]), include_snapshot=True,
+    )
+    assert preview["structured_count"] == 1
+    assert "PRIVATE VALUE WITH WHITESPACE" not in preview["prompt"]
+
+
 def test_disabled_llm_never_queries_events_or_network():
     broker = FakeBroker([event()])
     with pytest.raises(ValueError, match="llm_disabled"):
@@ -80,9 +176,12 @@ def test_preview_contains_only_redacted_public_fields_and_never_sends():
     assert preview["destination"]["remote"] is True
     assert broker.filters[0]["limit"] == 24
     assert broker.filters[0]["source"] == "app_log"
-    for forbidden in ("TOP_SECRET", "password=abc", "alice@example.com",
-                      "/home/alex", "/LOAN/one", "forbidden-account", "secret.example"):
-        assert forbidden not in preview["prompt"]
+    assert "password=abc" not in preview["prompt"]
+    assert "password=mot-de-passe-" in preview["prompt"]
+    for preserved in ("TOP_SECRET", "alice@example.com", "/home/alex", "/LOAN/one"):
+        assert preserved in preview["prompt"]
+    for unsupported in ("forbidden-account", "secret.example"):
+        assert unsupported not in preview["prompt"]
 
 
 @pytest.mark.parametrize("private_field", (
@@ -104,16 +203,13 @@ def test_remote_diagnostics_never_sends_unmarked_personal_labels(private_field):
     preview = prepare_analysis(model, FakeBroker([event(before)]))
     assert model.calls == 0
     assert "TRACE sync status=partial" in preview["prompt"]
-    assert "Camille" not in preview["prompt"]
-    assert "Luc" not in preview["prompt"]
-    assert "Les lectures privées" not in preview["prompt"]
-    assert "<expurgé>" in preview["prompt"]
-    assert "Camille" not in json.dumps(redacted_detail({"title": "Liseuse de Camille"}))
+    assert "Camille" in preview["prompt"]
+    assert "Camille" in json.dumps(redacted_detail({"title": "Liseuse de Camille"}))
     result = analyze_with_consent(
         model, preview, approval_id=preview["approval_id"],
     )
     assert result["ok"] and model.calls == 1
-    assert "Camille" not in model.sent[0].prompt
+    assert "Camille" in model.sent[0].prompt
 
 
 def test_unquoted_private_title_masks_full_multitoken_line_and_export():
@@ -122,9 +218,9 @@ def test_unquoted_private_title_masks_full_multitoken_line_and_export():
     )
     private = "title=Les longues aventures de Camille; son compte familial"
     safe = redacted_ai_response("Constat: " + private)
-    assert "Camille" not in safe
-    assert "compte familial" not in safe
-    assert "title=<expurgé>" in safe
+    assert "Camille" in safe
+    assert "compte familial" in safe
+    assert private in safe
     assert redacted_detail(safe, max_text=4000) == safe
     keys = redacted_detail({
         "title": "La famille de Camille",
@@ -132,9 +228,9 @@ def test_unquoted_private_title_masks_full_multitoken_line_and_export():
         "account_alias": "Lectures de Camille",
         "status": "partial",
     })
-    assert keys["title"] == "<expurgé>"
-    assert keys["author"] == "<expurgé>"
-    assert keys["account_alias"] == "<expurgé>"
+    assert keys["title"] == "La famille de Camille"
+    assert keys["author"] == "Camille Dupont"
+    assert keys["account_alias"] == "Lectures de Camille"
     assert keys["status"] == "partial"
 
 
@@ -286,7 +382,7 @@ def test_long_llm_output_is_redacted_before_truncation():
     model = LongModel()
     preview = prepare_analysis(model, FakeBroker([event()]))
     response = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
-    assert "PRIVATE_ACCESS" not in response["text"]
+    assert "PRIVATE_ACCESS" in response["text"]
     assert len(response["text"]) <= 4000
     assert model.calls == 1
 
@@ -550,10 +646,10 @@ def test_ai_structured_json_report_exposes_only_redacted_inferences():
     assert obj["destination_disclosed"]["remote"] is True
     assert obj["evidence"]["sample_count"] == 1
     assert "ref-1" not in obj["analysis"]  # no fabricated citation
-    assert all(needle not in exported for needle in (
-        "PRIVATE_LIMIT", "PRIVATE_MODULE", "alice@example.com",
-        "credential_id", "raw_log", "approval_id", "_approval_state",
-    ))
+    for preserved in ("PRIVATE_LIMIT", "PRIVATE_MODULE", "alice@example.com"):
+        assert preserved in exported
+    for private_internal in ("credential_id", "raw_log", "approval_id", "_approval_state"):
+        assert private_internal not in exported
     assert len(exported.encode("utf-8")) <= 24_000
     assert model.calls == 1
 
@@ -983,7 +1079,7 @@ def test_ai_free_text_filter_is_redacted_in_llm_prompt_but_query_is_preserved(mo
 
     # The Core's exact query and fingerprint still describe the user's choice.
     assert broker.filters == [{
-        "source": "all", "module": module, "severity": "", "since": None,
+        "source": "journal", "module": module, "severity": "", "since": None,
         "until": None, "limit": 24, "offset": 0,
     }]
     assert preview["scope"]["module"] == module
@@ -1195,9 +1291,9 @@ def test_ai_long_response_redacts_secrets_after_first_800_chars_before_cut():
     preview = prepare_analysis(model, FakeBroker([event()]))
     result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
     blob = export_analysis_json(result)
-    for secret in ("PRIVATE_TOKEN_LATE", "PRIVATE_URL",
-                   "alice@example.com", "/home/alice"):
-        assert secret not in result["text"] and secret not in blob
+    for value in ("PRIVATE_TOKEN_LATE", "PRIVATE_URL",
+                  "alice@example.com", "/home/alice"):
+        assert value in result["text"] and value in blob
     assert "Fin du rapport" in result["text"]
     assert "Fin du rapport" in json.loads(blob)["analysis"]
 
@@ -1247,34 +1343,23 @@ def test_default_diagnostic_detail_still_truncates_at_800_characters():
         redacted_detail(original, max_text=40_000)
 
 
-@pytest.mark.parametrize("private, marker", [
-    (" token=PRIVATE_TOKEN", "<expurgé>"),
-    (" alice@example.com", "<courriel expurgé>"),
-    (" /home/alice/private.log", "<chemin expurgé>"),
-    (" https://example.org/path?token=PRIVATE_URL", "<URL expurgée>"),
-    (" Authorization: Bearer PRIVATE_AUTH", None),
+@pytest.mark.parametrize("private", [
+    " token=PRIVATE_TOKEN",
+    " alice@example.com",
+    " /home/alice/private.log",
+    " https://example.org/path?token=PRIVATE_URL",
+    " Authorization: Bearer PRIVATE_AUTH",
 ])
-def test_long_ai_redaction_marker_is_atomic_and_export_is_identical(private, marker):
-    from cifereca_diagnostics_page import redacted_ai_response
+def test_long_ai_display_limits_are_bounded_without_masking_other_fields(private):
+    from cifereca_diagnostics_page import redacted_ai_response, redacted_detail
 
-    # Every replacement starts near the 3960-character cap and crosses it.
-    private_value = "a" * 3950 + private + "b" * 70
-    safe = redacted_ai_response(private_value)
-    if marker is not None:
-        assert marker in safe
-    # An authorization key that crosses the cutoff may be discarded entirely.
-    assert "\n… [tronqué]" in safe
-    assert len(safe) <= 4000
-    for secret in (
-        "PRIVATE_TOKEN", "alice@example.com", "/home/alice",
-        "PRIVATE_URL", "PRIVATE_AUTH",
-    ):
-        assert secret not in safe
-
-    # The displayed result and the JSON export must contain exactly the same
-    # already-redacted string after the second presentation redaction.
-    from cifereca_diagnostics_page import redacted_detail
-    assert redacted_detail(safe, max_text=4000) == safe
+    raw = "a" * 3950 + private + "b" * 70
+    shown = redacted_ai_response(raw)
+    assert shown.startswith(raw[:3950])
+    assert shown.startswith(raw[:3960])
+    assert "\n… [tronqué]" in shown
+    assert len(shown) <= 4000
+    assert redacted_detail(shown, max_text=4000) == shown
 
 
 @pytest.mark.parametrize("field, value", [

@@ -20,33 +20,64 @@ def row(detail, operation='acquisition_delivery', **kw):
                 operation=operation, status='error', detail=detail, **kw)
 
 
-def test_real_delivery_producer_to_public_broker_keeps_cause_correlation_and_bounds(tmp_path, monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'src/plugins/provider-numilog'))
+def test_real_delivery_producer_to_canonical_journal_keeps_cause_correlation_and_bounds(
+    tmp_path, monkeypatch,
+):
+    import logging
+
+    monkeypatch.syspath_prepend(
+        str(Path(__file__).resolve().parents[1] / 'src/plugins/provider-numilog')
+    )
     from cifereca_numilog_delivery_trace import DeliveryTrace
+    from cifereca.logging_utils import CanonicalEventFormatter
+
+    path = tmp_path / 'cifereca.log'
+    monkeypatch.setattr('cifereca.paths.log_file', lambda: path)
     diag = Diagnostics(level='detailed')
-    service = SimpleNamespace(diagnostics=diag)
-    monkeypatch.setattr('cifereca.paths.log_file', lambda: tmp_path/'absent')
-    # Real producer and collector, no HTTP/provider/acquisition call.
-    with DeliveryTrace(diag, source='owned_card') as trace:
-        trace.event('delivery_http', 'redirect', status=302,
-                    destination='https://www.numilog.com/readBook.ashx?auth=PRIVATE')
-        trace.event('html_selection', 'html_delivery_link_missing',
-                    mime='text/html; PRIVATE', html_kind='intermediate', candidates=0, hops=2)
-        trace.fail('html_delivery_link_missing')
-    events = DiagnosticsBrokerImpl(service).events(source='core_events')['events']
+    logger = logging.getLogger('cifereca')
+    previous = logger.level
+    handler = logging.FileHandler(path, encoding='utf-8')
+    handler.setFormatter(CanonicalEventFormatter(
+        '%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s'
+    ))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        with DeliveryTrace(diag, source='owned_card') as trace:
+            trace.event(
+                'delivery_http', 'redirect', status=302,
+                destination='https://www.numilog.com/readBook.ashx?auth=PRIVATE',
+            )
+            trace.event(
+                'html_selection', 'html_delivery_link_missing',
+                mime='text/html; PRIVATE', html_kind='intermediate',
+                candidates=0, hops=2,
+            )
+            trace.fail('html_delivery_link_missing')
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        handler.close()
+
+    class ForbiddenMemory:
+        def snapshot(self):
+            raise AssertionError('physical broker must never access memory')
+
+    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=ForbiddenMemory()))
+    events = broker.events(source='core_events')['events']
     assert len(events) == 4
-    assert {e['module'] for e in events} == {'NUMILOG'}
-    assert len({e['detail']['action'] for e in events}) == 1
-    terminal = next(e for e in events if e['detail']['phase'] == 'completed')
+    assert {event['source'] for event in events} == {'journal'}
+    assert {event['module'] for event in events} == {'NUMILOG'}
+    assert len({event['detail']['action'] for event in events}) == 1
+    terminal = next(event for event in events if event['detail']['phase'] == 'completed')
     assert terminal['severity'] == 'error'
     assert terminal['detail']['code'] == 'html_delivery_link_missing'
     assert terminal['detail']['hops'] == 2
-    assert 0 <= terminal['detail']['duration_ms'] <= 600000
-    assert 'phase=completed' in terminal['message']
-    assert 'code=html_delivery_link_missing' in terminal['message']
-    assert 'action=' in terminal['message']
-    assert 'PRIVATE' not in json.dumps(events)
-    assert len({e['event_id'] for e in events}) == 4
+    assert 0 <= terminal['duration_ms'] <= 600000
+    assert terminal['operation'] == terminal['message'] == 'acquisition_delivery'
+    assert 'PRIVATE' not in json.dumps(events)  # The producer emits typed classes.
+    assert len({event['event_id'] for event in events}) == 4
+    assert path.read_text(encoding='utf-8').count('DIAG_JSON ') == 4
 
 
 @pytest.mark.parametrize('code', ['http_forbidden', 'http_rate_limited',

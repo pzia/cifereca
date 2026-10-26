@@ -10,6 +10,7 @@ from contextlib import nullcontext
 
 import pytest
 
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.core import sync_coordination
 from cifereca.models import Account, Loan
 from tests.test_sync_state_contract import _service
@@ -99,6 +100,7 @@ def test_opening_sync_statistics_are_counts_without_raw_borrower_id(
                         lambda _loan: {"status": status, "loan_id": PRIVATE})
     monkeypatch.setattr(service, "kobo_backup_enabled", lambda: False)
     try:
+        enable_synthetic_paris_opening(service)
         outcome = service.opening_sync()
         assert outcome["identities"]
         acquisition_events = [x for x in _actions(service) if x[0] == "acquisition"]

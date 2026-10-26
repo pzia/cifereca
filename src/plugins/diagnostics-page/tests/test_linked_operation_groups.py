@@ -77,7 +77,7 @@ def test_linked_and_unlinked_selection_stays_complete_redacted_and_page_bounded(
     assert groups[0]["count"] == 50
     selected = {row["event_id"] for row in rows}
     data = export_selected_events(rows, selected)
-    assert "PRIVATE" not in data
+    assert "PRIVATE" in data
     exported = json.loads(data)
     assert len(exported["events"]) == 50
     assert all(row["task_ref"] == "aaaaaaaaaaaa" for row in exported["events"])

@@ -2,6 +2,8 @@ from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
 
 import logging
+import httpx
+from dataclasses import replace
 import re
 import time
 import unicodedata
@@ -14,7 +16,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError
+from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError, ParisError
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -28,6 +30,7 @@ from cifereca.plugin_api import (
     ProviderPlugin,
     ProviderSession,
     ProviderError,
+    LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     inspect_artifact_content,
     publish_artifact_content,
     sanitize_filename_component,
@@ -53,6 +56,9 @@ DESCRIPTOR = ProviderDescriptor(
         holdings=True,
         borrow=True,
         digital_download=True,
+        # Preserve the existing authorized Paris opening-sync path only.
+        # Newly installed lenders remain default-deny until explicit opt-in.
+        opening_loan_auto_acquisition=True,
         return_loan=True,
         renew_loan=True,
     ),
@@ -411,20 +417,28 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             try:
                 rows.extend(self.client.loans(upstream, account.unique_id))
-            except Exception:
-                # HTTP/provider exceptions may carry a signed loan URL,
-                # reader number or opaque secret even without a recognizable
-                # key name. Keep only fixed diagnostic codes at *emission*;
-                # Core needs the failed upstream, never its raw exception.
-                errors.append({
+            except Exception as exc:
+                # Neither branch failure nor sibling success proves an empty
+                # inventory. Keep the compatibility code and attach only the
+                # separately typed HTTP/transport reason when attested.
+                reason = (
+                    exc.code if isinstance(exc, ParisLoanListError) else
+                    "paris_loans_transport_timeout" if isinstance(exc, httpx.TimeoutException) else
+                    "paris_loans_transport_failed" if isinstance(exc, httpx.RequestError) else
+                    "paris_loans_inventory_shape_invalid"
+                    if type(exc) is ParisError and str(exc) == "paris_loans_inventory_shape_invalid" else
+                    None
+                )
+                failure = {
                     "upstream": upstream,
                     "code": "paris_loans_upstream_failed",
-                })
+                    **({"reason_code": reason} if reason is not None else {}),
+                }
+                errors.append(failure)
                 try:
                     self.diagnostics.add(
                         "API", f"loans {upstream}", "error",
-                        detail={"provider": "paris", "upstream": upstream,
-                                "code": "paris_loans_upstream_failed"},
+                        detail={"provider": "paris", **failure},
                     )
                 except Exception:
                     pass
@@ -441,6 +455,69 @@ class ParisProviderSession(ProviderSession):
         for loan in rows:
             loan.source_account_id = account.unique_id or "primary"
         return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+
+    def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
+        """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
+
+        Neither legacy Paris upstream currently attests pagination/exhaustive
+        absence. Consequently even an all-successful read claims UNKNOWN
+        completeness, never proof that a missing loan was returned.
+        """
+        def still_bound() -> bool:
+            return (
+                self.connected is True
+                and type(account) is Account
+                and account.provider_id == self.provider_id
+                and account.credential_id == self.credential_id
+                and any(
+                    type(active) is Account
+                    and active.unique_id == account.unique_id
+                    and active.identity_id == account.identity_id
+                    and active.provider_id == account.provider_id
+                    and active.credential_id == account.credential_id
+                    for active in self._accounts
+                )
+            )
+
+        if not still_bound():
+            raise ProviderConfigurationError("account_scope_mismatch")
+        rows = self.loans(account)
+        # One upstream response can race with an explicit disconnect,
+        # a changed credential or linked-reader removal. Never publish that
+        # batch under the former account's typed inventory envelope.
+        if not still_bound():
+            raise ProviderConfigurationError("account_scope_mismatch")
+        # Historical Paris Loan producers do not always carry the local
+        # Core identity. The authenticated account argument is the only
+        # authorized scope for this read. Never overwrite a contradictory
+        # identity supplied by an upstream row.
+        normalized = tuple(
+            replace(row, identity_id=account.identity_id)
+            if row.identity_id is None else row
+            for row in rows
+        )
+        failed = {
+            row.get("upstream") for row in self.last_loan_errors
+            if isinstance(row, dict)
+            and row.get("upstream") in {"DILICOM", "SYRACUSE"}
+        }
+        branches = tuple(
+            LoanBranchCoverage(
+                upstream=upstream.casefold(), medium=medium,
+                completeness="partial" if upstream in failed else "unknown",
+                reason_code="branch_unavailable" if upstream in failed else None,
+            )
+            for upstream, medium in (
+                ("DILICOM", "digital"), ("SYRACUSE", "physical")
+            )
+        )
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account),
+            loans=normalized,
+            status="partial" if failed else "success",
+            branches=branches,
+            reason_code="branch_unavailable" if failed else None,
+        )
 
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)

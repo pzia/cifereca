@@ -1,5 +1,13 @@
 # Cifereca — guide des agents
 
+## Consigne supérieure Diagnostics (25/10/2026, #3132)
+
+**Journaliser les faits observés sans expurgation générale.** Core, plugins, journal local unique, miroir console, broker et exports bruts conservent les valeurs **exactement telles qu'émises**, y compris URL, chemins, titres, identifiants, tokens, cookies, en-têtes et détails d'erreur. Aucune valeur ne doit être remplacée par `[opération masquée]` pour seule raison de confidentialité générale. Ne pas créer de nouveaux dumps HTTP/authentification en dehors d'une instrumentation métier explicitement demandée.
+
+**Uniquement dans l'IHM Diagnostics**, pseudonymiser **exclusivement les valeurs des champs login et mot de passe** (`login-1`, `mot-de-passe-1`, stables pendant la session). Tout le reste demeure visible. Recherche sur les données brutes ; copie du rendu pseudonymisé ; export brut non transformé après confirmation, permissions de fichier 0600, jamais d'envoi automatique. En cas de contradiction avec les anciennes politiques de masquage de logs, **cette règle prévaut**. Voir [journal canonique](docs/DIAGNOSTICS_CANONICAL_JOURNAL.md), [contrat transversal](docs/LOGGING-CONTRACT.md), [skill de journalisation](.agents/skills/cifereca-logging/SKILL.md), [Core](.agents/roles/core.md), [Plugins](.agents/roles/plugins.md).
+
+
+
 Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontières et le mode de collaboration. Les profils sous [.agents/roles/](.agents/roles/README.md) et les AGENTS.md locaux précisent les règles par répertoire. En cas de divergence documentaire, vérifier le code et les contrats actifs avant d'agir.
 
 ## Priorités : une seule file
@@ -29,7 +37,7 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 
 | Rôle | Livrable et périmètre |
 | --- | --- |
-| **backlog** | Priorités, critères d'acceptation, déduplication, dépendances et issues actionnables. Pas de code ni de merge. |
+| **backlog** | **Analyse et ticketing exclusivement** : triage, priorités, critères d'acceptation, déduplication, dépendances, issues et handoffs. Aucune implémentation, aucun test exécuté, aucune branche/PR/merge. Le rôle reste actif jusqu'à changement **explicitement demandé par l'utilisateur**. Voir [profil Backlog](.agents/roles/backlog.md#frontière-de-rôle-impérative-par-défaut-sans-exception-implicite). |
 | **core** | Core métier, stockage, services, API publique, framework de plugins ; également CoreUI (GTK/libadwaita). Pas de logique métier spécifique à un plugin. |
 | **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
 | **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires et preuves GTK ; **propositions numérotées courtes à valider avant création des nouveaux tickets UX**. Ne corrige pas le produit. |
@@ -67,7 +75,7 @@ Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **sim
 
 ## Méta-rôle focus : une étape à la fois
 
-Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.
+Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal **sans rôle classique déjà actif** : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.
 
 1. **Lire la situation** : état de main, issues P0/P1/P2/P3, PR, CI, dépendances et preuves déjà disponibles.
 2. **Choisir une seule action utile** : priorité la plus haute, travail non dupliqué et résultat vérifiable ; annoncer le rôle actif et la référence GitHub.
@@ -134,6 +142,6 @@ Le plan opérationnel et les tests de sélection sont suivis dans [#856](https:/
 - Une PR = un changement cohérent et réversible, avec tests et critères d'acceptation. Corriger un blocage dans le rôle propriétaire ; sinon transmettre une issue ciblée.
 - **cicd** vérifie la CI, les reviews, les conflits et les risques avant merge. **Il tente de résoudre les conflits de PR**, de préférence par rebase Git natif si nécessaire et autorisé : résolution mécanique conservant les changements pertinents, diff revu, tests/gates à nouveau vérifiés sur le nouveau SHA, puis merge. Les arbitrages métier ou architecturaux reviennent au rôle propriétaire avec un diagnostic concret ; ne pas se contenter de déclarer un conflit bloquant sans tentative réalisable. Un test réellement échoué n'est pas un simple check indisponible. Ne pas rebaser une PR uniquement parce qu'elle est derrière main ; actualiser seulement en cas de nécessité réelle. Voir [le profil cicd](.agents/roles/cicd.md#responsabilité-active-de-résolution-des-conflits).
 - **Aucune release implicite** : un merge, un « next », une PR ou une demande de préparation ne valent pas autorisation de publier.
-- Utiliser les skills locaux de .agents/skills/ : cifereca-plugin, cifereca-tests, cifereca-simulation et cifereca-release.
+- Utiliser les skills locaux de .agents/skills/ : **cifereca-logging** (Core et plugins), cifereca-plugin, cifereca-tests, cifereca-simulation et cifereca-release.
 
 Les consignes spécialisées et détaillées restent dans .agents/roles/ ; ce guide évite de les dupliquer.

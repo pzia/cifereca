@@ -7,7 +7,8 @@ and file chooser replies retain the originating page's lifetime guard.
 """
 from __future__ import annotations
 
-from pathlib import Path
+import os
+import stat
 
 from cifereca.plugin_api import prefer_downloads_for_save
 
@@ -90,7 +91,7 @@ def build_settings_diagnostic_callbacks(
 
 
     def export_text(_button=None) -> None:
-        """Enregistrer le rapport expurgé visible dans Diagnostic."""
+        """Enregistrer le texte affiché avec les pseudonymes GTK, pas l’export brut."""
         if not page_lifetime.alive:
             return
         refresh_text()
@@ -98,14 +99,14 @@ def build_settings_diagnostic_callbacks(
         start, end = buffer.get_bounds()
         content = buffer.get_text(start, end, True)
         chooser = Gtk.FileChooserNative.new(
-            "Exporter le diagnostic",
+            "Exporter l’affichage (autres données sensibles possibles)",
             self,
             Gtk.FileChooserAction.SAVE,
             "Exporter",
             "Annuler",
         )
         prefer_downloads_for_save(chooser)
-        chooser.set_current_name("cifereca-diagnostic.txt")
+        chooser.set_current_name("cifereca-diagnostic-affichage.txt")
 
         def chosen(dialog, response) -> None:
             try:
@@ -119,7 +120,16 @@ def build_settings_diagnostic_callbacks(
                 path = selected.get_path() if selected is not None else None
                 if not path:
                     raise RuntimeError("destination locale indisponible")
-                Path(path).write_text(content, encoding="utf-8")
+                # The Settings preview preserves other values but pseudonymizes login/password.
+                # Do not create a world-readable copy or follow a symlink.
+                flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                flags |= getattr(os, "O_CLOEXEC", 0)
+                with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise OSError("diagnostic export requires a regular file")
+                    os.fchmod(stream.fileno(), 0o600)
+                    stream.truncate(0)
+                    stream.write(content)
                 self.diagnostics.add(
                     "UI", "diagnostic export", "ok",
                     detail={"code": "export_completed"},
@@ -147,18 +157,19 @@ def build_settings_diagnostic_callbacks(
         if not 0 <= selected < len(levels):
             return
         try:
-            self.service.save_diagnostic_preferences(enabled=diag_switch.get_active(), level=levels[selected])
+            self.service.save_diagnostic_preferences(enabled=True, level=levels[selected])
             refresh_text()
         except Exception:
             self.show_error("Impossible d’enregistrer le niveau de diagnostic")
 
 
     def clear_diagnostics(_button=None) -> None:
-        # Clearing diagnostics is a Core mutation. A detached Settings
-        # button must never perform it after the page was replaced.
+        # The sole event history is the physical journal. "Clear display"
+        # must never silently delete a different in-memory collection while
+        # leaving disk evidence intact, nor erase the canonical journal.
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
-        self.diagnostics.clear()
-        refresh_text()
+        diag_text.get_buffer().set_text("")
+        self.toast("Affichage effacé ; journal local conservé")
 
     return copy_text, export_text, persist_diagnostics, clear_diagnostics

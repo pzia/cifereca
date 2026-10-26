@@ -245,6 +245,56 @@ def _records(db):
     return result
 
 
+def has_active_declared_link(storage, *, identity_id, provider_id,
+                             credential_id, account_id, item_id):
+    """Read-only anti-duplicate guard, NOT a local presence attestation.
+
+    An active user statement may describe a moved/changed/missing file. It
+    must be reviewed rather than ignored to download another copy. Revoked
+    statements do not block. Callers own live account admission and repeat
+    this check under the acquisition lock immediately before provider I/O.
+    No current GUI identity, filesystem scan, receipt or new right is used.
+    """
+    scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
+                                    account_id, item_id)))
+    _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
+             and provider_id in _PROVIDERS, 'invalid_scope')
+    try:
+        with _transaction(storage, False) as db:
+            return any(record['state'] == 'active' and record['scope'] == scope
+                       for record in _records(db))
+    except DeclarationRejected:
+        raise
+    except (sqlite3.Error, OSError):
+        raise DeclarationRejected('local_storage_unavailable') from None
+
+
+
+def recorded_declared_scopes(storage, *, identity_id):
+    """Snapshot exact active user statements for private *display only*.
+
+    This says nothing about the file's current bytes, rights validity or
+    provider provenance. Corrupt/incomplete metadata fails closed, and two
+    competing declarations for one right are not shown as an unambiguous pair.
+    Neither files nor source sessions are read.
+    """
+    from collections import Counter
+    _require(_text(identity_id), 'invalid_identity')
+    try:
+        with _transaction(storage, False) as db:
+            counts = Counter(
+                tuple(record['scope'][key] for key in _SCOPE_FIELDS)
+                for record in _records(db)
+                if record['state'] == 'active'
+                and record['scope']['identity_id'] == identity_id
+            )
+            return frozenset(scope for scope, count in counts.items() if count == 1)
+    except DeclarationRejected:
+        raise
+    except (sqlite3.Error, OSError):
+        raise DeclarationRejected('local_storage_unavailable') from None
+
+
 def _context(db, scope):
     connections = _rows(db, 'SELECT connection_id,identity_id,provider_id,credential_id,enabled '
                         'FROM provider_connections '

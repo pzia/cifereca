@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.models import Account, Loan
 from tests.test_core_p0_1346_opening_source_isolation import _state
 from tests.test_sync_state_contract import _service
@@ -72,6 +73,7 @@ def test_opening_acquisition_error_is_exact_paris_borrower_only(
 
         monkeypatch.setattr(service, "_loans_for_account", read)
         monkeypatch.setattr(service, "_acquire_active_loan_automatically", acquire)
+        enable_synthetic_paris_opening(service)
         summary = service.opening_sync()
         assert sorted(seen) == ["paired", "primary"]
         by_identity = {entry["identity_id"]: entry for entry in summary["identities"]}
@@ -125,6 +127,7 @@ def test_unknown_post_fetch_origin_degrades_all_sources_instead_of_guessing(
             service, "_acquire_active_loan_automatically",
             mutate_loan_on_acquisition,
         )
+        enable_synthetic_paris_opening(service)
         result = service.opening_sync()
         assert next(x for x in result["identities"]
                     if x["identity_id"] == "default")["status"] == "partial"

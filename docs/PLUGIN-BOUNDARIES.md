@@ -2,6 +2,10 @@
 
 État documentaire : 7 octobre 2026.
 
+## Consigne Diagnostics prioritaire — 25/10/2026
+
+Le Core et les plugins émettent dans **un journal brut unique**, sans effacer les détails des opérations. Ni le journal, ni la console, ni le broker, ni les exports bruts ne masquent les valeurs (URLs, chemins, comptes, tokens, cookies, titres, etc.). L'IHM Diagnostics est seule à pseudonymiser **les valeurs de login et de mot de passe**, sans masquer d'autre champ. Les tests vérifient la fidélité des valeurs brutes et la pseudonymisation de rendu ; aucun envoi automatique ni dump d'authentification créé uniquement pour les diagnostics. Fichiers locaux 0600, confirmation avant export brut. Ce contrat remplace les anciennes exigences d'expurgation générique des logs. Voir [journal canonique](DIAGNOSTICS_CANONICAL_JOURNAL.md) et [contrat transversal](LOGGING-CONTRACT.md).
+
 ## Principe
 
 Une fonctionnalité appartient au Core lorsqu'elle exprime un mécanisme transversal réutilisable par plusieurs plugins ou par l'orchestration générale. Elle appartient au plugin lorsqu'elle encode un protocole, une politique ou un comportement propre à un fournisseur/runtime.
@@ -14,7 +18,7 @@ Le Core est responsable des primitives communes :
 - inspection d'artefacts ;
 - publication atomique d'artefacts ;
 - cache, TTL et single-flight ;
-- diagnostics, health checks et redaction ;
+- journal d'événements canonique, diagnostics, health checks et pseudonymisation des valeurs login/mot de passe **uniquement au rendu IHM** ;
 - `TaskBroker`, progression et annulation ;
 - transport générique et contrats communs ;
 - stockage et ledger ;

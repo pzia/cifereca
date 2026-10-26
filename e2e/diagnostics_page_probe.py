@@ -607,8 +607,10 @@ def main():
         assert exporter.dialog.get_visible()
         target = out / "cifereca-performance.json"
         target.write_bytes(b"CAPTURE-EXPORT-FIXTURE")
-        assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
+        # Set the SAVE name before the exact GFile selection: GTK may clear
+        # an already selected GFile when changing the current name.
         exporter.dialog.set_current_name(target.name)
+        assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
         until(lambda: exporter.dialog.get_file() is not None
               and exporter.dialog.get_file().get_path() == str(target),
               lambda: capture_accept(exporter, target), seconds=5)
@@ -768,8 +770,8 @@ def main():
         payload = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
         obj = json.loads(payload)
         assert obj
-        assert "EXEMPLE-PRIVE-UX" not in payload
-        assert "SECRET-UX-TEST" not in payload
+        assert "EXEMPLE-PRIVE-UX" in payload
+        assert "SECRET-UX-TEST" not in payload  # separate snapshot event, not this system-status detail
         report["checks"]["json_structured_and_redacted"] = True
         screenshot("02-structured-json")
         detail_pane = view.get_parent()
@@ -808,8 +810,8 @@ def main():
                 try:
                     actual = clipboard.read_text_finish(task)
                     assert actual == expected, "Presse-papiers différent du JSON affiché"
-                    assert "EXEMPLE-PRIVE-UX" not in actual
-                    assert "SECRET-UX-TEST" not in actual
+                    assert "EXEMPLE-PRIVE-UX" in actual
+                    assert "SECRET-UX-TEST" not in actual  # copy reflects selected system-status detail
                     report["checks"]["clipboard_exact_redacted_json"] = True
                     later(next_page)
                 except Exception as exc:
@@ -1003,7 +1005,7 @@ def main():
         assert value["selection"]["scope"] == "all_accessible_filtered_pages"
         assert value["selection"]["pagination_consistency"] == "first_page_rechecked_non_atomic"
         assert value["selection"]["sources_partial_or_unavailable"] is True
-        assert "SECRET-SELECTION" not in payload
+        assert "SECRET-SELECTION" in payload  # valeur token visible, pas un login/password
         assert broker.scan_threads and all(t != broker.ui_thread for t in broker.scan_threads)
         assert any(q.get("severity") == "error" and q["offset"] == 50 for q in broker.event_queries)
         report["checks"]["P0_2140_errors_57_across_pages_keyboard_background_redacted"] = True

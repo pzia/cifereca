@@ -89,9 +89,9 @@ def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
     Dialog.shown[1].respond("import")
     kwargs = w.service.import_bnf_loan_acsm.call_args
     assert kwargs.args[0].name == "staged.acsm"
-    assert kwargs.kwargs == {
-        "expected_identity_id":"default", "title":"Fiction",
-    }
+    assert kwargs.kwargs["expected_identity_id"] == "default"
+    assert kwargs.kwargs["title"] == "Fiction"
+    assert kwargs.kwargs["loan"].id == "loan-a"
     assert actions == [
         ("Récupération du jeton BnF…", "loan-acquisition"),
         ("Import ADEPT du prêt BnF…", "acsm-import"),
@@ -167,6 +167,19 @@ def test_stage_error_explains_safe_code_without_starting_adept():
     assert title=='Téléchargement BnF'
     w.service.import_bnf_loan_acsm.assert_not_called()
     assert len(Dialog.shown)==1
+
+
+def test_failed_activity_message_says_no_get_was_attempted():
+    from cifereca.gui.bnf_acsm_action_controller import bnf_action_error_message
+    from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+    for code in ('bnf_activity_auth_required',
+                 'bnf_activity_http_unavailable',
+                 'bnf_activity_unrecognized_loans',
+                 'bnf_activity_unavailable'):
+        message=bnf_action_error_message(BnfLoanActionError(code))
+        assert 'Aucun GET ACSM' in message
+        assert 'Code : '+code in message
+        assert '\\n' not in message
 
 
 def test_import_error_is_distinct_and_never_formats_private_exception():

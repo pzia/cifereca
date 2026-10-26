@@ -5,11 +5,10 @@ from cifereca.plugin_api import redact_text
 from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
 
 
-def test_public_redact_text_hides_url_query():
+def test_public_redact_text_preserves_original_url_query():
     value = "https://example.test/path?x=VALUE"
     redacted = redact_text(value)
-    assert "VALUE" not in redacted
-    assert redacted == "https://example.test/<redacted>"
+    assert redacted == value
 
 
 @pytest.mark.parametrize(

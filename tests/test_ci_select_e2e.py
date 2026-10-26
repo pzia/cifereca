@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 30)
+        self.assertEqual(len(mod.ALL), 31)
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertEqual(mod.select(["e2e/maintenance_tools_probe.py"]), mod.MAINT)
@@ -151,7 +151,7 @@ class SelectionTests(unittest.TestCase):
             set(mod.select(["e2e/diagnostics_page_probe.py"])),
             set(mod.DIAG_SHARED),
         )
-        self.assertEqual(len(mod.DIAG_SHARED), 9)
+        self.assertEqual(len(mod.DIAG_SHARED), 10)
         self.assertEqual(set(mod.DIAG), set(mod.DIAG_SHARED) -
                          {"mainwindow-baseline-1366", "mainwindow-baseline-1600"})
 
@@ -190,6 +190,7 @@ class SelectionTests(unittest.TestCase):
             "gtk-llm-settings": "llm_settings_probe.py",
             "gtk-maintenance": "maintenance_tools_probe.py",
             "gtk-diagnostics": "diagnostics_page_probe.py",
+            "gtk-diagnostics-raw-export": "diagnostics_raw_export_probe.py",
             "gtk-diagnostics-states": "diagnostics_states_probe.py",
             "gtk-diagnostics-structured": "diagnostics_structured_probe.py",
             "gtk-diagnostics-volume": "diagnostics_volume_probe.py",
