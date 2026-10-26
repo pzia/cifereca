@@ -21,6 +21,11 @@ authentification ou n'importe quel code plugin.
 - Limiter le nombre de comptes inspectés à 512 et valider les types
   primitifs du compte demandé, sans connexion, session refresh, prêt ni
   téléchargement.
+- Exiger **une correspondance unique** du quadruplet
+  `identity/provider/credential/borrower` dans les comptes mémoire : deux
+  enregistrements identiques (ou le même objet deux fois) rendent l'opération
+  `unavailable`. La simple existence de la méthode ne dénoue pas
+  l'ambiguïté de portée et n'autorise aucun bouton.
 
 Cette vérification ne confère aucun droit, aucun consentement et ne modifie
 aucune opération provider. Elle n'est pas un contrôle de permission métier ;
