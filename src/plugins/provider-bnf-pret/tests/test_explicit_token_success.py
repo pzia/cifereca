@@ -20,6 +20,9 @@ def test_exact_observed_loan_stages_private_acsm(tmp_path):
         assert downloaded[0].method == "GET"
         assert downloaded[0].url.path == "/loans/loan-a"
         assert downloaded[0].url.host == "pret.bnf.fr"
+        assert downloaded[0].url.params['device_type'] == 'reader'
+        assert downloaded[0].url.params['drm'] == 'acs4'
+        assert downloaded[0].url.params['token'] == '0123456789abcdef0123456789abcdef01234567'
         assert list(path.parent.glob("*.part")) == []
         assert not session.capabilities.borrow
         assert not session.capabilities.digital_download
@@ -73,8 +76,8 @@ def test_stale_account_page_revokes_download_but_not_persisted_loans(tmp_path):
 def test_closed_session_never_publishes_inflight_token(tmp_path):
     session, account, loan, _, _, _ = connected()
     previous = session.client.loan_token
-    def closing(value):
-        token = previous(value)
+    def closing(value, url):
+        token = previous(value, url)
         session.close()
         return token
     session.client.loan_token = closing
