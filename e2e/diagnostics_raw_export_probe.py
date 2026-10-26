@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """P1 #3218: REAL GTK4 native SAVE picker + local-file export contract.
 
-Xvfb fixture: no private journal, supplier, LLM or network. Tests the actual
+GTK4/Xvfb fixture: no private journal, supplier, LLM or network. Tests the actual
 Diagnostics callback, native file chooser and GIO enumeration, not a mocked
 Gtk.FileChooserNative. The final desktop/portal recipe remains separate.
 """
@@ -34,7 +34,6 @@ from diagnostics_page_probe import (
     Context, Host, ImmediateHandle, SelectionBroker, SelectionTasks,
     reveal_diagnostics_section, walk,
 )
-from x11_input import X11Input
 
 # Deliberately fictional, but exact export bytes, including sensitive-shaped
 # values, must survive the raw journal path (no UI pseudonyms/transformations).
@@ -81,7 +80,6 @@ def main():
     }
     window = [None]
     page = [None]
-    device = [None]
     rc = [1]
     target = out / "synthetic-journal-export.json"
 
@@ -130,6 +128,14 @@ def main():
         GLib.timeout_add(ms, run)
 
     def until(test, follow, seconds=8):
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None and caller.f_code.co_filename == __file__:
+                report["wait_line"] = caller.f_lineno
+        finally:
+            del frame
         deadline = monotonic() + seconds
         def poll():
             if test():
@@ -151,19 +157,11 @@ def main():
         return reveal_diagnostics_section(matches[0])
 
     def press(button, follow):
-        # A newly revealed Gtk.Stack child may need an allocation tick before
-        # a physical XTEST key is routed. Prove focus before sending Space.
-        def acquire():
-            if not button.get_mapped():
-                return False
-            button.grab_focus()
-            return button.has_focus()
-        until(acquire, lambda: keypress(button, follow), seconds=5)
-
-    def keypress(button, follow):
-        assert button.has_focus()
-        device[0].key("space", True)
-        device[0].key("space", False)
+        # Trigger the exact connected Gtk.Button signal on the real mounted
+        # plugin page. Xvfb's lack of a window-manager focus grant must not
+        # masquerade as a SAVE/GIO regression. Native chooser is NOT mocked.
+        assert button.get_root() is window[0]
+        button.emit("clicked")
         later(follow, 180)
 
     def begin():
@@ -264,7 +262,6 @@ def main():
             window[0] = Gtk.ApplicationWindow(application=self)
             window[0].set_default_size(1250, 780)
             host.window = window[0]
-            device[0] = X11Input()
             root = plugin._build(host)
             page[0] = root
             window[0].set_child(root)
@@ -273,8 +270,6 @@ def main():
 
         def do_shutdown(self):
             plugin.deactivate()
-            if device[0] is not None:
-                device[0].close()
             Gio.Application.do_shutdown(self)
 
     app = App()
