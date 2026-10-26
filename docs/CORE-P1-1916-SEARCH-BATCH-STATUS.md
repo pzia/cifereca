@@ -21,6 +21,27 @@ décrite par `error_code` et **n'autorise aucun repli public**.
 
 La GUI conserve actuellement ses avertissements génériques et l'indication
 « Résultat connu · hors ligne » par fiche ; ce lot publie la distinction
-par fournisseur pour les consommateurs du contrat public. Les opérations de
-repli vers une route globale, le diagnostic temporel `Retry-After` et la
-recette UX intégrée restent à réaliser avant fermeture de #1916.
+par fournisseur pour les consommateurs du contrat public.
+
+### Tranche Core #1916 — HTTP 429 et Retry-After
+
+Un HTTP 429 **natif** (`httpx.HTTPStatusError`, y compris sous des wrappers
+d'exception bornés) active un délai **par session fournisseur, credential et
+identité** : au moins 30 secondes, au plus une heure. `Retry-After` est lu
+uniquement depuis l'en-tête d'une réponse 429 ; les formats secondes et date
+HTTP sont admis. Valeur absente, invalide ou passée : 30 secondes. Aucun corps,
+URL signée ou texte d'exception n'est retenu dans la décision.
+
+Pendant le délai, les recherches `search()` et `search_progressive()`
+n'envoient pas de nouvelle requête **à cette même session** et utilisent les
+avertissements habituels, avec secours public SQLite si attesté. Les autres
+fournisseurs poursuivent normalement, les résultats de secours ne deviennent
+ni droits, ni acquisition, ni réponse fraîche au cache TTL. Un changement de
+session, credential ou identité ne réutilise pas le délai ; la table en mémoire
+est bornée à 64 entrées. Pas de `sleep`, de retry implicite ou de persistance.
+
+Un fournisseur qui encapsule le 429 sans conserver le statut HTTP natif
+n'atteste pas, pour ce Core, un `Retry-After` : son éventuel quota propre reste
+géré dans son adaptateur (ex. Numilog). Les flux de recherche virtuels
+(`search_stream`), le repli vers une **route globale indépendante** et la
+recette UX intégrée restent distincts, avant clôture complète de #1916.

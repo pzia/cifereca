@@ -287,6 +287,69 @@ def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[
     ))
 
 
+def _search_cooldown_clock() -> float:
+    return time.monotonic()
+
+
+def _search_cooldown_key(session: ProviderSession, identity: object) -> tuple:
+    # Keys are strictly in-process; never persist identity/credential values.
+    return (session.provider_id, getattr(session, "credential_id", None),
+            getattr(identity, "identity_id", None))
+
+
+def _source_in_retry_after(self, session: ProviderSession, identity: object) -> bool:
+    """Check only the same configured source, session and identity."""
+    lock = getattr(self, "_search_generation_lock", None)
+    if lock is None:
+        return False  # Compatible with lightweight search-only test hosts.
+    with lock:
+        entries = getattr(self, "_search_retry_after", None)
+        if not entries:
+            return False
+        key = _search_cooldown_key(session, identity)
+        row = entries.get(key)
+        if row is None:
+            return False
+        bound_session, bound_identity, expires = row
+        if _search_cooldown_clock() >= expires:
+            entries.pop(key, None)
+            return False
+        # A new session with the same account key cannot inherit this
+        # throttle; nor may it erase the old session's active cooldown.
+        return bound_session is session and bound_identity is identity
+
+
+def _record_source_retry_after(
+    self, session: ProviderSession, identity: object, credential: object, error: BaseException,
+) -> None:
+    """Remember a native HTTP 429 once; never sleep/retry in a worker."""
+    from ..search_failures import search_retry_after_seconds
+    delay = search_retry_after_seconds(error)
+    if delay is None:
+        return
+    with self._search_generation_lock:
+        # A completed request from an old identity/account/session must not
+        # throttle a newly selected source or otherwise mutate its state.
+        if (self.current_identity is not identity
+                or getattr(session, "credential_id", None) != credential):
+            return
+        entries = getattr(self, "_search_retry_after", None)
+        if entries is None:
+            entries = self._search_retry_after = {}
+        now = _search_cooldown_clock()
+        for key, (_, _, expires) in tuple(entries.items()):
+            if expires <= now:
+                del entries[key]
+        if len(entries) >= 64:
+            del entries[min(entries, key=lambda key: entries[key][2])]
+        key = _search_cooldown_key(session, identity)
+        current = entries.get(key)
+        until = now + delay
+        if current is not None and current[0] is session and current[1] is identity:
+            until = max(until, current[2])
+        entries[key] = (session, identity, until)
+
+
 def search(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', field: str='all', content_types: tuple[str, ...] | list[str] | None=None, include_redundant_merged: bool=False, logger, facade_type) -> list[SearchResult]:
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     # Search is global: one connected session per provider is queried,
@@ -347,8 +410,11 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if effective_field is None:
             continue
         primary_ok = False
-        public_outage = False
-        for attempt, variant in enumerate(variants):
+        public_outage = _source_in_retry_after(self, session, identity)
+        credential = getattr(session, "credential_id", None)
+        if public_outage:
+            warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
+        for attempt, variant in enumerate(() if public_outage else variants):
             # Loose fallbacks are needed only when the exact query produced
             # no strong title/author match. This keeps normal searches fast.
             if attempt > 0 and primary_ok:
@@ -389,6 +455,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             except Exception as exc:
                 from ..search_failures import search_failure_code
                 code = search_failure_code(exc)
+                if code == "SearchTemporarilyUnavailable":
+                    _record_source_retry_after(self, session, identity, credential, exc)
                 public_outage = public_outage or code == "SearchTemporarilyUnavailable"
                 # Provider exceptions may carry signed URLs, query terms,
                 # cookies or private account identities. Never interpolate
@@ -576,6 +644,11 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
         warnings.append(contract_warning)
     if effective_field is None:
         return [], warnings, "", ""
+    identity = getattr(self, "current_identity", None)
+    credential = getattr(session, "credential_id", None)
+    if _source_in_retry_after(self, session, identity):
+        code = "SearchTemporarilyUnavailable"
+        return [], [f"{session.descriptor.display_name}: {_search_problem_label(code)}"], code, _search_problem_label(code)
     variants = self._search_query_variants(query)
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
@@ -618,6 +691,8 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             # personal search terms. Neither the result batch nor diagnostics
             # may carry their raw message.
             failure_code = search_failure_code(exc) or "ProviderSearchFailed"
+            if failure_code == "SearchTemporarilyUnavailable":
+                _record_source_retry_after(self, session, identity, credential, exc)
             # An earlier variant returning a legitimate empty 200 does not
             # make a later transport/protocol failure disappear. Record the
             # terminal outage for the source, even when it is variant N>1,
