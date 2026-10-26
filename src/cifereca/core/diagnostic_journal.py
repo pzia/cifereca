@@ -217,9 +217,9 @@ def query_journal(
     log_path: Path, *, search: str = "", module: str = "",
     severity: str = "", provider_id: str = "",
     since: str | None = None, until: str | None = None,
-    limit: int = 50, offset: int = 0,
+    limit: int = 50, offset: int = 0, sort_order: str = "asc",
 ) -> dict[str, Any]:
-    """Search all retained rotations BEFORE pagination, with honest coverage."""
+    """Search all retained rotations and apply global order BEFORE pagination."""
     if type(search) is not str or len(search) > 500:
         raise ValueError("invalid journal search")
     if type(module) is not str or len(module) > 90:
@@ -232,6 +232,8 @@ def query_journal(
         raise ValueError("invalid journal limit")
     if type(offset) is not int or not 0 <= offset <= 1000000:
         raise ValueError("invalid journal offset")
+    if type(sort_order) is not str or sort_order not in {"asc", "desc"}:
+        raise ValueError("invalid journal sort order")
 
     def bound(value):
         if value is None:
@@ -295,7 +297,11 @@ def query_journal(
     # Python's stable sort preserves physical log order for timestamps with
     # the same millisecond. Sorting ties by the SHA-derived event_id scrambles
     # the actual emission order (including across rotated files).
+    # The GUI must page the newest retained records GLOBALLY, not reverse
+    # only the oldest 50 returned by an ascending Core query.
     matched.sort(key=lambda row: row["timestamp"])
+    if sort_order == "desc":
+        matched.reverse()  # Equal timestamps: latest physical occurrence first.
     state = "partial" if gaps or missing else ("available" if events else "empty")
     source_state = {
         "source": "journal", "status": state,
