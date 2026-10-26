@@ -1460,6 +1460,26 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("SAVEPOINT relocate_local_path")
             try:
+                # A user declaration still names the OLD file and contains
+                # a stat fingerprint. Merely rewriting placements/backups
+                # would strand that association after unlink. Until a
+                # transaction can also refresh its fingerprint and consent,
+                # refuse this rename BEFORE touching any persistent row.
+                # The caller's staged hardlink is recoverable on exception.
+                if old_text != new_text:
+                    from .core.library_declared_links import (
+                        DeclarationRejected, _records,
+                    )
+                    try:
+                        declarations = _records(db)
+                    except DeclarationRejected:
+                        raise ValueError("relocate_declared_context_unavailable") from None
+                    if any(
+                        declaration["state"] == "active"
+                        and declaration["file"]["path"] == old_text
+                        for declaration in declarations
+                    ):
+                        raise ValueError("relocate_active_declaration_requires_relink")
                 # A matching path or SHA is not evidence that a placement
                 # belongs to the same identity, provider and logical source.
                 # Validate *before* changing any backup or catalog references.
