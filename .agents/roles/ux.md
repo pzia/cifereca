@@ -56,6 +56,8 @@ ordre :
 
 Le rôle UX doit préférer les outils versionnés existants à une recette ad hoc.
 
+**Cache GTK4 pour agents Debian 13 :** voir dès le départ [`environnements/openai-chat-debian/GITHUB_RELEASE_CACHE.md`](../../environnements/openai-chat-debian/GITHUB_RELEASE_CACHE.md). Utiliser cet **asset GitHub Release** et le vérificateur `fetch_release_cache.py` avant de lancer un relais .deb éphémère. La Release ne doit jamais contenir de captures privées ni être installée sur Ubuntu ; vérifier la vraie MainWindow GTK séparément.
+
 ## Procédure GTK / simulateur / vidéo
 
 Une preuve fonctionnelle suit cette séquence :

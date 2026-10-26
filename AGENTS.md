@@ -20,6 +20,8 @@ Cette règle prévaut sur les anciennes consignes générales de « données pri
 
 Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontières et le mode de collaboration. Les profils sous [.agents/roles/](.agents/roles/README.md) et les AGENTS.md locaux précisent les règles par répertoire. En cas de divergence documentaire, vérifier le code et les contrats actifs avant d'agir.
 
+**Agents UX / GTK4 sur VM Debian 13 sans réseau APT :** avant de créer un relais ou de conclure que GTK est indisponible, suivre le [cache GTK4 préassemblé sur GitHub Releases](environnements/openai-chat-debian/GITHUB_RELEASE_CACHE.md). La recette rootless y vérifie SHA-256 et la plateforme, puis exerce la vraie IHM via [E2E-UX](environnements/E2E-UX.md). Ce cache binaire n'appartient pas au Git et n'est pas compatible Ubuntu.
+
 ## Priorités : une seule file
 
 La priorité exprime **l'urgence et l'engagement dans la réalisation**, non le rôle, le composant ou la catégorie technique du ticket.

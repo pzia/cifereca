@@ -63,6 +63,8 @@ Python ; `test_ui.py` exerce un **app GTK de démonstration du harnais**
 Les chemins `runtime/`, `evidence/`, `packages-lock.json`, cache
 `.deb` et artefacts générés ne doivent pas être commités.
 
+**Nouveau chemin le plus court — Debian 13 hors ligne APT :** télécharger le [cache GTK4 Debian 13 sur GitHub Releases](openai-chat-debian/GITHUB_RELEASE_CACHE.md) avec `fetch_release_cache.py`, puis `bootstrap.py --offline --deb-cache <cache>` ; la vérification SHA-256 et du profil est faite avant extraction. Aucun workflow de relais provisoire requis si l'asset Release est accessible.
+
 ### Si DNS/APT est inaccessible
 
 La seule solution prévue est un **cache Debian 13 correspondant à la même

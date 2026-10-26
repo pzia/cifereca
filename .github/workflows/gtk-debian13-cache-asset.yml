@@ -1,0 +1,167 @@
+name: Publish Debian 13 GTK4 rootless offline cache
+
+on:
+  # The initial 2026-10-20 asset was published by a one-time branch push
+  # (run 39458209715). Subsequent publications require explicit approval,
+  # a NEW release tag and a review on main. Never publish on PR/push.
+  workflow_dispatch:
+    inputs:
+      confirm_publish:
+        description: "Publish fixed Debian 13 GTK asset release (never overwrite)"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gtk4-debian13-trixie-amd64-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'pzia/cifereca' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_publish == true
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install Debian APT signing and package prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update -o APT::Update::Error-Mode=any
+          apt-get install -y --no-install-recommends \
+            ca-certificates debian-archive-keyring python3 dpkg tar xz-utils git
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download signed Debian 13 package closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.gtk-deb-cache"
+          python3 environnements/openai-chat-debian/bootstrap.py \
+            --download-only --deb-cache "$GITHUB_WORKSPACE/.gtk-deb-cache"
+          # APT sometimes percent-encodes Debian epoch ':' in archive filenames.
+          # Rename only names that become exactly valid under the reviewed
+          # validator's fixed Debian package filename allowlist.
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.parse import unquote
+          import importlib.util
+
+          spec = importlib.util.spec_from_file_location(
+              "validator", "scripts/ci-validate-gtk-relay-cache.py")
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          for src in Path(".gtk-deb-cache").glob("*.deb"):
+              if mod.DEB_NAME.fullmatch(src.name):
+                  continue
+              name = unquote(src.name)
+              dst = src.with_name(name)
+              if (name == src.name or not mod.DEB_NAME.fullmatch(name)
+                      or dst.exists() or not src.is_file()):
+                  raise ValueError("unreviewed Debian package filename")
+              src.rename(dst)
+          PY
+
+      - name: Validate allowlist and construct no-private-data archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET="gtk4-deb-cache-debian13-trixie-amd64.tar.gz"
+          # Use the mounted workspace, not RUNNER_TEMP: actions/upload-artifact
+          # resolves runner.temp on the Ubuntu host, which can differ from the
+          # container's RUNNER_TEMP (/__w/_temp vs /home/runner/work/_temp).
+          mkdir -p "$GITHUB_WORKSPACE/.gtk-publish"
+          python3 scripts/ci-validate-gtk-relay-cache.py \
+            --cache "$GITHUB_WORKSPACE/.gtk-deb-cache" \
+            --output "$GITHUB_WORKSPACE/.gtk-publish/$ASSET"
+          cd "$GITHUB_WORKSPACE/.gtk-publish"
+          sha256sum "$ASSET" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          test "$(tar -tzf "$ASSET" | grep -c '^.gtk-deb-cache/.*.deb$')" -ge 11
+          # The validator emits strictly the profile and Debian .deb members.
+          echo "Validated signed-repository Debian package cache"
+          cat SHA256SUMS
+
+      - name: Hand off only reviewed Debian cache assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtk4-debian13-release-staged
+          path: |
+            .gtk-publish/gtk4-deb-cache-debian13-trixie-amd64.tar.gz
+            .gtk-publish/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+
+  publish:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # NO checkout, scripts or commands from the submitted branch in this
+    # privileged job. It consumes only the two validated staged data assets.
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: gtk4-debian13-release-staged
+          path: "${{ runner.temp }}/gtk4-debian13"
+
+      - name: Verify staging and publish immutable prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: gtk4-debian13-trixie-amd64-20261020
+          ASSET: gtk4-deb-cache-debian13-trixie-amd64.tar.gz
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/gtk4-debian13"
+          test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 2
+          test -s "$ASSET" && test -s SHA256SUMS
+          test ! -L "$ASSET" && test ! -L SHA256SUMS
+          sha256sum -c SHA256SUMS
+          test "$(awk 'END {print NR}' SHA256SUMS)" -eq 1
+          # Fail closed rather than replacing existing tagged binary assets.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite an existing GTK cache Release" >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/gtk4-release-notes.md" <<'NOTES'
+          Offline GTK4/libadwaita/PyGObject/Xvfb/XTEST rootless package cache
+          for Debian 13 trixie amd64 / Python 3.13 Cifereca UX agents.
+
+          Only the strictly allowlisted Debian .deb dependency closure and
+          platform marker are contained in this TAR; no runtime screenshots,
+          user accounts, Cifereca checkout, logs or credentials.
+
+          Download the TAR and SHA256SUMS, verify integrity, then use:
+          environnements/openai-chat-debian/fetch_release_cache.py --dest <new-cache>
+          environnements/openai-chat-debian/bootstrap.py --offline --deb-cache <cache>
+
+          A separate prerelease so this asset does not replace Cifereca Core
+          versions as the latest product release. The TAR and its SHA256SUMS
+          are immutable once the tag exists; rebuild with a NEW tag.
+          NOTES
+          gh release create "$TAG" "$ASSET" SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "GTK4 Debian 13 rootless offline cache (2026-10-20)" \
+            --notes-file "$RUNNER_TEMP/gtk4-release-notes.md" \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
