@@ -12,6 +12,13 @@ import re
 ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 # Exact path expressions from the reviewed workflows (not globbed directories).
+NODE24_ARTIFACT_WORKFLOWS = frozenset({
+    "e2e-smoke.yml",
+    "gtk-smoke.yml",
+    "package-plugins.yml",
+    "plugins-only-preview.yml",
+})
+
 PUBLIC_ARTIFACT_PATHS = {
     "gtk-debian13-cache-asset.yml": (
         ".gtk-publish/gtk4-deb-cache-debian13-trixie-amd64.tar.gz",
@@ -61,8 +68,11 @@ def test_exact_public_artifact_allowlist_and_two_day_retention():
         if "actions/upload-artifact" not in data:
             continue
         # Every producer is intentionally reviewed, including manual jobs.
-        assert data.count("uses: actions/upload-artifact@v4") == 1, workflow.name
-        block = data.split("uses: actions/upload-artifact@v4", 1)[1].split(
+        expected_major = 6 if workflow.name in NODE24_ARTIFACT_WORKFLOWS else 4
+        action = f"uses: actions/upload-artifact@v{expected_major}"
+        assert data.count("uses: actions/upload-artifact@") == 1, workflow.name
+        assert data.count(action) == 1, workflow.name
+        block = data.split(action, 1)[1].split(
             "\n      - ", 1,
         )[0]
         actual_publishers[workflow.name] = _published_paths(block)
