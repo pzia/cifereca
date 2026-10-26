@@ -604,6 +604,11 @@ class LibraryMaintenanceBrokerImpl:
             if row is None or keep is None: raise NotFound("Placement inconnu", code="placement_not_found")
             if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
                 raise _DuplicateScopeConflict("Doublon hors du même périmètre vérifié")
+            from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
+            if candidate_has_active_dependencies(
+                self.service.storage, placement_id=row["placement_id"], path=row["path"],
+            ):
+                raise Conflict("Le fichier est référencé par des données actives")
             return LibraryMutationPlan(op, "Supprimer le doublon physique vérifié", request, destructive=True, changes=(request.placement_id,), warnings=("Le fichier du placement sera supprimé.",))
         if op == "replace_cover":
             return LibraryMutationPlan(op, "Remplacer la couverture canonique", request, changes=(request.book_id, request.cover_artifact_id))
@@ -740,8 +745,28 @@ class LibraryMaintenanceBrokerImpl:
             keep=self.service.storage.placement_get(request.keep_placement_id)
             if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
                 raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable")
-            path=Path(str(row.get("path") or ""))
-            if path.exists(): path.unlink()
+            from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
+            if candidate_has_active_dependencies(
+                self.service.storage, placement_id=row["placement_id"], path=row["path"],
+            ):
+                raise Conflict("Le fichier est référencé par des données actives")
+            # A stale SHA in SQLite does not authorize unlinking an arbitrary
+            # replaced file, even when its placement owner still matches.
+            # Hash BOTH actual files under the user's explicit maintenance
+            # action. Never follow a symbolic link or remove a non-regular path.
+            path = Path(row["path"])
+            kept_path = Path(keep["path"])
+            evidence = self.service.storage.artifact_get(row["artifact_id"])
+            digest = evidence.get("sha256") if type(evidence) is dict else None
+            size = evidence.get("size") if type(evidence) is dict else None
+            if (type(digest) is not str or len(digest) != 64
+                    or type(size) is not int or size < 0
+                    or path.is_symlink() or kept_path.is_symlink()
+                    or not path.is_file() or not kept_path.is_file()
+                    or path.stat().st_size != size or kept_path.stat().st_size != size
+                    or sha256_file(path) != digest or sha256_file(kept_path) != digest):
+                raise Conflict("Octets du doublon non vérifiés")
+            path.unlink()
             self.service.storage.placement_delete(request.placement_id)
             return LibraryMutationResult(True,1,plan.summary)
         if request.operation == "replace_cover":
