@@ -1830,6 +1830,41 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
              count=len(candidates))
         return True
 
+    # A user-declared link is not a Kobo backup receipt. It may refer to a
+    # moved or altered EPUB, so neither a matching declaration nor an unreadable
+    # declaration store authorizes downloading a replacement. This check runs
+    # under the existing acquisition lock for BOTH normal and confirmed sync,
+    # after the existing verified-backup/filename guards and before provider I/O.
+    # Revoked declarations no longer block: never persist reconcile_required
+    # solely because of a statement whose active state may later change.
+    if all(type(base_record.get(key)) is str and base_record[key]
+           for key in ("identity_id", "credential_id", "account_id", "item_id")):
+        from .library_declared_links import DeclarationRejected, has_active_declared_link
+        try:
+            declared = has_active_declared_link(
+                self.storage, identity_id=base_record["identity_id"],
+                provider_id="kobo", credential_id=base_record["credential_id"],
+                account_id=base_record["account_id"], item_id=product_id,
+            )
+            declaration_error = False
+        except DeclarationRejected:
+            declared, declaration_error = False, True
+        if declared or declaration_error:
+            code = ("declared_link_recorded" if declared
+                    else "declared_links_unavailable")
+            message = ("Correspondance locale déclarée : vérifier le fichier avant "
+                       "toute nouvelle acquisition" if declared else
+                       "Déclarations locales indisponibles : acquisition suspendue "
+                       "jusqu'à vérification")
+            self.storage.backup_put({
+                **base_record, "status": "attention_required",
+                "attention_code": code, "error": message,
+            })
+            summary["attention_required"] += 1
+            emit("attention_required", current=index + 1, total=total,
+                 title=title, item_id=product_id, code=code, message=message)
+            return True
+
     # Vault 2.3.1 exposes archived items explicitly. Keep an already
     # acquired local file (handled above), otherwise persist a user
     # action instead of treating the title as permanently unavailable.
