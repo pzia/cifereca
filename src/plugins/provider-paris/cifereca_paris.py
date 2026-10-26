@@ -4,6 +4,7 @@ from cifereca_paris_formats import explicit_formats
 import logging
 import httpx
 from dataclasses import replace
+from threading import RLock
 import re
 import time
 import unicodedata
@@ -145,6 +146,10 @@ class ParisProviderSession(ProviderSession):
         timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.diagnostics = diagnostics
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
+        # Paris still publishes branch failures through the v1 mutable
+        # last_loan_errors facade. Keep one borrower read and its typed
+        # projection atomic so concurrent readers cannot exchange evidence.
+        self._loan_inventory_lock = RLock()
         self.last_loan_errors: list[dict[str, str]] = []
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
@@ -410,6 +415,10 @@ class ParisProviderSession(ProviderSession):
             loan.thumbnail_url = str(metadata["thumbnail_url"])
 
     def loans(self, account: Account) -> list[Loan]:
+        with self._loan_inventory_lock:
+            return self._read_loans_for_account(account)
+
+    def _read_loans_for_account(self, account: Account) -> list[Loan]:
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -457,6 +466,10 @@ class ParisProviderSession(ProviderSession):
         return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
+        with self._loan_inventory_lock:
+            return self._snapshot_for_account(account)
+
+    def _snapshot_for_account(self, account: Account) -> LoanInventorySnapshot:
         """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
 
         Neither legacy Paris upstream currently attests pagination/exhaustive
