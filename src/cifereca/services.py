@@ -2679,10 +2679,15 @@ class LibraryService:
         """
         return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
 
-    def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool = True) -> dict[str, int]:
-        """Persist observed loans; never treat unverified absence as a return."""
+    def _persist_active_loans(
+        self, identity_id: str, loans: list[Loan], *,
+        reconcile_missing: bool = True,
+        complete_scopes: set[tuple[str, str, str]] | None = None,
+    ) -> dict[str, int]:
+        """Persist observed loans; only exact complete scopes prove absence."""
         return library_mutation._persist_active_loans(
             self, identity_id, loans, reconcile_missing=reconcile_missing,
+            complete_scopes=complete_scopes,
         )
 
     @staticmethod
