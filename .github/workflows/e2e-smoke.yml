@@ -44,7 +44,10 @@ jobs:
   startup:
     name: E2E GTK · core
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Full impacted GTK replay is now up to 31 scenarios; 10 minutes
+    # cancelled a valid PR gate before verdict (run #40403881704).
+    # Keep a strict finite watchdog; do not skip or mask failed scenarios.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v5
