@@ -2926,7 +2926,12 @@ class LibraryService:
         # the read-only eligibility explanation. This is local state only,
         # never an extra provider GET or a new eligibility veto.
         if not self.can_download_loan(loan):
-            eligibility = self.loan_download_eligibility(loan)
+            try:
+                eligibility = self.loan_download_eligibility(loan)
+            except Exception:
+                # The diagnostic explanation must never change the existing
+                # business refusal, including legacy overrides/mocks.
+                eligibility = None
             code = eligibility.get("code") if type(eligibility) is dict else None
             if (
                 type(eligibility) is not dict
