@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cifereca_baen import BaenSession, _public_epub_filename
 
 BASE = "https://www.baen.com"
@@ -79,11 +81,12 @@ def test_different_public_products_with_same_title_do_not_clobber(tmp_path):
         obj.close()
 
 
-def test_empty_sanitized_title_never_uses_untrusted_record_id(tmp_path):
+@pytest.mark.parametrize("bad_title", ["   ", "///"])
+def test_empty_sanitized_title_never_uses_untrusted_record_id(tmp_path, bad_title):
     obj = session()
     try:
         result, _ = obj.download_direct(
-            book(FIRST, title="///", record_id="../../outside"), tmp_path / "safe",
+            book(FIRST, title=bad_title, record_id="../../outside"), tmp_path / "safe",
         )
         assert result.parent == tmp_path / "safe"
         assert result.name.startswith("Livre-")
