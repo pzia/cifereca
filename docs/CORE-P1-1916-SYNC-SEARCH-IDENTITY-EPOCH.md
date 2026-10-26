@@ -12,7 +12,7 @@ verrou Core que la recherche progressive. Les résultats d'une requête
 supplantée (changement de profil Alice→Bob, aller-retour Alice→Bob→Alice
 ou nouvelle recherche) ne sont **pas publiés** : retour `[]`, sans
 modification de `last_search` ni de ses avertissements. Ce contrôle
-s'applique également au chemin de cache en lecture.
+s'applique également au chemin de cache en lecture. La boucle des fournisseurs et\nles variantes textuelles vérifient le bail **avant chaque GET** : aucune\nseconde tentative de recherche n'est lancée après la révocation de profil.
 
 Le miroir SQLite reçoit toujours **l'identité capturée au départ**, et
 jamais le profil sélectionné en fin de GET. Le bail est revérifié avant
