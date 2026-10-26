@@ -205,12 +205,8 @@ class LocalCatalog:
                 "metadata": {**dict((existing or {}).get("metadata") or {}),
                              "invalid_reason": reason, "artifact_kind": "bundle"},
             })
-            # Invalid bytes/manifest revoke only physical presence, not the
-            # existing artifact/ownership history. Catalogue cannot stay local.
-            if existing:
-                for entry in self.storage.catalog_entries():
-                    if entry.get("placement_id") == placement_id and entry.get("local_state") != "invalid":
-                        self.storage.catalog_entry_put({**entry, "local_state": "invalid"})
+            # Storage.placement_put invalidates all linked catalogue rows
+            # within the same SQLite commit; historical ownership is retained.
             return {"status": "invalid", "path": path_text, "reason": reason, "artifact_kind": "bundle"}
 
         artifact = Artifact.from_bundle(
@@ -324,10 +320,8 @@ class LocalCatalog:
                              "invalid_reason": invalid_reason,
                              "media_format": media_format, **stat_meta},
             })
-            if existing:
-                for entry in self.storage.catalog_entries():
-                    if entry.get("placement_id") == placement_id and entry.get("local_state") != "invalid":
-                        self.storage.catalog_entry_put({**entry, "local_state": "invalid"})
+            # Storage.placement_put also invalidates linked catalogue rows
+            # transactionally, so no second, racy catalogue write is needed.
             return {"status": "invalid", "path": path_text, "reason": invalid_reason, "media_format": media_format}
 
         catalog_entry_id = stable_id('catalog', placement_id)
