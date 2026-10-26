@@ -12,6 +12,7 @@ from typing import Any
 
 def import_acsm(
     self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
+    placement_provider_id: str | None = None,
     Path, ProviderConfigurationError, sha256_file, hashlib, data_dir, shutil,
     detect_acsm_format, AdeptProfileResolutionError, inspect_artifact, os,
 ) -> dict[str, Any]:
@@ -26,6 +27,9 @@ def import_acsm(
     identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
     if identity is None:
         raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
+    if placement_provider_id not in (None, 'bnf-pret') or (placement_provider_id and provider_id != 'manual'):
+        raise ProviderConfigurationError("Source de placement ACSM invalide")
+    placement_provider = placement_provider_id or provider_id
     source_sha = sha256_file(source)
     acquisition_id = f"manual-acsm:{hashlib.sha256((identity.identity_id + ':' + source_sha).encode()).hexdigest()[:32]}"
     existing = self.storage.acquisition_get(acquisition_id)
@@ -54,7 +58,7 @@ def import_acsm(
         suffix = ".pdf" if media_format == "pdf" else ".epub"
         # A title is presentation, never an artifact identity. Keep each
         # ACSM's outputs in its own namespace and refuse unindexed residue.
-        root = self.library_identity_provider_dir(identity.identity_id, provider_id)
+        root = self.library_identity_provider_dir(identity.identity_id, placement_provider)
         destination_dir = root / ("acsm-" + source_sha)
         if destination_dir.is_symlink() or (destination_dir.exists() and not destination_dir.is_dir()):
             raise ProviderConfigurationError("Dossier d’import ACSM ambigu")
@@ -107,7 +111,7 @@ def import_acsm(
             produced = corrected
         indexed = self.catalog_index_path(
             produced, title=title or source.stem, item_id=source_sha,
-            identity_id=identity.identity_id, provider_id=provider_id,
+            identity_id=identity.identity_id, provider_id=placement_provider,
         )
         if indexed.get("status") != "indexed":
             raise ProviderConfigurationError("Indexation ACSM impossible")

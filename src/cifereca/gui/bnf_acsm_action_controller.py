@@ -103,7 +103,7 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
                 # ADEPT import, NOT an automatically proven BnF acquisition.
                 return window.service.import_bnf_loan_acsm(
                     Path(path), expected_identity_id=identity_id,
-                    title=loan.title,
+                    loan=loan, title=loan.title,
                 )
 
             def imported(result):
@@ -125,8 +125,8 @@ def prepare_bnf_acsm(window, loan, control, *, Adw, TaskPriority):
                         "Import BnF",
                     )
                     return
-                window._activity_result("ACSM importé via ADEPT" if result.get("status") == "complete"
-                                        else "ACSM déjà importé")
+                window._activity_result("Fichier importé via ADEPT (source BnF ; droit non attesté)"
+                                        if result.get("status") == "complete" else "ACSM déjà importé")
                 window.refresh_library(False)
 
             window.runner.submit(

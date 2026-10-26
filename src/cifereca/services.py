@@ -292,12 +292,13 @@ class LibraryService:
         return result
 
     def import_bnf_loan_acsm(
-        self, source: Path, *, expected_identity_id: str, title: str | None = None,
+        self, source: Path, *, expected_identity_id: str, loan: Loan,
+        title: str | None = None,
     ) -> dict[str, Any]:
-        """Separate consented ADEPT action; its result remains a manual import.
+        """Import the exact staged loan token with manual ADEPT attestation.
 
-        Diagnostic attribution to the BnF action never changes acquisition
-        provenance, establishes a BnF right, or selects another Adobe profile.
+        Physical placement identifies BnF as the observed source. The ledger
+        and DRM execution remain manual; neither establishes a BnF right.
         """
         from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
         observation = ActionObservation(self, 'import_acsm')
@@ -306,9 +307,35 @@ class LibraryService:
                     or self.current_identity is None
                     or self.current_identity.identity_id != expected_identity_id):
                 raise BnfLoanActionError('bnf_loan_scope_unproven')
+            if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
+                    or loan.identity_id != expected_identity_id
+                    or loan.medium != 'digital' or loan.state != 'active'
+                    or not loan.id or not loan.record_id or not loan.source_credential
+                    or not loan.source_account_id
+                    or self.storage.identity_for_connection(
+                        'bnf-pret', loan.source_credential) != expected_identity_id):
+                raise BnfLoanActionError('bnf_loan_scope_unproven')
+            try:
+                account = self._account_for_loan(loan)
+                expected = self._acquisition_work_dir(expected_identity_id, 'bnf-pret', loan.id)
+                candidate = Path(source)
+                if (account.provider_id != 'bnf-pret'
+                        or account.unique_id != loan.source_account_id
+                        or account.credential_id != loan.source_credential
+                        or account.identity_id != expected_identity_id
+                        or expected.is_symlink() or candidate.is_symlink()
+                        or candidate.parent.resolve() != expected.resolve()
+                        or not candidate.name.startswith('bnf-loan-')
+                        or candidate.suffix.casefold() != '.acsm'):
+                    raise BnfLoanActionError('bnf_loan_scope_unproven')
+            except BnfLoanActionError:
+                raise
+            except Exception:
+                raise BnfLoanActionError('bnf_loan_scope_unproven') from None
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
-                                      provider_id='manual', title=title)
+                                      provider_id='manual', title=title,
+                                      placement_provider_id='bnf-pret')
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
@@ -1916,10 +1943,12 @@ class LibraryService:
 
     def _import_acsm_impl(
         self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
+        placement_provider_id: str | None = None,
     ) -> dict[str, Any]:
         """Import a user ACSM without deleting the original file."""
         return manual_acsm_import.import_acsm(
             self, source, identity_id=identity_id, provider_id=provider_id, title=title,
+            placement_provider_id=placement_provider_id,
             Path=Path, ProviderConfigurationError=ProviderConfigurationError,
             sha256_file=sha256_file, hashlib=hashlib, data_dir=data_dir, shutil=shutil,
             detect_acsm_format=detect_acsm_format, AdeptProfileResolutionError=AdeptProfileResolutionError,
@@ -1928,6 +1957,7 @@ class LibraryService:
 
     def import_acsm(
         self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
+        placement_provider_id: str | None = None,
     ) -> dict[str, Any]:
         identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
         iid = identity.identity_id if identity else identity_id
@@ -1941,7 +1971,8 @@ class LibraryService:
                 with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
                     from .core.numilog_startup_diagnostics import adept_stage
                     with adept_stage(provider_id) as startup_trace:
-                        result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id, title=title)
+                        result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id,
+                                                        title=title, placement_provider_id=placement_provider_id)
                         if startup_trace is not None and result.get("status") not in {"complete", "unchanged"}:
                             startup_trace.fail("adept_failed")
             except LockBusyError:
