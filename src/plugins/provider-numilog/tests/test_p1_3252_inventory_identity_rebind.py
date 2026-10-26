@@ -71,15 +71,34 @@ def test_library_refuses_even_empty_rows_when_owner_changes_during_get():
         session.close()
 
 
-def test_library_refuses_missing_binding_before_network():
+def test_library_preserves_legacy_unresolved_owner_when_stable():
+    # The v1 inventory is still observable without a Core identity mapping.
+    # This does NOT authorize acquisition, which has its own mandatory guard.
     session, broker = make_session()
     broker.owner = None
     calls = []
-    session._rows = lambda **kw: calls.append("private-get")
+    def private_rows(**kwargs):
+        calls.append("private-get")
+        return [{"lid": "42", "title": "Synthetic"}]
+    session._rows = private_rows
+    session._normalize = lambda row: row
     try:
-        with pytest.raises(ProviderCapabilityError, match="identité propriétaire indisponible"):
+        assert session.library() == [{"lid": "42", "title": "Synthetic"}]
+        assert calls == ["private-get"]
+    finally:
+        session.close()
+
+
+def test_library_rejects_unresolved_to_resolved_owner_during_get():
+    session, broker = make_session()
+    broker.owner = None
+    def private_rows(**kwargs):
+        broker.owner = "identity-a"
+        return []
+    session._rows = private_rows
+    try:
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
             session.library()
-        assert calls == []
     finally:
         session.close()
 
