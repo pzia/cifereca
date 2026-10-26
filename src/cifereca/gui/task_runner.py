@@ -104,7 +104,10 @@ class TaskRunner:
             # Fixed, Core-owned task kinds already used by MainWindow.
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
-            "history", "bookings", "search-known",
+            "history", "bookings", "search-known", "detail-cache",
+            "adept-inventory", "adept-return", "loan-acquisition", "borrow",
+            "obtain", "provider-connect", "sync-audit", "source-consent",
+            "identity", "maintenance-inspection",
         } else "other"
         # An explicit user request must always run, including callers that
         # deliberately have no GTK control (keyboard actions, headless host).
