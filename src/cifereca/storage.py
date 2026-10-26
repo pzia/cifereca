@@ -1039,14 +1039,22 @@ class Storage:
         timestamp = int(row.get("updated_at") or now or time.time())
         entitlement_id = cls._entitlement_id_for(row)
         entitlement_type = str(row.get("entitlement_type") or "owned")
-        db.execute(
+        entitlement_cursor = db.execute(
             "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
             "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,"
             "state=excluded.state,expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
             "metadata_json=excluded.metadata_json,"
-            "identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at",
+            "identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at "
+            "WHERE entitlements.provider_id=excluded.provider_id "
+            "AND entitlements.credential_id=excluded.credential_id "
+            "AND entitlements.account_id IS excluded.account_id "
+            "AND entitlements.item_id=excluded.item_id "
+            "AND entitlements.entitlement_type=excluded.entitlement_type "
+            "AND entitlements.loan_id IS excluded.loan_id "
+            "AND (entitlements.identity_id IS NULL OR excluded.identity_id IS NULL "
+            "OR entitlements.identity_id=excluded.identity_id)",
             (
                 entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
                 row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"), entitlement_type,
@@ -1060,6 +1068,8 @@ class Storage:
                 timestamp, timestamp, row.get("identity_id"),
             ),
         )
+        if entitlement_cursor.rowcount != 1:
+            raise ValueError("backup_entitlement_owner_conflict")
         artifact_id = None
         sha = str(row.get("sha256") or "").strip().lower()
         if sha:
@@ -1102,7 +1112,7 @@ class Storage:
                  "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
             )
         acquisition_id = cls._acquisition_id_for(row)
-        db.execute(
+        acquisition_cursor = db.execute(
             "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
             "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
             "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
@@ -1110,7 +1120,14 @@ class Storage:
             "executor=COALESCE(excluded.executor,acquisition_ledger.executor),artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),"
             "attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),"
             "error_message=excluded.error_message,attention_code=excluded.attention_code,"
-            "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at",
+            "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at "
+            "WHERE acquisition_ledger.entitlement_id IS excluded.entitlement_id "
+            "AND acquisition_ledger.provider_id=excluded.provider_id "
+            "AND acquisition_ledger.credential_id=excluded.credential_id "
+            "AND acquisition_ledger.account_id IS excluded.account_id "
+            "AND acquisition_ledger.item_id=excluded.item_id "
+            "AND (acquisition_ledger.identity_id IS NULL OR excluded.identity_id IS NULL "
+            "OR acquisition_ledger.identity_id=excluded.identity_id)",
             (
                 acquisition_id, entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
                 row.get("account_id"), str(row.get("item_id") or ""), row.get("title"), cls._generic_status(row.get("status")),
@@ -1119,6 +1136,9 @@ class Storage:
                 cls._json_dump({"legacy_status": row.get("status")}), timestamp, timestamp, row.get("identity_id"),
             ),
         )
+
+        if acquisition_cursor.rowcount != 1:
+            raise ValueError("backup_acquisition_owner_conflict")
 
     def schema_version(self) -> int:
         with self._lock, self._connect() as db:
@@ -1282,7 +1302,10 @@ class Storage:
         except (TypeError, ValueError):
             attempt_count_value = 0
         with self._lock, self._connect() as db:
-            db.execute(
+            # A legacy projection PK omits identity/account. Refuse an
+            # explicit conflicting owner atomically: neither the 0.7 row nor
+            # the canonical right/receipt may change on an ambiguous rebind.
+            backup_cursor = db.execute(
                 "INSERT INTO backup_items("
                 "provider_id,credential_id,item_id,revision_id,title,author,format,local_path,status,size,sha256,updated_at,error,job_id,"
                 "account_id,entitlement_type,loan_id,expires_at,acquisition_strategy,executor,adept_profile,attempt_count,last_attempt_at,attention_code,identity_id,cover_url"
@@ -1300,7 +1323,14 @@ class Storage:
                 "attempt_count=MAX(backup_items.attempt_count,excluded.attempt_count),"
                 "last_attempt_at=COALESCE(excluded.last_attempt_at,backup_items.last_attempt_at),"
                 "attention_code=excluded.attention_code,identity_id=COALESCE(excluded.identity_id,backup_items.identity_id),"
-                "cover_url=COALESCE(excluded.cover_url,backup_items.cover_url)",
+                "cover_url=COALESCE(excluded.cover_url,backup_items.cover_url) "
+                "WHERE (backup_items.identity_id IS NULL OR excluded.identity_id IS NULL "
+                "OR backup_items.identity_id=excluded.identity_id) "
+                "AND (backup_items.account_id IS NULL OR excluded.account_id IS NULL "
+                "OR backup_items.account_id=excluded.account_id) "
+                "AND backup_items.entitlement_type=excluded.entitlement_type "
+                "AND (backup_items.loan_id IS NULL OR excluded.loan_id IS NULL "
+                "OR backup_items.loan_id=excluded.loan_id)",
                 (
                     str(item.get("provider_id") or ""), str(item.get("credential_id") or ""), str(item.get("item_id") or ""),
                     item.get("revision_id"), str(item.get("title") or item.get("item_id") or "Sans titre"), item.get("author"),
@@ -1311,6 +1341,8 @@ class Storage:
                     item.get("last_attempt_at"), item.get("attention_code"), item.get("identity_id"), item.get("cover_url"),
                 ),
             )
+            if backup_cursor.rowcount != 1:
+                raise ValueError("backup_projection_owner_conflict")
             # Keep the 0.7 compatibility projection and the generic 0.8 ledger
             # in the same SQLite transaction. This makes Kobo immediately visible
             # to the provider-neutral acquisition model without duplicating sync I/O.
