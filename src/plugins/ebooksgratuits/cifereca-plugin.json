@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.ebooksgratuits",
-    "version": "0.1.28",
+    "version": "0.1.29",
     "name": "Ebooks libres et gratuits",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -61,7 +61,7 @@
         }
       },
       "help_text": "Source principale : catalogue officiel Calibre/COPS OPDS Atom 1.x (https://opds2.ebooksgratuits.org/index.php/feed). Utilise la description OpenSearch du serveur, les liens de navigation et la pagination rel=next, sans scraper le site HTML ni inventer d'endpoint. Les filtres title/author/subject/category/genre sont appliqués localement à la seule page OPDS reçue, avec avertissement partial_results. Les catégories et genres proviennent des éléments Atom de chaque notice ; aucun âge n'est inventé. Aucune date historique, droit territorial ou éditeur ne sont déduits de la provenance ; éditeur rempli seulement s'il est explicite. Seuls les liens EPUB d'acquisition présents dans la notice sont téléchargeables, via transport.http avec validation de l'origine et du format. Le mode html est réservé à la simulation et aux tests existants ; les configurations ordinaires prennent opds.",
-      "version": "0.1.28",
+      "version": "0.1.29",
       "capabilities": [
         "catalog.search",
         "catalog.detail",
