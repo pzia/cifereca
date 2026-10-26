@@ -351,6 +351,20 @@ def _record_source_retry_after(
 
 
 def search(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', field: str='all', content_types: tuple[str, ...] | list[str] | None=None, include_redundant_merged: bool=False, logger, facade_type) -> list[SearchResult]:
+    # Capture before session discovery, which may run across an identity
+    # transition. A query must not discover sources as A then run them as B.
+    with self._search_generation_lock:
+        self._search_generation += 1
+        search_generation = self._search_generation
+        identity = self.current_identity
+
+    def request_current() -> bool:
+        with self._search_generation_lock:
+            return (
+                self._search_generation == search_generation
+                and self.current_identity is identity
+            )
+
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     # Search is global: one connected session per provider is queried,
     # independently of the reader account currently selected in the GUI.
@@ -373,21 +387,6 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         include_redundant_merged=include_redundant_merged,
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-    # The synchronous search path must obey the same generation lease as
-    # progressive search: an identity switch (even A→B→A) or a newer query
-    # invalidates its right to publish UI state.
-    with self._search_generation_lock:
-        self._search_generation += 1
-        search_generation = self._search_generation
-        identity = self.current_identity
-
-    def request_current() -> bool:
-        with self._search_generation_lock:
-            return (
-                self._search_generation == search_generation
-                and self.current_identity is identity
-            )
-
     pref_key = ""
     if identity is not None:
         pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
