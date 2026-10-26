@@ -87,10 +87,17 @@ class BaenFakeApp:
                              b"<html><body>Unknown synthetic catalogue layout</body></html>")
         page = _query_int(args, "page", 1)
         per_page = _query_int(args, "pageSize", 50)
-        found = [b for b in BOOKS if not q or q in b[1].casefold() or q in b[2].casefold()]
+        # Explicit simulator-only selector: do not mistake this artificial
+        # keyword for a Baen server-side query capability in production.
+        canonical_fixture = q == "fixture-canonical"
+        found = (list(BOOKS) if canonical_fixture else [
+            b for b in BOOKS if not q or q in b[1].casefold() or q in b[2].casefold()
+        ])
         rows = found[(page - 1) * per_page:page * per_page]
         links = "".join(
-            f'<article><a href="/allbooks/{slug}">{_escape(title)}</a></article>'
+            (f'<article><a class="product-item-link" href="/{slug}.html">'
+             f'{_escape(title)}</a></article>' if canonical_fixture else
+             f'<article><a href="/allbooks/{slug}">{_escape(title)}</a></article>')
             for slug, title, _, _, _, _ in rows
         )
         # Both closed zero markers are included only for an actually empty
@@ -100,6 +107,8 @@ class BaenFakeApp:
         body = (
             "<!doctype html><html><body>"
             "<a href='/allbooks/not-a-record'>More...</a>"
+            + ('<h1>Free Library</h1><p>Showing 1-3 of 3</p>'
+               if canonical_fixture else '')
             + empty_proof + links + '<a href="/allbooks/not-a-record">Buy</a>'
             + "</body></html>"
         ).encode("utf-8")
@@ -132,6 +141,10 @@ class BaenFakeApp:
             })
         if parsed.path == "/allbooks/category/index/id/2012":
             return self.list_books(h, args)
+        # The canonical product URL is a public root .html page, unlike the
+        # older /allbooks/<slug> fixture. Both map to the same fake product.
+        if parsed.path.startswith("/") and parsed.path.endswith(".html"):
+            return self.detail(h, parsed.path[1:-5])
         if parsed.path.startswith("/allbooks/"):
             return self.detail(h, parsed.path.removeprefix("/allbooks/").rstrip("/"))
         if parsed.path.startswith("/downloads/") and parsed.path.endswith(".epub"):
