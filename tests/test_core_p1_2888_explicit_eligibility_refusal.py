@@ -66,7 +66,7 @@ def test_one_exact_refusal_from_existing_eligibility_at_admission(code, tmp_path
         logger.setLevel(previous)
         handler.close()
 
-    assert checks == [code]  # one preflight, zero repeated network checks
+    assert checks == [code, code]  # admission + local explanation; zero provider GETs
     (row,) = service.diagnostics.snapshot()
     assert row["verified_loan_download"] is True
     assert row["category"] == "PNB"
@@ -92,8 +92,8 @@ def test_unknown_broken_eligibility_code_stays_closed_without_crashing():
     with pytest.raises(ProviderConfigurationError):
         service.reacquire_digital_loan(loan)
     (row,) = service.diagnostics.snapshot()
-    assert checks == ["unexpected-future-code"]
-    assert row["detail"]["code"] == "provider_unavailable"
+    assert checks == ["unexpected-future-code", "unexpected-future-code"]
+    assert row["detail"]["code"] == "unclassified_error"
     assert row["detail"]["status"] == "refused"
 
 
@@ -108,3 +108,17 @@ def test_later_provider_configuration_failure_is_not_falsely_labeled_refusal():
     assert row["detail"]["status"] == "failed"
     assert row["detail"]["phase"] == "terminal"
     assert row["detail"]["code"] == "provider_failure"
+
+
+def test_decision_state_change_does_not_claim_a_specific_provider_cause():
+    service, loan, _checks = setup_service("provider_disconnected")
+    service.can_download_loan = lambda _loan: False
+    service.loan_download_eligibility = lambda _loan: {
+        "available": True, "code": "available",
+    }
+    with pytest.raises(ProviderConfigurationError):
+        service.reacquire_digital_loan(loan)
+    (row,) = service.diagnostics.snapshot()
+    assert row["detail"]["status"] == "refused"
+    assert row["detail"]["phase"] == "admission"
+    assert row["detail"]["code"] == "unclassified_error"
