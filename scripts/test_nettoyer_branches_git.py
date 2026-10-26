@@ -175,5 +175,95 @@ class BranchCleanerTests(unittest.TestCase):
         self.assertIn('refs/heads/feature/open', remote_refs)
 
 
+    def _force_path(self, name: str) -> str:
+        path = self.checkout.parent / 'force.txt'
+        path.write_text(name + '\n', encoding='utf-8')
+        return str(path)
+
+    def test_force_overrides_exclusion_and_unmerged_status(self):
+        forced = self._force_path('feature/keep')
+        exclusions = self.checkout.parent / 'exclusions.txt'
+        exclusions.write_text('feature/keep\n', encoding='utf-8')
+        rc, _ = self.execute('--force-delete-branches', forced,
+                             '--exclude', str(exclusions),
+                             '--open-pr-branches', str(self.open_pr_path),
+                             '--plan', str(self.plan_path))
+        self.assertEqual(rc, 0)
+        plan = json.loads(self.plan_path.read_text())
+        self.assertEqual(plan['force_delete_branches'], ['feature/keep'])
+        forced_rows = [x for x in plan['candidates'] if x['branch'] == 'feature/keep']
+        self.assertEqual(len(forced_rows), 1)
+        self.assertEqual(forced_rows[0]['category'], 'FORCÉ')
+        rc, _ = self.execute('--apply', '--yes', '--max-delete', '3',
+                             '--force-delete-branches', forced, '--exclude', str(exclusions),
+                             '--open-pr-branches', str(self.open_pr_path),
+                             '--plan', str(self.plan_path))
+        self.assertEqual(rc, 0)
+        refs = run('ls-remote', '--heads', 'origin', cwd=self.checkout)
+        self.assertNotIn('refs/heads/feature/keep', refs)
+        self.assertIn('refs/heads/feature/open', refs)
+
+    def test_force_open_pr_stays_forbidden(self):
+        forced = self._force_path('feature/open')
+        with self.assertRaisesRegex(RuntimeError, 'Suppression forcée interdite'):
+            self.execute('--force-delete-branches', forced,
+                         '--open-pr-branches', str(self.open_pr_path))
+        self.assertTrue(run('ls-remote', '--heads', 'origin', 'feature/open', cwd=self.checkout))
+
+    def test_force_main_stays_forbidden(self):
+        forced = self._force_path('main')
+        with self.assertRaisesRegex(RuntimeError, 'Suppression forcée interdite'):
+            self.execute('--force-delete-branches', forced,
+                         '--open-pr-branches', str(self.open_pr_path))
+
+    def test_force_names_must_be_literal(self):
+        forced = self._force_path('feature/*')
+        with self.assertRaisesRegex(RuntimeError, 'sans glob'):
+            self.execute('--force-delete-branches', forced)
+
+    def test_force_nonexistent_branch_is_rejected(self):
+        forced = self._force_path('feature/nonexistent')
+        with self.assertRaisesRegex(RuntimeError, 'absentes du remote'):
+            self.execute('--force-delete-branches', forced)
+
+    def test_force_file_changed_between_simulation_and_apply(self):
+        forced = self._force_path('feature/keep')
+        self.execute('--force-delete-branches', forced,
+                     '--open-pr-branches', str(self.open_pr_path),
+                     '--plan', str(self.plan_path))
+        Path(forced).write_text('', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'Le plan ne correspond'):
+            self.execute('--apply', '--yes', '--max-delete', '3',
+                         '--force-delete-branches', forced,
+                         '--open-pr-branches', str(self.open_pr_path),
+                         '--plan', str(self.plan_path))
+        self.assertTrue(run('ls-remote', '--heads', 'origin', 'feature/keep', cwd=self.checkout))
+
+    def test_force_directive_in_same_exclusions_file(self):
+        config = self.checkout.parent / 'exclusions.txt'
+        config.write_text('# Travaux en cours\nfeature/open\n!feature/keep\n', encoding='utf-8')
+        rc, _ = self.execute('--exclude', str(config),
+                             '--open-pr-branches', str(self.open_pr_path),
+                             '--plan', str(self.plan_path))
+        self.assertEqual(rc, 0)
+        approved = json.loads(self.plan_path.read_text())
+        self.assertEqual(approved['force_delete_branches'], ['feature/keep'])
+        self.assertIn('feature/keep', [v['branch'] for v in approved['candidates']])
+        rc, _ = self.execute('--apply', '--yes', '--max-delete', '3',
+                             '--exclude', str(config),
+                             '--open-pr-branches', str(self.open_pr_path),
+                             '--plan', str(self.plan_path))
+        self.assertEqual(rc, 0)
+        self.assertFalse(run('ls-remote', '--heads', 'origin', 'feature/keep', cwd=self.checkout))
+        self.assertTrue(run('ls-remote', '--heads', 'origin', 'feature/open', cwd=self.checkout))
+
+    def test_force_directive_on_open_pr_is_rejected(self):
+        config = self.checkout.parent / 'exclusions.txt'
+        config.write_text('!feature/open\n', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'Suppression forcée interdite'):
+            self.execute('--exclude', str(config),
+                         '--open-pr-branches', str(self.open_pr_path))
+
+
 if __name__ == '__main__':
     unittest.main()
