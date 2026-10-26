@@ -57,7 +57,9 @@ def test_targeted_index_rejects_replacement_after_hash(
     with pytest.raises(OSError, match="catalog_index_file_changed"):
         catalogue.index_path(path)
 
-    assert store.placement_for_path(path) == placement_before
+    # The symlink case resolves to an external filename: inspect the original
+    # placement by immutable ID, not by the now-mutated filesystem path.
+    assert store.placement_get(placement_before["placement_id"]) == placement_before
     assert store.catalog_entries() == catalog_before
     assert store.artifacts() == artifacts_before
     assert store.acquisitions() == []
