@@ -228,13 +228,15 @@ def main():
         # GTK SAVE can clear a previously selected GFile on changing name.
         chooser.set_current_name(target.name)
         target.write_bytes(b"OLD-SYNTHETIC-NONPRIVATE")
+        # A native SAVE dialog may defer exposing its chosen GFile until
+        # the ACCEPT response. set_file() returning True does not guarantee
+        # an immediately observable get_file() on every GTK backend.
         assert chooser.set_file(Gio.File.new_for_path(str(target)))
-        until(lambda: chooser.get_file() is not None
-              and chooser.get_file().get_path() == str(target),
-              lambda: accept(chooser), seconds=6)
+        later(lambda: accept(chooser), 250)
 
     def accept(chooser):
-        assert chooser.get_file().get_path() == str(target)
+        # Test the actual callback and the on-disk byte/permission result;
+        # do not require an internal native-picker selection before ACCEPT.
         chooser.emit("response", Gtk.ResponseType.ACCEPT)
         until(lambda: target.exists() and target.read_bytes() == _PAYLOAD,
               saved, seconds=6)
