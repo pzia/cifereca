@@ -1109,19 +1109,26 @@ class Storage:
                  row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
             )
             if placement_cursor.rowcount != 1:
-                raise ValueError("backup_placement_owner_conflict")
-            catalog_id = cls._stable_id("catalog", placement_id)
-            db.execute(
-                "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,"
-                "provider_id,item_id,local_state,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,catalog_entries.artifact_id),"
-                "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=COALESCE(excluded.media_format,catalog_entries.media_format),"
-                "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
-                "updated_at=excluded.updated_at",
-                (catalog_id, artifact_id, placement_id, str(row.get("title") or row.get("item_id") or "Sans titre"),
-                 row.get("author"), str(row.get("format") or "").lower() or None, row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
-                 "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
-            )
+                # The historical backup projection can contain multiple
+                # item references to the same pathname (including diagnoses
+                # of broken mappings). Preserve each legacy/source receipt,
+                # but never create another canonical LOCAL catalogue claim
+                # or link this item's acquisition to the incumbent artifact.
+                placement_id = None
+                artifact_id = None
+            else:
+                catalog_id = cls._stable_id("catalog", placement_id)
+                db.execute(
+                    "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,"
+                    "provider_id,item_id,local_state,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,catalog_entries.artifact_id),"
+                    "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=COALESCE(excluded.media_format,catalog_entries.media_format),"
+                    "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
+                    "updated_at=excluded.updated_at",
+                    (catalog_id, artifact_id, placement_id, str(row.get("title") or row.get("item_id") or "Sans titre"),
+                     row.get("author"), str(row.get("format") or "").lower() or None, row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
+                     "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+                )
         acquisition_id = cls._acquisition_id_for(row)
         acquisition_cursor = db.execute(
             "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
