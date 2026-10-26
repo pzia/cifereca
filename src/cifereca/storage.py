@@ -1507,8 +1507,8 @@ class Storage:
                     # identity must not remain dangling after this move.
                     if db.execute(
                         "SELECT 1 FROM backup_items WHERE local_path=? AND "
-                        "(provider_id<>? OR (identity_id IS NOT NULL "
-                        "AND identity_id<>?)) LIMIT 1",
+                        "(provider_id<>? OR identity_id IS NULL "
+                        "OR identity_id<>?) LIMIT 1",
                         (old_text, provider_id, identity_id),
                     ).fetchone():
                         raise ValueError("relocate_scope_conflict")
