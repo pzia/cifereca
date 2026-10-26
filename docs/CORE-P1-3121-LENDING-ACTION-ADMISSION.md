@@ -48,6 +48,11 @@ ni consentement.
 - session toujours enregistrée et connectée, credential/provider stables,
   emprunteur encore présent dans la session ;
 - `_account_context_epoch` Core et `_epoch` propre au provider, si présent.
+- inventaire d'emprunteurs lu **directement depuis `_accounts` en mémoire**, uniquement
+  si `session.accounts` reste la propriété de base `ProviderSession`.
+  Toute surcharge, absence de registre, duplication de l'objet ou dépassement
+  de 512 comptes bloque le bail **sans exécuter de getter plugin**.
+
 
 Un aller-retour Alice → Bob → Alice ne renouvelle pas un ancien consentement,
 même si le même objet `Account` est encore visible. Toute erreur échoue
@@ -74,6 +79,9 @@ CoreUI sont préservées.
   epoch Core et provider, ABA, changement in-place du credential/borrower,
   remplacement de session.accounts, mutation du prêt, annulation du contexte
   avant le GET, candidate nettoyée.
+- `tests/test_core_p1_3121_action_lease_getter.py` : propriété `accounts`
+  malveillante non invoquée, enregistrement absent ou dupliqué, limites,
+  revalidation après changement du compte.
 - Fixtures HTTPX locales seulement, pas de navigateur, réseau live, DRM ni
   nouvel appel implicite.
 
