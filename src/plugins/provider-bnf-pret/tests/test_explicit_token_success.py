@@ -116,7 +116,7 @@ def test_signed_link_parser_refuses_foreign_loan_and_malformed_query(wrong):
 def test_signed_link_in_fresh_activity_is_not_exported_to_core():
     from test_http_provider import ACT, FAKE_SIGNED_HREF
     from cifereca_bnf_pret_web import parse_loans, ProfileScope, ORIGIN
-    scope = ProfileScope('profile-a', 'credential-a')
+    scope = ProfileScope('profile-a', 'credential-a', 'synthetic-epoch')
     snapshot = parse_loans(ACT, page_url=ORIGIN + '/my_profile/activity',
                            expected=scope, observed=scope)
     assert len(snapshot.loans) == 1
