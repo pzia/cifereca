@@ -49,7 +49,7 @@ def test_canonical_error_filter_contains_explicit_download_failures(tmp_path):
 
     results = query_journal(path, provider_id="paris", limit=100)
     assert results["total"] == len(CASES)
-    events = {event["status"]: event for event in results["events"]}
+    events = {event["detail"]["status"]: event for event in results["events"]}
     for status, code, severity in CASES:
         assert events[status]["severity"] == severity
         assert events[status]["operation"] == "download_loan"
