@@ -50,6 +50,12 @@ def test_owned_not_downloadable_is_pending_not_silently_ignored(tmp_path, monkey
         _authorize(broker, sid)
         book = replace(_row(account.credential_id, 0), downloadable=False)
         session.library = lambda: [book]
+        # The old SQLite right can lack the live provider's downloadability
+        # flag. Even a permissive preflight must not authorize delivery.
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "preflight_numilog_purchase",
+            lambda *_a: SyncResult(ok=True, facts={"status": "candidate_unverified"}),
+        )
         monkeypatch.setattr(
             service, "acquire_direct_item",
             lambda *_a, **_kw: pytest.fail("non-downloadable owned item must not acquire"),
