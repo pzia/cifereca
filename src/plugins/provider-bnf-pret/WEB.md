@@ -238,3 +238,35 @@ Aucune nouvelle requête, relance, modification de route ou capture de
 formulaire SSO n’est ajoutée. Un échec d’activité ne déclenche pas le GET jeton.
 Les réponses de test sont synthétiques ; la cause HTTP du refus terrain et
 le fulfillment réel restent à qualifier dans #2055.
+
+## Lien ACSM BnF signé : qualification terrain du 26/10/2026 (draft #2055)
+
+L'utilisateur a observé depuis son navigateur une URL de téléchargement ayant
+la forme **structurelle** `/loans/{id}` avec les paramètres
+`device_type=reader`, `drm=acs4`, `nonce`, `timestamp` et `token`.
+**Aucune valeur de signature, URL complète ou capture privée n'est conservée
+dans ce dépôt.** Le GET précédent construit avec le seul `/loans/{id}`
+a effectivement répondu **HTTP 500**, tandis que la relecture de l'activité
+était **HTTP 200**. Un statut 500 ne prouve pas à lui seul une panne BnF.
+
+Cette tranche de correction interdit le GET non signé. Lorsqu'un lien signé
+existe **dans un `a[href]` de la carte du prêt exact au sein de la page
+d'activité fraîche**, son origine, sa route, les cinq paramètres attendus,
+l'unicité des paramètres et l'absence de lien contradictoire sont contrôlés.
+La query signée est reprise telle quelle, jamais régénérée, journalisée
+ni exposée au Core. Le même client HTTPX du compte utilise un GET non répété,
+refuse les redirections et continue à vérifier strictement les octets ACSM.
+
+**Limite explicite :** le seul exemple de lien navigateur ne prouve pas que
+cette URL figure dans le HTML brut de `/my_profile/activity`.
+Si elle n'y figure pas (lien assemblé par un script, une requête distincte ou
+une interaction consentie), le provider refuse avec
+`bnf_download_link_unavailable` **avant tout GET de jeton**, au lieu de
+réessayer la route non signée. Il faudra alors qualifier en privé le **point
+de production** du lien, sans recopier de secret, avant d'ajouter un nouveau
+parcours réseau. Le plugin ne fabrique ni `nonce`, ni `timestamp`, ni `token`.
+
+Tests synthétiques requis : lien valide observé dans une seule carte,
+champs exacts, lien absent, URL étrangère, prêt différent, query ambiguë,
+échec HTTP et XML invalide, aucun téléchargement déclenché au simple listing.
+Le succès réel ACSM puis ADEPT reste à recetter indépendamment.
