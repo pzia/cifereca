@@ -1023,7 +1023,18 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     self.diagnostics.add_core_kobo_backup_decision(kobo_decision)
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
-    self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
+    # The opening inventory covers ALL local identities to keep their rights
+    # current, but last_loans is consumed directly by the ACTIVE profile's
+    # Loans GTK page. Never publish the global multi-identity union there.
+    # Selecting another profile during a long opening sync is handled by
+    # reading current_identity at publication, not at task submission.
+    visible_identity = getattr(self.current_identity, "identity_id", None)
+    self.last_loans = sorted(
+        (row for row in all_loans
+         if type(row) is Loan and row.identity_id == visible_identity
+         and visible_identity is not None),
+        key=lambda row: (str(row.due_at or "9999"), row.title.casefold()),
+    )
     if deep:
         catalog = self.catalog_scan(repair_misnamed=True)
         self.storage.metadata_set("catalog_deep_last_at", int(time.time()))
