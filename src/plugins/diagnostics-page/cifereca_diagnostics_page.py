@@ -1584,8 +1584,12 @@ class DiagnosticsPagePlugin:
             if not callable(getattr(broker, "export_raw_journal", None)):
                 host.toast("Core incompatible : export brut non disponible")
                 return
+            # _UiHost is an adapter, not a Gtk.Window. The initiating button
+            # supplies the real toplevel; detached test pages have no parent.
+            root = _button.get_root()
+            parent = root if isinstance(root, Gtk.Window) else None
             chooser = Gtk.FileChooserNative.new(
-                "Exporter les événements bruts", host,
+                "Exporter les événements bruts", parent,
                 Gtk.FileChooserAction.SAVE, "Exporter", "Annuler",
             )
             chooser.set_current_name("cifereca-journal-brut.json")
