@@ -8,6 +8,16 @@
 
 
 
+## Doctrine de confidentialité — credentials uniquement (26/10/2026)
+
+**Seuls les credentials nécessitent une protection de confidentialité spécifique.** Sont concernés les secrets qui permettent de s'authentifier ou d'accéder à une ressource : mots de passe, jetons d'accès/rafraîchissement, cookies de session authentifiants, clés API privées, clés privées et URL signées qui font office de jetons. Un `credential_id`, un identifiant de compte ou un login *sans secret d'authentification* ne constitue pas en soi un credential secret.
+
+**Tous les autres éléments sont utilisables tels quels à des fins de diagnostic et de preuve** : exceptions, traces, corps d'erreur, statut/échanges HTTP, chemins, titres, identifiants de compte ou de livres, noms, emails, profils, informations métier et captures sans credential. Ils ne justifient **aucun masquage, anonymisation, expurgation, collecte de preuves de confidentialité, audit additionnel ou ticket spécifique**. Ne pas bloquer un P0/P1, une PR, une recette ou une clôture sur leur seule présence ; ne pas inventer de travaux de confidentialité accessoires.
+
+Pour les credentials, conserver les protections existantes : stockage local à permissions restrictives, absence de publication/transfert automatique des secrets et avertissement/confirmation avant export volontaire des journaux bruts. **Le contrat de journalisation reste intégral et non expurgé**, y compris dans les exports bruts déclenchés par l'utilisateur ; **seuls login et mot de passe sont pseudonymisés dans le rendu de l'IHM Diagnostics**, selon le contrat canonique. La protection des credentials n'autorise pas une expurgation générique des données de diagnostic.
+
+Cette règle prévaut sur les anciennes consignes générales de « données privées » ou « logs/captures expurgés » en matière de **confidentialité** ; elle ne supprime ni les invariants de droits, d'intégrité, de sécurité des opérations, ni les limitations techniques propres à des artefacts ou à une autorisation fournisseur.
+
 Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontières et le mode de collaboration. Les profils sous [.agents/roles/](.agents/roles/README.md) et les AGENTS.md locaux précisent les règles par répertoire. En cas de divergence documentaire, vérifier le code et les contrats actifs avant d'agir.
 
 ## Priorités : une seule file

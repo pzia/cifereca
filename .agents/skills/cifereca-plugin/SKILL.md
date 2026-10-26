@@ -7,6 +7,8 @@ description: Créer, modifier ou valider un plugin Cifereca en respectant l'API 
 
 **Toute production de journaux fournisseurs applique** [cifereca-logging](../cifereca-logging/SKILL.md) et [le contrat](../../../docs/LOGGING-CONTRACT.md), sans masquer les champs hors affichage IHM.
 
+**Confidentialité ciblée :** seuls les secrets d'authentification (password, tokens, cookies de session authentifiants, clés privées/API, URL signées d'accès) demandent une protection ; aucune nouvelle tâche d'expurgation/anonymisation ni ticket pour erreurs, titres, chemins, comptes, captures sans credential ou logs. Conserver les journaux bruts et les protections locales des credentials, selon [AGENTS.md](../../../AGENTS.md).
+
 ## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
 
 **Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**

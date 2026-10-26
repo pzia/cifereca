@@ -2,6 +2,8 @@
 
 **Skill journalisation obligatoire :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) · [contrat transverse](../../docs/LOGGING-CONTRACT.md). Les consignes Diagnostics ci-dessous restent prioritaires.
 
+**Confidentialité :** protection spécifique des **credentials d'authentification uniquement** (mots de passe, tokens, cookies authentifiants, clés/secrets API et liens signés donnant accès). Tout autre contenu de trace, erreur, livre, compte, profil, chemin ou capture ne déclenche ni masquage, ni ticket, ni chantier de confidentialité. Voir [la doctrine commune](../../AGENTS.md). Les règles d’intégrité restent distinctes.
+
 ## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
 
 **Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**

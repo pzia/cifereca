@@ -1,5 +1,8 @@
 # CI/CD P0 #1143 — audit de publication des artefacts (19 octobre 2026)
 
+> **Interprétation produit actualisée (26/10/2026) :** les seules données à protéger au titre de la confidentialité sont les **credentials** : mots de passe, jetons bearer/refresh, cookies de session authentifiants, clés privées/secrets API et liens signés donnant accès. La présence de noms, comptes, chemins, titres, identifiants, textes d'erreur, URL ordinaires, traces ou captures **sans credential** ne motive ni un nouveau ticket de confidentialité, ni des purges, expurgations ou contrôles supplémentaires. Les règles historiques ci-dessous documentent les **artefacts et limites de publication réellement implémentés** ; elles ne constituent pas une demande d'élargissement des travaux à la confidentialité des autres champs. Les contrôles existants continuent de s'appliquer jusqu'à modification explicite du pipeline par CI/CD ; ne jamais publier automatiquement de credentials.
+
+
 ## Périmètre vérifié
 
 **Dépôt public** : les journaux des workflows, step summaries et artefacts Actions peuvent être lus hors équipe. La revue couvre **tous** les fichiers de `.github/workflows/*.yml` sur `main`, et les producteurs historiques cités dans #1143. Les workflows sans `upload-artifact` ne produisent pas d'archives Actions, mais leurs logs restent publics.
