@@ -6,12 +6,12 @@
 - `max_pending=None` est la valeur par défaut, **comportement historique conservé**. Aucun nombre de threads supplémentaires, aucune limite active imposée sans activation explicite.
 - L'option est propagée facultativement par `TaskRunner` (actions GTK) et `TaskBrokerImpl` (opérations Core/plugins), à configuration indépendante. Le `TaskRunner` existant transforme les refus `RuntimeError` en retour UI générique et libère contrôle, réservation et compteur.
 - `admission_snapshot()` retourne exclusivement `pending`, `active`, `admitted`, `rejected`, `max_pending`, `closed`, jamais les libellés, clés de coalescence, propriétaires, titres, URLs ni identités. Aucun export de métriques persistantes implicite.
-- Une tâche annulée dans la file ne sera pas exécutée. Son entrée occupe un emplacement *physique* jusqu'à son retrait par un worker ou le shutdown : la mémoire de la file reste bornée en mode plafonné, sans compaction risquée de heap.
+- Une tâche annulée **avant démarrage** ne sera pas exécutée. Avec `max_pending=N`, `Future.cancel()` retire immédiatement son entrée du tas `PriorityQueue` sous son mutex, restaure `pending` et la place d'admission, sans double décompte lors des courses avec worker/shutdown. Les soumissions/annulations répétées ne gonflent donc pas physiquement la file plafonnée. Sans cap (`max_pending=None`), l'entrée annulée peut rester dans la file jusqu'au retrait par un worker ou au shutdown : le comportement historique reste inchangé.
 - `shutdown(cancel_futures=True)` supprime les entrées restantes ; les callbacks de `Future.cancel()` s'exécutent **hors verrou** pour ne pas bloquer l'observation ou une tentative de nouvelle soumission.
 
 ## Limites intentionnelles
 
-Ce budget est **local au pool**, pas encore une admission globale I/O/CPU, ni un quota par fournisseur/compte/hôte. Le cap n'est pas activé globalement par défaut, faute de seuil p95/charge mesuré sur le poste réel et de règle d'éviction donnant priorité aux actions utilisateur. La priorité des éléments *admis* reste intacte. Une action utilisateur arrivant après saturation est rejetée ; il reste à définir une politique de réservation/éviction avant de l'activer en production.
+Ce budget est **local au pool**, pas encore une admission globale I/O/CPU, ni un quota par fournisseur/compte/hôte. Le cap n'est pas activé globalement par défaut, faute de seuil p95/charge mesuré sur le poste réel et de règle d'éviction donnant priorité aux actions utilisateur. La priorité des éléments *admis* reste intacte. Une action utilisateur arrivant après saturation est rejetée tant qu'aucune place n'est effectivement libérée (y compris par annulation) ; il reste à définir une politique de réservation/éviction avant de l'activer en production.
 
 Il reste à #2431 : gouvernance partagée entre pools, anti-famine, budgets par source, comparatif p50/p95 CPU/RSS et activation progressive ; coordination #1741. Aucun gain chiffré supposé.
 
@@ -84,8 +84,10 @@ l'activation contrôlée restent à #2431/#1741. Aucun quota produit n'est activ
 worker, conservée jusqu'à sa sortie et la fin des callbacks de Future) de
 `queued = inflight - running` (réservée, pas encore démarrée). Ce dernier
 compte les réservations avant démarrage, **pas la taille physique des heaps** :
-un Future annulé peut encore avoir une entrée dans un pool tout en ayant
-libéré sa réservation partagée. Un utilisateur direct de `acquire()` reste
+sans `max_pending` local, un Future annulé peut encore avoir une entrée
+physique en file tout en ayant libéré sa réservation partagée ; avec
+`max_pending=N`, l'entrée est retirée immédiatement lorsqu'elle est encore
+en attente. Un utilisateur direct de `acquire()` reste
 compté dans `queued` tant qu'il n'appelle pas `mark_running()`.
 
 `peak_inflight`, `peak_running`, `peak_queued` sont des maxima numériques
