@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 ORIGIN = "https://pret.bnf.fr"
 MAX_HTML_BYTES = 512 * 1024
@@ -128,6 +128,43 @@ def _id(href: str, kind: str) -> str | None:
 def _links(node, kind):
     return {value for n in node.walk() if n.tag == "a"
             and (value := _id(n.attrs.get("href", ""), kind))}
+
+
+def signed_loan_url(href: str, loan_id: str) -> str | None:
+    """Accept a fresh BnF-provided signed link, never synthesize its signature.
+
+    The opaque query remains private and unchanged. This validator is shared
+    by activity parsing and the HTTP transport's last check before I/O.
+    """
+    if (type(href) is not str or not 0 < len(href) <= 4096
+            or type(loan_id) is not str
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", loan_id) is None
+            or any(ord(ch) <= 32 or ch == "\\" for ch in href)):
+        return None
+    try:
+        parts = urlsplit(href)
+        if (parts.scheme not in {"", "https"} or
+                parts.netloc not in {"", "pret.bnf.fr"} or
+                parts.username or parts.password or parts.fragment or
+                parts.path != "/loans/" + loan_id or not parts.query or
+                (not parts.scheme and parts.netloc) or
+                (parts.scheme and parts.netloc != "pret.bnf.fr")):
+            return None
+        pairs = parse_qsl(parts.query, keep_blank_values=True,
+                          strict_parsing=True, max_num_fields=6)
+        values = dict(pairs)
+        if (len(pairs) != 5 or len(values) != 5 or
+                set(values) != {"device_type", "drm", "nonce", "timestamp", "token"} or
+                values["device_type"] != "reader" or values["drm"] != "acs4" or
+                re.fullmatch(r"[A-Za-z0-9_-]{8,128}", values["nonce"]) is None or
+                re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z",
+                             values["timestamp"]) is None or
+                re.fullmatch(r"[A-Za-z0-9_-]{16,256}", values["token"]) is None):
+            return None
+        # Preserve signed octets/encoding: never re-encode or reorder fields.
+        return urljoin(ORIGIN + "/", href)
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -328,6 +365,7 @@ class LoanRecord:
     # Do not use headers, linked catalogue names or unrelated book scopes.
     authors: tuple[str, ...] = field(default=(), repr=False, compare=False)
     thumbnail_url: str | None = field(default=None, repr=False, compare=False)
+    signed_download_url: str | None = field(default=None, repr=False, compare=False)
     # Raw dates intentionally absent: no date selector has been qualified.
 
 
@@ -372,15 +410,25 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         if len(author_values) > 8:
             partial = True
             author_values = ()
+        loan_id = next(iter(lids))
         resource_id = next(iter(rids))
-        loan = LoanRecord(next(iter(lids)), resource_id,
+        signed = {
+            link for n in card.walk() if n.tag == "a"
+            and _id(n.attrs.get("href", ""), "loans") == loan_id
+            if (link := signed_loan_url(n.attrs.get("href", ""), loan_id))
+        }
+        if len(signed) > 1:
+            partial = True  # Divergent signed destinations: refuse token GET.
+        loan = LoanRecord(loan_id, resource_id,
                           next(iter(titles)) if len(titles) == 1 else "",
-                          tuple(author_values), _loan_cover(card, resource_id))
+                          tuple(author_values), _loan_cover(card, resource_id),
+                          next(iter(signed)) if len(signed) == 1 else None)
         if loan.loan_id in loans:
             previous = loans[loan.loan_id]
             if previous.resource_id != loan.resource_id:
                 raise WebParseError("ambiguous_loans")
-            if previous.thumbnail_url != loan.thumbnail_url:
+            if (previous.thumbnail_url != loan.thumbnail_url
+                    or previous.signed_download_url != loan.signed_download_url):
                 # Duplicate cards with conflicting evidence must not choose
                 # a cover arbitrarily; keep the positive loan but no image.
                 partial = True
