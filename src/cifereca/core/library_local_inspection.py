@@ -763,9 +763,7 @@ class LocalInspection:
         # remain unverified, even if the user made an exact-scoped statement.
         recorded_scopes = frozenset()
         if service is not None:
-            from .library_declared_links import (
-                DeclarationRejected, recorded_declared_scopes,
-            )
+            from .library_declared_links import recorded_declared_scopes
             try:
                 current_storage = service.storage
                 if valid():
@@ -774,7 +772,9 @@ class LocalInspection:
                     )
                     if valid() and service.storage is current_storage:
                         recorded_scopes = observed_scopes
-            except DeclarationRejected:
+            except Exception:
+                # Optional local projection must never interrupt inspection;
+                # unknown evidence is not an active statement or a file proof.
                 pass
         for index in displayed_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
