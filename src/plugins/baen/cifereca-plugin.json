@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.baen",
-    "version": "0.1.12",
+    "version": "0.1.13",
     "name": "Baen",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -31,7 +31,7 @@
         }
       },
       "help_text": "Catalogue public Baen Free Library, désactivé par défaut : seul le champ général est proposé. La recherche et la pagination serveur restent non qualifiées ; chaque réponse est signalée comme partielle, même vide. Une liste vide ne prouve pas l’absence de livres correspondant à la requête. À l’ouverture d’une fiche publique, le plugin conserve auteur, date de publication et ISBN explicitement exposés par la page produit, avec provenance, sans extrapoler genre ni données de compte. Le flux EPUB final est téléchargé par transport.http avec limite de taille, validation EPUB et publication atomique. Achats et My Books restent hors périmètre.",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "capabilities": [
         "catalog.search",
         "catalog.detail",
