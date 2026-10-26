@@ -494,6 +494,16 @@ class LocalCatalog:
                                      "media_format": media_format},
                     }
                 )
+                # The physical placement is no longer trusted; an old
+                # catalogue projection must not continue to advertise this
+                # file as local/usable while its bytes are invalid.
+                if previous:
+                    for entry in self.storage.catalog_entries():
+                        if (entry.get("placement_id") == previous["placement_id"]
+                                and entry.get("local_state") != "invalid"):
+                            self.storage.catalog_entry_put({
+                                **entry, "local_state": "invalid",
+                            })
                 continue
 
             existing = self.storage.placement_for_path(Path(path_text))
