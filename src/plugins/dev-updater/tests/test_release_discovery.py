@@ -1,9 +1,8 @@
 """P2 #794: safe, deterministic GitHub release discovery without HTTP."""
 from __future__ import annotations
 
-import io
 import json
-from urllib.error import HTTPError, URLError
+import httpx
 
 import pytest
 
@@ -21,22 +20,9 @@ def release(tag, date, *, prerelease=False, draft=False, assets=None):
     }
 
 
-class Response:
-    def __init__(self, url, payload, *, mime="application/json", status=200):
-        self.url, self.payload, self.status = url, io.BytesIO(payload), status
-        self.headers = {"Content-Type": mime}
-
-    def geturl(self):
-        return self.url
-
-    def read(self, size=-1):
-        return self.payload.read(size)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        self.payload.close()
+def response(request, payload, *, mime="application/json", status=200):
+    return httpx.Response(status, headers={"Content-Type": mime},
+                          stream=httpx.ByteStream(payload), request=request)
 
 
 def test_channel_and_draft_filter_with_dates_not_input_order():
@@ -75,14 +61,14 @@ def test_url_allowlist_no_auth_and_single_explicit_get():
     )]).encode()
     def opener(req):
         calls.append(req)
-        return Response(req.full_url, body)
-    chosen = fetch_releases(DEFAULT_REPOSITORY, opener=opener)
+        return response(req, body)
+    chosen = fetch_releases(DEFAULT_REPOSITORY, transport=httpx.MockTransport(opener))
     assert chosen.tag == "v1.1"
     assert chosen.zip_names == ("v1.1.zip",)
     assert chosen.verification_names == ("v1.1.zip.sha256", "v1.1.zip.sigstore.json")
     assert len(calls) == 1
-    assert calls[0].get_method() == "GET"
-    assert calls[0].full_url == (
+    assert calls[0].method == "GET"
+    assert str(calls[0].url) == (
         "https://api.github.com/repos/pzia/cifereca/releases?per_page=30"
     )
     assert not any("authorization" in key.casefold() for key in calls[0].headers)
@@ -99,20 +85,23 @@ def test_bad_response_is_rejected_without_payload_leak(options):
     url = "https://api.github.com/repos/pzia/cifereca/releases?per_page=30"
     body = options.pop("payload", b"[]")
     with pytest.raises(ReleaseCheckError):
-        fetch_releases(opener=lambda req: Response(url, body, **options))
+        fetch_releases(transport=httpx.MockTransport(lambda req: response(req, body, **options)))
 
 
 def test_redirect_and_http_errors_are_friendly_and_do_not_expose_url():
+    requests=[]
+    def redirect(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"Location":"https://evil.invalid/release"})
     with pytest.raises(ReleaseCheckError, match="redirigée"):
-        fetch_releases(opener=lambda req: Response("https://evil.invalid/release", b"[]"))
-    def throttled(req):
-        raise HTTPError(req.full_url, 403, "Sensitive header", {}, None)
+        fetch_releases(transport=httpx.MockTransport(redirect))
+    assert len(requests)==1
     with pytest.raises(ReleaseCheckError, match="limite"):
-        fetch_releases(opener=throttled)
-    def offline(req):
-        raise URLError("secret-host or token")
+        fetch_releases(transport=httpx.MockTransport(lambda r:httpx.Response(403)))
+    def offline(request):
+        raise httpx.ConnectError("secret-host or token",request=request)
     with pytest.raises(ReleaseCheckError) as caught:
-        fetch_releases(opener=offline)
+        fetch_releases(transport=httpx.MockTransport(offline))
     assert "secret" not in str(caught.value)
 
 

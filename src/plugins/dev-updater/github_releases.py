@@ -9,9 +9,9 @@ import json
 import re
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from packaging.version import InvalidVersion, Version
 
@@ -24,11 +24,6 @@ _ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,159}$")
 
 class ReleaseCheckError(Exception):
     """User-safe error. Never contains an upstream URL, token or raw payload."""
-
-
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, newurl):
-        return None
 
 
 @dataclass(frozen=True)
@@ -127,39 +122,41 @@ def select_release(payload, *, channel="stable"):
     return max(qualified, key=lambda r: r.published) if qualified else None
 
 
-def _request(request):
-    return build_opener(NoRedirect()).open(request, timeout=10)
-
-
-def fetch_releases(repository=DEFAULT_REPOSITORY, *, channel="stable", opener=None):
-    """Bounded JSON read of public GitHub releases. No redirects or credentials."""
+def fetch_releases(repository=DEFAULT_REPOSITORY, *, channel="stable", transport=None):
+    """Bounded raw JSON read via Core. Explicit action, no redirect or cookie reuse."""
     slug = repository_slug(repository)
     selected_channel = channel_name(channel)
     owner, name = slug.split("/")
     url = ("https://api.github.com/repos/" + quote(owner, safe="") +
            "/" + quote(name, safe="") + "/releases?per_page=30")
-    req = Request(url, headers={
+    headers = {
         "Accept": "application/vnd.github+json",
+        "Accept-Encoding": "identity",
         "User-Agent": "cifereca-dev-updater-readonly/0.1",
         "X-GitHub-Api-Version": "2022-11-28",
-    }, method="GET")
+    }
     try:
-        with (opener or _request)(req) as response:
-            if response.geturl() != url or response.status != 200:
-                raise ReleaseCheckError("Réponse redirigée ou invalide.")
-            mime = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-            if mime not in ("application/json", "application/vnd.github+json"):
-                raise ReleaseCheckError("La réponse GitHub n'est pas du JSON.")
-            data = response.read(MAX_RESPONSE + 1)
-            if len(data) > MAX_RESPONSE:
-                raise ReleaseCheckError("Réponse GitHub trop volumineuse.")
-    except HTTPError as exc:
-        if exc.code in (403, 429):
-            raise ReleaseCheckError("GitHub limite les vérifications ; réessayez ultérieurement.") from None
-        if exc.code in (401, 404):
-            raise ReleaseCheckError("Dépôt ou accès aux releases indisponible.") from None
-        raise ReleaseCheckError("Vérification GitHub indisponible.") from None
-    except (URLError, TimeoutError, OSError):
+        with HTTPX_TRANSPORT.client(producer="dev-updater", timeout=10,
+                                    follow_redirects=False, transport=transport) as client:
+            with client.stream("GET", url, headers=headers) as response:
+                status = response.status_code
+                if status in (403, 429):
+                    raise ReleaseCheckError("GitHub limite les vérifications ; réessayez ultérieurement.")
+                if status in (401, 404):
+                    raise ReleaseCheckError("Dépôt ou accès aux releases indisponible.")
+                if status >= 400:
+                    raise ReleaseCheckError("Vérification GitHub indisponible.")
+                if str(response.url) != url or status != 200:
+                    raise ReleaseCheckError("Réponse redirigée ou invalide.")
+                mime = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                if mime not in ("application/json", "application/vnd.github+json"):
+                    raise ReleaseCheckError("La réponse GitHub n'est pas du JSON.")
+                data = bytearray()
+                for chunk in response.iter_raw(chunk_size=64 * 1024):
+                    data.extend(chunk)
+                    if len(data) > MAX_RESPONSE:
+                        raise ReleaseCheckError("Réponse GitHub trop volumineuse.")
+    except (httpx.HTTPError, TimeoutError, OSError):
         raise ReleaseCheckError("Connexion à GitHub indisponible.") from None
     try:
         payload = json.loads(data)
