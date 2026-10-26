@@ -114,10 +114,17 @@ def main():
             if report["status"] != "RUNNING":
                 return False
             try:
-                report["checkpoint"] = fn.__name__
+                code = getattr(fn, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
                 save()
                 fn()
             except Exception as exc:
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        report["failure_line"] = trace.tb_lineno
+                    trace = trace.tb_next
                 fail(type(exc).__name__)
             return False
         GLib.timeout_add(ms, run)
@@ -143,23 +150,35 @@ def main():
         assert len(matches) == 1
         return reveal_diagnostics_section(matches[0])
 
-    def press(button):
-        assert button.grab_focus() is not False
+    def press(button, follow):
+        # A newly revealed Gtk.Stack child may need an allocation tick before
+        # a physical XTEST key is routed. Prove focus before sending Space.
+        def acquire():
+            if not button.get_mapped():
+                return False
+            button.grab_focus()
+            return button.has_focus()
+        until(acquire, lambda: keypress(button, follow), seconds=5)
+
+    def keypress(button, follow):
+        assert button.has_focus()
         device[0].key("space", True)
         device[0].key("space", False)
+        later(follow, 180)
 
     def begin():
         assert page[0].get_root() is window[0]
         assert plugin._raw_export_chooser is None
-        press(button())
+        press(button(), first_press_done)
+
+    def first_press_done():
         assert plugin._raw_export_chooser is None
         assert "Confirmer l’export brut non masqué" == button().get_label()
         assert broker.exports == 0
         report["checks"]["first_press_only_warns"] = True
-        later(second_press, 180)
+        press(button(), second_press_done)
 
-    def second_press():
-        press(button())
+    def second_press_done():
         until(lambda: plugin._raw_export_chooser is not None,
               chooser_opened)
 
@@ -196,11 +215,12 @@ def main():
         assert not target.exists()
         assert broker.exports == 0
         report["checks"]["cancel_no_file_no_broker"] = True
-        press(button())
-        later(third_press, 130)
+        press(button(), third_press)
 
     def third_press():
-        press(button())
+        press(button(), third_press_done)
+
+    def third_press_done():
         until(lambda: plugin._raw_export_chooser is not None, choose_target)
 
     def choose_target():
