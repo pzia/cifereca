@@ -14,10 +14,12 @@ identifiants déterministes des tables `entitlements` et
 explicite. Il expose les compteurs fermés suivants : droits/ledger absents,
 divergences de portée, de statut d'acquisition, d'artefact et de placement.
 
+Les anciennes lignes Kobo sans `identity_id` rendent tout audit scoped **`scope_unverified`**, sans affectation implicite au profil courant à partir d'une credential ou d'un titre. Leur migration explicite doit précéder la qualification complète.
+
 **Un statut `complete` signifie uniquement que l'échantillon SQLite a été
 parcouru en entier**, et non qu'une acquisition est réussie, qu'un fichier
 est accessible, qu'un achat est attesté ou que l'inventaire vendeur est
-exhaustif. `budget_exceeded`, `invalid_scope` et `unavailable` sont
+exhaustif. `budget_exceeded`, `scope_unverified`, `invalid_scope` et `unavailable` sont
 des états **non concluants** ; pas de totaux partiels présentés comme preuves.
 Budget maximal fixe : 500 lignes. Les champs d'identification, credentials
 et chemins restent à l'intérieur de SQLite ; seules les valeurs de statut et
