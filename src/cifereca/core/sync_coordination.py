@@ -124,9 +124,9 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             raise ProviderConfigurationError("loan_source_scope_changed")
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
-        # An explicit source refresh has the SAME positive-loan semantics as
-        # opening sync. Never infer absence, close loans missing from an
-        # empty/partial list, expire another account's loans or acquire EPUBs.
+        # A source refresh has the same positive-loan semantics as opening
+        # sync. Never infer absence or close loans missing from a partial list.
+        # BnF materialization below requires its separate per-account opt-in.
         if loans:
             from . import library_mutation
             with measure("rights_mirror_ms"):
@@ -139,6 +139,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
+        if account.provider_id == 'bnf-pret':
+            from .bnf_auto_materialization import enabled, materialize
+            if enabled(self, account):
+                outcomes = [materialize(self, account, loan, control=control) for loan in loans]
+                result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
+                result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
+                if any(row['status'] not in {'complete', 'unchanged', 'skipped'} for row in outcomes):
+                    result['status'] = 'partial'
         # Use the same provider partial-inventory signal as opening sync.
         # BnF HTML observations are deliberately non-exhaustive even when
         # every request succeeded. Preserve Paris' legacy fail-closed default
@@ -710,6 +718,20 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 session = self._sessions.get(
                     self._session_key(loan.source_provider, loan.source_credential)
                 )
+                if loan.source_provider == 'bnf-pret':
+                    from .bnf_auto_materialization import enabled, materialize
+                    account = next((a for a in self.accounts
+                                    if a.identity_id == loan.identity_id
+                                    and a.provider_id == 'bnf-pret'
+                                    and a.credential_id == loan.source_credential
+                                    and a.unique_id == loan.source_account_id), None)
+                    if account is not None and enabled(self, account):
+                        outcome = materialize(self, account, loan)
+                        if outcome['status'] == 'complete':
+                            new_acquisitions += 1
+                        elif outcome['status'] == 'attention_required':
+                            attention += 1
+                    continue
                 if not _opening_loan_acquisition_allowed(loan, session=session):
                     continue
                 result = self._acquire_active_loan_automatically(loan)
