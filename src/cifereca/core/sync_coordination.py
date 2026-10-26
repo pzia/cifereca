@@ -672,9 +672,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         snapshot is not None and snapshot.status == "partial"
                     ) or legacy_unverified
                     if inventory_partial:
-                        # One closed partial observation per account, not the
-                        # mutable number of upstream error strings.
-                        errors += 1
+                        # Unknown v1 coverage is not a *provider error*: do
+                        # not inflate failure counts (or blame an acquisition).
+                        # It still makes this source and identity incomplete.
+                        if not legacy_unverified:
+                            errors += 1
                         provider_errors.append({
                             "code": (
                                 "loan_legacy_unverified" if legacy_unverified
@@ -838,7 +840,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                                     "process": result.get("process", {})}
                     detail.setdefault("acquisition_errors", []).append(issue)
                     self.diagnostics.add("ACQUISITION", "loan sync", "error" if result["status"] == "retryable_error" else "warning", detail=issue, level="errors")
-            if errors or attention:
+            if errors or attention or any(
+                state == "partial" for state in source_outcomes.values()
+            ):
+                # Unknown v1 coverage is partial, not a transport error.
                 # A partially successful source is not a total failure even
                 # when its list contains zero entries. Provider error counts
                 # need not equal the number of accounts (Paris has 2 branches).
