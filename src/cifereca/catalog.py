@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hashlib
 import mimetypes
 import time
@@ -335,6 +336,19 @@ class LocalCatalog:
     def scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> CatalogScanResult:
         self._force_covers = force_covers
         self._cover_refresh_seen = set()
+        # Never fabricate an empty replacement for a temporarily unavailable
+        # library (unmounted volume, removed root). Doing so and then marking
+        # every previously indexed placement missing would turn an outage
+        # into false absence evidence for reconciliation/reacquisition.
+        if not self.root.exists():
+            root = self.root.resolve()
+            if any(
+                type(placement.get("path")) is str
+                and Path(placement["path"]).is_absolute()
+                and Path(placement["path"]).is_relative_to(root)
+                for placement in self.storage.placements()
+            ):
+                raise FileNotFoundError("catalog_scan_root_unavailable")
         self.root.mkdir(parents=True, exist_ok=True)
         started_at = int(time.time())
         previous_catalog = {row["catalog_entry_id"]: row for row in self.storage.catalog_entries()}
@@ -492,6 +506,18 @@ class LocalCatalog:
                     effective = preserved
             if str((effective.get('metadata') or {}).get('path') or '') in seen_paths:
                 self._enrich_epub_entry(effective)
+
+        # pathlib.rglob can suppress scandir failures on some Python versions.
+        # An unreadable child directory is *not* evidence its known files
+        # vanished. Require a successful complete directory traversal before
+        # applying the negative SQLite transition, even if positive files
+        # were indexed earlier in this pass.
+        def fail_incomplete(_error):
+            raise OSError("catalog_scan_incomplete") from None
+
+        for _ in os.walk(self.root, topdown=True, onerror=fail_incomplete,
+                         followlinks=False):
+            pass
 
         missing_marked = self.storage.placements_mark_missing(self.root, seen_paths, seen_at=started_at)
         return CatalogScanResult(
