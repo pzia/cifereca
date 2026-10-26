@@ -395,6 +395,24 @@ class _HTTPXTransportService:
             raise TypeError("The Core HTTPX service owns the capture session")
         return TraceHTTPClient(producer=producer, **options)
 
+    def public_client(self, *, producer: str, timeout: float = 15) -> httpx.Client:
+        """Create an isolated, non-proxied client pinned to public IP peers.
+
+        Each redirect remains an explicit caller decision. No transport,
+        mount, proxy or SSL override can bypass public-peer validation.
+        """
+        import math
+        from .public_httpx_transport import PublicOnlyHTTPTransport
+        try:
+            valid_timeout = type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0
+        except OverflowError:
+            valid_timeout = False
+        if not valid_timeout:
+            raise ValueError("A finite positive public HTTP timeout is required")
+        return TraceHTTPClient(producer=producer, timeout=timeout,
+                               trust_env=False, follow_redirects=False,
+                               transport=PublicOnlyHTTPTransport())
+
     def async_client(self, *, producer: str, **options) -> httpx.AsyncClient:
         if 'capture' in options:
             raise TypeError("The Core HTTPX service owns the capture session")

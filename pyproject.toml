@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "apsw>=3.54.0,<3.55",
   "httpx>=0.28.1,<0.29",
+  "httpcore>=1.0,<1.1",
   "packaging>=24,<26",
 ]
 

@@ -120,3 +120,21 @@ Les corps ne sont pas dupliqués dans le journal canonique.
 Cette première tranche fournit les primitives et le broker. L'adoption des
 clients Core/plugins et le bouton Diagnostics nécessitent leurs adaptations
 respectives : cette API seule ne prétend pas couvrir leurs échanges existants.
+
+## Destinations publiques avec DNS épinglé — API 1.4.2 (#3335)
+
+`HTTPX_TRANSPORT.public_client(producer=..., timeout=...)` utilise le même
+Trace Core mais impose une connexion directe (pas de proxy, mount, transport
+ou SSL remplaçable), un timeout fini positif, HTTP/1.1 et aucun retry/redirect
+implicite. Tous les résultats DNS doivent être globaux ; l'adresse numérique
+choisie est connectée sans seconde résolution du hostname, puis le pair est
+contrôlé avant d'envoyer HTTP. HTTPcore garde l'origine initiale pour Host, SNI
+et vérification du certificat TLS, avec le contexte système vérifié.
+
+Ce contrat reprend le transport public déjà employé par les flux de Critique
+littéraire : sa migration ne doit pas affaiblir l'épinglage ni ajouter une
+exception autonome. Le caller conserve la whitelist d'URL, les limites de
+corps, le budget global et les décisions de redirection (dont refus de
+downgrade HTTPS). Le backend synchrone dépend explicitement de HTTPcore 1.0.x
+et HTTPX 0.28.x ; l'upgrade de ces bornes doit rééprouver ce point d'intégration.
+Aucune requête de sondage et aucune interception globale ne sont ajoutées.
