@@ -69,3 +69,24 @@ Cette garantie ne supprime pas les écritures de la projection v0.7 ni ne
 migre les anciennes lignes ; elle prépare le retrait du double chemin
 autoritatif. Les références `placements` et les chemins physiques demeurent
 traités séparément par #3185. Les tests ne touchent aucun fournisseur Kobo réel.
+
+## Lot additionnel : propriété d'un chemin de placement
+
+La projection Kobo persistait historiquement le chemin physique par
+`placements.path` unique. L'ancien `ON CONFLICT(path)` pouvait écraser
+`artifact_id`, `provider_id` et `source_item_id` depuis une autre
+connexion ou un autre livre, **sans preuve de transfert de propriété**.
+
+Le miroir applique désormais une condition SQL sur l'identité, le fournisseur
+et le livre source avant tout `UPDATE` d'un placement existant. Deux valeurs
+explicites différentes entraînent `backup_placement_owner_conflict` ; le
+`backup_put` entier est annulé transactionnellement, projection v0.7,
+droits, artefacts, notices et acquisitions compris. Les mises à jour
+idempotentes du même propriétaire sont conservées.
+
+Un ancien `NULL` n'est pas réinterprété comme attestation d'une nouvelle
+identité lors de cette projection : l'owner manquant reste à résoudre par
+réconciliation explicite. **Aucun fichier** n'est déplacé, détruit,
+téléchargé ou associé par SHA/titre. L'ownership des placements sera
+traité complètement avec #3185 lors de la migration vers la source
+canonique, pas par une affectation implicite Kobo.
