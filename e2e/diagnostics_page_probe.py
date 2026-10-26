@@ -607,8 +607,10 @@ def main():
         assert exporter.dialog.get_visible()
         target = out / "cifereca-performance.json"
         target.write_bytes(b"CAPTURE-EXPORT-FIXTURE")
-        assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
+        # Set the SAVE name before the exact GFile selection: GTK may clear
+        # an already selected GFile when changing the current name.
         exporter.dialog.set_current_name(target.name)
+        assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
         until(lambda: exporter.dialog.get_file() is not None
               and exporter.dialog.get_file().get_path() == str(target),
               lambda: capture_accept(exporter, target), seconds=5)
