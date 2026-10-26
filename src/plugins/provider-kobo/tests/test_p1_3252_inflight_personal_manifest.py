@@ -111,3 +111,77 @@ def test_stable_personal_account_still_returns_exact_positive_manifest(entrypoin
             assert session.backup_manifest_policy["status"] == "classified"
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("race", ["disconnect", "same_account_reconnect", "account_replaced"])
+@pytest.mark.parametrize("phase", ["library_normalize", "library_cover", "backup_cover"])
+def test_manifest_epoch_is_rechecked_after_local_projection(phase, race):
+    """A session changing AFTER Vault GET cannot publish prior account rights.
+
+    The old first fence is deliberately allowed to pass: the race happens in
+    the subsequent local projection, not in the HTTP client's response.
+    """
+    vault = FakeVault([{
+        "product_id": "book-1", "account_id": "alice",
+        "owned": True, "downloadable": True,
+    }])
+    session = _session(vault)
+    calls = []
+
+    def change_binding():
+        if not calls:
+            calls.append("projection")
+            if race == "disconnect":
+                session.close()
+            elif race == "same_account_reconnect":
+                session._personal_binding_generation += 1
+            else:
+                session._accounts = [Account(
+                    unique_id="alice", display_name="Rebound",
+                    provider_id=session.provider_id,
+                    credential_id=session.credential_id,
+                )]
+
+    def normalization(row, **kwargs):
+        change_binding()
+        return row
+
+    def cover_url(row):
+        change_binding()
+        return None
+
+    session.catalog.cover_url = cover_url if phase != "library_normalize" else lambda row: None
+    session.normalize_item = normalization if phase == "library_normalize" else lambda row, **kwargs: row
+    entrypoint = "backup_manifest" if phase == "backup_cover" else "library"
+    try:
+        with pytest.raises(ProviderError, match="session modifiée pendant lecture"):
+            getattr(session, entrypoint)()
+        assert calls == ["projection"]
+        assert vault.calls == 1
+        if entrypoint == "backup_manifest":
+            assert session.backup_manifest_rejection_count == 0
+            assert session.backup_manifest_policy["manifest_authoritative"] is False
+            assert session.backup_manifest_policy["acquisition_authorized"] is False
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("entrypoint", ["library", "backup_manifest"])
+def test_valid_session_still_publishes_after_projection_fence(entrypoint):
+    vault = FakeVault([{
+        "product_id": "book-1", "account_id": "alice",
+        "owned": True, "downloadable": True,
+    }])
+    session = _session(vault)
+    calls = []
+    session.catalog.cover_url = lambda row: (calls.append("cover") or None)
+    session.normalize_item = lambda row, **kwargs: (calls.append("normalize") or row)
+    try:
+        rows = getattr(session, entrypoint)()
+        assert [row["product_id"] for row in rows] == ["book-1"]
+        assert vault.calls == 1
+        assert calls == (["cover", "normalize"] if entrypoint == "library" else ["cover"])
+        if entrypoint == "backup_manifest":
+            assert session.backup_manifest_policy["status"] == "classified"
+    finally:
+        session.close()
