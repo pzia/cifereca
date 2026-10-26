@@ -130,3 +130,35 @@ def test_sync_search_cache_hit_respects_profile_generation(tmp_path, monkeypatch
         assert service.last_search == []
     finally:
         service.close()
+
+
+def test_superseded_synchronous_query_does_not_retry_text_variants(
+    tmp_path, monkeypatch,
+):
+    service = _rig(tmp_path)
+    source = service._sessions["good"]
+    requests = []
+    def changed_on_first_get(query, scope, **kwargs):
+        requests.append(query)
+        service.select_identity("bob")
+        # A normal, empty supplier response would otherwise try looser
+        # text variants of this same query.
+        return []
+    source.search = changed_on_first_get
+    mirrored = []
+    monkeypatch.setattr(
+        service, "_mirror_remote_results",
+        lambda rows, **kw: mirrored.extend(rows),
+    )
+    try:
+        assert len(service._search_query_variants("Maritime Library")) > 1
+        assert service.search("Maritime Library", force=True) == []
+        assert requests == ["Maritime Library"]
+        assert mirrored == []
+        assert service.last_search == []
+        assert not any(
+            row["namespace"] == "search"
+            for row in service.storage.cache_namespace_stats()
+        )
+    finally:
+        service.close()
