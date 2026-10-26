@@ -1538,6 +1538,7 @@ class Storage:
                         or not old_row[5] or old_row[5] != target_row[5]
                     ):
                         raise ValueError("relocate_scope_conflict")
+                placement_metadata = None
                 # A different catalogue projection may still point at the
                 # source path even when it uses another placement ID. Do not
                 # strand or silently retarget that independent reference.
