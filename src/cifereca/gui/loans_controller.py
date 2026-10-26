@@ -151,9 +151,14 @@ def _loan_selected(self, row: BookListItem | None) -> None:
 def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -> None:
     identity = self.service.current_identity
     identity_id = identity.identity_id if identity else None
+    # An A -> B -> A round trip has the same identity ID but invalidates an
+    # earlier refresh. Guard the GTK callback by the Core account epoch too.
+    account_epoch = getattr(self.service, "_account_context_epoch", None)
     def done(rows):
         current = self.service.current_identity
         if (current.identity_id if current else None) == identity_id:
+            if getattr(self.service, "_account_context_epoch", None) != account_epoch:
+                return
             self._loans_refreshed(rows)
     self.runner.submit(
         "Actualisation des emprunts…",
