@@ -37,7 +37,7 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 
 | Rôle | Livrable et périmètre |
 | --- | --- |
-| **backlog** | Priorités, critères d'acceptation, déduplication, dépendances et issues actionnables. Pas de code ni de merge. |
+| **backlog** | **Analyse et ticketing exclusivement** : triage, priorités, critères d'acceptation, déduplication, dépendances, issues et handoffs. Aucune implémentation, aucun test exécuté, aucune branche/PR/merge. Le rôle reste actif jusqu'à changement **explicitement demandé par l'utilisateur**. Voir [profil Backlog](.agents/roles/backlog.md#frontière-de-rôle-impérative-par-défaut-sans-exception-implicite). |
 | **core** | Core métier, stockage, services, API publique, framework de plugins ; également CoreUI (GTK/libadwaita). Pas de logique métier spécifique à un plugin. |
 | **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
 | **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires et preuves GTK ; **propositions numérotées courtes à valider avant création des nouveaux tickets UX**. Ne corrige pas le produit. |
@@ -75,7 +75,7 @@ Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **sim
 
 ## Méta-rôle focus : une étape à la fois
 
-Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.
+Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal **sans rôle classique déjà actif** : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.
 
 1. **Lire la situation** : état de main, issues P0/P1/P2/P3, PR, CI, dépendances et preuves déjà disponibles.
 2. **Choisir une seule action utile** : priorité la plus haute, travail non dupliqué et résultat vérifiable ; annoncer le rôle actif et la référence GitHub.
