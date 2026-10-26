@@ -325,6 +325,36 @@ class Diagnostics:
             # Observability cannot interfere with the visual fallback.
             pass
 
+    def add_core_cover_failure(self, code: str, *, duration_ms: int) -> None:
+        """One Core-attested cover fetch failure, not an ebook acquisition.
+
+        Only the cover worker calls this entry point. No URL, HTTP response,
+        book identity or exception enters its closed diagnostic payload.
+        """
+        from .core.diagnostic_cover_failure import public_fields, public_message
+
+        fields = public_fields({"reason_code": code, "duration_ms": duration_ms})
+        if not fields:
+            return
+        message = public_message(fields)
+        if self.enabled:
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="COVER", operation="cover_download_failure", status="error",
+                duration_ms=fields["duration_ms"], detail=fields,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            logging.getLogger("cifereca").log(
+                logging.ERROR, "%s", message,
+                extra=_core_journal_record(
+                    "COVER", "cover_download_failure", "error", message, fields,
+                ),
+            )
+        except Exception:
+            pass
+
     def add_core_provider_connection_attempt(self, event: object) -> None:
         """P0 #3101: a single Core request emits attested phase records.
 
