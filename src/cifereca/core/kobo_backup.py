@@ -365,11 +365,15 @@ def kobo_backup_preview(
     )
     counts = {
         "already_local_linked": 0, "already_local_verified": 0,
-        "already_local_declared": 0,
         "needs_reconciliation": 0, "attention_required": 0,
         "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
         "potentially_missing": 0, "invalid_manifest_items": upstream_rejected,
     }
+    # Do not change the historical offline/legacy counter schema. A
+    # declaration-presence result is exposed only by a caller that explicitly
+    # refreshed its manifest AND requested a physical file check.
+    if refresh_manifest and verify_local_files:
+        counts["already_local_declared"] = 0
     examples: list[dict[str, str]] = []
     seen: set[str] = set()
     # A verified declaration is local presence, not an authenticated Kobo
