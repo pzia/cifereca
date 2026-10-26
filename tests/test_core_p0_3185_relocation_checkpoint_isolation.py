@@ -63,9 +63,16 @@ def test_checkpoint_path_blocks_filename_mutation_without_stranding_sqlite(
     _assert_unchanged(service, placement_id, old, new)
 
 
+def _deep_json():
+    value = "not-the-path"
+    for _ in range(27):
+        value = [value]
+    return json.dumps(value)
+
+
 @pytest.mark.parametrize("metadata_json", [
     "{invalid json",
-    json.dumps({"nested": [[[[[[[[[[[[[[[[[[[[[[[[[["too-deep"]]]]]]]]]]]]]]]]]]]]]]]]]]]}),
+    _deep_json(),
     " " * (1024 * 1024 + 1),
 ])
 def test_unknown_acquisition_context_fails_closed(tmp_path, metadata_json):
