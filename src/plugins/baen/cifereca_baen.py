@@ -38,7 +38,7 @@ def _listing_product_href(href, attrs, page_html):
     """
     if '/allbooks/' in href:
         return True
-    classes = re.search(r'\bclass\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
+    classes = re.search(r'(?:^|\s)class\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
     if classes is None or 'product-item-link' not in classes.group(1).split():
         return False
     try:
@@ -245,7 +245,7 @@ class BaenSession(ProviderSession):
             raise failure from None
         out=[]; seen=set()
         for attrs,body in re.findall(r'<a\b([^>]*)>(.*?)</a\s*>',r.text,re.I|re.S):
-            href_match = re.search(r'\bhref\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
+            href_match = re.search(r'(?:^|\s)href\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
             if href_match is None: continue
             href = html.unescape(href_match.group(1))
             plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
