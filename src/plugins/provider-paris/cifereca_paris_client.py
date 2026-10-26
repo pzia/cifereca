@@ -96,6 +96,7 @@ PARIS_LOAN_ERROR_CODES = frozenset({
     "paris_loans_redirect_unexpected",
     "paris_loans_html_unexpected",
     "paris_loans_non_json",
+    "paris_loans_json_shape_invalid",
     "paris_loans_transport_timeout",
     "paris_loans_transport_failed",
 })
@@ -425,11 +426,14 @@ class ParisClient:
                     status=r.status_code,
                 )
             try:
-                data = self._json(r, f"loans {provider}")
-            except ParisError as exc:
-                if "réponse non JSON" not in str(exc):
-                    raise
+                data = r.json()
+            except (ValueError, TypeError):
                 raise ParisLoanListError("paris_loans_non_json", status=r.status_code) from None
+            if type(data) is not dict:
+                raise ParisLoanListError("paris_loans_json_shape_invalid", status=r.status_code)
+            if data.get("success") is not True:
+                # Preserve the existing structured upstream-error contract.
+                self._json(r, f"loans {provider}")
             # A malformed/partial ListLoans response is NOT evidence of zero
             # loans. Preserve earlier rights instead of silently dropping rows.
             envelope = data.get("d")
