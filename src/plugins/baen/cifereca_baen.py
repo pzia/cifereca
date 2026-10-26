@@ -38,18 +38,18 @@ def _listing_product_href(href, attrs, page_html):
     """
     if '/allbooks/' in href:
         return True
-    classes = re.search(r'\\bclass\\s*=\\s*["\\']([^"\\']+)["\\']', attrs, re.I)
+    classes = re.search(r'\bclass\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
     if classes is None or 'product-item-link' not in classes.group(1).split():
         return False
     try:
         parsed = urlsplit(urljoin(BASE, href))
         if (parsed.query or parsed.fragment
-                or not re.fullmatch(r'/[A-Za-z0-9][A-Za-z0-9_-]*\\.html', parsed.path)):
+                or not re.fullmatch(r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parsed.path)):
             return False
     except ValueError:
         return False
-    return bool(re.search(r'\\bFree\\s+Library\\b', page_html, re.I)
-                and re.search(r'\\bShowing\\s+\\d+\\s*-\\s*\\d+\\s+of\\s+\\d+\\b',
+    return bool(re.search(r'\bFree\s+Library\b', page_html, re.I)
+                and re.search(r'\bShowing\s+\d+\s*-\s*\d+\s+of\s+\d+\b',
                               page_html, re.I))
 
 
@@ -244,8 +244,8 @@ class BaenSession(ProviderSession):
             # Redirect loops are not evidence of a technical outage.
             raise failure from None
         out=[]; seen=set()
-        for attrs,body in re.findall(r'<a\\b([^>]*)>(.*?)</a\\s*>',r.text,re.I|re.S):
-            href_match = re.search(r'\\bhref\\s*=\\s*["\\']([^"\\']+)["\\']', attrs, re.I)
+        for attrs,body in re.findall(r'<a\b([^>]*)>(.*?)</a\s*>',r.text,re.I|re.S):
+            href_match = re.search(r'\bhref\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
             if href_match is None: continue
             href = html.unescape(href_match.group(1))
             plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
