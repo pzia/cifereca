@@ -60,7 +60,7 @@ def test_raw_export_keeps_confirmation_file_permissions_and_unmodified_bytes():
     assert "broker.export_raw_journal()" in body
     assert "Gtk.FileChooserAction.SAVE" in body
     assert "Gtk.ResponseType.ACCEPT" in body
-    assert "os.O_NOFOLLOW" in body
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in body
     assert "os.open(destination, flags, 0o600)" in body
     assert "os.fchmod(handle.fileno(), 0o600)" in body
     assert "handle.write(content)" in body
