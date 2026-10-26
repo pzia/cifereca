@@ -7,10 +7,11 @@ fermé de chaque tâche. Une exception non typée présentait pourtant la boîte
 « Une erreur est survenue / Traitement indisponible », indistincte d'une
 synchronisation fournisseur voisine pourtant réussie.
 
-Pour toute **erreur de worker** ou **rejet d'enqueue** de ce runner, un événement
+Pour toute **erreur de worker**, **rejet d'enqueue** ou **exception de callback
+GTK** de ce runner, un événement
 local corrélable est publié :
 
-`TRACE task failure id=N kind=... origin=... phase=worker|enqueue exception=TYPE cause=TYPE|none`
+`TRACE task failure id=N kind=... origin=... phase=worker|enqueue|gtk_ok_callback|gtk_error_callback exception=TYPE cause=TYPE|none`
 
 Les types sont des noms Python validés et bornés; ni libellé UI ni
 message d'exception contenant potentiellement un bearer/password/cookie
@@ -21,8 +22,11 @@ un `task_ref` inexistant.
 Pour `origin=automatic`, et **uniquement en absence de gestionnaire d'erreur
 spécifique**, l'échec reste visible dans l'historique d'activité mais
 n'ouvre plus une boîte générique bloquante. Les actions déclenchées par
-l'utilisateur, les `UserFacingError` et les callbacks `err` métiers conservent
-leur comportement. Les succès de tâches voisines ne sont pas modifiés.
+l'utilisateur et les `UserFacingError` conservent leur affichage. Un callback
+`ok` GTK qui échoue requalifie **le même reçu de tâche** dans l'activité en
+erreur, même si le worker a réussi. Un callback `err` qui échoue est lui aussi
+tracé distinctement ; aucune panne fournisseur fictive n'est déduite. Les
+callbacks spécifiques continuent d'être appelés une seule fois. Les succès de tâches voisines ne sont pas modifiés.
 
 ## Recette synthétique / limites
 
@@ -30,11 +34,12 @@ leur comportement. Les succès de tâches voisines ne sont pas modifiés.
   événements et identifiants distincts, pas de modal générique automatique.
 - Rejet d'enqueue : activité équilibrée, diagnostic `phase=enqueue`,
   contrôle GTK rétabli selon le garde existant.
+- Callback GTK de succès ou d'erreur qui lève : même `task_id`, phase distincte,
+  erreur visible dans l'activité, aucun faux second worker.
 - Action utilisateur échouée : modal historique maintenu.
 - Aucune requête fournisseur, écriture d'inventaire, acquisition ou release.
 
 **Reste pour clôturer #3373** : confirmer sur la version installée la nouvelle
-occurrence utilisateur, y compris la frontière des callbacks GTK et leur
-propre diagnostic. Ce correctif n'attribue **pas** rétrospectivement
+occurrence utilisateur, sur le vrai poste ainsi que le parcours de lecture des diagnostics. Ce correctif n'attribue **pas** rétrospectivement
 l'incident observé le 26 octobre à Numilog ou Kobo, dont les deux
 synchronisations étaient réussies dans l'extrait disponible.
