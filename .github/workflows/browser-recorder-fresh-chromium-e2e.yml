@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           # Administration of throwaway CI runner only, never application behavior.
           sudo "$RUNNER_TEMP/recorder-clean-venv/bin/python" -m playwright install-deps chromium
-      - name: Real Playwright CLI: deny official CDN via synthetic localhost proxy
+      - name: 'Real Playwright CLI: deny official CDN via synthetic localhost proxy'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/empty-proxy-home"
@@ -84,7 +84,7 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/empty-ui-home"
           test ! -e "$RUNNER_TEMP/empty-ui-home/.cache/ms-playwright"
-      - name: Real Plugins GUI XTEST: physical consent for Python repair and Chromium
+      - name: 'Real Plugins GUI XTEST: physical consent for Python repair and Chromium'
         env:
           GDK_BACKEND: x11
         run: |
