@@ -41,6 +41,60 @@ def _result(status: str, *, ok: bool = False,
     )
 
 
+def _completed_local_purchase_verified(
+    broker: Any, account: Any, source_id: str, item_id: str,
+    *, source_current: Any,
+) -> bool:
+    """Reuse existing exact Numilog receipt/placement/SHA checks, never acquire.
+
+    A prior ledger alone is not proof of a local EPUB. Refuse foreign,
+    duplicate, incomplete or changed receipts and recheck SQLite after the
+    physical hash; no public IDs or new provider calls are produced.
+    """
+    try:
+        if not source_current():
+            return False
+        storage = broker.service.storage
+        options = dict(
+            identity_id=account.identity_id, credential_id=account.credential_id,
+            account_id=account.unique_id, item_id=item_id,
+        )
+        before = storage.numilog_purchase_preflight_evidence(**options)
+        rights = before.get("entitlements")
+        ledger = before.get("acquisitions")
+        if type(rights) is not list or len(rights) != 1 or (
+            type(ledger) is not list or len(ledger) != 1
+        ):
+            return False
+        right, receipt = rights[0], ledger[0]
+        if (type(right) is not dict or type(receipt) is not dict
+                or receipt.get("status") != "complete"
+                or receipt.get("identity_id") != account.identity_id
+                or receipt.get("account_id") != account.unique_id
+                or receipt.get("item_id") != item_id
+                or receipt.get("entitlement_id") != right.get("entitlement_id")):
+            return False
+        from .numilog_local_preview import preview
+        check = preview(
+            broker, account, source_id, verify_local_files=True,
+            _only_item_id=item_id,
+        )
+        counts = check.facts.get("counts")
+        if (check.ok is not True or type(counts) is not dict
+                or counts.get("owned_purchases") != 1
+                or counts.get("already_local_verified") != 1):
+            return False
+        # A verified file from a previous account/session or a changed right
+        # never becomes a successful presence just because bytes match.
+        return source_current() and before == storage.numilog_purchase_preflight_evidence(
+            **options,
+        ) and source_current()
+    except Cancelled:
+        raise
+    except Exception:
+        return False
+
+
 def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
     """Passive policy/connection check: no filesystem I/O or provider call."""
     try:
@@ -320,6 +374,35 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     declared_pending += 1
                     trace.fail('preflight_failed')
                     continue
+                # The offline preflight conservatively reports *any*
+                # existing receipt as needs_reconciliation. A previous
+                # completed purchase must nevertheless count as present if
+                # the existing exact receipt, placement and current SHA all
+                # agree. Unknown/foreign/damaged evidence remains blocked.
+                if prior.facts.get('status') == 'needs_reconciliation':
+                    if presence_seconds_remaining > 0:
+                        proof_started = monotonic()
+                        try:
+                            verified = _completed_local_purchase_verified(
+                                broker, account, source_id, row.record_id,
+                                source_current=lambda: (
+                                    same_source() and mode(broker, source_id) == 'on_start'
+                                    and broker.service.storage.numilog_materialization_consent_revision(
+                                        source_id) == consent_revision
+                                ),
+                            )
+                        finally:
+                            presence_seconds_remaining = max(
+                                0.0, presence_seconds_remaining
+                                - max(0.0, monotonic() - proof_started),
+                            )
+                        if control is not None and callable(
+                            getattr(control, 'check_cancelled', None)
+                        ):
+                            control.check_cancelled()
+                        if verified:
+                            skipped += 1
+                            continue
                 # The fresh authenticated inventory is authoritative for
                 # delivery capability. SQLite's older owned right may omit
                 # 'downloadable'; a permissive preflight must never override
