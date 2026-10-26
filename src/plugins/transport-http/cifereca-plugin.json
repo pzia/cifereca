@@ -2,16 +2,16 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.transport.http",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "name": "Transport HTTP",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4,<2"
+    "plugin_api": ">=1.4.1,<2"
   },
   "plugins": [
     {
       "id": "transport.http",
       "type": "transport",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "entrypoint": "cifereca_http_transport:PLUGIN",
       "display_name": "Transport HTTP",
       "description": "Téléchargement HTTP/HTTPS borné, redirections sûres et publication atomique.",
@@ -68,7 +68,7 @@
     {
       "id": "diagnostics.http-transport",
       "type": "diagnostics.check",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "entrypoint": "cifereca_http_transport_health:PLUGIN",
       "display_name": "Diagnostic transport HTTP",
       "description": "Vérification locale et expurgée du transport HTTP.",

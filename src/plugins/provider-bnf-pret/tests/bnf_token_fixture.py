@@ -17,7 +17,7 @@ TOKEN = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" '
 
 def connected(*, payload=TOKEN, status=200, headers=None):
     session, calls, state = HTTPProviderTests().make()
-    original = session.client.http._transport.handler
+    original = session.client.http._transport.transport.handler
     downloaded = []
 
     def handler(request):
@@ -30,7 +30,7 @@ def connected(*, payload=TOKEN, status=200, headers=None):
             )
         return original(request)
 
-    session.client.http._transport.handler = handler
+    session.client.http._transport.transport.handler = handler
     account, = session.connect()
     account.identity_id = "profile-a"
     loan, = session.loans(account)

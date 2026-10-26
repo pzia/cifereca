@@ -47,12 +47,12 @@ def test_failed_http_keeps_exact_status_and_endpoint_without_retry(endpoint, sta
 def test_real_provider_get_order_and_canonical_projection(tmp_path, caplog, activity_status):
     from cifereca.core.diagnostic_journal import query_journal
     session, account, loan, _, _, downloads = connected(status=405)
-    original = session.client.http._transport.handler
+    original = session.client.http._transport.transport.handler
     def handler(request):
         if str(request.url) == ACTIVITY and activity_status != 200:
             return httpx.Response(activity_status, text='synthetic unavailable')
         return original(request)
-    session.client.http._transport.handler = handler
+    session.client.http._transport.transport.handler = handler
     target = tmp_path / 'journal.log'
     file_handler = logging.FileHandler(target)
     file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s'))

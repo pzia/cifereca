@@ -15,6 +15,7 @@ from xml.etree import ElementTree as ET
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from cifereca.plugin_api import TraceHTTPTransport
 from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderSearchCapabilities, ProviderError,
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
@@ -27,7 +28,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 # A descendant of the Core logger shares its canonical journal handler.
 _LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.85'
+VERSION = '0.1.86'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -173,6 +174,7 @@ class NumilogSession(ProviderSession):
         if not 1 <= timeout <= 120 or not 1024 <= self.maximum <= 512*1024*1024:
             raise ProviderConfigurationError('Numilog : limites réseau invalides')
         self.client = httpx.Client(timeout=timeout,follow_redirects=False,trust_env=False,
+            transport=TraceHTTPTransport(producer="provider.numilog", trust_env=False),
             headers={'User-Agent':'Cifereca-Numilog/'+VERSION,'Accept-Language':'fr-FR,fr;q=0.9'})
         self.lock = threading.RLock()
         # Only public anonymous responses are cached; owned rights are always

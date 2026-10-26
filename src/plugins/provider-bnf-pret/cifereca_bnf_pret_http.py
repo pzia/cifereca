@@ -9,6 +9,7 @@ from uuid import uuid4
 import time
 from urllib.parse import urljoin, urlsplit
 import httpx
+from cifereca.plugin_api import TraceHTTPTransport
 from cifereca_bnf_pret_web import _DOM, MAX_HTML_BYTES, WebParseError
 from cifereca_bnf_pret_paging import _params
 from cifereca_bnf_pret_signed_action import signed_loan_url
@@ -85,7 +86,7 @@ class ReaderHTTPClient:
         self.diagnostics = diagnostics
         self.http = httpx.Client(timeout=httpx.Timeout(15, connect=10),
                                  follow_redirects=False, trust_env=False,
-                                 transport=transport)
+                                 transport=TraceHTTPTransport(transport, producer="provider.bnf-pret", trust_env=False))
 
     def _observe(self, detail, status, started):
         """One canonical journal event; optional diagnostics cannot affect I/O."""

@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from cifereca.plugin_api import TraceHTTPTransport
 
 from cifereca.plugin_api import Conflict, TemporaryUnavailable, UnsupportedOperation, inspect_artifact, publish_artifact_file
 
@@ -94,6 +95,7 @@ class HttpTransport:
         self.max_download_bytes = int(self.config.get("max_download_bytes", 256 * 1024 * 1024) or 256 * 1024 * 1024)
         self.max_redirects = int(self.config.get("max_redirects", 8) or 8)
         self.client = httpx.Client(
+            transport=TraceHTTPTransport(producer="transport.http", trust_env=False),
             follow_redirects=False,
             trust_env=False,
             headers={"User-Agent": "cifereca-http-transport/1.0"},

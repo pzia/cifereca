@@ -55,7 +55,7 @@ def test_activity_failure_is_distinct_from_token_get_and_never_downloads(
     import httpx
     from cifereca_bnf_pret_http import ACTIVITY
     session, account, loan, state, calls, downloaded = connected()
-    original = session.client.http._transport.handler
+    original = session.client.http._transport.transport.handler
     activity_requests = []
 
     def handler(request):
@@ -65,7 +65,7 @@ def test_activity_failure_is_distinct_from_token_get_and_never_downloads(
                                   headers={"content-type": "text/html"})
         return original(request)
 
-    session.client.http._transport.handler = handler
+    session.client.http._transport.transport.handler = handler
     try:
         with pytest.raises(ProviderError, match="^" + reason + "$"):
             session.download_digital(loan, account, tmp_path, explicit_user_action=True)

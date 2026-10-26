@@ -283,7 +283,7 @@ DETAIL = ('<article itemscope itemtype="https://schema.org/Book">'
 class HTTPCatalogTests(unittest.TestCase):
     def make(self):
         session, calls, state = HTTPProviderTests().make()
-        base = session.client.http._transport.handler
+        base = session.client.http._transport.transport.handler
         state.update(pages={'1':search_html()}, detail=DETAIL, statuses={}, redirects={})
         requests = []
         def handler(request):
@@ -299,7 +299,7 @@ class HTTPCatalogTests(unittest.TestCase):
                                           headers={'content-type':'text/html'})
                 return httpx.Response(200,text=state['detail'],headers={'content-type':'text/html'})
             return base(request)
-        session.client.http._transport.handler=handler
+        session.client.http._transport.transport.handler=handler
         self.addCleanup(session.close)
         return session,calls,state,requests
 

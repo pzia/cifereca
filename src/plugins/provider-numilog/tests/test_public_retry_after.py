@@ -35,7 +35,9 @@ def test_429_blocks_new_http_until_requested_deadline_even_after_clear(monkeypat
         assert 'cookie' not in request.headers and 'authorization' not in request.headers
         return httpx.Response(429, headers={} if header is None else {'Retry-After':header},
                               content=b'PRIVATE upstream body')
-    def client(**kwargs):return original_client(**kwargs,transport=httpx.MockTransport(respond))
+    def client(**kwargs):
+        kwargs["transport"].transport = httpx.MockTransport(respond)
+        return original_client(**kwargs)
     monkeypatch.setattr(public.httpx,'Client',client)
     fetch=(lambda:public.fetch_public_search('jefferson')) if surface == 'search' else (lambda:public.fetch_public_detail(URL))
     cache.get('existing',lambda:{'public':True})
