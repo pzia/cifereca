@@ -459,7 +459,7 @@ et sa copie en cache, chaque classe d'erreur et le parcours réussi. Un comparat
 avec deux vraies notices (une réussie, une échouée) reste nécessaire pour isoler
 la cause des défaillances rapportées sur le poste utilisateur.
 
-## #1917 — limite locale de page OPDS (0.1.27)
+## #1917 — limite locale de page OPDS (0.1.28)
 
 Si une page serveur contient plus de livres correspondant au filtre que la
 limite locale, le fournisseur publie `partial_results` : des notices de

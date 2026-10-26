@@ -6,7 +6,43 @@ and no implicit plugin activation. GTK and projection are injected by the host.
 """
 from __future__ import annotations
 
+import json
+
+from ..brokers import DiagnosticsBrokerImpl
+from ..core.diagnostic_journal import journal_payload
 from .connection_failure_summary import connection_failure_summary
+from .diagnostics_pseudonyms import DISPLAY_PSEUDONYMS
+
+
+def _canonical_settings_report(service, version: str, extra: dict) -> str:
+    """Short local compatibility preview of the SAME persistent journal.
+
+    This Settings section is not another event collector or independent
+    export source. It applies the same GTK-only session pseudonyms as the
+    Diagnostics plugin to explicit login/password fields, nothing else.
+    """
+    lines = [
+        f"cifereca v{version}",
+        "Source: journal canonique local (100 dernières observations structurées)",
+        "Pour tous les logs, leurs rotations et l'export brut : ouvrir Diagnostics.",
+    ]
+    for key, value in extra.items():
+        lines.append(f"{key}: " + DISPLAY_PSEUDONYMS.text(json.dumps(
+            journal_payload(value), ensure_ascii=False, allow_nan=False,
+        )))
+    lines.append("")
+    try:
+        events = DiagnosticsBrokerImpl(service).snapshot()
+    except Exception as exc:
+        lines.append("Lecture du journal indisponible : " + type(exc).__name__)
+        return "\n".join(lines) + "\n"
+    if not events:
+        lines.append("Aucune observation structurée dans la rétention accessible.")
+    for event in events[-100:]:
+        lines.append(DISPLAY_PSEUDONYMS.text(json.dumps(
+            journal_payload(event), ensure_ascii=False, allow_nan=False,
+        )))
+    return "\n".join(lines) + "\n"
 
 
 def refresh_settings_diagnostics(
@@ -67,9 +103,10 @@ def refresh_settings_diagnostics(
         item.add_row(detail)
         diag_issues_box.append(item)
 
-    # Preserve the former diagnostic snapshot with its bounded presentation
-    # and without re-triggering any provider discovery or background job.
-    diagnostics_text = window.diagnostics.text(version, {
+    # Never read the obsolete Diagnostics._items memory cache. The recent
+    # structured journal is bounded here; the full canonical log is browsed
+    # via the dedicated Diagnostics page, not dumped synchronously in Settings.
+    diagnostics_text = _canonical_settings_report(window.service, version, {
         "transport": "httpx local direct",
         "base_url": (
             window.config.paris_base_url()

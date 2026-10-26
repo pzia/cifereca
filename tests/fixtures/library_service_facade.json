@@ -337,7 +337,7 @@
   },
   "renew": {
     "kind": "method",
-    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+    "signature": "(self, loan: 'Loan', *, confirmed: 'bool' = False) -> 'dict[str, Any]'"
   },
   "_return_loan_identity": {
     "kind": "method",

@@ -65,17 +65,19 @@ def test_explorer_distinguishes_missing_sources_from_empty_results():
         assert fragment in helper, f"Missing source availability contract: {fragment}"
 
 
-def test_explorer_has_no_direct_private_log_access():
+def test_explorer_reads_journal_via_core_broker_only():
     build = _build()
-    prohibited = {"open", "read_text", "read_bytes", "glob", "rglob"}
-    direct = [
+    prohibited = {"read_text", "read_bytes", "glob", "rglob"}
+    direct_reads = [
         n for n in ast.walk(build) if isinstance(n, ast.Call)
-        and (
-            isinstance(n.func, ast.Name) and n.func.id == "open"
-            or isinstance(n.func, ast.Attribute) and n.func.attr in prohibited
-        )
+        and (isinstance(n.func, ast.Name) and n.func.id == "open"
+             or isinstance(n.func, ast.Attribute) and n.func.attr in prohibited)
     ]
-    assert not direct, "Only a public Core diagnostics broker can expose log events"
+    assert not direct_reads, "Journal reads must go through the Core broker"
+    source = ast.unparse(build)
+    # os.open writes exclusively the user-approved, 0600 export destination.
+    assert "os.open(destination, flags, 384)" in source
+    assert "broker.export_raw_journal()" in source
 
 
 @pytest.mark.xfail(strict=True, reason="#1013: journal rows missing provenance and timestamp")

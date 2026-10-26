@@ -56,11 +56,13 @@ def page_selection_ids(rows: list[dict], previous: set[str], action: str) -> set
             and row.get("severity") in ("error", "critical")}
 
 
-# These seven fields are the complete exported, redacted event summary.
-# Rechecking their fingerprint (not only IDs) prevents stale message/status
-# changes being advertised as a stable, selected snapshot.
+# Include the closed, Core-attested connection attribution in the frozen
+# first-page fingerprint. A stable event_id with changed operation_ref/phase
+# must not be presented as an atomic multi-page export.
 _EXPORTED_EVENT_FIELDS = (
     "timestamp", "source", "module", "severity", "message", "status", "event_id",
+    "operation_ref", "phase", "caller_category", "source_kind",
+    "connection_status", "network_auth", "connection_provider_id", "task_ref",
 )
 
 
@@ -69,7 +71,7 @@ def _redacted_page_fingerprint(rows):
     # intentionally absent from the clipboard JSON. A changing classification
     # must invalidate a multi-page selection.
     return tuple(
-        tuple(row[field] for field in _EXPORTED_EVENT_FIELDS)
+        tuple(row.get(field, "") for field in _EXPORTED_EVENT_FIELDS)
         + (row.get("business_module", ""), row.get("provider_id", ""),
            row.get("domain", ""))
         for row in rows
@@ -87,7 +89,7 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
     """
     module_prefix = module.strip().casefold()
     for row in rows:
-        if (row["source"] not in ("app_log", "core_events")
+        if (row["source"] not in ("app_log", "core_events", "journal")
                 or (source != "all" and row["source"] != source)
                 or row["severity"] not in ("debug", "info", "warning", "error", "critical")
                 or (severity and row["severity"] != severity)
@@ -95,7 +97,7 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                     and not row["module"].casefold().startswith(module_prefix)
                     and not row.get("business_module", "").casefold().startswith(module_prefix))):
             raise ValueError("diagnostic selection contains out-of-scope events")
-        if provider_id and row.get("provider_id") != provider_id:
+        if provider_id and source != "journal" and row.get("provider_id") != provider_id:
             raise ValueError("diagnostic selection contains out-of-scope events")
         if domain and row.get("domain") != domain:
             raise ValueError("diagnostic selection contains out-of-scope events")
@@ -127,7 +129,7 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None,
     total = payload.get("total")
     received = payload.get("offset")
     items = payload.get("events")
-    if (type(total) is not int or not 0 <= total <= 10000
+    if (type(total) is not int or not 0 <= total <= 100000
             or type(received) is not int or received != offset
             or not isinstance(items, (list, tuple)) or len(items) > PAGE_SIZE
             or (expected_total is not None and total != expected_total)):
@@ -163,7 +165,7 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None,
 
 
 def collect_filtered_selection(
-    broker, *, source="all", module="", severity="", period="day", search="",
+    broker, *, source="journal", module="", severity="", period="day", search="",
     provider_id="", reason_code="", domain="", mode="errors",
     cancelled: Callable[[], bool] | None = None,
     max_pages=MAX_SCAN_PAGES,
@@ -213,6 +215,7 @@ def collect_filtered_selection(
                 period=period, offset=offset, reference_time=reference_time,
                 reason_code=reason_code, provider_id=provider_id,
                 domain=verified_domain,
+                search=search if source == "journal" else "",
             )
             rows, total, following = _checked_page(
                 page, offset, total_expected, reason_code=reason_code,
@@ -234,7 +237,7 @@ def collect_filtered_selection(
                 if event_id in seen:
                     raise ValueError("diagnostic selection contains duplicate event IDs")
                 seen.add(event_id)
-                if search and search.casefold() not in " ".join(
+                if search and source != "journal" and search.casefold() not in " ".join(
                     row[key] for key in
                     ("timestamp", "source", "module", "severity", "message", "status")
                 ).casefold():
@@ -255,6 +258,7 @@ def collect_filtered_selection(
             period=period, offset=0, reference_time=reference_time,
             reason_code=reason_code, provider_id=provider_id,
             domain=verified_domain,
+            search=search if source == "journal" else "",
         )
         reread, _total, _next = _checked_page(
             current, 0, total_expected, reason_code=reason_code,

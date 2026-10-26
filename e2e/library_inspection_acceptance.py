@@ -185,8 +185,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
-        assert window.get_height()<=parent.get_height()
         report['checks']['P0_2712_initial_window_width_ok']=True
+        assert window.get_height()<=parent.get_height()
         report['checks']['P0_2712_initial_window_height_ok']=True
         assert window.get_decorated() and window.get_resizable()
         header = next(w for w in walk(window) if isinstance(w, Adw.HeaderBar))

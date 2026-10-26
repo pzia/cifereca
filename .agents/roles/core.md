@@ -1,6 +1,17 @@
 # Rôle : core
 
-**Skill obligatoire pour les traces et diagnostics :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) et [contrat canonique](../../docs/LOGGING-CONTRACT.md). Core émet, stocke et expose les événements **sans masquage préalable** ; **l'IHM seule** pseudonymise **login/mot de passe**, jamais les autres champs. Rechercher et corréler toutes les sources, synchroniser `--trace` et le niveau IHM. Ne pas présumer le code historique déjà conforme.
+**Skill journalisation obligatoire :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) · [contrat transverse](../../docs/LOGGING-CONTRACT.md). Les consignes Diagnostics ci-dessous restent prioritaires.
+
+## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
+
+**Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**
+Journal, console (miroir), Core, API/broker et export brut conservent **les valeurs telles qu'émises** : opérations, phases, provider, URLs complètes, chemins, comptes, titres, identifiants, codes et corps d'erreur utiles, cookies, tokens et en-têtes compris. Ne jamais substituer `[opération masquée]` à un fait observé par une règle générique d'expurgation. N'inventer ni état, ni HTTP, ni causalité, ni corrélation par horodatage.
+
+**Exception visuelle strictement limitative :** dans le rendu de l'IHM Diagnostics (et les copies du texte affiché), seules **les valeurs explicites de login et de mot de passe** sont pseudonymisées par des alias stables pendant la session (`login-1`, `mot-de-passe-1`). Tout autre champ reste visible. La recherche et l'export brut portent sur les valeurs originales. Ne pas ajouter volontairement de dumps réseau/authentification uniquement pour ce chantier.
+
+Le journal peut contenir des secrets : fichier/rotations locaux restreints (0600), avertissement et confirmation pour l'export brut, **jamais d'envoi automatique**. Les anciennes obligations d'expurgation extensive dans les documents ou tests sont remplacées pour ce périmètre ; conserver les protections spécifiques non liées au journal, sans les présenter comme une politique générale de logs. Contrat et limites : [Journal canonique](../../docs/DIAGNOSTICS_CANONICAL_JOURNAL.md).
+
+
 
 ## Mission
 Traiter le Core applicatif et le Core UI, dans cet ordre de priorité.

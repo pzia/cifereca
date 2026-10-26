@@ -15,6 +15,7 @@ from cifereca.plugins.configuration import defaults_for_schema, schema_scope
 from .action_widgets import action_button, AdaptiveActionBar, mirror_sensitivity
 from .plugin_attention import plugin_section_expanded
 from .plugin_manager_error_feedback import plugin_error_message
+from .store_usage_labels import store_plugin_usage_hint
 from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
@@ -625,6 +626,16 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         role = Gtk.Label(label=f"Rôle · {PLUGIN_ROLE_LABELS[plugin_role(d)]}", xalign=0)
         role.add_css_class("caption"); role.add_css_class("dim-label")
         box.append(role)
+        # Fixed technical role vocabulary: a public Numilog catalogue does
+        # not share a private account or entitlements. Kobo's catalogue is
+        # only an internal catalog.service, never a second user account.
+        usage = store_plugin_usage_hint(d.id)
+        if usage:
+            hint = Gtk.Label(label=usage, xalign=0)
+            hint.set_wrap(True)
+            hint.add_css_class("caption")
+            hint.add_css_class("dim-label")
+            box.append(hint)
         for line in plugin_relationships(status, statuses):
             relation = Gtk.Label(label=line, xalign=0)
             relation.set_wrap(True)
@@ -708,7 +719,11 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             primary_actions.append(cfg)
         if d.instantiation == "singleton_public":
             identities = Gtk.MenuButton(label="Identités…")
-            identities.set_tooltip_text("Activer ce catalogue pour chaque identité")
+            identities.set_tooltip_text(
+                "Activer ce catalogue public, indépendamment des comptes privés, pour chaque identité"
+                if d.id == "provider.numilog.catalog"
+                else "Activer ce catalogue pour chaque identité"
+            )
             identity_popover = Gtk.Popover()
             choices = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             choices.set_margin_top(10); choices.set_margin_bottom(10)
@@ -1173,8 +1188,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
     def _diagnostic(self, plugin_id: str) -> None:
         row = self.manager.diagnostic(plugin_id)[0]
-        from ..diagnostics import redact
-        body = json.dumps(redact(row), ensure_ascii=False, indent=2)
+        body = json.dumps(row, ensure_ascii=False, indent=2)
         dialog = Adw.MessageDialog.new(self.window, row["display_name"], body)
         dialog.add_response("close", "Fermer"); dialog.present()
 

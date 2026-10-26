@@ -5,7 +5,18 @@ description: Concevoir, placer, exécuter ou réorganiser les tests Cifereca en 
 
 # Tests Cifereca
 
-**Tests de journalisation :** appliquer [cifereca-logging](../cifereca-logging/SKILL.md) et [le contrat](../../../docs/LOGGING-CONTRACT.md) : conservation des détails dans les journaux/brokers/exports bruts, pseudonymisation **uniquement login et mot de passe dans l'IHM**, recherche et niveau `--trace` unifiés. Utiliser uniquement des valeurs de test synthétiques ; les assertions de redaction historiques ne définissent plus la cible.
+**Contrat des tests de journalisation :** [cifereca-logging](../cifereca-logging/SKILL.md) et [référence](../../../docs/LOGGING-CONTRACT.md) ; tester les traces brutes, pseudonymisation login/password seulement en IHM, et conserver les fixtures synthétiques.
+
+## Contrat impératif Diagnostics / journal (25/10/2026, #3132)
+
+**Une seule source locale brute, aucun masquage hors de l'IHM Diagnostics.**
+Journal, console (miroir), Core, API/broker et export brut conservent **les valeurs telles qu'émises** : opérations, phases, provider, URLs complètes, chemins, comptes, titres, identifiants, codes et corps d'erreur utiles, cookies, tokens et en-têtes compris. Ne jamais substituer `[opération masquée]` à un fait observé par une règle générique d'expurgation. N'inventer ni état, ni HTTP, ni causalité, ni corrélation par horodatage.
+
+**Exception visuelle strictement limitative :** dans le rendu de l'IHM Diagnostics (et les copies du texte affiché), seules **les valeurs explicites de login et de mot de passe** sont pseudonymisées par des alias stables pendant la session (`login-1`, `mot-de-passe-1`). Tout autre champ reste visible. La recherche et l'export brut portent sur les valeurs originales. Ne pas ajouter volontairement de dumps réseau/authentification uniquement pour ce chantier.
+
+Le journal peut contenir des secrets : fichier/rotations locaux restreints (0600), avertissement et confirmation pour l'export brut, **jamais d'envoi automatique**. Les anciennes obligations d'expurgation extensive dans les documents ou tests sont remplacées pour ce périmètre ; conserver les protections spécifiques non liées au journal, sans les présenter comme une politique générale de logs. Contrat et limites : [Journal canonique](../../../docs/DIAGNOSTICS_CANONICAL_JOURNAL.md).
+
+
 
 Utiliser ce skill lorsqu'une tâche ajoute des tests, corrige une régression, modifie la stratégie de validation ou déplace des tests.
 

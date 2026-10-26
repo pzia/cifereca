@@ -47,7 +47,7 @@ def test_recent_success_then_login_form_reports_evidence_not_expiry(tmp_path, ca
         assert path == LOGIN
         return httpx.Response(200, text='<form><input type="password" value="PRIVATE_HTML"></form>',
                               headers={'content-type': 'text/html'})
-    caplog.set_level(logging.INFO, logger='cifereca_numilog')
+    caplog.set_level(logging.INFO, logger='cifereca.plugin.provider.numilog')
     session = session_for(handler, diagnostics=diag)
     try:
         started = monotonic()
@@ -180,7 +180,7 @@ def test_login_widget_off_login_route_keeps_session_but_never_follows_link(
             text='<div>Public page template</div><input type="password" />'
                  + '<a href="' + SIGNED + '">Synthetic delivery</a>')
 
-    caplog.set_level(logging.INFO, logger='cifereca_numilog')
+    caplog.set_level(logging.INFO, logger='cifereca.plugin.provider.numilog')
     session = session_for(handler, diagnostics=diag)
     try:
         session.connect()

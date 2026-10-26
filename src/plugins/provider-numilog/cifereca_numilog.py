@@ -24,7 +24,8 @@ from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionE
 from cifereca_numilog_filename import publish
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
-_LOG = logging.getLogger(__name__)
+# A descendant of the Core logger shares its canonical journal handler.
+_LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
 VERSION = '0.1.84'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',

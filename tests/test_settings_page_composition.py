@@ -42,6 +42,7 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         _settings_standalone_lifetime=SettingsPageLifetime(),
         _settings_tabs=object(), _diag_refresh=object(),
         service=NS(provider_descriptors=lambda: []), config={},
+        diagnostics=NS(level='normal'),
         navigate=Mock(), action_button=Mock(),
     )
     previous_main, previous_standalone = host._settings_main_lifetime, host._settings_standalone_lifetime
@@ -185,7 +186,7 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
     assert refresh.call_count == 2
     ui.copy.emit('clicked'); ui.export.emit('clicked'); ui.clear.emit('clicked')
     app.level_dropdown.emit('notify::selected'); app.diagnostics_switch.emit('notify::active')
-    assert [fn.call_count for fn in callbacks] == [1, 1, 2, 1]
+    assert [fn.call_count for fn in callbacks] == [1, 1, 1, 1]
     ui.details_toggle.active = True; ui.details_toggle.emit('toggled')
     assert ui.scroll.visible and ui.details_toggle.label == 'Masquer les détails techniques'
     lifetime.dispose(); refresh_text(); ui.refresh.emit('clicked')

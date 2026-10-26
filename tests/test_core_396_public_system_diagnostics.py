@@ -121,3 +121,32 @@ def test_runtime_diagnostic_truncates_text():
 
     assert len(row["operation"]) <= 240
     assert len(row["stderr_summary"]) <= 240
+
+
+def test_inventory_preserves_unmasked_descriptor_values():
+    service = Service()
+    service.plugin_manager.diagnostic = lambda: [{
+        "plugin_id": "runtime.example",
+        "display_name": "Reader alice@example.org",
+        "type": "runtime.adapter",
+        "version": "1.0",
+        "reason_code": "https://example.org/item?token=KEEP",
+        "capabilities": ["source=https://example.org/item?token=KEEP"],
+    }]
+    row = DiagnosticsBrokerImpl(service).inventory()[0]
+    assert row["display_name"] == "Reader alice@example.org"
+    assert row["reason_code"] == "https://example.org/item?token=KEEP"
+    assert row["capabilities"] == ("source=https://example.org/item?token=KEEP",)
+
+
+def test_runtime_diagnostic_preserves_values_without_core_redaction():
+    service = Service()
+    service.runtime_diagnostic = lambda _plugin_id: {
+        "operation": "https://example.org/loan?token=KEEP",
+        "stderr_summary": "login=alice@example.org token=KEEP /home/alice/file.epub",
+        "stdout_summary": "password=KEEP",
+    }
+    row = DiagnosticsBrokerImpl(service).runtime_diagnostic("runtime.kobo-adept")
+    assert row["operation"] == "https://example.org/loan?token=KEEP"
+    assert row["stderr_summary"] == "login=alice@example.org token=KEEP /home/alice/file.epub"
+    assert row["stdout_summary"] == "password=KEEP"

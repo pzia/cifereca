@@ -15,7 +15,7 @@ from diagnostics_explorer import (
     diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation, local_timestamp_label, DOMAIN_LABELS,
-    normalize_diagnostic_domain,
+    normalize_diagnostic_domain, connection_provenance_label,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -23,38 +23,10 @@ from diagnostics_support import (
     SupportReportExport, diagnostic_json_bytes, preserve_report_selection,
 )
 
-# The broker provides already-redacted data. This is a second, stricter
-# presentation boundary: neither UI modes nor clipboard may expose raw secrets.
-_DIAGNOSTIC_SECRET_KEY = re.compile(
-    r"pass(?:word)?|cookie|token|secret|authorization|bearer|barcode|readerid|"
-    r"credential[_-]?id|account[_-]?id|identity[_-]?id|profile[_-]?id|"
-    r"acsm|licen[sc]e|(?:api|access|private)[_-]?key|(^|_)path$|filename|payload|headers?|"
-    r"(?:book[_-]?(?:title|name)|(?:reader|display|person|account|source|library|owner)[_-]?(?:name|label|alias)|title|author|borrower)$", re.I
-)
-_DIAGNOSTIC_SECRET_VALUE = re.compile(
-    r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
-    r"""\s*[:=]\s*(?:"[^"]*"|\'[^\']*\'|[^\s,;]+)"""
-)
-# A catalogue title, reader name or account alias can be private without
-# any recognizable token, path, e-mail or other secret marker. Suppress the
-# entire free-form value, not only its first word. Unquoted values consume the
-# rest of their line because names and titles may contain punctuation.
-_DIAGNOSTIC_PRIVATE_LABEL_VALUE = re.compile(
-    r"""(?i)(?<![\w-])("?(?:book[_-]?(?:title|name)|"""
-    r"""(?:reader|display|person|account|source|library|owner)[_-]?(?:name|label|alias)|"""
-    r"""title|author|borrower)"?[ \t]*[:=][ \t]*)"""
-    r"""(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]*)"""
-)
-# Authentication headers may contain schemes followed by several secret fields.
-# Mask the entire value, not merely the first whitespace-delimited token.
-_DIAGNOSTIC_AUTH_HEADER = re.compile(
-    r"(?im)\b((?:proxy-)?authorization|x-api-key)\s*[:=][^\r\n]*"
-)
-_DIAGNOSTIC_URL = re.compile(r"(?i)https?://[^\s<>]+")
-_DIAGNOSTIC_MAIL = re.compile(r"(?i)\b[a-z0-9_.+%-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
-_DIAGNOSTIC_PATH = re.compile(
-    r"(?:/home/|/Users/|/run/user/)[^\s,;]+|[A-Za-z]:\\Users\\[^\s,;]+"
-)
+# Only the GTK presentation pseudonymizes login and password fields.
+# The journal, console, broker and raw exports retain their original values.
+from diagnostics_pseudonyms import DISPLAY_PSEUDONYMS
+
 _MAX_DETAIL_BYTES = 24_000
 _MAX_DETAIL_NODES = 300
 _MAX_DETAIL_DEPTH = 7
@@ -64,44 +36,13 @@ _MAX_DETAIL_TEXT = 800
 
 def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT,
                    max_input_chars: int = _MAX_DETAIL_BYTES) -> str:
-    # A partial email, URL or token can straddle the preview cut. Redact
-    # complete values BEFORE truncating anything shown or copied to the UI.
-    # Fail closed on oversized untrusted text to bound regex scanning.
-    if len(value) > max_input_chars:
-        return "<texte trop long : contenu masqué>"
-    text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
-    text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
-    text = _DIAGNOSTIC_PATH.sub("<chemin expurgé>", text)
-    text = _DIAGNOSTIC_AUTH_HEADER.sub(r"\1=<expurgé>", text)
-    text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
-    text = _DIAGNOSTIC_PRIVATE_LABEL_VALUE.sub(r"\1<expurgé>", text)
-    if len(text) <= max_chars:
-        return text
-    cut = max_chars
-    # Do not slice through a redaction marker. An incomplete "<exp..." can
-    # be rewritten differently by the JSON export's second redaction pass,
-    # causing the report and exported evidence to disagree.
-    for marker in (
-        "<expurgé>", "<URL expurgée>", "<courriel expurgé>",
-        "<chemin expurgé>",
-    ):
-        start = text.find(
-            marker, max(0, max_chars - 32), max_chars + len(marker) + 32,
-        )
-        if start >= 0 and start <= max_chars < start + len(marker):
-            cut = start + len(marker)
-            break
-        if max_chars < start <= max_chars + 32:
-            # The cut would land inside the key or URL label immediately
-            # preceding a marker. Drop that incomplete label rather than
-            # publishing a fragment that the second redaction changes.
-            boundary = text.rfind(" ", max(0, max_chars - 64), start)
-            cut = boundary if boundary >= 0 else max(0, max_chars - 32)
-            break
-    # A newline prevents an Authorization header from absorbing the
-    # truncation notice during the clipboard export's second pass.
-    return text[:cut] + "\n… [tronqué]"
+    """Render only explicit login/password values as stable session pseudonyms."""
+    if type(value) is not str:
+        raise TypeError("invalid diagnostics text")
+    text = DISPLAY_PSEUDONYMS.text(value)
+    if len(text) > min(max_chars, max_input_chars):
+        return text[:min(max_chars, max_input_chars)] + "\n… [tronqué]"
+    return text
 
 
 def redacted_ai_response(value: str) -> str:
@@ -170,12 +111,11 @@ def redacted_detail(
                             marker = f" [{suffix}]"
                             safe_name = base_name[:160 - len(marker)] + marker
                             suffix += 1
-                    result[safe_name] = (
-                        "<expurgé>" if (
-                            len(name) > _MAX_DETAIL_BYTES
-                            or _DIAGNOSTIC_SECRET_KEY.search(name)
-                        ) else walk(child, depth + 1)
-                    )
+                    # Explicit login/password fields are pseudonymized
+                    # only here. Paths, URLs, tokens, titles, authors, IDs and
+                    # other data are displayed as emitted.
+                    visible = DISPLAY_PSEUDONYMS.value(name, child)
+                    result[safe_name] = walk(visible, depth + 1)
                 if len(pairs) > _MAX_DETAIL_CHILDREN:
                     result["[suite]"] = "<éléments supplémentaires masqués>"
                 return result
@@ -471,6 +411,7 @@ class DiagnosticsPagePlugin:
         self.diagnostics = None
         self.tasks = None
         self._check_handle = None
+        self._event_handle = None
         self._ai_handle = None
         self._selection_handle = None
         self.llm = None
@@ -503,6 +444,7 @@ class DiagnosticsPagePlugin:
         broker = self.diagnostics
         if broker is None:
             raise RuntimeError("plugin Diagnostics non activé")
+        journal_available = callable(getattr(broker, "export_raw_journal", None))
 
         # Rebuilding a page revokes file actions belonging to its old widgets.
         # The shared Core capture itself deliberately remains untouched.
@@ -601,24 +543,42 @@ class DiagnosticsPagePlugin:
 
         # Journals remain inside the existing Diagnostics page. Every refresh
         # is an asynchronous call to the read-only public Diagnostics broker.
-        journals_title = Gtk.Label(label="Journaux par composant", xalign=0)
+        journals_title = Gtk.Label(label=("Journal des événements" if journal_available
+                                               else "Journaux par composant"), xalign=0)
         journals_title.add_css_class("heading")
         journals_tab.append(journals_title)
         journals_hint = Gtk.Label(
-            label="Flux expurgé et borné du Core ; aucune collecte réseau. "
-                  "La recherche texte (y compris les codes de limites de réconciliation) "
-                  "et le tri agissent sur la page chargée, pas sur tout l’historique. "
-                  "Le filtre Domaine métier agit avant pagination.",
+            label="Recherche sur tout le journal local conservé, rotations comprises. "
+                  "Les données brutes peuvent contenir des informations sensibles. "
+                  "Seuls login et mot de passe sont pseudonymisés à l’écran.",
             xalign=0,
         )
         journals_hint.set_wrap(True)
         journals_tab.append(journals_hint)
 
-        filters_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        source_selector = Gtk.DropDown.new_from_strings(
-            ["Toutes les sources", "Événements Core", "Journal applicatif"]
+        search_filter = Gtk.Entry()
+        search_filter.set_placeholder_text(
+            "Rechercher dans tous les événements" if journal_available
+            else "Rechercher dans cette page"
         )
-        source_selector.set_tooltip_text("Source des événements")
+        search_filter.set_hexpand(True)
+        search_filter.set_tooltip_text(
+            "Recherche côté Core sur toutes les rotations avant pagination ; Entrée pour actualiser"
+        )
+        if journal_available:
+            journals_tab.append(search_filter)
+
+        advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        filters_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        source_labels = ["Toutes les sources (ancien)", "Événements Core", "Journal applicatif"]
+        if journal_available:
+            source_labels.append("Journal unifié")
+        source_selector = Gtk.DropDown.new_from_strings(source_labels)
+        source_selector.set_selected(3 if journal_available else 0)
+        source_selector.set_tooltip_text(
+            "Journal canonique ; anciennes sources accessibles en mode avancé"
+            if journal_available else "Source des événements"
+        )
         severity_selector = Gtk.DropDown.new_from_strings(
             ["Tous niveaux", "Debug", "Info", "Avertissements", "Erreurs", "Critiques"]
         )
@@ -626,9 +586,10 @@ class DiagnosticsPagePlugin:
         period_selector = Gtk.DropDown.new_from_strings(
             ["Toutes périodes", "Dernière heure", "24 heures", "7 jours", "30 jours"]
         )
-        period_selector.set_selected(2)
+        period_selector.set_selected(0 if journal_available else 2)
         period_selector.set_tooltip_text("Période de la consultation")
-        filters_top.append(source_selector)
+        if not journal_available:
+            advanced_box.append(source_selector)
         filters_top.append(severity_selector)
         filters_top.append(period_selector)
         journals_tab.append(filters_top)
@@ -638,16 +599,14 @@ class DiagnosticsPagePlugin:
         module_filter.set_placeholder_text("Préfixe module (Entrée pour appliquer)")
         module_filter.set_hexpand(True)
         module_filter.set_tooltip_text("Filtre serveur sur le préfixe de module")
-        search_filter = Gtk.Entry()
-        search_filter.set_placeholder_text("Rechercher dans cette page")
-        search_filter.set_hexpand(True)
-        search_filter.set_tooltip_text("Recherche locale dans les événements chargés")
         sort_latest = Gtk.CheckButton(label="Plus récents d’abord")
         sort_latest.set_active(True)
         filters_bottom.append(module_filter)
-        filters_bottom.append(search_filter)
+        if not journal_available:
+            # Preserve the existing GTK keyboard focus order for legacy brokers.
+            filters_bottom.append(search_filter)
         filters_bottom.append(sort_latest)
-        journals_tab.append(filters_bottom)
+        advanced_box.append(filters_bottom)
 
         # Alias UI -> domaine Core attesté, sans recherche dans les journaux
         # privés ou les messages libres de plugins.
@@ -665,7 +624,8 @@ class DiagnosticsPagePlugin:
         )
         domain_row.append(domain_caption)
         domain_row.append(domain_filter)
-        journals_tab.append(domain_row)
+        if not journal_available:
+            advanced_box.append(domain_row)
 
         # Separate from the module prefix and from the event-source channel.
         # The Core filter is exact and runs before pagination.
@@ -681,7 +641,7 @@ class DiagnosticsPagePlugin:
         )
         provider_row.append(provider_caption)
         provider_row.append(provider_filter)
-        journals_tab.append(provider_row)
+        advanced_box.append(provider_row)
 
         # This is a SERVER-side exact Core reason-code filter, unlike the
         # search field above which only scans the 50 loaded observations.
@@ -704,7 +664,8 @@ class DiagnosticsPagePlugin:
         reason_code_filter.set_hexpand(True)
         reason_row.append(reason_caption)
         reason_row.append(reason_code_filter)
-        journals_tab.append(reason_row)
+        if not journal_available:
+            advanced_box.append(reason_row)
 
         operation_grouping = Gtk.CheckButton(label="Regrouper par tâche liée (cette page)")
         operation_grouping.set_tooltip_text(
@@ -712,7 +673,11 @@ class DiagnosticsPagePlugin:
             "avec les filtres, la pagination ou la rotation des journaux. "
             "Les résultats métier et worker restent distincts."
         )
-        journals_tab.append(operation_grouping)
+        advanced_box.append(operation_grouping)
+        advanced_filters = Gtk.Expander(label="Filtres avancés")
+        advanced_filters.set_expanded(not journal_available)
+        advanced_filters.set_child(advanced_box)
+        journals_tab.append(advanced_filters)
 
         journals_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         journals_refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
@@ -725,6 +690,12 @@ class DiagnosticsPagePlugin:
         journals_actions.append(journals_next)
         journals_actions.append(journals_copy)
         journals_tab.append(journals_actions)
+        journals_raw_export = Gtk.Button(label="Exporter le journal brut…")
+        journals_raw_export.set_tooltip_text(
+            "Export local non masqué, après confirmation : mots de passe, "
+            "identifiants, cookies, tokens et URLs peuvent être présents"
+        )
+        journals_tab.append(journals_raw_export)
 
         # FlowBox wraps four actions even in narrow 760px windows.
         journals_select_actions = Gtk.FlowBox()
@@ -1222,8 +1193,9 @@ class DiagnosticsPagePlugin:
 
         def display_events() -> None:
             clear_container(journals_box)
+            journal_mode = int(source_selector.get_selected()) == 3
             rows = sanitized_rows(
-                current_page, search=search_filter.get_text().strip(),
+                current_page, search="" if journal_mode else search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
                 include_detail=True,
             )
@@ -1239,7 +1211,7 @@ class DiagnosticsPagePlugin:
             except ValueError:
                 pass
             journals_summary.set_text(explorer_header(
-                current_page, rows, search=search_filter.get_text().strip()
+                current_page, rows, search="" if journal_mode else search_filter.get_text().strip()
             ) + " · Domaine : " + domain_label)
             groups = (linked_operation_groups(rows) if operation_grouping.get_active()
                       else module_groups(rows))
@@ -1301,6 +1273,7 @@ class DiagnosticsPagePlugin:
                             + (f"· Fournisseur : {row['provider_id']} "
                                if row.get("provider_id") else "")
                             + f"· Référence : {event_id[:16]}"
+                            + connection_provenance_label(row)
                         ),
                         xalign=0,
                     )
@@ -1358,6 +1331,8 @@ class DiagnosticsPagePlugin:
             generation = page_generation
             if not (keep_bulk and selection_json is not None):
                 invalidate_selection("Sélection effacée après actualisation ou navigation")
+            if self._event_handle is not None and not self._event_handle.done():
+                self._event_handle.cancel()
             # Invalidate the previous snapshot immediately, including when
             # a local search change happens while the new query is pending.
             current_page = {
@@ -1378,8 +1353,13 @@ class DiagnosticsPagePlugin:
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "offset": page_offset,
-                "reason_code": reason_code_filter.get_text().strip(),
+                "reason_code": ("" if int(source_selector.get_selected()) == 3
+                                else reason_code_filter.get_text().strip()),
+                "search": (search_filter.get_text().strip()
+                           if int(source_selector.get_selected()) == 3 else ""),
             }
+            if int(source_selector.get_selected()) == 3:
+                query["domain"] = ""
 
             def read_snapshot(_control):
                 return fetch_explorer_page(broker, **query)
@@ -1462,7 +1442,8 @@ class DiagnosticsPagePlugin:
                 host.toast("Sélection multi-page expurgée copiée (non atomique)")
                 return
             rows = sanitized_rows(
-                current_page, search=search_filter.get_text().strip(),
+                current_page, search=("" if int(source_selector.get_selected()) == 3
+                                      else search_filter.get_text().strip()),
                 newest_first=sort_latest.get_active(),
             )
             visible_ids = selectable_event_ids(rows)
@@ -1585,6 +1566,91 @@ class DiagnosticsPagePlugin:
 
             handle.add_done_callback(done)
 
+        raw_export_armed = False
+
+        def export_raw_journal_clicked(_button):
+            nonlocal raw_export_armed
+            if not raw_export_armed:
+                raw_export_armed = True
+                journals_raw_export.set_label("Confirmer l’export brut non masqué")
+                host.toast(
+                    "Attention : le journal brut contient potentiellement logins, "
+                    "mots de passe, cookies, tokens, URL et autres données sensibles. "
+                    "Cliquez encore pour choisir un fichier local."
+                )
+                return
+            raw_export_armed = False
+            journals_raw_export.set_label("Exporter le journal brut…")
+            if not callable(getattr(broker, "export_raw_journal", None)):
+                host.toast("Core incompatible : export brut non disponible")
+                return
+            chooser = Gtk.FileChooserNative.new(
+                "Exporter les événements bruts", host,
+                Gtk.FileChooserAction.SAVE, "Exporter", "Annuler",
+            )
+            chooser.set_current_name("cifereca-journal-brut.json")
+
+            def chose_file(dialog, response):
+                try:
+                    if response != Gtk.ResponseType.ACCEPT:
+                        return
+                    output = dialog.get_file()
+                    destination = output.get_path() if output is not None else None
+                    if not destination:
+                        host.toast("Destination locale requise")
+                        return
+
+                    def write_raw(control):
+                        import os
+                        if control.cancelled():
+                            return False
+                        content = broker.export_raw_journal()
+                        if type(content) is not bytes or len(content) > 12_000_000:
+                            raise ValueError("journal_export_limit")
+                        if control.cancelled():
+                            return False
+                        flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                                 | getattr(os, "O_NOFOLLOW", 0))
+                        fd = os.open(destination, flags, 0o600)
+                        with os.fdopen(fd, "wb") as handle:
+                            os.fchmod(handle.fileno(), 0o600)
+                            handle.write(content)
+                        return True
+
+                    try:
+                        handle = self.tasks.submit(
+                            write_raw, label="Export local du journal brut",
+                            kind="diagnostics",
+                        )
+                    except Exception:
+                        host.toast("Export brut indisponible")
+                        return
+
+                    def completed(done_handle):
+                        try:
+                            okay = done_handle.result()
+                        except Exception:
+                            okay = False
+
+                        def status():
+                            if self._page_root is page_root:
+                                host.toast(
+                                    "Journal brut exporté localement" if okay
+                                    else "Export brut impossible ou annulé"
+                                )
+                            return False
+
+                        GLib.idle_add(status)
+
+                    handle.add_done_callback(completed)
+                finally:
+                    dialog.destroy()
+
+            chooser.connect("response", chose_file)
+            chooser.show()
+
+        journals_raw_export.connect("clicked", export_raw_journal_clicked)
+
         # An explicit refresh changes the underlying evidence. Any old AI
         # preview or consent must be revoked *before* starting broker I/O.
         def refresh_journals(_button):
@@ -1609,7 +1675,33 @@ class DiagnosticsPagePlugin:
         provider_filter.connect("changed", lambda *_: invalidate_selection())
         reason_code_filter.connect("activate", reset_events)
         reason_code_filter.connect("changed", lambda *_: invalidate_selection())
-        search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
+        search_timeout = 0
+
+        def on_search_change(*_args):
+            # Debounce typing: never scan 10,000 events on every keystroke.
+            # The actual query uses the task broker; stale replies are ignored
+            # through page_generation, and the prior task is cancelled.
+            from gi.repository import GLib
+            nonlocal search_timeout
+            invalidate_selection()
+            if not journal_available:
+                display_events()  # Backward-compatible Core, local page search.
+                return
+            if search_timeout:
+                GLib.source_remove(search_timeout)
+
+            def apply_search():
+                nonlocal search_timeout
+                search_timeout = 0
+                if int(source_selector.get_selected()) == 3:
+                    reset_events()
+                else:
+                    display_events()
+                return False
+
+            search_timeout = GLib.timeout_add(220, apply_search)
+
+        search_filter.connect("changed", on_search_change)
         sort_latest.connect("toggled", lambda *_: display_events())
         operation_grouping.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)

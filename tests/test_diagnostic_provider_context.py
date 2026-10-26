@@ -29,41 +29,59 @@ def application_log(tmp_path):
         handler.close()
 
 
-def test_broker_exact_provider_filter_both_channels_before_pagination(application_log, monkeypatch):
-    diag = Diagnostics(level="errors")
+def test_broker_provider_filter_reads_only_physical_events(application_log, monkeypatch):
+    # The same event must never be counted once in RAM and again on disk.
+    records = []
     providers = ("paris", "kobo", "numilog", "paris.catalog")
-    for provider in providers:
-        diag.add_core_provider_connect_failure(provider)
-        diag.add_core_source_sync(provider, phase="completed", status="failed", code="source_sync_failed")
-    # Same spelling in arbitrary plugin data is not provider provenance.
-    diag.add("PLUGIN", "provider connect", "error", detail={
-        "provider_id": "paris", "code": "provider_connect_failed",
-        "email": "PRIVATE@example.invalid", "password": "PRIVATE",
-        "book_id": "PRIVATE", "site": "PRIVATE.example.invalid",
-    })
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Diagnostics must remain offline")
-    service = SimpleNamespace(diagnostics=diag, registry=SimpleNamespace(maybe_get=forbidden),
-                              connect_configured=forbidden)
+    for index, provider in enumerate(providers):
+        for offset, category in enumerate(("CONNECTION", "SYNC")):
+            records.append(
+                f"2026-10-25 10:00:{index * 2 + offset:02d},000 ERROR cifereca "
+                "DIAG_JSON " + json.dumps({
+                    "schema_version": 1, "category": category,
+                    "operation": "provider_connect" if offset == 0 else "source_sync",
+                    "status": "error", "message": "source failed",
+                    "detail": {"provider_id": provider, "code": "failed"},
+                })
+            )
+    records.append(
+        "2026-10-25 10:00:10,000 ERROR cifereca DIAG_JSON "
+        + json.dumps({
+            "schema_version": 1, "category": "PLUGIN",
+            "operation": "unrelated", "status": "error",
+            "message": "paris mentioned without typed provider ID",
+            "detail": {"email": "PRIVATE@example.invalid"},
+        })
+    )
+    application_log.write_text("\n".join(records) + "\n", encoding="utf-8")
     monkeypatch.setattr("cifereca.paths.log_file", lambda: application_log)
-    broker = DiagnosticsBrokerImpl(service)
-    full = broker.events(provider_id="paris", severity="error", limit=100)
-    assert full["total"] == 4
-    assert {e["source"] for e in full["events"]} == {"app_log", "core_events"}
-    assert {e["module"] for e in full["events"]} == {"cifereca", "PLUGIN", "SYNC"}
-    assert all(e["provider_id"] == e["detail"]["provider_id"] == "paris"
-               for e in full["events"])
-    assert "PRIVATE" not in json.dumps(full)
-    pages = [broker.events(provider_id="paris", limit=1, offset=i) for i in range(4)]
-    assert all(p["total"] == 4 for p in pages)
-    assert [p["events"][0]["event_id"] for p in pages] == [e["event_id"] for e in full["events"]]
+
+    class ForbiddenMemory:
+        def snapshot(self):
+            raise AssertionError("physical broker must not read memory")
+
+    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=ForbiddenMemory()))
+    full = broker.events(source="all", provider_id="paris", severity="error", limit=100)
+    assert full["total"] == 2
+    assert {row["source"] for row in full["events"]} == {"journal"}
+    assert {row["module"] for row in full["events"]} == {"CONNECTION", "SYNC"}
+    assert all(row["detail"]["provider_id"] == "paris" for row in full["events"])
+    assert "PRIVATE@example.invalid" not in json.dumps(full)
+
+    pages = [broker.events(source="core_events", provider_id="paris", limit=1, offset=i)
+             for i in range(2)]
+    assert all(page["total"] == 2 for page in pages)
+    assert [page["events"][0]["event_id"] for page in pages] == [
+        row["event_id"] for row in full["events"]
+    ]
     assert pages[-1]["next_offset"] is None
-    assert broker.events(provider_id="paris", module="SYNC")["total"] == 2
-    assert broker.events(provider_id="paris.catalog")["total"] == 4
-    assert broker.events(provider_id="provider")["total"] == 0
-    unknown = broker.events(provider_id="provider.absent")
-    assert unknown["events"] == [] and unknown["status"] == "empty"
+    assert broker.events(source="app_log", provider_id="paris", module="SYNC")["total"] == 1
+    assert broker.events(source="all", provider_id="paris.catalog")["total"] == 2
+    assert broker.events(source="all", provider_id="provider")["total"] == 0
+    unknown = broker.events(source="all", provider_id="provider.absent")
+    assert unknown["events"] == [] and unknown["total"] == 0
     assert unknown["sources"] == full["sources"]
+
 
 
 def test_generic_categories_and_runtime_do_not_attest_provider(tmp_path):

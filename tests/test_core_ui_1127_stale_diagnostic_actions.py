@@ -31,7 +31,8 @@ def _context(*, closed=False):
     lifetime = SettingsPageLifetime()
     host = NS(
         _closed=closed,
-        diagnostics=NS(clear=lambda: events.append(("clear",))),
+        diagnostics=NS(clear=lambda: events.append(("legacy_clear",))),
+        toast=lambda message: events.append(("toast", message)),
         navigate=lambda route: events.append(("navigate", route)),
         plugins_page=NS(
             focus_plugin=lambda source: events.append(("focus", source)),
@@ -41,15 +42,21 @@ def _context(*, closed=False):
         "self": host,
         "page_lifetime": lifetime,
         "refresh_text": lambda: events.append(("refresh",)),
+        "diag_text": NS(get_buffer=lambda: NS(
+            set_text=lambda value: events.append(("display", value))
+        )),
     }, lifetime, host, events
 
 
-def test_diagnostics_clear_button_keeps_normal_behavior_when_live():
+def test_diagnostics_clear_button_clears_only_display_when_live():
     ctx, lifetime, host, events = _context()
     source, clear = _source_and_callback("clear_diagnostics", ctx)
     assert 'clear.connect(\'clicked\', clear_diagnostics)' in source
     clear()
-    assert events == [("clear",), ("refresh",)]
+    assert events == [
+        ("display", ""),
+        ("toast", "Affichage effacé ; journal local conservé"),
+    ]
     assert lifetime.alive
 
 

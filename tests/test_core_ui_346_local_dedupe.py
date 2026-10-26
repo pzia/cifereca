@@ -39,7 +39,7 @@ def test_non_trivial_states_remain_visible():
     host = _standalone_pair()
 
     assert host._library_availability_label({"provider_id": "local", "state": "missing"}) == "Fichier manquant"
-    assert host._library_availability_label({"provider_id": "local", "state": "remote_catalog"}) == "Distant"
+    assert host._library_availability_label({"provider_id": "local", "state": "remote_catalog"}) == "Notice de catalogue · sans droit attesté"
     assert host._library_availability_label({"provider_id": "paris", "state": "available_to_borrow"}) == "Empruntable"
     assert host._library_availability_label({"provider_id": "kobo", "state": "local"}) == "Local"
 

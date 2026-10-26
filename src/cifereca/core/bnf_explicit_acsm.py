@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
 from .diagnostic_bnf_loan_action import BnfLoanActionError, provider_reason
+from .loan_action_scope import capture_loan_action_scope
 
 _MAX_BYTES = 2 * 1024 * 1024
 
@@ -115,13 +116,26 @@ def stage_bnf_loan_acsm(
             except Exception:
                 _refuse("bnf_loan_scope_unproven")
 
-            # No provider download capability override. The BnF-specific
-            # explicit gate is required; generic download_digital(loan,...)
-            # remains refused, including during opening_sync.
+            # Consent is already explicit, and this BnF-private action is
+            # deliberately NOT the publicly advertised loan.download_token
+            # capability. Capture the exact Core account/session/epoch before
+            # any staging or provider GET. A same-object in-place mutation
+            # must not retain its former authority.
+            lease = capture_loan_action_scope(
+                service, loan, account, session,
+                expected_identity_id=expected_identity_id,
+            )
+            if lease is None:
+                _refuse("bnf_loan_scope_unproven")
             observe_phase('local_staging')
             destination = service._acquisition_work_dir(
                 expected_identity_id, "bnf-pret", loan.id)
             observe_phase('provider_delivery')
+            # A context change after confirmation (or while local staging
+            # was being prepared) must deny the GET itself, not just its
+            # resulting candidate.
+            if not lease.current(service):
+                _refuse("bnf_loan_scope_unproven")
             try:
                 artifact, url = session.download_digital(
                     loan, account, destination, explicit_user_action=True)
@@ -130,6 +144,12 @@ def stage_bnf_loan_acsm(
                 # accidentally include private URLs or SAML in that text.
                 _refuse(provider_reason(exc))
             observe_phase('artifact_validation')
+            # Network I/O can switch the Core epoch even if the selected
+            # identity later returns to its original value (ABA). Discard
+            # only the private candidate in our own staging directory.
+            if not lease.current(service):
+                _discard_invalid_candidate(artifact, destination)
+                _refuse("bnf_loan_scope_unproven")
             try:
                 if not isinstance(artifact, Path) or type(url) is not str or url:
                     _refuse("bnf_loan_token_invalid")
@@ -140,11 +160,8 @@ def stage_bnf_loan_acsm(
                         or not 0 < artifact.stat().st_size <= _MAX_BYTES
                         or not _valid_loan_token(artifact, inspect_artifact)):
                     _refuse("bnf_loan_token_invalid")
-                if not active_identity() or session.connected is not True:
-                    try:
-                        artifact.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                if not lease.current(service):
+                    _discard_invalid_candidate(artifact, destination)
                     _refuse("bnf_loan_scope_unproven")
             except (OSError, ValueError):
                 _discard_invalid_candidate(artifact, destination)
@@ -156,20 +173,11 @@ def stage_bnf_loan_acsm(
             # A valid ACSM from a stale session must never be handed to ADEPT.
             observe_phase('source_revalidation')
             try:
-                still_bound = (
-                    active_identity()
-                    and service._session_for_source(
-                        loan.source_provider, loan.source_credential) is session
-                    and service._account_for_loan(loan) is account
-                    and session.connected is True
-                )
+                still_bound = lease.current(service)
             except Exception:
                 still_bound = False
             if not still_bound:
-                try:
-                    artifact.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                _discard_invalid_candidate(artifact, destination)
                 _refuse("bnf_loan_scope_unproven")
             # The candidate is deliberately NOT an acquisition, a loan
             # fulfillment receipt, or a new/expired entitlement.

@@ -8,6 +8,12 @@ from .context import PluginContext
 from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
+from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
+from .lending_actions import (
+    LENDING_ACTION_CONTRACT, LendingActionOrigin, LendingActionOriginPolicy,
+    LendingActionAdmission, assess_lending_action, LendingActionStatus,
+    LendingActionOutcome,
+)
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
 from .models import (
     AcquisitionOffer, AcquisitionPreferences, AcquisitionOfferSet,
@@ -52,6 +58,8 @@ from cifereca.language import normalize_language_tag
 from cifereca.filename_normalization import sanitize_filename_component
 from cifereca.descriptions import description_text, description_element
 from cifereca.diagnostics import redact_text
+# GTK presentation-only helper; plugins access it solely through the public API.
+from cifereca.gui.diagnostics_pseudonyms import DiagnosticsPseudonyms, DISPLAY_PSEUDONYMS
 from cifereca.artifact_inspection import ArtifactInspection, detect_artifact_format, inspect_artifact, inspect_artifact_content
 from cifereca.artifact_publication import publish_artifact_content, publish_artifact_file
 from .bundles import (
@@ -69,8 +77,13 @@ from .llm import LLMRequest, LLMResult, LLMService
 from .document_links import document_links
 
 __all__ = [
+    "DiagnosticsPseudonyms", "DISPLAY_PSEUDONYMS",
     "LLMRequest", "LLMResult", "LLMService",
     "ProviderCollection", "ProviderCollectionSnapshot", "VirtualProviderEntry", "ProviderCollectionValidationError", "validate_provider_collection_snapshot",
+    "INVENTORY_CONTRACT", "LoanInventoryScope", "LoanBranchCoverage", "LoanInventorySnapshot", "legacy_loan_inventory", "read_loan_inventory",
+    "LENDING_ACTION_CONTRACT", "LendingActionOrigin", "LendingActionOriginPolicy",
+    "LendingActionAdmission", "assess_lending_action", "LendingActionStatus",
+    "LendingActionOutcome",
     "ProviderSearchEvent", "ProviderSearchStream",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",

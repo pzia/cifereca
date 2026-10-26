@@ -45,6 +45,9 @@ def _show_search():
     env = dict(
         file_format=file_format, detail_language=detail_language,
         book_detail_presentation=book_detail_presentation,
+        # Isolated AST execution does not import module-level GTK helpers.
+        # This scenario is Gallica-only; the Numilog scope is tested separately.
+        _commercial_search_usage=lambda _item, _service=None: "",
         Adw=NS(PreferencesGroup=lambda: NS(set_title=lambda *_: None, add=lambda *_: None),
                ActionRow=lambda: NS(set_title=lambda *_: None)),
     )

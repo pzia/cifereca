@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import Account, Loan
@@ -93,6 +94,7 @@ def test_opening_sync_persists_per_identity_status_on_partial_errors(tmp_path: P
         monkeypatch.setattr(service, "_acquire_active_loan_automatically", lambda loan: {"status": "attention_required", "loan_id": loan.id})
         monkeypatch.setattr(service, "catalog_scan", lambda: {"scanned": 0})
         monkeypatch.setattr(service, "kobo_backup_enabled", lambda: False)
+        enable_synthetic_paris_opening(service)
         summary = service.opening_sync()
         assert len(summary["identities"]) == 2
         first = next(row for row in summary["identities"] if row["identity_id"] == "default")

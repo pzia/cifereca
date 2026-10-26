@@ -39,6 +39,10 @@ DEV_COMMAND = "cifereca-update-dev"
 DEFAULT_GITHUB_REPOSITORY = "pzia/cifereca"
 TRANSACTION_FILE = ".cifereca-transaction.json"
 TRANSACTION_SCHEMA = 1
+# Sequential plugin installs have a separate 300s cap *per* package. 21
+# installs cannot share a 300s parent deadline; cap the overall release
+# child as well and keep strict failure-before-rollback semantics.
+RELEASE_PLUGIN_SNAPSHOT_TIMEOUT_SECONDS = 3600
 
 
 class UpdateError(RuntimeError):
@@ -681,6 +685,39 @@ def _path_from_identity(value: Any) -> Path | None:
     return Path(str(value["path"]))
 
 
+def _verify_restored_transaction_state(root: Path, transaction: dict[str, Any]) -> None:
+    """Read-only proof after rollback: both Core links and every managed package.
+
+    A successful copy or CLI smoke does not prove that absent packages stayed
+    absent, nor that Core symlinks still target their pre-update releases.
+    Consume only the transaction's own pre-mutation identities. No writes,
+    network calls, plugin activation or untrusted fields in public failures.
+    """
+    core = transaction.get("core")
+    packages = transaction.get("packages")
+    if type(core) is not dict or type(packages) is not dict:
+        raise UpdateError("rollback_evidence_unavailable")
+    for link, key in (("current", "before_current"), ("previous", "before_previous")):
+        expected = _path_from_identity(core.get(key))
+        actual = _symlink_target(root / link)
+        if ((expected is None) != (actual is None)
+                or (expected is not None and (
+                    not expected.is_dir() or actual is None
+                    or actual.resolve() != expected.resolve()
+                ))):
+            raise UpdateError("rollback_core_state_mismatch")
+    for package_id, row in sorted(packages.items()):
+        before = row.get("before") if type(row) is dict else None
+        if type(before) is not dict:
+            raise UpdateError("rollback_evidence_unavailable")
+        try:
+            after = _package_identity(package_id)
+        except Exception:
+            raise UpdateError("rollback_package_state_unavailable") from None
+        if after != before:
+            raise UpdateError("rollback_package_state_mismatch")
+
+
 def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str, Any], state: str) -> None:
     """Idempotently complete a failed update or an interrupted voluntary rollback."""
     _save_transaction(path, transaction, state)
@@ -706,6 +743,13 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
                 (bin_dir() / command).unlink(missing_ok=True)
     except Exception as exc:
         errors.append("core")
+    if not errors:
+        try:
+            _verify_restored_transaction_state(root, transaction)
+        except Exception:
+            # Never mark an unproven restore successful. Preserve the
+            # transaction for a safe later reconciliation; do not leak paths.
+            errors.append("verification")
     if errors:
         transaction["restoration_errors"] = errors
         _save_transaction(path, transaction, "restoration_incomplete")
@@ -874,7 +918,7 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     try:
         proc = run_plugin_child(
             [str(command), str(snapshot), "--json"],
-            timeout=300, on_line=child_progress_receiver(),
+            timeout=RELEASE_PLUGIN_SNAPSHOT_TIMEOUT_SECONDS, on_line=child_progress_receiver(),
         )
     except TimeoutError:
         raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None

@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.3.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.4.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -144,6 +144,28 @@ le XML ACSM, les cookies, les credentials, le HTML privé ou les chemins locaux.
 Ces nouveaux événements ne permettent pas de déterminer rétrospectivement
 la cause des deux échecs du 25 octobre 2026.
 
+### BnF-Prêt 0.3.4 — localiser le refus avant le GET ACSM (#2055)
+
+Le parcours sous double consentement conserve ses garanties précédentes. Le
+fournisseur distingue maintenant les échecs de **relecture d'activité**
+(`activity_http_unavailable`, `activity_access_denied`,
+`activity_unrecognized_loans`, etc.) des échecs au **GET du jeton ACSM**
+(`http_unavailable`, `access_denied`, `invalid_loan_token`, etc.).
+Le Core publie les mêmes raisons fermées avec le préfixe `bnf_` dans
+`reason_code`. Une raison `bnf_activity_*` prouve que le GET ACSM **n'a pas
+été déclenché par cette tentative**. `provider_delivery` reste la phase
+englobante : ce seul libellé n'atteste pas le GET. Le cas de prêt disparu
+demeure `bnf_loan_not_observed`, lui aussi **avant** le GET.
+
+La révocation de session durant la relecture est désormais vérifiée **avant**
+la requête de téléchargement ; cela refuse le GET et ne produit ni jeton
+ni import. Aucune nouvelle requête, aucune réponse privée ni URL n'entre
+dans les événements. Les anciens plugins 0.3.3 restent compatibles : leur
+code `bnf_http_unavailable` en `provider_delivery` ne permet toujours pas
+de déduire quelle requête a échoué. Cette distinction n'est vérifiée qu'en
+tests HTTPX synthétiques ; la réponse réelle du serveur et ADEPT restent à
+qualifier sur un prêt choisi manuellement.
+
 ## Catalogue et fiches en lecture seule
 
 Dans le Core, après configuration et connexion du compte BnF, sélectionner
@@ -196,3 +218,23 @@ redirection interdite, absence de mutation et fermeture. Les suites Core et
 CoreUI couvrent le double consentement, l'immuabilité du prêt choisi et la
 validation indépendante de l'ACSM. Ces tests synthétiques ne remplacent ni la
 recette du GET réel, ni celle d'ADEPT.
+
+## Diagnostic des lectures de prêt (0.3.6)
+
+Le journal canonique et Diagnostics reçoivent `BnF HTTP`, filtrable par
+`provider_id=bnf-pret`. Chaque lecture existante de l’activité ou du jeton
+émet `begin`, `response` si des en-têtes ont été reçus, puis `terminal`, avec
+un `request_ref` commun aux observations de cette requête uniquement.
+`logical_endpoint=activity` / `phase=activity_recheck` distingue la relecture
+de `logical_endpoint=loan_token` / `phase=loan_token_get`. Le statut
+`http_status` numérique et le `content_type` reçu sont conservés sans
+reconstruction. Avant réception, le statut HTTP est absent. Une interruption
+de lecture après HTTP 200 reste un échec de transport. Une redirection HTML
+est un résultat partiel `redirect_received`, pas une lecture de contenu achevée.
+
+`http_read_completed` atteste seulement la lecture HTTP bornée : validation
+ACSM, staging Core et fulfillment ADEPT restent des étapes indépendantes.
+Aucune nouvelle requête, relance, modification de route ou capture de
+formulaire SSO n’est ajoutée. Un échec d’activité ne déclenche pas le GET jeton.
+Les réponses de test sont synthétiques ; la cause HTTP du refus terrain et
+le fulfillment réel restent à qualifier dans #2055.

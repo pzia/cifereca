@@ -28,14 +28,25 @@ def main() -> int:
     if "--version" in sys.argv[1:]:
         print(f"cifereca {__version__}")
         return 0
-    verbose = "--verbose" in sys.argv[1:] or "--debug" in sys.argv[1:]
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(
+            "Usage: cifereca [--trace] [--no-plugins] [--force-plugin ID]\n"
+            "       cifereca [--help | --version]\n\n"
+            "  --trace         Activer le niveau Trace dans le Core et l'interface\n"
+            "  --debug         Alias de --trace (compatibilité)\n"
+            "  --verbose       Alias de --trace (compatibilité)\n"
+            "  --no-plugins    Désactiver les plugins au lancement\n"
+            "  --force-plugin  Activer le plugin indiqué (répétable)"
+        )
+        return 0
+    verbose = any(arg in {"--trace", "--verbose", "--debug"} for arg in sys.argv[1:])
     no_plugins = "--no-plugins" in sys.argv[1:]
     force_plugins: list[str] = []
     cleaned = [sys.argv[0]]
     index = 1
     while index < len(sys.argv):
         arg = sys.argv[index]
-        if arg in {"--verbose", "--debug", "--no-plugins"}:
+        if arg in {"--trace", "--verbose", "--debug", "--no-plugins"}:
             index += 1
             continue
         if arg == "--force-plugin":
@@ -66,13 +77,18 @@ def main() -> int:
 
     logger.info("TRACE startup gtk-import-ok dt=%.3fs", time.monotonic()-t0)
     logger.info("TRACE startup core-open begin")
-    core = CiferecaCore.open(
+    core_options = dict(
         no_plugins=no_plugins,
         force_plugins=tuple(force_plugins),
         activate_plugins=False,
     )
+    # Apply an explicit CLI override before constructing services/plugins.
+    # Do not persist it: only an IHM preference change saves the next launch.
+    if verbose:
+        core_options["diagnostics_level"] = "trace"
+    core = CiferecaCore.open(**core_options)
     config, service, diagnostics = core.config, core.library, core.diagnostics
-    set_diagnostics_level("trace" if verbose else diagnostics.level)
+    set_diagnostics_level(diagnostics.level)
     logger.info(
         "TRACE startup core-open end schema=%s dt=%.3fs",
         core.storage.schema_version(), time.monotonic()-t0,

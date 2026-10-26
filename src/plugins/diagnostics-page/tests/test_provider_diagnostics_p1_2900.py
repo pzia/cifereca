@@ -8,9 +8,18 @@ from pathlib import Path
 import pytest
 
 from diagnostics_explorer import (
-    fetch_explorer_page, sanitized_rows, export_selected_events,
+    fetch_explorer_page as canonical_explorer_page, sanitized_rows, export_selected_events,
 )
-from diagnostics_selection import collect_filtered_selection
+from diagnostics_selection import collect_filtered_selection as canonical_selection
+
+
+# #3133: provider compatibility fixtures opt into historical sources.
+def fetch_explorer_page(broker, **filters):
+    return canonical_explorer_page(broker, source=filters.pop("source", "all"), **filters)
+
+
+def collect_filtered_selection(broker, **filters):
+    return canonical_selection(broker, source=filters.pop("source", "all"), **filters)
 
 
 def event(idx, provider="paris"):
@@ -185,21 +194,54 @@ def test_old_core_supports_unfiltered_page_and_refuses_explicit_provider():
 
 
 def test_real_core_broker_provider_survives_page_bulk_copy_and_ai(tmp_path, monkeypatch):
+    import logging
     from types import SimpleNamespace
+
     from cifereca.brokers import DiagnosticsBrokerImpl
     from cifereca.diagnostics import Diagnostics
+    from cifereca.logging_utils import CanonicalEventFormatter
     from diagnostics_ai import prepare_analysis
     from tests.test_diagnostics_ai_p0 import FakeLLM
-    diag = Diagnostics(level="errors")
+
+    path = tmp_path / "cifereca.log"
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: path)
+    logger = logging.getLogger("cifereca")
+    previous = logger.level
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(CanonicalEventFormatter(
+        "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
+    ))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        producer = Diagnostics(level="errors")
+        for provider in ("paris", "kobo", "numilog"):
+            producer.add_core_source_sync(
+                provider, phase="completed", status="failed",
+                code="source_sync_failed",
+            )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        handler.close()
+
+    class ForbiddenMemory:
+        def snapshot(self):
+            raise AssertionError("journal broker must not read memory")
+
+    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=ForbiddenMemory()))
+    assert path.read_text(encoding="utf-8").count("DIAG_JSON ") == 3
     for provider in ("paris", "kobo", "numilog"):
-        diag.add_core_source_sync(provider, phase="completed", status="failed", code="source_sync_failed")
-    monkeypatch.setattr("cifereca.paths.log_file", lambda: tmp_path / "missing")
-    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=diag))
-    for provider in ("paris", "kobo", "numilog"):
-        payload = fetch_explorer_page(broker, provider_id=provider, source="core_events", period="all")
+        payload = fetch_explorer_page(
+            broker, provider_id=provider, source="journal", period="all",
+        )
         rows = sanitized_rows(payload)
         assert len(rows) == 1 and rows[0]["provider_id"] == provider
-        selected = collect_filtered_selection(broker, provider_id=provider, source="core_events", period="all")
+        selected = collect_filtered_selection(
+            broker, provider_id=provider, source="journal", period="all",
+        )
         assert json.loads(selected.export_json)["events"][0]["provider_id"] == provider
-        preview = prepare_analysis(FakeLLM(), broker, provider_id=provider, source="core_events")
+        preview = prepare_analysis(
+            FakeLLM(), broker, provider_id=provider, source="journal",
+        )
         assert preview["prompt"].count('"provider_id": "' + provider + '"') == 2

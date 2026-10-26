@@ -15,7 +15,7 @@ PRIVATE = 'PRIVATE_COORDINATE'
 
 
 def assert_clean(caplog):
-    records = caplog.records
+    records = [record for record in caplog.records if record.name.startswith("privacy-")]
     assert records
     assert all(PRIVATE not in r.getMessage() + repr(r.args) for r in records)
     assert all('request_ref=' in r.getMessage() for r in records)

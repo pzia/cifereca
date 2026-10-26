@@ -2,6 +2,10 @@
 
 État documentaire : 7 octobre 2026.
 
+## Consigne Diagnostics prioritaire — 25/10/2026
+
+Le Core et les plugins émettent dans **un journal brut unique**, sans effacer les détails des opérations. Ni le journal, ni la console, ni le broker, ni les exports bruts ne masquent les valeurs (URLs, chemins, comptes, tokens, cookies, titres, etc.). L'IHM Diagnostics est seule à pseudonymiser **les valeurs de login et de mot de passe**, sans masquer d'autre champ. Les tests vérifient la fidélité des valeurs brutes et la pseudonymisation de rendu ; aucun envoi automatique ni dump d'authentification créé uniquement pour les diagnostics. Fichiers locaux 0600, confirmation avant export brut. Ce contrat remplace les anciennes exigences d'expurgation générique des logs. Voir [journal canonique](DIAGNOSTICS_CANONICAL_JOURNAL.md) et [contrat transversal](LOGGING-CONTRACT.md).
+
 ## Principe
 
 Une fonctionnalité appartient au Core lorsqu'elle exprime un mécanisme transversal réutilisable par plusieurs plugins ou par l'orchestration générale. Elle appartient au plugin lorsqu'elle encode un protocole, une politique ou un comportement propre à un fournisseur/runtime.
@@ -14,7 +18,7 @@ Le Core est responsable des primitives communes :
 - inspection d'artefacts ;
 - publication atomique d'artefacts ;
 - cache, TTL et single-flight ;
-- journalisation intégrale, diagnostics et health checks ; pseudonymisation **login/mot de passe dans l'IHM uniquement** ([contrat](LOGGING-CONTRACT.md)) ;
+- journal d'événements canonique, diagnostics, health checks et pseudonymisation des valeurs login/mot de passe **uniquement au rendu IHM** ;
 - `TaskBroker`, progression et annulation ;
 - transport générique et contrats communs ;
 - stockage et ledger ;
@@ -67,7 +71,7 @@ Le runtime ADEPT reste séparé du Core : le Core orchestre, le runtime spécial
 
 ### Diagnostics
 
-**[Contrat impératif](LOGGING-CONTRACT.md) — 25/10/2026.** Le Core porte le journal commun, les niveaux, la recherche et l'API Diagnostics ; les plugins émettent les événements complets, y compris messages libres, statuts HTTP, URLs et contextes métier réellement observés, **sans pré-masquage**. Le broker, le terminal et les exports bruts conservent les valeurs originales. **Seul le rendu IHM** pseudonymise les **valeurs du login et du mot de passe** ; les autres valeurs, même sensibles, restent visibles. Une copie du texte affiché reste pseudonymisée, l'export brut non. Aucun transfert automatique de journaux bruts.
+La redaction commune est une primitive publique. Les messages et contextes métier restent du ressort du provider.
 
 ## Décision pour une nouvelle fonctionnalité
 

@@ -1,6 +1,12 @@
 # Cifereca — guide des agents
 
-**Contrat impératif de logs (25/10/2026)** : [docs/LOGGING-CONTRACT.md](docs/LOGGING-CONTRACT.md). Core et plugins journalisent tout ce qui est effectivement émis, sans expurgation du journal, de la console, du broker ou des exports bruts. **Seul le rendu dans l'IHM** pseudonymise **uniquement login et mot de passe** ; tout le reste est visible. Cette décision prévaut sur toute consigne historique contraire. Aucun transfert automatique des journaux bruts, qui peuvent contenir des secrets.
+## Consigne supérieure Diagnostics (25/10/2026, #3132)
+
+**Journaliser les faits observés sans expurgation générale.** Core, plugins, journal local unique, miroir console, broker et exports bruts conservent les valeurs **exactement telles qu'émises**, y compris URL, chemins, titres, identifiants, tokens, cookies, en-têtes et détails d'erreur. Aucune valeur ne doit être remplacée par `[opération masquée]` pour seule raison de confidentialité générale. Ne pas créer de nouveaux dumps HTTP/authentification en dehors d'une instrumentation métier explicitement demandée.
+
+**Uniquement dans l'IHM Diagnostics**, pseudonymiser **exclusivement les valeurs des champs login et mot de passe** (`login-1`, `mot-de-passe-1`, stables pendant la session). Tout le reste demeure visible. Recherche sur les données brutes ; copie du rendu pseudonymisé ; export brut non transformé après confirmation, permissions de fichier 0600, jamais d'envoi automatique. En cas de contradiction avec les anciennes politiques de masquage de logs, **cette règle prévaut**. Voir [journal canonique](docs/DIAGNOSTICS_CANONICAL_JOURNAL.md), [contrat transversal](docs/LOGGING-CONTRACT.md), [skill de journalisation](.agents/skills/cifereca-logging/SKILL.md), [Core](.agents/roles/core.md), [Plugins](.agents/roles/plugins.md).
+
+
 
 Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontières et le mode de collaboration. Les profils sous [.agents/roles/](.agents/roles/README.md) et les AGENTS.md locaux précisent les règles par répertoire. En cas de divergence documentaire, vérifier le code et les contrats actifs avant d'agir.
 

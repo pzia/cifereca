@@ -84,14 +84,16 @@ def test_noncanonical_logger_cannot_publish_typed_trace_in_normal_mode(monkeypat
     assert not logging_utils.RedactionFilter().filter(record(observation(), logger="cifereca.plugin"))
 
 
-def test_safe_body_does_not_attest_attached_private_traceback_or_stack(monkeypatch):
+def test_closed_body_preserves_attached_original_traceback_and_stack(monkeypatch):
     monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
     item = record(observation())
     item.exc_info = (RuntimeError, RuntimeError("PRIVATE"), None)
     item.exc_text = "PRIVATE cached traceback"
     item.stack_info = "PRIVATE stack"
     assert logging_utils.RedactionFilter().filter(item)
-    assert "PRIVATE" not in logging.Formatter("%(message)s").format(item)
+    assert item.exc_info[1].args == ("PRIVATE",)
+    assert item.exc_text == "PRIVATE cached traceback"
+    assert item.stack_info == "PRIVATE stack"
 
 
 @pytest.mark.parametrize("outcome", ["success", "failed", "cancelled"])
@@ -149,32 +151,14 @@ def test_real_disabled_collector_still_logs_failed_provider_at_normal_level(tmp_
         handler.close()
 
 
-@pytest.mark.parametrize("key", [
-    "credential", "identity", "profile", "account", "borrower", "source_credential",
-    "api_key", "access_token", "refresh_token", "client_secret", "private_key",
-    "account_name", "reader_name", "email", "source_item_id",
-])
-@pytest.mark.parametrize("value", ["PRIVATE", '"PRIVATE with spaces"',
-                                    '"PRIVATE' + "x" * 1500 + '"',
-                                    '"PRIVATE\\\" with escaped quote"', '"PRIVATE unclosed'])
-def test_private_aliases_and_long_quoted_values_are_masked(key, value):
-    output = logging_utils._redact_log_identifiers(
-        f'{key}={value} provider_id=provider.paris book_id=9782000000000'
-    )
-    assert "PRIVATE" not in output and "escaped quote" not in output
-    if not value.endswith("unclosed"):
-        assert "provider_id=provider.paris" in output
-        assert "book_id=9782000000000" in output
-
-
-def test_cached_traceback_and_stack_are_redacted_on_generic_logs(monkeypatch):
+def test_generic_log_preserves_cached_exception_and_stack(monkeypatch):
     monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
     item = record("provider_id=provider.paris error")
     item.exc_text = "credential=PRIVATE api_key=PRIVATE"
     item.stack_info = "identity=PRIVATE /home/private/secret.py"
     assert logging_utils.RedactionFilter().filter(item)
-    result = logging.Formatter("%(message)s").format(item)
-    assert "PRIVATE" not in result and "/home/private" not in result
+    assert item.exc_text == "credential=PRIVATE api_key=PRIVATE"
+    assert item.stack_info == "identity=PRIVATE /home/private/secret.py"
 
 
 def test_normal_mode_preserves_source_phases_and_their_real_worker_correlation(tmp_path, monkeypatch):
@@ -221,16 +205,14 @@ def test_errors_mode_does_not_promote_successful_info_trace(monkeypatch):
     "https://bibliotheques.paris.fr/opaque-PRIVATE",
     "https://user:PRIVATE@reader-PRIVATE.example.invalid/?token=PRIVATE",
 ])
-def test_legacy_url_text_is_removed_while_explicit_public_context_survives(monkeypatch, url):
+def test_full_legacy_url_remains_visible_in_raw_log(monkeypatch, url):
     monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
-    item = record("provider_id=paris site=bibliotheques.paris.fr book_id=9782000000000 " + url)
+    item = record("provider_id=paris site=bibliotheques.paris.fr " + url)
     item.exc_text = url
     item.stack_info = url
     assert logging_utils.RedactionFilter().filter(item)
-    rendered = logging.Formatter("%(message)s").format(item)
-    assert "PRIVATE" not in rendered and "https://" not in rendered
-    assert "site=bibliotheques.paris.fr" in rendered
-    assert "book_id=9782000000000" in rendered
+    assert url in item.getMessage()
+    assert item.exc_text == item.stack_info == url
 
 
 @pytest.mark.parametrize("kind", ["connect", "download", "audit"])
@@ -277,7 +259,7 @@ def test_closed_event_is_preserved_canonically_and_can_be_parsed(
 
 
 @pytest.mark.parametrize("kind", ["connect", "download", "audit"])
-def test_extended_closed_event_never_bypasses_redaction_or_normalizes_payload(
+def test_extended_core_event_is_not_recognized_but_stays_raw(
     monkeypatch, kind,
 ):
     monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
@@ -311,6 +293,6 @@ def test_extended_closed_event_never_bypasses_redaction_or_normalizes_payload(
         assert not is_public_core_observation("cifereca", attack)
         item = record(attack)
         assert logging_utils.RedactionFilter().filter(item)
-        assert "PRIVATE_PASSWORD" not in item.getMessage()
+        assert "PRIVATE_PASSWORD" in item.getMessage()
         assert not is_public_core_observation("cifereca", item.getMessage())
     assert not is_public_core_observation("cifereca.plugin", body)

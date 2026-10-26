@@ -72,7 +72,7 @@ def test_only_public_broker_called_with_exact_bounded_filters():
 
 @pytest.mark.parametrize("filters", [
     {"source": "local_file"}, {"severity": "security"},
-    {"offset": -1}, {"offset": 10001}, {"offset": True},
+    {"offset": -1}, {"offset": 1000001}, {"offset": True},
     {"period": "forever"},
 ])
 def test_invalid_filter_fails_before_broker_access(filters):
@@ -143,8 +143,9 @@ def test_export_only_selected_event_ids_pseudonyms_and_public_fields():
     payload = json.loads(exported)
     assert len(payload["events"]) == 1
     assert payload["events"][0]["event_id"] == "second"
-    for sensitive in ("ABC123", "alice@example.com", "/home/alex", "SHOULD_NOT_LEAK"):
-        assert sensitive not in exported
+    for preserved in ("ABC123", "alice@example.com", "/home/alex"):
+        assert preserved in exported
+    assert "SHOULD_NOT_LEAK" not in exported  # unrecognized broker field remains excluded
     assert "corrélation" in payload["notice"]
 
 
@@ -353,24 +354,23 @@ def test_export_rejects_invalid_unicode_without_crashing_ui():
         export_selected_events(rows, {"invalid"})
 
 
-def test_export_redacts_secret_crossing_500_character_cutoff():
+def test_export_preserves_non_credential_fields_near_500_character_cutoff():
     text = "x" * 480 + " token=SUPERPRIVATESECRET-" + "z" * 40
     row = event("bounded", message=text)
     payload = json.loads(export_selected_events([row], {"bounded"}))
     message = payload["events"][0]["message"]
-    assert "SUPERPRIVATE" not in message
-    assert "token=<expurgé>" in message
+    assert "SUPERPRIVATE" in message
+    assert "token=SUPERPRIVATE" in message
     assert len(message) <= 500
 
 
-def test_normalizer_redacts_before_500_character_display_cutoff():
-    # The UI must not publish a cut token prefix, even if the broker is malformed.
+def test_normalizer_bounds_long_non_credential_fields_without_global_redaction():
+    # Long messages remain bounded; non-credential tokens are not masked.
     text = "x" * 490 + " token=SUPERPRIVATESECRET-" + "z" * 40
     rows = sanitized_rows({"events": [event("bounded", message=text)]})
     assert len(rows) == 1
     shown = rows[0]["message"]
-    assert "SUPERPRIVATE" not in shown
-    assert "token=SUP" not in shown
+    assert "token=SUP" in shown
     assert len(shown) <= 500
 
 
@@ -705,3 +705,28 @@ def test_partial_core_memory_is_not_described_as_rotated_application_journal():
     assert "Événements Core (mémoire) : Historique Core partiel" in text
     assert "Journal applicatif (lecture bornée) : Journal partiel" in text
     assert "rotation" not in text.split("Journal applicatif", 1)[0]
+
+
+def test_journal_mode_hides_unsupported_legacy_filters():
+    """Journal-only UI must not invite filters the canonical broker rejects."""
+    from pathlib import Path
+
+    module = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
+    source = module.read_text(encoding="utf-8")
+    assert "source_selector.set_selected(3 if journal_available else 0)" in source
+    for row in ("source_selector", "domain_row", "reason_row"):
+        assert ("if not journal_available:\n"
+                f"            advanced_box.append({row})") in source
+
+
+def test_explorer_without_source_explicitly_queries_canonical_journal():
+    broker = Broker({
+        "events": [], "sources": [{"source": "journal", "status": "empty"}],
+        "total": 0, "offset": 0, "next_offset": None,
+    })
+    fetch_explorer_page(broker, period="all", search="échec")
+    assert broker.calls == [{
+        "source": "journal", "module": "", "severity": "",
+        "since": None, "until": None, "limit": PAGE_SIZE,
+        "offset": 0, "search": "échec",
+    }]

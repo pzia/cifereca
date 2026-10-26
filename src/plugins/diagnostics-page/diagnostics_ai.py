@@ -251,8 +251,13 @@ def _public_structured_row(item: Mapping[str, Any]) -> dict[str, Any]:
         except (ValueError, OverflowError):
             pass
     source = item.get("source")
-    if type(source) is str and source in ("core_events", "app_log"):
+    if type(source) is str and source in ("journal", "core_events", "app_log"):
         row["source"] = source
+    if row.get("source") == "journal" and "timestamp" in row:
+        event_id = item.get("event_id")
+        if type(event_id) is str and len(event_id) <= 64 and _REF.fullmatch(event_id):
+            # Physical ID, never reconstructed from time, provider or message.
+            row["event_id"] = event_id
     for key in ("component", "status", "operation"):
         value = item.get(key)
         if type(value) is str and value.casefold() in _STRUCTURED_TOP_LEVEL:
@@ -335,7 +340,7 @@ def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
         except (ValueError, OverflowError):
             pass
     source = item.get("source")
-    if type(source) is str and source in ("core_events", "app_log"):
+    if type(source) is str and source in ("journal", "core_events", "app_log"):
         row["source"] = source
     provider = public_provider_id(item.get("provider_id"))
     if "source" in row and provider is not None:
@@ -511,7 +516,7 @@ def _valid_since(since: object) -> bool:
 
 
 def prepare_analysis(
-    llm: Any, diagnostics_broker: Any, *, source: str = "all",
+    llm: Any, diagnostics_broker: Any, *, source: str = "journal",
     since: str | None = None, module: str = "", severity: str = "",
     provider_id: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
@@ -521,7 +526,7 @@ def prepare_analysis(
     from cifereca_diagnostics_page import redacted_detail, format_diagnostic_detail
 
     destination = llm_destination(llm)
-    if type(source) is not str or source not in ("all", "core_events", "app_log"):
+    if type(source) is not str or source not in ("journal", "all", "core_events", "app_log"):
         raise ValueError("unsupported_source")
     if type(module) is not str or len(module) > 90 or any(
         ord(char) < 32 or ord(char) == 127 for char in module
@@ -683,6 +688,15 @@ def prepare_analysis(
             continue
         filtered.append(safe)
 
+    # Optional structured context now comes from this same physical journal.
+    # Deduplicate ONLY on a validated physical event ID and explicit source,
+    # never similarity of text, timestamp or provider.
+    filtered_journal_ids = {
+        row["event_id"] for row in filtered
+        if type(row) is dict and row.get("source") == "journal"
+        and type(row.get("event_id")) is str
+    }
+
     # Only explicit opt-in may add the Core's read-only diagnostic snapshot.
     # Do not invoke active_checks(), arbitrary file reads or runtime actions.
     if include_snapshot:
@@ -692,8 +706,8 @@ def prepare_analysis(
         records = snapshot()
         if not isinstance(records, (list, tuple)):
             raise ValueError("structured_diagnostics_unavailable")
-        # Diagnostics.snapshot() exposes the Core's append-ordered deque.
-        # Sample the *latest* records, newest first, so a full history or
+        # The Core broker projects the latest structured journal occurrences.
+        # Sample these records newest first, so a large history or
         # a tight byte budget does not hide the incident being investigated.
         for item in reversed(records[-_MAX_STRUCTURED:]):
             if not isinstance(item, Mapping):
@@ -701,6 +715,9 @@ def prepare_analysis(
             row = _public_structured_row(item)
             if not row:
                 continue
+            if (row.get("source") == "journal"
+                    and row.get("event_id") in filtered_journal_ids):
+                continue  # Already present as the SAME physical occurrence.
             safe = redacted_detail(row)
             candidate = structured + [safe]
             if _prompt_bytes(header + evidence_body(filtered, candidate, {})) > _MAX_PROMPT:
