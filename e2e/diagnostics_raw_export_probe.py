@@ -225,18 +225,24 @@ def main():
         chooser = plugin._raw_export_chooser
         assert chooser.get_visible()
         assert chooser.set_current_folder(Gio.File.new_for_path(str(out)))
-        # GTK SAVE can clear a previously selected GFile on changing name.
+        # Native backends may complete folder navigation asynchronously.
+        # A SAVE filename set before that transition can be silently reset.
+        until(lambda: chooser.get_current_folder() is not None
+              and chooser.get_current_folder().get_path() == str(out),
+              lambda: select_target(chooser), seconds=8)
+
+    def select_target(chooser):
+        report["checks"]["target_folder_ready"] = True
         chooser.set_current_name(target.name)
         target.write_bytes(b"OLD-SYNTHETIC-NONPRIVATE")
-        # A native SAVE dialog may defer exposing its chosen GFile until
-        # the ACCEPT response. set_file() returning True does not guarantee
-        # an immediately observable get_file() on every GTK backend.
         assert chooser.set_file(Gio.File.new_for_path(str(target)))
-        later(lambda: accept(chooser), 250)
+        # The native picker may apply the selected file asynchronously.
+        until(lambda: chooser.get_file() is not None
+              and chooser.get_file().get_path() == str(target),
+              lambda: accept(chooser), seconds=8)
 
     def accept(chooser):
-        # Test the actual callback and the on-disk byte/permission result;
-        # do not require an internal native-picker selection before ACCEPT.
+        report["checks"]["native_file_selected"] = True
         chooser.emit("response", Gtk.ResponseType.ACCEPT)
         until(lambda: target.exists() and target.read_bytes() == _PAYLOAD,
               saved, seconds=6)
