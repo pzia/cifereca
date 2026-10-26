@@ -7,8 +7,9 @@ pouvait se terminer **après** une sélection d'identité différente puis
 réécrire `last_search`, le cache et le catalogue SQLite dans la portée
 désormais courante.
 
-La recherche synchrone prend désormais un bail de génération sous le même
-verrou Core que la recherche progressive. Les résultats d'une requête
+La recherche synchrone prend désormais un bail de génération **avant
+l'inventaire des sessions fournisseurs**, sous le même verrou Core que la
+recherche progressive. Les résultats d'une requête
 supplantée (changement de profil Alice→Bob, aller-retour Alice→Bob→Alice
 ou nouvelle recherche) ne sont **pas publiés** : retour `[]`, sans
 modification de `last_search` ni de ses avertissements. Ce contrôle
@@ -30,4 +31,5 @@ droit ajoutée.
 
 Recette de non-régression : GET contrôlé par événements, changements de
 profil, ABA, recherche concurrente plus récente, transition pendant le miroir,
-hit cache concurrent. Fixtures locales Core/SQLite uniquement, sans réseau.
+hit cache concurrent, transition pendant la découverte des sessions.
+Fixtures locales Core/SQLite uniquement, sans réseau.
