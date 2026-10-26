@@ -3658,6 +3658,26 @@ class Storage:
         row = dict(item); now = int(time.time())
         entry_id = str(row.get("catalog_entry_id") or self._stable_id("catalog", row.get("placement_id"), row.get("artifact_id"), row.get("item_id")))
         with self._lock, self._connect() as db:
+            # A local catalog entry's ID must not silently move its book to a
+            # different physical placement, identity, provider or edition.
+            # Explicit relocation/reconciliation use their own reviewed paths.
+            # Remote-only entries (without a placement) retain their normal
+            # provider-catalog refresh semantics.
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT placement_id,identity_id,provider_id,item_id "
+                "FROM catalog_entries WHERE catalog_entry_id=?", (entry_id,),
+            ).fetchone()
+            if current is not None and current[0]:
+                if row.get("placement_id") != current[0]:
+                    raise ValueError("catalog_entry_scope_conflict")
+                for stored, proposed in zip(
+                    current[1:],
+                    (row.get("identity_id"), row.get("provider_id"),
+                     row.get("item_id")),
+                ):
+                    if stored and proposed and stored != proposed:
+                        raise ValueError("catalog_entry_scope_conflict")
             db.execute(
                 "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,provider_id,item_id,local_state,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=excluded.artifact_id,placement_id=excluded.placement_id,"
