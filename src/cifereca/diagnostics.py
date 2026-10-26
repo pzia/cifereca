@@ -74,6 +74,7 @@ class DiagnosticEntry:
     verified_reconciliation: bool = False
     verified_loan_download: bool = False
     verified_bnf_loan_action: bool = False
+    verified_cover_failure: bool = False
 
 
 class Diagnostics:
@@ -285,6 +286,43 @@ class Diagnostics:
             )
         except Exception:
             # Diagnostics must never alter the plugin operation's result.
+            pass
+
+
+    def add_core_cover_failure(self, code: str, *, duration_ms: int) -> None:
+        """One attested image-download failure, not an EPUB acquisition.
+
+        A generic plugin diagnostic cannot attest a cover failure reason.
+        Publish a single Core-owned canonical journal occurrence; the
+        in-memory snapshot remains read-only legacy compatibility.
+        """
+        from .core.diagnostic_cover_failure import public_fields, public_message
+        fields = public_fields({"code": code, "duration_ms": duration_ms})
+        if not fields or not self.enabled:
+            return
+        message = public_message(fields)
+        if message is None:
+            return
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="COVER", operation="download", status="error",
+            duration_ms=fields["duration_ms"], detail={"code": fields["code"]},
+            verified_cover_failure=True,
+        )
+        with self._lock:
+            self._items.append(entry)
+        try:
+            logger = logging.getLogger("cifereca")
+            if logger.isEnabledFor(logging.ERROR):
+                logger.log(
+                    logging.ERROR, "%s", message,
+                    extra=_core_journal_record(
+                        "COVER", "cover_download_failure", "error", message,
+                        {"code": fields["code"]}, duration_ms=fields["duration_ms"],
+                    ),
+                )
+        except Exception:
+            # Observability cannot interfere with the visual fallback.
             pass
 
     def add_core_provider_connection_attempt(self, event: object) -> None:
@@ -679,6 +717,8 @@ class Diagnostics:
                     row.pop("verified_reconciliation", None)
                 if row.get("verified_loan_download") is False:
                     row.pop("verified_loan_download", None)
+                if row.get("verified_cover_failure") is False:
+                    row.pop("verified_cover_failure", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
