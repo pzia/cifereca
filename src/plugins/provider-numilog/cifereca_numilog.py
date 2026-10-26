@@ -419,9 +419,17 @@ class NumilogSession(ProviderSession):
 
     def library(self):
         with self.lock:
+            # The HTTP client is serialized with reconnect/close, but the Core
+            # identity broker may reassign this account while MesLivres is
+            # loading. Pin the owner across GET and normalization; never
+            # publish a positive purchase observation under a new identity.
+            # Standalone legacy sessions without a broker remain supported.
+            owner = self._enrichment_identity_snapshot()
             rows = self._rows()
-            self._diag('bibliothèque',items=len(rows))
-            return [self._normalize(row) for row in rows]
+            normalized = [self._normalize(row) for row in rows]
+            self._ensure_enrichment_identity(owner)
+            self._diag('bibliothèque',items=len(normalized))
+            return normalized
 
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
