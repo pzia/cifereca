@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat as _stat
 import hashlib
 import mimetypes
 import time
@@ -65,11 +66,35 @@ class LocalCatalog:
 
     @staticmethod
     def sha256(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        # A book can be replaced after the rglob()/is_file() check. Hash via
+        # a no-follow descriptor and require the same inode/size/timestamps
+        # at both ends. Never hash an external symlink target as local proof.
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise OSError("catalog_scan_nofollow_unavailable")
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
+        try:
+            with os.fdopen(fd, "rb") as handle:
+                fd = -1
+                before = os.fstat(handle.fileno())
+                if not _stat.S_ISREG(before.st_mode):
+                    raise OSError("catalog_scan_not_regular")
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                after = os.fstat(handle.fileno())
+                named = os.stat(path, follow_symlinks=False)
+                fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                if any(
+                    getattr(before, key) != getattr(after, key)
+                    or getattr(before, key) != getattr(named, key)
+                    for key in fields
+                ):
+                    raise OSError("catalog_scan_file_changed")
+                return digest.hexdigest()
+        finally:
+            if fd >= 0:
+                os.close(fd)
 
     @staticmethod
     def _media_format(path: Path) -> str | None:
@@ -392,6 +417,24 @@ class LocalCatalog:
             resolved = path.resolve()
             return any(root in resolved.parents for root in bundle_root_set)
 
+        def same_scanned_file(path: Path, before) -> bool:
+            # Compare the actual indexed filename with the stat preceding
+            # SHA/cache lookup, including after metadata/Artifact creation.
+            # A successful hash of one inode never attests replacement bytes.
+            try:
+                after = os.stat(path, follow_symlinks=False)
+                return (
+                    _stat.S_ISREG(after.st_mode)
+                    and is_unlinked_local_file(path)
+                    and all(
+                        getattr(after, key) == getattr(before, key)
+                        for key in ("st_dev", "st_ino", "st_size",
+                                    "st_mtime_ns", "st_ctime_ns")
+                    )
+                )
+            except (OSError, ValueError, RuntimeError):
+                return False
+
         for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)):
             scanned += 1
             if not is_unlinked_local_file(path):
@@ -520,7 +563,11 @@ class LocalCatalog:
                     mime_type=mime_type,
                     metadata={**((self.storage.artifact_get(artifact_id) or {}).get("metadata") or {}), "discovered_by": "local_catalog_scan"},
                 )
+                if not same_scanned_file(path, stat):
+                    raise OSError("catalog_scan_file_changed")
                 self.storage.artifact_put(artifact)
+            if not same_scanned_file(path, stat):
+                raise OSError("catalog_scan_file_changed")
             self.storage.placement_put(
                 {
                     "placement_id": placement_id,
