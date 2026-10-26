@@ -36,7 +36,9 @@ def _public_epub_filename(title, detail_url):
     its query string or letting an arbitrary ID control filesystem paths.
     """
     stem = re.sub(r'[^\w .-]', '_', title if type(title) is str else '')
-    stem = stem.strip(' .')[:48].rstrip(' .') or 'Livre'
+    stem = stem.strip(' .')[:48].rstrip(' .')
+    if not any(char.isalnum() for char in stem):
+        stem = 'Livre'
     digest = hashlib.sha256(detail_url.encode('utf-8')).hexdigest()[:16]
     return f'{stem}-{digest}.epub'
 
