@@ -396,17 +396,26 @@ class LocalCatalog:
                 provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
             if not ok:
                 invalid += 1
+                # Invalid bytes revoke physical presence, not historic source
+                # ownership. A deep scan must not replace an indexed artifact,
+                # edition or identity with null/inferred provenance when its
+                # extension is wrong. Keep the reference for manual review.
+                previous = self.storage.placement_for_path(Path(path_text))
                 self.storage.placement_put(
                     {
-                        "placement_id": stable_id("placement", path_text),
-                        "artifact_id": None,
+                        "placement_id": (previous or {}).get("placement_id")
+                            or stable_id("placement", path_text),
+                        "artifact_id": (previous or {}).get("artifact_id"),
                         "path": path_text,
-                        "identity_id": identity_hint,
-                        "provider_id": provider_hint,
-                        "source_item_id": legacy.get("item_id") if legacy else None,
+                        "identity_id": (previous or {}).get("identity_id") or identity_hint,
+                        "provider_id": (previous or {}).get("provider_id") or provider_hint,
+                        "source_item_id": (previous or {}).get("source_item_id")
+                            or (legacy.get("item_id") if legacy else None),
                         "state": "invalid",
                         "last_seen_at": started_at,
-                        "metadata": {"invalid_reason": invalid_reason, "media_format": media_format},
+                        "metadata": {**((previous or {}).get("metadata") or {}),
+                                     "invalid_reason": invalid_reason,
+                                     "media_format": media_format},
                     }
                 )
                 continue
