@@ -345,3 +345,43 @@ class TraceAsyncHTTPTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self):
         await self.transport.aclose()
+
+
+class TraceHTTPClient(httpx.Client):
+    """Explicit HTTPX client preserving native proxy/mount/SSL selection.
+
+    HTTPX is pinned to 0.28.x. This one dispatch override is tested against
+    that version; it wraps the transport selected by HTTPX, never rebuilds
+    options, changes class globals or mutates a client's transport mappings.
+    Client.close() remains the sole owner of the underlying transports.
+    """
+    def __init__(self, *, producer="core", capture=None, **options):
+        if type(producer) is not str or not 0 < len(producer) <= 128:
+            raise ValueError("producer must be a bounded string")
+        self._trace_producer = producer
+        self._trace_capture = capture if capture is not None else HTTP_TRACE
+        super().__init__(**options)
+
+    def _transport_for_url(self, url):
+        transport = super()._transport_for_url(url)
+        if isinstance(transport, TraceHTTPTransport):
+            return transport
+        return TraceHTTPTransport(transport, producer=self._trace_producer,
+                                  capture=self._trace_capture)
+
+
+class TraceAsyncHTTPClient(httpx.AsyncClient):
+    """Async counterpart with native HTTPX proxy/mount/SSL selection."""
+    def __init__(self, *, producer="core", capture=None, **options):
+        if type(producer) is not str or not 0 < len(producer) <= 128:
+            raise ValueError("producer must be a bounded string")
+        self._trace_producer = producer
+        self._trace_capture = capture if capture is not None else HTTP_TRACE
+        super().__init__(**options)
+
+    def _transport_for_url(self, url):
+        transport = super()._transport_for_url(url)
+        if isinstance(transport, TraceAsyncHTTPTransport):
+            return transport
+        return TraceAsyncHTTPTransport(transport, producer=self._trace_producer,
+                                       capture=self._trace_capture)

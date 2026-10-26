@@ -4,7 +4,7 @@ External plugins should import from this package only.  Internal modules such as
 ``cifereca.services`` and ``cifereca.storage`` are not part of the plugin contract.
 """
 
-from cifereca.http_trace import TraceHTTPTransport, TraceAsyncHTTPTransport
+from cifereca.http_trace import TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
 from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
@@ -78,7 +78,7 @@ from .llm import LLMRequest, LLMResult, LLMService
 from .document_links import document_links
 
 __all__ = [
-    "TraceHTTPTransport", "TraceAsyncHTTPTransport",
+    "TraceHTTPTransport", "TraceAsyncHTTPTransport", "TraceHTTPClient", "TraceAsyncHTTPClient",
     "DiagnosticsPseudonyms", "DISPLAY_PSEUDONYMS",
     "LLMRequest", "LLMResult", "LLMService",
     "ProviderCollection", "ProviderCollectionSnapshot", "VirtualProviderEntry", "ProviderCollectionValidationError", "validate_provider_collection_snapshot",

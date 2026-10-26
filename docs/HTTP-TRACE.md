@@ -38,6 +38,23 @@ format n'est pas une capture de paquets ni une preuve d'octets TLS ou HTTP bruts
 Un corps de requête non consommé par le transport reste `not_read`, même si le
 client l'avait préconstruit. Aucun octet envoyé n'est inventé dans ce cas.
 
+## Clients avec proxies ou montages
+
+`TraceHTTPClient` et `TraceAsyncHTTPClient` sont également publics en Plugin API
+1.4.1 et acceptent les options natives de `httpx.Client` / `AsyncClient`, plus
+`producer`. Utiliser ces classes pour préserver automatiquement la sélection
+native des proxies d'environnement, `NO_PROXY`, montages et options SSL. Aucune
+reconstruction d'options, modification globale ou lecture eager. Le seul point
+de dispatch interne surchargé est `_transport_for_url`, couvert par les tests
+et limité à la dépendance HTTPX 0.28.x épinglée par le Core. Tout futur upgrade
+HTTPX doit revérifier ce contrat avant de changer la borne de dépendance.
+
+Un transport déjà instrumenté n'est pas enveloppé une seconde fois. Le client
+natif reste propriétaire de la fermeture des pools/montages. Le chargeur de
+couvertures Core utilise ce client et garde intégralement ses limites de pool,
+son routage et ses préférences HTTP/SSL/proxy précédentes. Les clients externes
+ordinaires restent hors périmètre tant qu'ils ne sont pas adaptés explicitement.
+
 ## Budgets et états
 
 Par défaut : 2 Mio par corps, 32 Mio cumulés de métadonnées et corps stockés,

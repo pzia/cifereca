@@ -318,3 +318,72 @@ def test_public_broker_export_has_same_trace_gate(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         broker.export_http_trace(str(tmp_path / 'blocked.zip'))
     assert not (tmp_path / 'blocked.zip').exists()
+
+
+def test_client_preserves_mount_routing_and_closes_transports_once():
+    from cifereca.plugin_api import TraceHTTPClient
+    capture = HTTPTraceCapture()
+    seen, closed = [], []
+
+    class Transport(httpx.BaseTransport):
+        def __init__(self, name):self.name=name
+        def handle_request(self, request):
+            seen.append((self.name, str(request.url)))
+            return httpx.Response(200, stream=httpx.ByteStream(self.name.encode()))
+        def close(self):closed.append(self.name)
+
+    with TraceHTTPClient(transport=Transport('default'),
+                         mounts={'https://mounted.test':Transport('mounted')},
+                         capture=capture, producer='test.mounted',trust_env=False) as c:
+        assert c.get('https://mounted.test/a').content==b'mounted'
+        assert c.get('https://other.test/b').content==b'default'
+    assert [name for name,_ in seen]==['mounted','default']
+    assert sorted(closed)==['default','mounted']
+    assert len(capture.snapshot()['exchanges'])==2
+    assert all(e['request']['producer']=='test.mounted' for e in capture.snapshot()['exchanges'])
+
+
+def test_client_preserves_environment_proxy_and_no_proxy_routing(monkeypatch):
+    from cifereca.plugin_api import TraceHTTPClient
+    for key in ('HTTP_PROXY','http_proxy','HTTPS_PROXY','https_proxy',
+                'ALL_PROXY','all_proxy','NO_PROXY','no_proxy'):
+        monkeypatch.delenv(key,raising=False)
+    monkeypatch.setenv('HTTPS_PROXY','http://proxy.test:8181')
+    monkeypatch.setenv('NO_PROXY','direct.test')
+    monkeypatch.delenv('ALL_PROXY',raising=False)
+    monkeypatch.delenv('all_proxy',raising=False)
+    observed=[]
+
+    def handle(transport, request):
+        observed.append(type(transport._pool).__name__)
+        return httpx.Response(200,stream=httpx.ByteStream(b'ok'))
+
+    monkeypatch.setattr(httpx.HTTPTransport,'handle_request',handle)
+    capture=HTTPTraceCapture()
+    with httpx.Client() as plain:
+        assert plain.get('https://proxy-routed.test').content==b'ok'
+        assert plain.get('https://direct.test').content==b'ok'
+    with TraceHTTPClient(capture=capture,producer='test.env') as traced:
+        assert traced.get('https://proxy-routed.test').content==b'ok'
+        assert traced.get('https://direct.test').content==b'ok'
+    assert observed==['HTTPProxy','ConnectionPool','HTTPProxy','ConnectionPool']
+    assert len(capture.snapshot()['exchanges'])==2
+
+
+def test_async_client_preserves_mounted_transport_and_avoids_double_capture():
+    from cifereca.plugin_api import TraceAsyncHTTPClient
+    capture=HTTPTraceCapture()
+    closed=[]
+
+    class Transport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self,request):
+            return httpx.Response(200,content=b'async')
+        async def aclose(self):closed.append(True)
+
+    async def run():
+        wrapper=TraceAsyncHTTPTransport(Transport(),capture=capture)
+        async with TraceAsyncHTTPClient(transport=wrapper,trust_env=False,capture=capture) as c:
+            assert (await c.get('https://example.test')).content==b'async'
+    asyncio.run(run())
+    assert closed==[True]
+    assert len(capture.snapshot()['exchanges'])==1
