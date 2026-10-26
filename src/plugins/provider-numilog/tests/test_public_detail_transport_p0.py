@@ -49,7 +49,7 @@ class AnonymousClient:
 
 def test_anonymous_detail_fetch_never_uses_private_session(monkeypatch):
     AnonymousClient.requests = []
-    monkeypatch.setattr(public_client.httpx, "Client", AnonymousClient)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", AnonymousClient)
     result = public_client.fetch_public_detail(URL)
     assert result["fields"]["title"] == "Fixture"
     assert not result["owned"] and not result["downloadable"]
@@ -64,7 +64,7 @@ def test_anonymous_detail_fetch_never_uses_private_session(monkeypatch):
 def test_bad_url_does_not_open_http_client(monkeypatch, url):
     def forbidden(**kwargs):
         raise AssertionError("network must not start")
-    monkeypatch.setattr(public_client.httpx, "Client", forbidden)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", forbidden)
     with pytest.raises(ProviderCapabilityError):
         public_client.fetch_public_detail(url)
 
@@ -78,7 +78,7 @@ def test_http_failures_are_typed_without_fallback(monkeypatch, status, code):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.status = status
-    monkeypatch.setattr(public_client.httpx, "Client", Fail)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", Fail)
     with pytest.raises(ProviderError, match="public_detail_" + code):
         public_client.fetch_public_detail(URL)
 
@@ -88,7 +88,7 @@ def test_unknown_html_is_not_treated_as_empty_metadata(monkeypatch):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.body = "<form><input type='password' value='PRIVATE_MARKER'></form>"
-    monkeypatch.setattr(public_client.httpx, "Client", Login)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", Login)
     with pytest.raises(ProviderError, match="public_detail_layout_unverified") as caught:
         public_client.fetch_public_detail(URL)
     assert "PRIVATE_MARKER" not in str(caught.value)
@@ -99,6 +99,6 @@ def test_large_body_is_rejected_before_parse(monkeypatch):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.body = "a" * (1024 * 1024 + 1)
-    monkeypatch.setattr(public_client.httpx, "Client", Large)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", Large)
     with pytest.raises(ProviderError, match="public_detail_response_too_large"):
         public_client.fetch_public_detail(URL)

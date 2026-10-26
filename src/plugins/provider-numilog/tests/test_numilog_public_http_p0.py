@@ -51,7 +51,7 @@ def setup_public_client(monkeypatch, response=None):
     def factory(**kwargs):
         parameters.append(kwargs)
         return fake
-    monkeypatch.setattr(public_client.httpx, "Client", factory)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", factory)
     return fake, parameters
 
 

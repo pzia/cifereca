@@ -44,7 +44,7 @@ def test_429_header_caps_monotonic_deadline_and_recovers_after_cap(
         header = formatdate(10_000_000_000, usegmt=True)
     monkeypatch.setattr(client.time, "time", lambda: 1000)
     requests = []
-    original_client = httpx.Client
+    original_client = client.HTTPX_TRANSPORT.client
 
     def respond(request):
         requests.append(request)
@@ -55,7 +55,7 @@ def test_429_header_caps_monotonic_deadline_and_recovers_after_cap(
             content=b'PRIVATE_429_RESPONSE',
         )
 
-    monkeypatch.setattr(client.httpx, "Client", lambda **kwargs: original_client(
+    monkeypatch.setattr(client.HTTPX_TRANSPORT, "client", lambda **kwargs: original_client(
         **kwargs, transport=httpx.MockTransport(respond),
     ))
     getter = (lambda: client.fetch_public_search("jefferson") if source == "search"
