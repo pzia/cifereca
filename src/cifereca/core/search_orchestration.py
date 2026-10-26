@@ -373,7 +373,21 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         include_redundant_merged=include_redundant_merged,
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-    identity = self.current_identity
+    # The synchronous search path must obey the same generation lease as
+    # progressive search: an identity switch (even A→B→A) or a newer query
+    # invalidates its right to publish UI state.
+    with self._search_generation_lock:
+        self._search_generation += 1
+        search_generation = self._search_generation
+        identity = self.current_identity
+
+    def request_current() -> bool:
+        with self._search_generation_lock:
+            return (
+                self._search_generation == search_generation
+                and self.current_identity is identity
+            )
+
     pref_key = ""
     if identity is not None:
         pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
@@ -390,11 +404,16 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     if not force:
         cached = self.storage.cache_get("search", cache_key)
         if isinstance(cached, list):
-            self.last_search = [_provider_search_row(SearchResult(**x)) for x in cached]
-            # Never leak a warning from a previous, unrelated search.
-            self.last_search_warnings = []
-            self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(self.last_search), "q_len": len(query), "providers": provider_key})
-            return self.last_search
+            rows = [_provider_search_row(SearchResult(**x)) for x in cached]
+            with self._search_generation_lock:
+                if (self._search_generation != search_generation
+                        or self.current_identity is not identity):
+                    return []
+                self.last_search = rows
+                # Never leak a warning from a previous, unrelated search.
+                self.last_search_warnings = []
+            self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(rows), "q_len": len(query), "providers": provider_key})
+            return rows
 
     rows: list[SearchResult] = []
     warnings: list[str] = []
@@ -529,19 +548,30 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             reverse=True,
         )
     warnings = list(dict.fromkeys(warnings))
-    try:
-        self._mirror_remote_results([
-            row for row in rows
-            if not isinstance(row.metadata, dict)
-            or row.metadata.get("search_provenance") != "known_catalog_stale"
-        ])
-    except Exception:
-        # Mirror exceptions may be dynamically named by untrusted plugins.
-        logger.warning("TRACE catalog mirror search code=mirror_failed")
+    # Provider I/O may outlive both a user switch and a newer search request.
+    # Never write those stale notices under the now-selected identity.
+    if not request_current():
+        return []
+    if identity is not None:
+        try:
+            self._mirror_remote_results([
+                row for row in rows
+                if not isinstance(row.metadata, dict)
+                or row.metadata.get("search_provenance") != "known_catalog_stale"
+            ], identity_id=identity.identity_id)
+        except Exception:
+            # Mirror exceptions may be dynamically named by untrusted plugins.
+            logger.warning("TRACE catalog mirror search code=mirror_failed")
+    if not request_current():
+        return []
     if not warnings:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-    self.last_search = rows
-    self.last_search_warnings = warnings
+    with self._search_generation_lock:
+        if (self._search_generation != search_generation
+                or self.current_identity is not identity):
+            return []
+        self.last_search = rows
+        self.last_search_warnings = warnings
     self.diagnostics.add(
         "SEARCH", "federated",
         detail={
