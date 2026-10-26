@@ -41,6 +41,13 @@ def _share_canonical_handlers(core: logging.Logger) -> None:
     numilog = logging.getLogger("cifereca_numilog")
     numilog.setLevel(core.level)
     numilog.propagate = False
+    # This legacy logger must MIRROR the Core's current canonical handlers,
+    # not accumulate retired file/console handlers after a reconfiguration.
+    # Keeping a stale file handler writes the same event to two physical
+    # journals, and can resurrect a closed/old journal after switching paths.
+    for handler in tuple(numilog.handlers):
+        if handler not in core.handlers:
+            numilog.removeHandler(handler)
     for handler in core.handlers:
         if handler not in numilog.handlers:
             numilog.addHandler(handler)
