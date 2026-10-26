@@ -244,12 +244,14 @@ def test_official_package_install_activation_and_disable_without_network(tmp_pat
     sys.path.insert(0, str(ROOT.parents[2] / 'scripts'))
     from plugin_packaging import build_plugin_zip
     from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
+    from cifereca.plugin_api import HTTPX_TRANSPORT
     def forbidden(*args, **kwargs):
         raise AssertionError('activation must not connect')
     monkeypatch.setattr(httpx.Client, 'request', forbidden)
     monkeypatch.setattr(httpx.Client, 'send', forbidden)
     archive = build_plugin_zip(ROOT, tmp_path / 'dist')
-    manager = PluginManager(package_store=PackageStore(tmp_path / 'packages'),
+    manager = PluginManager(brokers={'httpx': HTTPX_TRANSPORT},
+                            package_store=PackageStore(tmp_path / 'packages'),
                             state_store=PluginStateStore(tmp_path / 'state.json'))
     try:
         manager.install(archive)

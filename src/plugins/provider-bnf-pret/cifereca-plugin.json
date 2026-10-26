@@ -2,16 +2,16 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.bnf-pret",
-    "version": "0.3.9",
+    "version": "0.3.10",
     "name": "BnF Prêt — HTTPX",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4,<2"
+    "plugin_api": ">=1.4.1,<2"
   },
   "plugins": [
     {
       "id": "provider.bnf-pret",
       "type": "provider.library",
-      "version": "0.3.9",
+      "version": "0.3.10",
       "entrypoint": "cifereca_bnf_pret:PLUGIN",
       "display_name": "BnF Prêt",
       "description": "Catalogue HTML, fiches et synchronisation non destructive des prêts via HTTPX.",
@@ -24,7 +24,9 @@
       ],
       "requires": [],
       "recommends": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "httpx"
+      ],
       "requires_contracts": [],
       "system_requires": [],
       "help_text": "Catalogue BnF Prêt et fiches des livres, avec compte lecteur configuré. Une recherche lit au maximum cinq pages liées par le portail et reste signalée comme partielle. Un bouton Emprunter ne prouve pas une disponibilité. Aucun emprunt ni téléchargement automatique. Un prêt déjà observé peut faire l’objet d’une récupération ACSM explicitement demandée depuis Mes emprunts, puis d’un import ADEPT séparément confirmé ; la réussite réelle BnF reste à qualifier."
