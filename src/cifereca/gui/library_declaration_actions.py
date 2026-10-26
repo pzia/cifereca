@@ -118,11 +118,20 @@ class DeclarationActions:
             elif status in ('already_declared', 'needs_review'):
                 self.revoke.set_visible(result.get('revoke_available') is True)
                 self.status.set_text(
-                    'Une déclaration existe ; le fichier ou l’état du droit '
-                    'a changé. À examiner, sans promotion en preuve. Vous '
-                    'pouvez révoquer cette déclaration.' if status == 'needs_review'
-                    else 'Cette correspondance est déjà déclarée par vous. '
-                    'Elle reste distincte d’un lien attesté et peut être révoquée.'
+                    'Cette déclaration nécessite une nouvelle vérification : '
+                    'fichier local modifié ou indisponible, état du droit ou '
+                    'compte changé, ou conflit de provenance. Aucune présence '
+                    'locale confirmée ; la déclaration reste révocable.'
+                    if result.get('presence_state') == 'declared_needs_review'
+                    else
+                    'Fichier local revérifié (octets et périmètre exact) ; '
+                    'association manuelle présente pour le droit enregistré. '
+                    'Ceci n’atteste ni achat auprès du fournisseur ni '
+                    'acquisition officielle. Déclaration révocable.'
+                    if result.get('presence_state') == 'present_declared'
+                    else
+                    'Cette correspondance est déjà déclarée par vous. '
+                    'Sa présence actuelle n’est pas attestée ; elle peut être révoquée.'
                 )
             elif status == 'blocked':
                 self.status.set_text(
