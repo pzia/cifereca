@@ -31,6 +31,7 @@ Le fournisseur historique conserve `ProviderSession.loans(account) -> list[Loan]
 | Paris futur v1+ | `loan_inventory_snapshot(account)` opt-in | compte exact + branche attestée | **pas encore consommée par le Core** |
 | BnF Prêt futur v1+ | idem | prêt positif attesté, SSO indépendant | **pas encore consommée** ; HTML incomplet |
 | Erreur, fermeture, mix de comptes | `read_loan_inventory` | aucune ligne non vérifiée publiée | aucune, code fermé `unavailable/read_failed` |
+| Annulation explicite `Cancelled` pendant une lecture v1 ou typée | `read_loan_inventory` | **aucune** ligne de lecture partielle publiée | aucune, `status=cancelled`, `reason_code=cancelled` |
 
 La fonction `read_loan_inventory(session, account)` ne s'exécute **que sur
 appel explicite** ; elle vérifie la connexion, la capability `loans`, le
@@ -40,6 +41,12 @@ si leur portée a changé ; une future intégration Core doit en plus confirmer
 la génération et l'identité de la session enregistrée par le registre.
 **Aucun GET n'est lancé par simple import ou introspection du contrat.**
 En cas d'exception, ni son message ni l'état du compte ne sont publiés.
+La cancellation Core/Plugin API ne doit pas être reclassée en `failed` : elle
+produit un snapshot vide `cancelled`, sans lien vers un retour, une absence
+d'emprunt ou une mutation. Les erreurs réseau et autres exceptions demeurent
+`failed/read_failed`. Cette tranche de #3197 conserve le contrat v1 et ne
+modifie aucun chemin fournisseur ou effet métier.
+
 
 **Important :** la présence de méthodes Python ou de branches déclarées ne
 vaut pas attestation d'autorité métier. Le Core doit encore revalider epoch,
