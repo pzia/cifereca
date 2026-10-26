@@ -831,6 +831,23 @@ class LibraryService:
         session = self._session_for_account(account)
         if not session.capabilities.loans:
             return []
+        # Capture immutable read coordinates before *either* provider I/O
+        # path. A mutable legacy Account must not move an observation to a
+        # different identity, borrower or cache key while loans() is running.
+        request_scope = (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+        request_epoch = self._account_context_epoch
+        request_session_fields = (
+            getattr(session, "provider_id", None),
+            getattr(session, "credential_id", None),
+            getattr(session, "connected", None),
+        )
+        session_key = self._session_key(
+            request_scope[1], request_scope[2],
+        )
+        registered_at_read = self._sessions.get(session_key) is session
         # Prefer the atomic, scoped v2 observation where published. The v1
         # list reader stays available for old installed plugin packages; it
         # is never consulted as a second read of an opt-in snapshot.
@@ -850,6 +867,25 @@ class LibraryService:
             rows = list(snapshot.loans)
         else:
             rows = session.loans(account)
+            # Legacy v1 has no immutable envelope or post-I/O scope guard.
+            # Close that gap before any normalization or cache publication,
+            # including in-place account edits, session swaps and ABA epoch
+            # changes. Preserve non-registered legacy test/plugin shims:
+            # only assert a registry lease if it existed at admission.
+            if (
+                self._account_context_epoch != request_epoch
+                or (
+                    account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id,
+                ) != request_scope
+                or (
+                    getattr(session, "provider_id", None),
+                    getattr(session, "credential_id", None),
+                    getattr(session, "connected", None),
+                ) != request_session_fields
+                or (registered_at_read and self._sessions.get(session_key) is not session)
+            ):
+                raise ProviderConfigurationError("loan_inventory_scope_changed")
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
