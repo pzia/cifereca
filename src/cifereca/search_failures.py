@@ -1,5 +1,8 @@
 """A looser query cannot repair transport, authentication or malformed XML."""
 import httpx
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from time import time
 from xml.etree.ElementTree import ParseError
 
 
@@ -73,6 +76,72 @@ def search_failure_code(error: BaseException) -> str | None:
     # but a concrete underlying HTTP 401/403 outranks both.
     return (provider_refusal or ("SearchProxyUnavailable" if proxy_unavailable else None)
             or ("SearchTemporarilyUnavailable" if unavailable else None))
+
+
+
+# Per-service, per-session cooldowns are deliberately bounded. These values
+# are only consumed when native HTTP 429 evidence exists (not provider text).
+_PUBLIC_RETRY_MIN_SECONDS = 30
+_PUBLIC_RETRY_MAX_SECONDS = 3600
+
+
+def _parsed_public_retry_after(raw: object, now: float) -> int:
+    """Parse HTTP Retry-After numeric/date without retaining the header text."""
+    if type(raw) is not str or not raw or len(raw) > 80 or not raw.isascii():
+        return 0
+    if raw.isdigit():
+        # Treat huge integers as the finite cap; never parse unbounded digits.
+        if len(raw) > 12:
+            return _PUBLIC_RETRY_MAX_SECONDS
+        return min(int(raw), _PUBLIC_RETRY_MAX_SECONDS)
+    try:
+        at = parsedate_to_datetime(raw)
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        delay = at.timestamp() - now
+        if delay <= 0:
+            return 0
+        return _PUBLIC_RETRY_MAX_SECONDS if delay > _PUBLIC_RETRY_MAX_SECONDS else int(delay) + (delay % 1 > 0)
+    except (ValueError, TypeError, OverflowError, IndexError):
+        return 0
+
+
+def search_retry_after_seconds(error: BaseException, *, now: float | None = None) -> int | None:
+    """Return a finite 429 cooldown, or None without trustworthy HTTP evidence.
+
+    Native httpx HTTPStatusError 429 only: never trust arbitrary provider
+    messages, URLs or dynamic exception properties. Access/refusal/proxy
+    conflicts and truncated exception graphs fail closed.
+    """
+    if search_failure_code(error) != "SearchTemporarilyUnavailable":
+        return None
+    now = time() if now is None else now
+    seen: set[int] = set()
+    pending = [error]
+    found_429 = False
+    delay = 0
+    while pending and len(seen) < 128:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, httpx.HTTPStatusError):
+            response = current.response
+            if response.status_code == 429:
+                found_429 = True
+                try:
+                    raw = response.headers.get("retry-after")
+                except (ValueError, TypeError):
+                    raw = None
+                delay = max(delay, _parsed_public_retry_after(raw, now))
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+    if pending or not found_429:
+        return None
+    return min(_PUBLIC_RETRY_MAX_SECONDS, max(_PUBLIC_RETRY_MIN_SECONDS, delay))
+
 
 
 def is_technical_search_error(error):
