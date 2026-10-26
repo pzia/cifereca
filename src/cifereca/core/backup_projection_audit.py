@@ -46,6 +46,16 @@ def audit_backup_projection(
                     "entitlement_type,loan_id,identity_id,status,"
                     "sha256,local_path"
                 )
+                # Legacy v0.7 rows may not yet have an identity owner.
+                # They cannot be attributed to this identity from a book
+                # title, credential or SHA. A scoped scan is inconclusive
+                # while ANY unscoped Kobo compatibility row remains.
+                if db.execute(
+                    "SELECT 1 FROM backup_items WHERE provider_id='kobo' "
+                    "AND (identity_id IS NULL OR identity_id='') LIMIT 1"
+                ).fetchone():
+                    result["status"] = "scope_unverified"
+                    return result
                 rows = db.execute(
                     f"SELECT {columns} FROM backup_items "
                     "WHERE provider_id='kobo' AND identity_id=? "
