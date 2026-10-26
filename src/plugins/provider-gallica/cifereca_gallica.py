@@ -10,6 +10,7 @@ from urllib.parse import quote_plus, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from cifereca.plugin_api import (
     Account, ItemDetail, SearchResult, AcquisitionOffer,
@@ -114,7 +115,7 @@ class GallicaSession(ProviderSession):
         self.include_audio = bool(self.options.get("include_audio", True))
         self.max_audio_track_bytes = int(self.options.get('max_audio_track_bytes', 100 * 1024 * 1024))
         self.max_audio_bundle_bytes = int(self.options.get('max_audio_bundle_bytes', 512 * 1024 * 1024))
-        self.client = httpx.Client(
+        self.client = HTTPX_TRANSPORT.client(producer="provider.gallica",
             timeout=timeout,
             follow_redirects=True,
             http2=False,

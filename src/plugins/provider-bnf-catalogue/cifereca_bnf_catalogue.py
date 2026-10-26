@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from cifereca.plugin_api import (
     description_text,
@@ -96,7 +97,7 @@ class BnfCatalogueSession(ProviderSession):
         self.page_size = int(self.options.get("page_size", 50))
         if not 1 <= self.page_size <= 100:
             raise ProviderError("BnF : taille de page hors limites (1–100)")
-        self.client = httpx.Client(
+        self.client = HTTPX_TRANSPORT.client(producer="provider.bnf-catalogue",
             timeout=float(self.options.get("timeout_seconds", 25)), follow_redirects=True,
             headers={"User-Agent": "Cifereca-BnF-Catalogue/1.0", "Accept": "application/xml, text/xml"},
         )
