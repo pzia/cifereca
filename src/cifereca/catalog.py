@@ -418,6 +418,14 @@ class LocalCatalog:
         root_identity = (initial_root.st_dev, initial_root.st_ino)
         started_at = int(time.time())
         previous_catalog = {row["catalog_entry_id"]: row for row in self.storage.catalog_entries()}
+        # Only placements already eligible for a negative observation when
+        # this inventory started can become 'missing'. Another acquisition
+        # may insert a placement or restore an archived one after our rglob
+        # snapshot and immediately before the final SQLite transition.
+        negative_candidate_ids = {
+            row["placement_id"] for row in self.storage.placements()
+            if row.get("state") != "missing"
+        }
         seen_paths: set[str] = set()
         scanned = cataloged = invalid = unsupported = artifacts_new = placements_new = 0
 
@@ -727,7 +735,10 @@ class LocalCatalog:
                 raise OSError("catalog_scan_root_changed")
         except OSError:
             raise OSError("catalog_scan_root_changed") from None
-        missing_marked = self.storage.placements_mark_missing(self.root, seen_paths, seen_at=started_at)
+        missing_marked = self.storage.placements_mark_missing(
+            self.root, seen_paths, seen_at=started_at,
+            candidate_placement_ids=negative_candidate_ids,
+        )
         return CatalogScanResult(
             root=self.root,
             scanned=scanned,
