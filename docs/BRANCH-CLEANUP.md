@@ -79,3 +79,45 @@ python -m unittest scripts.test_nettoyer_branches_git
 ```
 
 Les tests utilisent un dépôt bare local temporaire, jamais `pzia/cifereca`.
+
+
+## Suppression forcée ponctuelle
+
+Le même fichier d'exclusions accepte **`!nom-de-branche-exact`** pour supprimer
+une branche même si elle est divergente ou couverte par une exclusion :
+
+```text
+# Par défaut, conserver cette branche sans PR :
+core/p0-3171-declared-download-guard
+
+# Pour forcer sa suppression, enlever la ligne précédente puis écrire :
+# !core/p0-3171-declared-download-guard
+```
+
+Une ligne préfixée `!` est **inactive tant qu'elle commence par `#`**.
+Elle doit désigner un nom exact, jamais un motif global. Il est également
+possible de fournir les noms exacts sans `!` dans un fichier séparé via
+`--force-delete-branches FICHIER`.
+
+Le script attribue la catégorie `FORCÉ` : elle **n'atteste aucune fusion**
+et peut faire perdre des commits non intégrés. Restent impossibles à forcer :
+`main`, les branches des PR ouvertes et la branche actuellement checkoutée.
+Un plan JSON format 2 enregistre les noms forcés, HEAD, catégories et preuves
+afin de refuser toute modification entre simulation et application ;
+`--max-delete`, confirmation et `--force-with-lease` restent obligatoires.
+
+```bash
+# SIMULATION (reprendre les autres arguments du scénario précédent)
+python scripts/nettoyer_branches_git.py \\
+  --open-pr-branches /tmp/cifereca-pr-ouvertes.txt \\
+  --exclude /tmp/cifereca-exclusions.txt \\
+  --plan /tmp/cifereca-plan.json \\
+  --report /tmp/cifereca-branches.csv
+
+# APPLICATION volontaire, après revue du plan et actualisation des PR ouvertes :
+python scripts/nettoyer_branches_git.py \\
+  --open-pr-branches /tmp/cifereca-pr-ouvertes.txt \\
+  --exclude /tmp/cifereca-exclusions.txt \\
+  --plan /tmp/cifereca-plan.json \\
+  --max-delete 50 --apply
+```
