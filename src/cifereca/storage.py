@@ -3593,13 +3593,22 @@ class Storage:
             row=dict(zip(columns,record)); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
-    def placements_mark_missing(self, root: Path, seen_paths: set[str], *, seen_at: int | None = None) -> int:
+    def placements_mark_missing(
+        self, root: Path, seen_paths: set[str], *, seen_at: int | None = None,
+        candidate_placement_ids: set[str] | None = None,
+    ) -> int:
         root_resolved = root.expanduser().resolve()
         now = int(seen_at or time.time())
         changed = 0
         with self._lock, self._connect() as db:
             rows = db.execute("SELECT placement_id,path,state FROM placements").fetchall()
             for placement_id, path_text, state in rows:
+                # A concurrent acquisition may have created or reactivated
+                # this row after the scan started. It is not a valid negative
+                # candidate for a snapshot that predates its presence.
+                if (candidate_placement_ids is not None
+                        and placement_id not in candidate_placement_ids):
+                    continue
                 try:
                     # Do not resolve the *stored* leaf or its parents here:
                     # a previously indexed book replaced by a symlink could
