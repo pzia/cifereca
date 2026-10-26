@@ -122,3 +122,19 @@ def test_decision_state_change_does_not_claim_a_specific_provider_cause():
     assert row["detail"]["status"] == "refused"
     assert row["detail"]["phase"] == "admission"
     assert row["detail"]["code"] == "unclassified_error"
+
+
+def test_broken_diagnostic_explanation_cannot_change_the_existing_refusal():
+    service, loan, _checks = setup_service("provider_disconnected")
+    service.can_download_loan = lambda _loan: False
+
+    def broken_explanation(_loan):
+        raise RuntimeError("Synthetic read-only diagnostic unavailable")
+
+    service.loan_download_eligibility = broken_explanation
+    with pytest.raises(ProviderConfigurationError, match="Ce prêt ne permet pas"):
+        service.reacquire_digital_loan(loan)
+    (row,) = service.diagnostics.snapshot()
+    assert row["detail"]["status"] == "refused"
+    assert row["detail"]["code"] == "unclassified_error"
+    assert row["detail"]["phase"] == "admission"
