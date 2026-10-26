@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import shutil
 import tempfile
@@ -628,7 +629,22 @@ class LibraryMaintenanceBrokerImpl:
         if request.operation == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
-            old=Path(str(row.get("path") or "")).resolve(); new=old.with_name(str(plan.facts.get("new_filename") or old.name))
+            # A recorded placement may have been replaced by a symlink
+            # after its last scan. resolve() BEFORE checking the source would
+            # silently turn a library rename into a mutation outside the
+            # indexed path. Also refuse symlinked ancestors, legacy aliases
+            # and special files before creating any hardlink.
+            old=Path(str(row.get("path") or ""))
+            try:
+                if (not old.is_absolute() or ".." in old.parts
+                        or old.is_symlink() or old.resolve() != old
+                        or not stat.S_ISREG(
+                            os.stat(old, follow_symlinks=False).st_mode
+                        )):
+                    raise _LibraryFilenameConflict("Source non canonique ou symbolique")
+            except (OSError, RuntimeError):
+                raise _LibraryFilenameConflict("Source locale non vérifiable") from None
+            new=old.with_name(str(plan.facts.get("new_filename") or old.name))
             if new != old:
                 # Never allow a target symlink to redirect the new SQLite
                 # pathname to a different inode/root, even at equal SHA.
