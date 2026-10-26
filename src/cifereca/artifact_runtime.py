@@ -24,6 +24,12 @@ class _LibraryFilenameConflict(Conflict):
     """Closed, catchable collision code; no path or identity in the error."""
     code = "library_filename_conflict"
 
+class _DuplicateScopeConflict(Conflict):
+    """A fixed UI-safe reason; never include private path or borrower text."""
+    code = "placement_not_duplicate"
+
+
+
 
 def _media_type(fmt: str, explicit: str | None = None) -> str:
     if explicit:
@@ -597,7 +603,7 @@ class LibraryMaintenanceBrokerImpl:
             row=self.service.storage.placement_get(request.placement_id); keep=self.service.storage.placement_get(request.keep_placement_id)
             if row is None or keep is None: raise NotFound("Placement inconnu", code="placement_not_found")
             if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
-                raise Conflict("Doublon hors du même périmètre vérifié", code="placement_not_duplicate")
+                raise _DuplicateScopeConflict("Doublon hors du même périmètre vérifié")
             return LibraryMutationPlan(op, "Supprimer le doublon physique vérifié", request, destructive=True, changes=(request.placement_id,), warnings=("Le fichier du placement sera supprimé.",))
         if op == "replace_cover":
             return LibraryMutationPlan(op, "Remplacer la couverture canonique", request, changes=(request.book_id, request.cover_artifact_id))
@@ -733,7 +739,7 @@ class LibraryMaintenanceBrokerImpl:
             if row is None: return LibraryMutationResult(True,0,"Placement déjà absent")
             keep=self.service.storage.placement_get(request.keep_placement_id)
             if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
-                raise Conflict("Le doublon n'est plus vérifiable", code="placement_not_duplicate")
+                raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable")
             path=Path(str(row.get("path") or ""))
             if path.exists(): path.unlink()
             self.service.storage.placement_delete(request.placement_id)
