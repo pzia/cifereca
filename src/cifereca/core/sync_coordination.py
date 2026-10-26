@@ -658,27 +658,33 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         self, account, session, typed_scope,
                     ):
                         raise ProviderConfigurationError("loan_source_scope_changed")
-                    # Legacy side-channel is used ONLY for legacy readers.
-                    # Typed partial evidence stays coherent with its rows
-                    # despite a later unrelated call mutating last_loan_errors.
-                    partial_errors = (
-                        [None] if snapshot is not None and snapshot.status == "partial"
-                        else [] if snapshot is not None
-                        else list(getattr(session, "last_loan_errors", []) or [])
-                        if session is not None else []
+                    # A v1 loans() list has NO verified branch/pagination
+                    # coverage. Reading last_loan_errors (a mutable producer
+                    # side channel) cannot prove completion, even when empty.
+                    # Do not consult it. Personal-library-only providers are
+                    # unaffected: they have no loan inventory to classify.
+                    legacy_unverified = (
+                        snapshot is None and session is not None
+                        and getattr(getattr(session, "capabilities", None),
+                                    "loans", None) is True
                     )
-                    if partial_errors:
-                        errors += len(partial_errors)
-                        # Provider partial errors are untrusted data (potentially
-                        # a signed URL, account ID or HTTP body). Persist only
-                        # closed event codes, preserving the exact failure count.
-                        provider_errors.extend(
-                            {"code": "loan_partial_failure"}
-                            for _ in partial_errors
-                        )
+                    inventory_partial = (
+                        snapshot is not None and snapshot.status == "partial"
+                    ) or legacy_unverified
+                    if inventory_partial:
+                        # One closed partial observation per account, not the
+                        # mutable number of upstream error strings.
+                        errors += 1
+                        provider_errors.append({
+                            "code": (
+                                "loan_legacy_unverified" if legacy_unverified
+                                else "loan_partial_failure"
+                            ),
+                        })
                         logger.warning(
-                            "TRACE loans sync partial code=loan_partial_failure count=%s",
-                            len(partial_errors),
+                            "TRACE loans sync partial code=%s",
+                            "loan_legacy_unverified" if legacy_unverified
+                            else "loan_partial_failure",
                         )
                     # Stage this WHOLE account before accepting any row. If
                     # page N contradicts page 1, mark the account failed but
@@ -712,10 +718,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             (account, session, typed_scope, list(account_loans)),
                         )
                         complete_scope = _complete_digital_loan_scope(account, snapshot)
-                        if complete_scope is not None and not partial_errors:
+                        if complete_scope is not None and not inventory_partial:
                             complete_by_source[source_id] = complete_scope
                     source_outcomes[source_id] = (
-                        "partial" if partial_errors else "success"
+                        "partial" if inventory_partial else "success"
                     )
                 except Exception:
                     source_outcomes[source_id] = "failed"
