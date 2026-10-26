@@ -46,7 +46,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install Core test dependencies
-        run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12"
+        run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
 
       - name: Run Core tests
         run: python -m pytest -q --durations=10 tests
