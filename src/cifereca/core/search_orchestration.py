@@ -419,6 +419,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     warnings: list[str] = []
     variants = self._search_query_variants(query)
     for session in searchable:
+        if not request_current():
+            return []
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
         effective_field, contract_warning = _effective_search_field(
@@ -434,6 +436,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if public_outage:
             warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
         for attempt, variant in enumerate(() if public_outage else variants):
+            # Stop network work after an identity switch or newer search.
+            # A second loose-text GET cannot repair a revoked request.
+            if not request_current():
+                return []
             # Loose fallbacks are needed only when the exact query produced
             # no strong title/author match. This keeps normal searches fast.
             if attempt > 0 and primary_ok:
