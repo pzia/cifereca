@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
-from cifereca_baen import BaenSession, _trusted_baen_url
+from cifereca_baen import BaenSession, _trusted_baen_url, _public_epub_filename
 
 BASE = "https://www.baen.com"
 
@@ -131,7 +131,7 @@ def test_download_keeps_same_origin_epub_link(tmp_path):
     s=rig('<a href="/downloads/book.epub">Download EPUB</a>')
     try:
         result,_=s.download_direct(item(BASE + "/allbooks/book"),tmp_path)
-        assert result.name=="Book.epub"
+        assert result.name == _public_epub_filename("Book", BASE + "/allbooks/book")
         assert len(s.transport.calls)==1
         assert s.transport.calls[0]["url"]==BASE + "/downloads/book.epub"
     finally:
