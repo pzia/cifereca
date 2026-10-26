@@ -22,6 +22,40 @@ def action(url=URL, *, loan='loan-a'):
             f'aria-controls="{loan}-reader-acs" href="{escape(url, quote=True)}">ACSM</a>')
 
 
+def four_reader_actions():
+    """Synthetic sibling accordion: four distinct signed routes for one loan."""
+    web = URL.replace('drm=acs4&device_type=reader', 'viewer=web_reader')
+    computer = URL.replace('device_type=reader', 'device_type=computer').replace('drm=acs4', 'drm=lcp')
+    reader_lcp = URL.replace('drm=acs4', 'drm=lcp')
+    return ('<ul class="actions-list js-accordeon">'
+            '<li><a class="actions-list__title actions-list__link" target="_blank" '
+            f'href="{escape(web, quote=True)}">Lire en ligne</a></li>'
+            '<li><a class="actions-list__title actions-list__link js-accordeon__item" '
+            f'href="{escape(computer, quote=True)}">Lire hors ligne sur ordinateur</a></li>'
+            '<li><span>Lire sur une liseuse</span>'
+            '<a class="actions-list__link actions-list__sublink js-accordeon__item" '
+            f'href="{escape(reader_lcp, quote=True)}" aria-controls="loan-a-reader-lcp">'
+            'Liseuse Vivlio/PocketBook ou Bookeen DIVA</a>'
+            + action().replace('>ACSM</a>', '>Autre type de liseuse</a>')
+            + '<div id="loan-a-reader-acs">Adobe Digital Editions : transférer sur liseuse</div>'
+            '</li></ul>')
+
+
+def test_four_distinct_sibling_actions_select_only_reader_acs4(tmp_path):
+    html = CARD + four_reader_actions()
+    assert signed_acsm_action(html, 'loan-a', 'book-a') == URL
+    session, account, loan, state, _, downloaded = connected()
+    state['activity'] = html
+    try:
+        file, public_url = session.download_digital(
+            loan, account, tmp_path, explicit_user_action=True)
+        assert file.read_bytes() == TOKEN and public_url == ''
+        assert len(downloaded) == 1
+        assert downloaded[0].url.raw_path == ('/loans/loan-a?' + QUERY).encode('ascii')
+    finally:
+        session.close()
+
+
 def test_outside_card_control_is_joined_by_exact_aria_and_path():
     assert signed_acsm_action(CARD + action(), 'loan-a', 'book-a') == URL
     assert signed_acsm_action(CARD + action(loan='loan-b'), 'loan-a', 'book-a') is None
