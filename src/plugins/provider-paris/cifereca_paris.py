@@ -2,6 +2,7 @@ from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
 
 import logging
+import httpx
 from dataclasses import replace
 import re
 import time
@@ -15,7 +16,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError
+from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError, ParisError
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -416,20 +417,28 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             try:
                 rows.extend(self.client.loans(upstream, account.unique_id))
-            except Exception:
-                # HTTP/provider exceptions may carry a signed loan URL,
-                # reader number or opaque secret even without a recognizable
-                # key name. Keep only fixed diagnostic codes at *emission*;
-                # Core needs the failed upstream, never its raw exception.
-                errors.append({
+            except Exception as exc:
+                # Neither branch failure nor sibling success proves an empty
+                # inventory. Keep the compatibility code and attach only the
+                # separately typed HTTP/transport reason when attested.
+                reason = (
+                    exc.code if isinstance(exc, ParisLoanListError) else
+                    "paris_loans_transport_timeout" if isinstance(exc, httpx.TimeoutException) else
+                    "paris_loans_transport_failed" if isinstance(exc, httpx.RequestError) else
+                    "paris_loans_inventory_shape_invalid"
+                    if type(exc) is ParisError and str(exc) == "paris_loans_inventory_shape_invalid" else
+                    None
+                )
+                failure = {
                     "upstream": upstream,
                     "code": "paris_loans_upstream_failed",
-                })
+                    **({"reason_code": reason} if reason is not None else {}),
+                }
+                errors.append(failure)
                 try:
                     self.diagnostics.add(
                         "API", f"loans {upstream}", "error",
-                        detail={"provider": "paris", "upstream": upstream,
-                                "code": "paris_loans_upstream_failed"},
+                        detail={"provider": "paris", **failure},
                     )
                 except Exception:
                     pass
