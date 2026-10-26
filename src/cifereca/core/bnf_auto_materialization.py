@@ -42,6 +42,63 @@ def enabled(service, account: Account) -> bool:
         return False
 
 
+def _receipt_local_file_verified(service, account: Account, row: dict, path: Path) -> bool:
+    """A private auto-ref is only a hint, never proof of an unchanged book.
+
+    Verify that the complete acquisition still names the exact BnF directory,
+    indexed placement and original physical SHA. No provider/DRM I/O.
+    """
+    from ..library_files import sha256_file
+    try:
+        if (type(row) is not dict or row.get('identity_id') != account.identity_id
+                or row.get('provider_id') != 'manual'
+                or row.get('credential_id') != 'manual'
+                or type(row.get('artifact_id')) is not str):
+            return False
+        expected_id = row['artifact_id']
+        artifact = service.storage.artifact_get(expected_id)
+        if (type(artifact) is not dict or type(artifact.get('sha256')) is not str
+                or expected_id != 'sha256:' + artifact['sha256']
+                or type(artifact.get('size')) is not int
+                or artifact['size'] <= 0):
+            return False
+        root = service.library_identity_provider_dir(account.identity_id, 'bnf-pret')
+        if root.is_symlink() or path.is_symlink() or not path.is_file():
+            return False
+        # Reject ALL symlinks below the identity/provider directory, not just
+        # the last component. An external EPUB must never satisfy this loan.
+        relative = path.relative_to(root)
+        if len(relative.parts) < 2:
+            return False
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return False
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+        linked = service.storage.placement_for_path(path)
+        if (type(linked) is not dict
+                or linked.get('state') != 'present'
+                or linked.get('identity_id') != account.identity_id
+                or linked.get('provider_id') != 'bnf-pret'
+                or linked.get('artifact_id') != expected_id):
+            return False
+        before = path.stat(follow_symlinks=False)
+        if before.st_size != artifact['size'] or sha256_file(path) != artifact['sha256']:
+            return False
+        inspected = inspect_artifact(path)
+        after = path.stat(follow_symlinks=False)
+        if (inspected.valid is not True
+                or inspected.media_format not in {'epub', 'pdf'}
+                or any(getattr(before, key) != getattr(after, key)
+                       for key in ('st_dev', 'st_ino', 'st_size',
+                                   'st_mtime_ns', 'st_ctime_ns'))):
+            return False
+        return True
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
     """Called only under the existing source/opening sync acquisition lock."""
     if not enabled(service, account) or type(loan) is not Loan:
@@ -64,10 +121,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         if type(meta) is not dict or meta.get('bnf_auto_ref') != ref:
             continue
         path = Path(str(meta.get('path') or ''))
-        try:
-            usable = path.is_file() and not path.is_symlink() and inspect_artifact(path).valid is True
-        except (OSError, ValueError):
-            usable = False
+        usable = _receipt_local_file_verified(service, account, row, path)
         return ({'status': 'unchanged'} if usable else
                 {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
     try:
@@ -119,7 +173,9 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             if previous_ref not in (None, ref):
                 return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
             produced = Path(str(result.get('path') or ''))
-            if not produced.is_file() or produced.is_symlink() or inspect_artifact(produced).valid is not True:
+            # An ADEPT "complete" without a matching indexed artifact and
+            # provider-owned placement is not a usable local book.
+            if not _receipt_local_file_verified(service, account, existing, produced):
                 return {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'}
             service.storage.acquisition_update_state(
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
