@@ -3559,6 +3559,22 @@ class Storage:
         path = str(Path(str(row.get("path") or "")).expanduser().resolve())
         placement_id = str(row.get("placement_id") or self._stable_id("placement", path))
         with self._lock, self._connect() as db:
+            # Inserting an already known path must neither transfer its
+            # account/provider/edition nor return a non-existent placement ID.
+            # Lock the read + upsert against concurrent SQLite writers.
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT placement_id,identity_id,provider_id,source_item_id "
+                "FROM placements WHERE path=?", (path,),
+            ).fetchone()
+            if current is not None:
+                for stored, proposed in zip(
+                    current[1:],
+                    (row.get("identity_id"), row.get("provider_id"),
+                     row.get("source_item_id")),
+                ):
+                    if stored and proposed and stored != proposed:
+                        raise ValueError("placement_scope_conflict")
             db.execute(
                 "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET artifact_id=excluded.artifact_id,identity_id=COALESCE(excluded.identity_id,placements.identity_id),"
@@ -3577,7 +3593,12 @@ class Storage:
                     "WHERE placement_id=(SELECT placement_id FROM placements WHERE path=?)",
                     (now, path),
                 )
-        return placement_id
+            # ON CONFLICT(path) keeps the original primary key; callers must
+            # receive that actual key rather than their proposed new one.
+            canonical = db.execute(
+                "SELECT placement_id FROM placements WHERE path=?", (path,),
+            ).fetchone()
+            return str(canonical[0])
 
     def placements(self, *, state: str | None = None) -> list[dict[str, Any]]:
         columns = ["placement_id", "artifact_id", "path", "identity_id", "provider_id", "source_item_id", "state", "last_seen_at", "metadata_json", "created_at", "updated_at"]
