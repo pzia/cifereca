@@ -3,6 +3,8 @@
 > **Règle impérative commune Core/Plugins :** [skill journalisation](../skills/cifereca-logging/SKILL.md) et [contrat canonique](../../docs/LOGGING-CONTRACT.md). Tout journaliser tel qu'émis, aucun masquage hors IHM, uniquement login et mot de passe pseudonymisés à l'affichage. Les consignes historiques de listes blanches ne prévalent pas.
 
 
+> **Doctrine transversale de confidentialité :** protéger exclusivement les **credentials d'authentification** (mots de passe, tokens, cookies de session authentifiants, clés privées/API, URL signées servant de jetons). Aucune tâche spéciale de confidentialité ni expurgation n'est requise pour les erreurs, traces, comptes, chemins, titres, identifiants, emails, captures sans secret ou autres informations métier. Ne pas créer ou prolonger un P0/P1 à cette seule fin. Voir [AGENTS.md](../../AGENTS.md#doctrine-de-confidentialité--credentials-uniquement-26102026) ; le rendu Diagnostics continue de pseudonymiser seulement login/mot de passe et les exports volontaires restent bruts.
+
 Le guide canonique est [AGENTS.md](../../AGENTS.md). La politique de réalisation asynchrone, preuves, fusion et clôture est [docs/AGENT-DELIVERY-POLICY.md](../../docs/AGENT-DELIVERY-POLICY.md).
 
 - `backlog` : **analyse et ticketing uniquement** (triage, priorités, critères d'acceptation, issues et handoffs). Aucun code, test exécuté, branche, PR, merge ni changement implicite de rôle.

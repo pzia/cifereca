@@ -13,6 +13,16 @@ Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois
 5. Quand l'état ou le propriétaire change, mettre à jour **l'issue canonique** ou la PR avec le résultat et un handoff minimal.
 6. Relire les priorités et recommencer ; `Next` signifie la prochaine étape, pas une release.
 
+## Périmètre strict — invariant d'exécution
+
+**À chaque étape, Focus résout exclusivement le ticket retenu dans les limites de la demande utilisateur.** Une restriction explicite de chantier, fournisseur, rôle ou composant demeure applicable d'un ticket à l'autre jusqu'à nouvel ordre de l'utilisateur. Les règles transversales [AGENTS.md](../../AGENTS.md#périmètre-strict-du-ticket-et-restitution-par-défaut) restent impératives.
+
+- **Aucune extension opportuniste** fonctionnelle, technique ou architecturale : pas de refactoring de proximité, de nouvelle fonctionnalité, d'optimisation accessoire, de réécriture de contrat ni de correctif d'un défaut indépendant dans la même PR, même si le code est voisin ou si l'occasion paraît favorable.
+- **Dépendances indispensables seulement** : une modification annexe n'est admissible que si elle est strictement nécessaire pour satisfaire le contrat et les tests du ticket, avec justification vérifiable. Une dépendance relevant d'un autre rôle ou d'une résolution distincte fait l'objet d'un handoff, pas d'une extension silencieuse de PR.
+- **Découverte hors périmètre** : documenter le constat dans l'issue canonique et le transmettre au rôle `backlog` pour qualification et arbitrage. Ne pas commencer son implémentation, même sous prétexte d'urgence P0, sans décision explicite autorisant ce nouveau travail.
+- **Autonomie ≠ élargissement** : `next`, `next max`, `go max`, `continue`, `termine` et `ne t'arrête pas` autorisent à itérer **dans le périmètre autorisé**, pas à élargir un ticket, à promouvoir un P2/P3, à lever un `STANDBY` ou à reprendre une tâche suspendue. Passer à un autre rôle ou à un autre ticket ne contourne pas une restriction formulée par l'utilisateur.
+- **Clôturer sur le contrat** : lorsque les critères du ticket et les validations requises sont satisfaits, préparer la fusion/clôture selon le rôle responsable sans retenir le ticket pour des améliorations optionnelles. Une extension de périmètre exige une **instruction explicite de l'utilisateur** ou un arbitrage produit explicitement validé.
+
 ## Handoff minimal
 
 - **Priorité / ticket** : P0/P1/P2/P3 et référence GitHub.
