@@ -1599,6 +1599,38 @@ class Storage:
                             )
                     else:
                         placement_metadata = None
+                # A catalog entry bound to a placement can carry an
+                # independent, explicit identity/source/edition/artifact.
+                # The relocation below rewrites its identity/provider (and
+                # possibly merges its placement ID). That is only safe when
+                # none of its recorded coordinates contradicts the owning
+                # placement: a row pointing to an old path must not become
+                # evidence of another account's or edition's ownership.
+                # Check both source and destination before any SQL mutation.
+                if old_row:
+                    owners = {old_row[0]: old_row}
+                    if target_row is not None:
+                        owners[target_row[0]] = target_row
+                    for placement_key, catalog_identity, catalog_provider, catalog_item, catalog_artifact in db.execute(
+                        "SELECT placement_id,identity_id,provider_id,item_id,artifact_id "
+                        "FROM catalog_entries WHERE placement_id IN (?,?)",
+                        (old_row[0], target_row[0] if target_row else old_row[0]),
+                    ):
+                        owner = owners.get(placement_key)
+                        if owner is None:
+                            raise ValueError("relocate_catalog_scope_conflict")
+                        for recorded, expected in (
+                            (catalog_identity, owner[2]),
+                            (catalog_provider, owner[3]),
+                            (catalog_item, owner[5]),
+                            (catalog_artifact, owner[4]),
+                        ):
+                            if (recorded not in (None, "") and (
+                                type(recorded) is not str
+                                or type(expected) is not str
+                                or not expected or recorded != expected
+                            )):
+                                raise ValueError("relocate_catalog_scope_conflict")
                 if any(
                     row[0] not in (None, "", identity_id)
                     for row in db.execute(
