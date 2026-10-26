@@ -105,12 +105,38 @@ def _make_event(match, identity, offset):
     status = "unknown"
     task_ref = None
     duration_ms = None
+    structured_unreadable = False
     if message.startswith(_DIAGNOSTIC_PREFIX):
         try:
             document = json.loads(message[len(_DIAGNOSTIC_PREFIX):])
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
             document = None
-        if type(document) is dict and document.get("schema_version") == 1:
+        # A broken or unknown DIAG_JSON envelope is still an observed log
+        # occurrence. Keep its RAW text, but do not silently call the
+        # structured history complete: operation, status, task and provider
+        # evidence cannot be recovered from this record.
+        if (type(document) is not dict
+                or type(document.get("schema_version")) is not int
+                or document["schema_version"] != 1):
+            structured_unreadable = True
+        elif (any(
+            key in document and type(document[key]) is not kind
+            for key, kind in (
+                ("message", str), ("category", str), ("operation", str),
+                ("status", str), ("detail", dict), ("task_ref", str),
+            )
+        ) or (
+            "duration_ms" in document and (
+                type(document["duration_ms"]) is not int
+                or not 0 <= document["duration_ms"] <= 86_400_000
+            )
+        )):
+            # A schema-1 field present with the WRONG TYPE is not evidence
+            # of a missing operation/status/owner. Never silently replace it
+            # with "unknown", empty detail or an invented default while
+            # claiming a complete history. Preserve the raw DIAG_JSON text.
+            structured_unreadable = True
+        else:
             message = document.get("message") if type(document.get("message")) is str else message
             category = document.get("category") if type(document.get("category")) is str else category
             operation = document.get("operation") if type(document.get("operation")) is str else ""
@@ -148,20 +174,28 @@ def _make_event(match, identity, offset):
         event["task_ref"] = task_ref
     if duration_ms is not None:
         event["duration_ms"] = duration_ms
-    return event
+    return event, structured_unreadable
 
 
 def _events(log_path: Path):
     events = []
     gaps = []
     active_missing = False
+    present_rotations = set()
+    missing_rotations = set()
     for rotation in _ROTATIONS:
         path = Path(f"{log_path}.{rotation}" if rotation else str(log_path))
         lines, state, identity = _lines(path)
         if state == "missing":
             if rotation == 0:
                 active_missing = True
+            else:
+                missing_rotations.add(rotation)
             continue
+        # A missing *oldest* backup is normal before enough rotations exist.
+        # A hole BETWEEN two present log files is different: some events
+        # have disappeared, even if every remaining file parses correctly.
+        present_rotations.add(rotation)
         if state != "available":
             gaps.append(f"rotation_{rotation}_{state}")
             continue
@@ -171,8 +205,10 @@ def _events(log_path: Path):
             if m:
                 current = None
                 try:
-                    current = _make_event(m, identity, offset)
+                    current, structured_unreadable = _make_event(m, identity, offset)
                     events.append(current)
+                    if structured_unreadable and "structured_event_unreadable" not in gaps:
+                        gaps.append("structured_event_unreadable")
                 except (ValueError, OverflowError):
                     gaps.append("timestamp_invalid")
             elif line:
@@ -186,6 +222,11 @@ def _events(log_path: Path):
                     current["message"] += "\n" + line
                 elif "event_text_exceeded" not in gaps:
                     gaps.append("event_text_exceeded")
+    for rotation in sorted(missing_rotations, reverse=True):
+        if any(older > rotation for older in present_rotations) and any(
+            newer < rotation for newer in present_rotations
+        ):
+            gaps.append(f"rotation_{rotation}_missing")
     return events, gaps, active_missing
 
 
@@ -193,9 +234,9 @@ def query_journal(
     log_path: Path, *, search: str = "", module: str = "",
     severity: str = "", provider_id: str = "",
     since: str | None = None, until: str | None = None,
-    limit: int = 50, offset: int = 0,
+    limit: int = 50, offset: int = 0, sort_order: str = "asc",
 ) -> dict[str, Any]:
-    """Search all retained rotations BEFORE pagination, with honest coverage."""
+    """Search all retained rotations and apply global order BEFORE pagination."""
     if type(search) is not str or len(search) > 500:
         raise ValueError("invalid journal search")
     if type(module) is not str or len(module) > 90:
@@ -208,6 +249,8 @@ def query_journal(
         raise ValueError("invalid journal limit")
     if type(offset) is not int or not 0 <= offset <= 1000000:
         raise ValueError("invalid journal offset")
+    if type(sort_order) is not str or sort_order not in {"asc", "desc"}:
+        raise ValueError("invalid journal sort order")
 
     def bound(value):
         if value is None:
@@ -239,10 +282,43 @@ def query_journal(
         instant = datetime.fromisoformat(event["timestamp"])
         if lower and instant < lower or upper and instant > upper:
             continue
-        if needle and needle not in _fold(json.dumps(event, ensure_ascii=False, default=str)):
-            continue
+        if needle:
+            # Search original observed log/structured fields, not the journal
+            # reader's synthetic envelope. Otherwise every query for
+            # "journal" or "schema_version" matches ALL events solely
+            # because these labels were added during projection.
+            # JSON object keys in this reader's envelope (e.g. "module",
+            # "severity", "status", "message", "logger") did not occur as
+            # words in an unstructured log line. Searching a serialized event
+            # object makes every such query spuriously match every row.
+            #
+            # Search observed VALUES only. Preserve source-provided detail
+            # dictionaries with their real keys, including phase/reason_code.
+            observed = [
+                event["timestamp"], event["logger"], event["severity"],
+                event["module"], event["message"],
+            ]
+            observed.extend(event[key] for key in (
+                "operation", "task_ref", "duration_ms",
+            ) if key in event)
+            if event.get("detail"):
+                observed.append(event["detail"])
+            if (event.get("operation") or event.get("detail")
+                    or event["status"] != "unknown"):
+                observed.append(event["status"])
+            if needle not in _fold(json.dumps(
+                observed, ensure_ascii=False, default=str,
+            )):
+                continue
         matched.append(event)
-    matched.sort(key=lambda row: (row["timestamp"], row["event_id"]))
+    # Python's stable sort preserves physical log order for timestamps with
+    # the same millisecond. Sorting ties by the SHA-derived event_id scrambles
+    # the actual emission order (including across rotated files).
+    # The GUI must page the newest retained records GLOBALLY, not reverse
+    # only the oldest 50 returned by an ascending Core query.
+    matched.sort(key=lambda row: row["timestamp"])
+    if sort_order == "desc":
+        matched.reverse()  # Equal timestamps: latest physical occurrence first.
     state = "partial" if gaps or missing else ("available" if events else "empty")
     source_state = {
         "source": "journal", "status": state,
@@ -276,7 +352,8 @@ def recent_diagnostics_snapshot(log_path: Path, *, limit: int = 100) -> tuple[di
         raise ValueError("invalid journal snapshot limit")
     events, _gaps, _missing = _events(Path(log_path))
     structured = [row for row in events if row.get("operation")]
-    structured.sort(key=lambda row: (row["timestamp"], row["event_id"]))
+    # Keep the same physical tie order as query_journal and raw export.
+    structured.sort(key=lambda row: row["timestamp"])
     result = []
     for event in structured[-limit:]:
         row = {

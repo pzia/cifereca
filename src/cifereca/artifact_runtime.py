@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import shutil
 import tempfile
@@ -27,6 +28,10 @@ class _LibraryFilenameConflict(Conflict):
 class _DuplicateScopeConflict(Conflict):
     """A fixed UI-safe reason; never include private path or borrower text."""
     code = "placement_not_duplicate"
+
+class _VariantScopeConflict(Conflict):
+    """Deleting a shared SHA is not authority to unlink another book."""
+    code = "artifact_variant_scope_conflict"
 
 
 
@@ -211,6 +216,15 @@ class ArtifactExecutionBrokerImpl:
             raise Conflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
         if result.size_bytes and actual_size != int(result.size_bytes):
             raise Conflict("Taille de transformation invalide", code="artifact_output_size_mismatch")
+        # An identity transform has exactly the original content-addressed
+        # artifact_id. Persisting a self-variant would make delete_variant
+        # select and physically unlink the ORIGINAL book placements. The
+        # produced staging file is disposable; preserve the existing source
+        # artifact and do not create a false independent derivative.
+        if actual_sha == source.sha256:
+            path.unlink()
+            lease.active = False
+            return source
         existing = self.service.storage.artifact_variant_find(
             source_sha256=source.sha256, transformer_plugin_id=transformer_plugin_id,
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
@@ -580,6 +594,45 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
     return True
 
 
+def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
+    """Deleting a derived SHA cannot unlink another book sharing its bytes.
+
+    The physical placement table is content-addressed. Only placements
+    explicitly materialized by this variant's source are candidates for
+    global deletion. A generic/local/provider placement with the same SHA,
+    or a derivative now shared across identities, remains independent.
+    """
+    if type(variant) is not dict:
+        return False
+    artifact_id = variant.get("artifact_id")
+    source_id = variant.get("source_artifact_id")
+    if (type(artifact_id) is not str or not artifact_id
+            or type(source_id) is not str or not source_id
+            or artifact_id == source_id):
+        return False
+    placements = [
+        row for row in storage.placements()
+        if row.get("artifact_id") == artifact_id
+    ]
+    scopes = set()
+    for row in placements:
+        metadata = row.get("metadata")
+        scope = tuple(row.get(key) for key in (
+            "identity_id", "provider_id", "source_item_id"
+        ))
+        if (type(metadata) is not dict
+                or metadata.get("variant") is not True
+                or metadata.get("source_artifact_id") != source_id
+                or any(type(value) is not str or not value for value in scope)
+                or row.get("state") != "present"
+                or Path(str(row.get("path") or "")).is_symlink()):
+            return False
+        scopes.add(scope)
+        if len(scopes) > 1:
+            return False
+    return True
+
+
 @dataclass(slots=True)
 class LibraryMaintenanceBrokerImpl:
     service: Any
@@ -615,6 +668,13 @@ class LibraryMaintenanceBrokerImpl:
         if op == "delete_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: raise NotFound("Variante inconnue", code="artifact_variant_not_found")
+            # Content-addressed identity derivatives can exist in historical
+            # stores. Never unlink the source artifact's physical placements.
+            # More than one variant row sharing the hash is also ambiguous:
+            # deleting one cannot authorize deletion of the other's bytes.
+            if (len(rows) != 1
+                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
+                raise _VariantScopeConflict("Variante et source non indépendantes")
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
@@ -628,8 +688,61 @@ class LibraryMaintenanceBrokerImpl:
         if request.operation == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
-            old=Path(str(row.get("path") or "")).resolve(); new=old.with_name(str(plan.facts.get("new_filename") or old.name))
+            # A recorded placement may have been replaced by a symlink
+            # after its last scan. resolve() BEFORE checking the source would
+            # silently turn a library rename into a mutation outside the
+            # indexed path. Also refuse symlinked ancestors, legacy aliases
+            # and special files before creating any hardlink.
+            old=Path(str(row.get("path") or ""))
+            try:
+                if (not old.is_absolute() or ".." in old.parts
+                        or old.is_symlink() or old.resolve() != old
+                        or not stat.S_ISREG(
+                            os.stat(old, follow_symlinks=False).st_mode
+                        )):
+                    raise _LibraryFilenameConflict("Source non canonique ou symbolique")
+            except (OSError, RuntimeError):
+                raise _LibraryFilenameConflict("Source locale non vérifiable") from None
+            new=old.with_name(str(plan.facts.get("new_filename") or old.name))
             if new != old:
+                # A stored artifact_id is not evidence that the bytes on
+                # disk are still those of the indexed book. Rehash the actual
+                # source under a no-follow fd for this explicit maintenance
+                # operation, before creating the destination hardlink or
+                # changing SQLite. Size + mtime alone are not a fingerprint.
+                evidence = self.service.storage.artifact_get(str(row.get("artifact_id") or ""))
+                digest = evidence.get("sha256") if type(evidence) is dict else None
+                length = evidence.get("size") if type(evidence) is dict else None
+                if (type(digest) is not str or len(digest) != 64
+                        or any(c not in "0123456789abcdef" for c in digest)
+                        or row.get("artifact_id") != "sha256:" + digest
+                        or type(length) is not int or length <= 0
+                        or not hasattr(os, "O_NOFOLLOW")):
+                    raise _LibraryFilenameConflict("Empreinte source non attestée")
+                try:
+                    fd = os.open(
+                        old, os.O_RDONLY | os.O_NOFOLLOW |
+                        getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0),
+                    )
+                    try:
+                        before = os.fstat(fd)
+                        if not stat.S_ISREG(before.st_mode) or before.st_size != length:
+                            raise _LibraryFilenameConflict("Fichier source modifié")
+                        hasher = hashlib.sha256()
+                        while chunk := os.read(fd, 1024 * 1024):
+                            hasher.update(chunk)
+                        after = os.fstat(fd)
+                        named = os.stat(old, follow_symlinks=False)
+                        attrs = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                        if (any(getattr(before, key) != getattr(after, key) or
+                                getattr(before, key) != getattr(named, key)
+                                for key in attrs)
+                                or hasher.hexdigest() != digest):
+                            raise _LibraryFilenameConflict("Fichier source modifié")
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    raise _LibraryFilenameConflict("Source locale non vérifiable") from None
                 # Never allow a target symlink to redirect the new SQLite
                 # pathname to a different inode/root, even at equal SHA.
                 if new.is_symlink():
@@ -762,13 +875,61 @@ class LibraryMaintenanceBrokerImpl:
             if (type(digest) is not str or len(digest) != 64
                     or type(size) is not int or size < 0
                     or path.is_symlink() or kept_path.is_symlink()
-                    or not path.is_file() or not kept_path.is_file()
-                    or path.stat().st_size != size or kept_path.stat().st_size != size
-                    or sha256_file(path) != digest or sha256_file(kept_path) != digest):
+                    or not path.is_file() or not kept_path.is_file()):
                 raise Conflict("Octets du doublon non vérifiés")
-            path.unlink()
+            try:
+                deleted_stat = os.stat(path, follow_symlinks=False)
+                kept_stat = os.stat(kept_path, follow_symlinks=False)
+                if (not stat.S_ISREG(deleted_stat.st_mode)
+                        or not stat.S_ISREG(kept_stat.st_mode)
+                        or deleted_stat.st_size != size or kept_stat.st_size != size
+                        or sha256_file(path) != digest
+                        or sha256_file(kept_path) != digest):
+                    raise Conflict("Octets du doublon non vérifiés")
+                fingerprint = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                for selected, expected in ((path, deleted_stat), (kept_path, kept_stat)):
+                    now = os.stat(selected, follow_symlinks=False)
+                    if any(getattr(now, key) != getattr(expected, key) for key in fingerprint):
+                        raise Conflict("Octets du doublon non vérifiés")
+            except OSError:
+                raise Conflict("Octets du doublon non vérifiés") from None
+            # Commit removal of the unreferenced placement FIRST. A failed
+            # SQLite transaction leaves both verified physical paths intact;
+            # a crash afterwards leaves an extra, recoverable duplicate, not
+            # a 'present' SQLite row pointing at an already deleted book.
             self.service.storage.placement_delete(request.placement_id)
-            return LibraryMutationResult(True,1,plan.summary)
+            # The old file is now an optional cleanup target. Never unlink a
+            # name that was replaced or rebound while SQLite committed, and
+            # never destroy the remaining copy after its inode changed.
+            cleanup_pending = True
+            try:
+                if (not candidate_has_active_dependencies(
+                    self.service.storage,
+                    placement_id=request.placement_id,
+                    path=str(path),
+                ) and self.service.storage.placement_for_path(path) is None):
+                    current_deleted = os.stat(path, follow_symlinks=False)
+                    current_kept = os.stat(kept_path, follow_symlinks=False)
+                    if (
+                        stat.S_ISREG(current_deleted.st_mode)
+                        and stat.S_ISREG(current_kept.st_mode)
+                        and all(
+                            getattr(current_deleted, key) == getattr(deleted_stat, key)
+                            and getattr(current_kept, key) == getattr(kept_stat, key)
+                            for key in fingerprint
+                        )
+                    ):
+                        path.unlink()
+                        cleanup_pending = False
+            except OSError:
+                pass
+            return LibraryMutationResult(
+                True, 1, plan.summary,
+                warnings=(
+                    ("Fichier doublon conservé : nettoyage local à vérifier.",)
+                    if cleanup_pending else ()
+                ),
+            )
         if request.operation == "replace_cover":
             if not request.book_id or not request.cover_artifact_id: raise ValueError("book_id and cover_artifact_id required")
             cover=self.service.storage.artifact_get(request.cover_artifact_id)
@@ -788,6 +949,9 @@ class LibraryMaintenanceBrokerImpl:
         if request.operation == "delete_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
             if not rows: return LibraryMutationResult(True,0,"Variante déjà absente")
+            if (len(rows) != 1
+                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
+                raise _VariantScopeConflict("Variante et source non indépendantes")
             variant=rows[0]; source_id=str(variant.get("source_artifact_id") or "")
             for placement in [p for p in self.service.storage.placements() if str(p.get("artifact_id") or "") == request.artifact_id]:
                 path=Path(str(placement.get("path") or ""))

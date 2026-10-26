@@ -473,6 +473,10 @@ class DiagnosticsPagePlugin:
         if previous_raw_chooser is not None:
             previous_raw_chooser.destroy()
         self._raw_export_chooser = None
+        previous_http_export = getattr(self, "_http_trace_export", None)
+        if previous_http_export is not None:
+            previous_http_export.close()
+        self._http_trace_export = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []
@@ -721,6 +725,14 @@ class DiagnosticsPagePlugin:
             "identifiants, cookies, tokens et URLs peuvent être présents"
         )
         journals_tab.append(journals_raw_export)
+        journals_http_export = Gtk.Button(label="Exporter les échanges HTTP…")
+        journals_tab.append(journals_http_export)
+        from diagnostics_http_export import HTTPTraceExport
+        self._http_trace_export = HTTPTraceExport(
+            journals_http_export, broker=broker, tasks=self.tasks, host=host,
+            current=lambda: self._page_root is page_root and self.diagnostics is broker,
+            folder=_readable_raw_export_folder,
+        )
 
         # FlowBox wraps four actions even in narrow 760px windows.
         journals_select_actions = Gtk.FlowBox()
@@ -1385,6 +1397,10 @@ class DiagnosticsPagePlugin:
             }
             if int(source_selector.get_selected()) == 3:
                 query["domain"] = ""
+                # A journal page is already globally ordered by Core. The
+                # 50-row GTK display sort alone would otherwise reverse the
+                # OLDEST page and falsely label it "Plus récents d’abord".
+                query["sort_order"] = "desc" if sort_latest.get_active() else "asc"
 
             def read_snapshot(_control):
                 return fetch_explorer_page(broker, **query)
@@ -1746,7 +1762,11 @@ class DiagnosticsPagePlugin:
             search_timeout = GLib.timeout_add(220, apply_search)
 
         search_filter.connect("changed", on_search_change)
-        sort_latest.connect("toggled", lambda *_: display_events())
+        sort_latest.connect(
+            "toggled",
+            lambda *_: reset_events() if int(source_selector.get_selected()) == 3
+            else display_events(),
+        )
         operation_grouping.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)
         journals_previous.set_sensitive(False)
@@ -2248,6 +2268,10 @@ class DiagnosticsPagePlugin:
         if previous_raw_chooser is not None:
             previous_raw_chooser.destroy()
         self._raw_export_chooser = None
+        previous_http_export = getattr(self, "_http_trace_export", None)
+        if previous_http_export is not None:
+            previous_http_export.close()
+        self._http_trace_export = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []

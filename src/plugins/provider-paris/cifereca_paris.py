@@ -180,6 +180,13 @@ class ParisProviderSession(ProviderSession):
         return account
 
     def connect(self) -> list[Account]:
+        # A reconnect replaces the authenticated client and account list.
+        # Serialize it with the complete two-branch inventory snapshot so a
+        # single published observation cannot span two sessions.
+        with self._loan_inventory_lock:
+            return self._connect_locked()
+
+    def _connect_locked(self) -> list[Account]:
         username = str(self.credentials.get("username") or "").strip()
         password = str(self.credentials.get("password") or "")
         if not username or not password:
@@ -292,12 +299,14 @@ class ParisProviderSession(ProviderSession):
         return self.accounts
 
     def connect_with_credentials(self, username: str, password: str) -> list[Account]:
-        self.credentials = {"username": username, "password": password}
-        return self.connect()
+        with self._loan_inventory_lock:
+            self.credentials = {"username": username, "password": password}
+            return self.connect()
 
     def close(self) -> None:
-        self.client.close()
-        self.connected = False
+        with self._loan_inventory_lock:
+            self.client.close()
+            self.connected = False
 
     @staticmethod
     def _decorate(items: list[Any], provider_id: str, credential_id: str) -> list[Any]:

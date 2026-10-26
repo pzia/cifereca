@@ -8,7 +8,7 @@ pending ADEPT/index receipts.
 from __future__ import annotations
 
 from collections import Counter
-from time import time
+from time import time, monotonic
 from typing import Any
 
 from ..models import SearchResult
@@ -25,7 +25,8 @@ from .numilog_materialization_consent import (
 def _result(status: str, *, ok: bool = False,
             downloaded: int = 0, attempted: int = 0,
             skipped: int = 0, failed: int = 0,
-            blocked: int = 0, claimed: int = 0, source_results=()) -> SyncResult:
+            blocked: int = 0, claimed: int = 0, declared_local: int = 0,
+            declared_pending: int = 0, source_results=()) -> SyncResult:
     return SyncResult(
         ok=ok, changed=downloaded, warnings=() if ok else (status,),
         facts={
@@ -33,9 +34,65 @@ def _result(status: str, *, ok: bool = False,
             "status": status, "downloaded": downloaded,
             "attempted": attempted, "skipped": skipped, "failed": failed,
             "blocked": blocked, "sources_claimed": claimed,
+            "already_local_declared": declared_local,
+            "declared_needs_review": declared_pending,
             "acquisition_authorized": False, "source_results": tuple(source_results),
         },
     )
+
+
+def _completed_local_purchase_verified(
+    broker: Any, account: Any, source_id: str, item_id: str,
+    *, source_current: Any,
+) -> bool:
+    """Reuse existing exact Numilog receipt/placement/SHA checks, never acquire.
+
+    A prior ledger alone is not proof of a local EPUB. Refuse foreign,
+    duplicate, incomplete or changed receipts and recheck SQLite after the
+    physical hash; no public IDs or new provider calls are produced.
+    """
+    try:
+        if not source_current():
+            return False
+        storage = broker.service.storage
+        options = dict(
+            identity_id=account.identity_id, credential_id=account.credential_id,
+            account_id=account.unique_id, item_id=item_id,
+        )
+        before = storage.numilog_purchase_preflight_evidence(**options)
+        rights = before.get("entitlements")
+        ledger = before.get("acquisitions")
+        if type(rights) is not list or len(rights) != 1 or (
+            type(ledger) is not list or len(ledger) != 1
+        ):
+            return False
+        right, receipt = rights[0], ledger[0]
+        if (type(right) is not dict or type(receipt) is not dict
+                or receipt.get("status") != "complete"
+                or receipt.get("identity_id") != account.identity_id
+                or receipt.get("account_id") != account.unique_id
+                or receipt.get("item_id") != item_id
+                or receipt.get("entitlement_id") != right.get("entitlement_id")):
+            return False
+        from .numilog_local_preview import preview
+        check = preview(
+            broker, account, source_id, verify_local_files=True,
+            _only_item_id=item_id,
+        )
+        counts = check.facts.get("counts")
+        if (check.ok is not True or type(counts) is not dict
+                or counts.get("owned_purchases") != 1
+                or counts.get("already_local_verified") != 1):
+            return False
+        # A verified file from a previous account/session or a changed right
+        # never becomes a successful presence just because bytes match.
+        return source_current() and before == storage.numilog_purchase_preflight_evidence(
+            **options,
+        ) and source_current()
+    except Cancelled:
+        raise
+    except Exception:
+        return False
 
 
 def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
@@ -68,7 +125,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
     """At most eight attempts *per source*; failures never starve siblings."""
     if trigger != "startup" or type(identity_id) is not str:
         return _result("invalid_trigger")
-    total = attempts = skipped = failures = blocked = claimed = 0
+    total = attempts = skipped = failures = blocked = claimed = declared_local = declared_pending = 0
     source_results = []
     sources = eligible_source_ids(broker, identity_id)
     if not sources:
@@ -80,6 +137,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         account, session, roots = bound
         trace = StartupTrace(broker.service, source_id)
         previous = (total, attempts, skipped, failures, blocked)
+        previous_declared_local = declared_local
+        previous_declared_pending = declared_pending
+        presence_seconds_remaining = 8.0
 
         def observe(phase, code="started"):
             trace.counts.update(downloaded=total - previous[0], attempted=attempts - previous[1],
@@ -252,7 +312,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and row.source_credential == account.credential_id
                 and row.source_collection == "library"
                 and row.scenario == "NUMILOG_LIBRARY"
-                and row.owned is True and row.downloadable is True
+                and row.owned is True
                 and row.id == row.record_id
                 and _item_id(row.record_id, account.credential_id)
                 and count[row.record_id] == 1
@@ -262,6 +322,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # and durable claim are per account, so the download quota
                 # must reset for each independently opted-in account.
                 if attempts - previous[1] >= _MAX_ITEMS_PER_OPENING:
+                    # The per-opening quota leaves purchases unexamined.
+                    # A partial batch must never be reported as complete.
+                    blocked += 1
+                    trace.fail('preflight_failed')
                     break
                 if control is not None and callable(getattr(control, "check_cancelled", None)):
                     control.check_cancelled()
@@ -276,14 +340,85 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 observe("preflight")
                 prior = broker.preflight_numilog_purchase(source_id, row.record_id)
                 if prior.facts.get('status') == 'declared_link_recorded':
-                    # A recorded user association requires local verification,
-                    # not a duplicate download or a successful "0 attempted".
+                    from .library_declared_presence import verify_declared_presence
+                    if presence_seconds_remaining <= 0:
+                        blocked += 1
+                        declared_pending += 1
+                        trace.fail('preflight_failed')
+                        continue
+                    presence_started = monotonic()
+                    try:
+                        presence = verify_declared_presence(
+                            broker.service, identity_id=account.identity_id,
+                            provider_id='numilog', credential_id=account.credential_id,
+                            account_id=account.unique_id, item_id=row.record_id,
+                            source_current=lambda: (
+                                same_source() and mode(broker, source_id) == 'on_start'
+                                and broker.service.storage.numilog_materialization_consent_revision(
+                                    source_id) == consent_revision
+                            ),
+                            cancelled=lambda: bool(control is not None
+                                and callable(getattr(control, 'cancelled', None)) and control.cancelled()),
+                            seconds=presence_seconds_remaining,
+                        )
+                    finally:
+                        presence_seconds_remaining = max(0.0, presence_seconds_remaining
+                            - max(0.0, monotonic() - presence_started))
+                    if control is not None and callable(getattr(control, 'check_cancelled', None)):
+                        control.check_cancelled()
+                    if presence.status == 'declared_current':
+                        declared_local += 1
+                        skipped += 1
+                        continue
+                    blocked += 1
+                    declared_pending += 1
+                    trace.fail('preflight_failed')
+                    continue
+                # The offline preflight conservatively reports *any*
+                # existing receipt as needs_reconciliation. A previous
+                # completed purchase must nevertheless count as present if
+                # the existing exact receipt, placement and current SHA all
+                # agree. Unknown/foreign/damaged evidence remains blocked.
+                if prior.facts.get('status') == 'needs_reconciliation':
+                    if presence_seconds_remaining > 0:
+                        proof_started = monotonic()
+                        try:
+                            verified = _completed_local_purchase_verified(
+                                broker, account, source_id, row.record_id,
+                                source_current=lambda: (
+                                    same_source() and mode(broker, source_id) == 'on_start'
+                                    and broker.service.storage.numilog_materialization_consent_revision(
+                                        source_id) == consent_revision
+                                ),
+                            )
+                        finally:
+                            presence_seconds_remaining = max(
+                                0.0, presence_seconds_remaining
+                                - max(0.0, monotonic() - proof_started),
+                            )
+                        if control is not None and callable(
+                            getattr(control, 'check_cancelled', None)
+                        ):
+                            control.check_cancelled()
+                        if verified:
+                            skipped += 1
+                            continue
+                # The fresh authenticated inventory is authoritative for
+                # delivery capability. SQLite's older owned right may omit
+                # 'downloadable'; a permissive preflight must never override
+                # an explicit no-download observation from THIS source.
+                if row.downloadable is not True:
                     blocked += 1
                     trace.fail('preflight_failed')
                     continue
                 if (prior.ok is not True
                         or prior.facts.get("status") != "candidate_unverified"):
-                    skipped += 1
+                    # A prior receipt, conflicting placement, missing proof or
+                    # non-downloadable purchased title does not attest a
+                    # local file. Keep it pending instead of counting a
+                    # silently skipped purchase in a 'complete' sync.
+                    blocked += 1
+                    trace.fail('preflight_failed')
                     continue
 
                 def admission() -> SearchResult:
@@ -346,6 +481,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 own_skipped = skipped - previous[2]
                 own_failed = failures - previous[3]
                 own_blocked = blocked - previous[4]
+                own_declared_local = declared_local - previous_declared_local
+                own_declared_pending = declared_pending - previous_declared_pending
                 result_status = (
                     "partial" if own_downloaded and (own_failed or own_blocked or interrupted)
                     else "failed" if own_failed
@@ -358,7 +495,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         source_id=source_id, started_at=started_at,
                         status=result_status, attempted=own_attempted,
                         downloaded=own_downloaded, skipped=own_skipped,
-                        failed=own_failed,
+                        failed=own_failed, declared_local=own_declared_local,
+                        declared_pending=own_declared_pending,
                     )
                     if finalized is not True:
                         # The stale-run SQL guard can refuse a final receipt
@@ -396,5 +534,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         status, ok=not (failures or blocked),
         downloaded=total, attempted=attempts,
         skipped=skipped, failed=failures,
-        blocked=blocked, claimed=claimed, source_results=source_results,
+        blocked=blocked, claimed=claimed, declared_local=declared_local,
+        declared_pending=declared_pending, source_results=source_results,
     )

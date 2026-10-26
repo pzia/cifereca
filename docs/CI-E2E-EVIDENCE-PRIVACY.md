@@ -1,5 +1,8 @@
 # Publication des résultats E2E dans GitHub Actions (#1143)
 
+> **Doctrine de confidentialité actuelle (26/10/2026) : seul le risque d'exposition involontaire de credentials d'authentification** (mots de passe, tokens, cookies de session, secrets API, clés privées, URL signées d'accès) justifie un travail spécifique. Des captures, erreurs, chemins, comptes ou traces **sans credential** ne demandent pas d'audit, d'expurgation, de ticket ou de gate de confidentialité supplémentaire. La politique de publication bornée décrite ci-dessous est **l'état technique du pipeline**, pas une obligation générale de masquer les autres données. Ne pas modifier les workflows sans ticket fonctionnel explicite ; continuer à éviter toute publication automatique de credentials.
+
+
 Le workflow `.github/workflows/e2e-smoke.yml` produit toujours les captures PNG,
 logs stdout/stderr, traces JSONL et rapports de probes dans le runner isolé.
 **Ces fichiers bruts ne sont plus téléchargés ni recopiés dans le résumé Actions.**

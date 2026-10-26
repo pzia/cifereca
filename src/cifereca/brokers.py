@@ -1453,7 +1453,7 @@ class DiagnosticsBrokerImpl:
         provider_id: str = "", domain: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
-        search: str = "",
+        search: str = "", sort_order: str = "asc",
     ) -> dict[str, Any]:
         """Read only the canonical physical journal, never the memory cache.
 
@@ -1472,8 +1472,16 @@ class DiagnosticsBrokerImpl:
         return query_journal(
             log_file(), search=search, module=module, severity=severity,
             provider_id=provider_id, since=since, until=until,
-            limit=limit, offset=offset,
+            limit=limit, offset=offset, sort_order=sort_order,
         )
+
+    def http_trace_status(self):
+        from .http_trace import HTTP_TRACE
+        return HTTP_TRACE.status()
+
+    def export_http_trace(self, destination: str) -> str:
+        from .http_trace import HTTP_TRACE
+        return str(HTTP_TRACE.export(destination))
 
     def export_raw_journal(self) -> bytes:
         """Explicit local export; no provider interaction, no GUI masking."""
@@ -1695,6 +1703,7 @@ class LibraryNamingBrokerImpl:
 
 
 def build_public_brokers(service: Any) -> dict[str, object]:
+    from .http_trace import HTTPX_TRANSPORT
     from .core.release_update_read import ReleaseUpdateReadBrokerImpl
     from .core.library_audit_broker import LibraryReconciliationReadBrokerImpl
     artifact_execution = ArtifactExecutionBrokerImpl(service)
@@ -1712,6 +1721,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "adept.profiles": AdeptProfileBrokerImpl(service),
         "adept.loans": AdeptLoanBrokerImpl(service),
         "diagnostics": DiagnosticsBrokerImpl(service),
+        "httpx": HTTPX_TRANSPORT,
         "library.naming": LibraryNamingBrokerImpl(service),
         "artifact.execution": artifact_execution,
         "library.read": LibraryReadBrokerImpl(service),

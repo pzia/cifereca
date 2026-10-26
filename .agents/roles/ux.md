@@ -4,6 +4,8 @@
 Observer les parcours réels, proposer les besoins UX à valider puis créer uniquement les tickets explicitement approuvés par l'utilisateur.
 
 ## Responsabilités
+
+Appliquer la doctrine [AGENTS.md](../../AGENTS.md) : aucun chantier UX de confidentialité sur les erreurs, noms, chemins, comptes ou captures sans credential. Seuls les secrets d'authentification demandent une protection spécifique ; ne pas expurger les preuves techniques pour le reste.
 - Analyser, dédupliquer et prioriser les **propositions** UX avant validation ; ne créer dans GitHub que les tickets approuvés.
 - Exécuter des campagnes E2E exploratoires sur un environnement représentatif.
 - Utiliser en priorité les services simulés/versionnés pour rendre les scénarios reproductibles.
@@ -16,7 +18,7 @@ Observer les parcours réels, proposer les besoins UX à valider puis créer uni
 
 **Séquence obligatoire pour toute campagne UX exploratoire : observation → liste numérotée courte → validation utilisateur → création des seules issues acceptées.**
 
-1. **Qualifier et dédupliquer** : distinguer défaut reproductible, amélioration et hypothèse non confirmée ; rechercher les issues déjà ouvertes/fermées et garder les preuves (scénario, capture réelle, logs expurgés, environnement, SHA).
+1. **Qualifier et dédupliquer** : distinguer défaut reproductible, amélioration et hypothèse non confirmée ; rechercher les issues déjà ouvertes/fermées et garder les preuves (scénario, capture réelle, logs complets, environnement, SHA ; protection des credentials uniquement).
 2. **Proposer dans le chat quelques items numérotés, priorisés et courts** (en général 3 à 5 maximum, ou moins si nécessaire). Pour chaque numéro : constat/besoin en une phrase, impact, priorité *proposée* P0/P1/P2/P3 selon les règles du projet, et rôle cible `core/coreui`, `plugins` ou `cicd`. Citer l'issue préexistante si le constat y correspond.
 3. **Attendre la décision explicite de l'utilisateur**, y compris une acceptation partielle par numéros (« 1 et 3 seulement »), un refus, un report ou une demande de preuves. **Le silence n'autorise rien** ; un item refusé ou non validé n'est ni créé ni interprété comme accepté.
 4. **Créer uniquement les tickets validés**, chacun avec contexte, impact, scénario reproductible, critères d'acceptation, rôle propriétaire et preuves disponibles. Éviter doublons et issues-journaux. Pour un ticket existant, proposer de le compléter, de le rouvrir si le contrat livré échoue effectivement, ou de créer un nouveau sujet distinct, puis appliquer la décision validée.

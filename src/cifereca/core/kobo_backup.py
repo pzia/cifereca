@@ -369,8 +369,16 @@ def kobo_backup_preview(
         "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
         "potentially_missing": 0, "invalid_manifest_items": upstream_rejected,
     }
+    # Do not change the historical offline/legacy counter schema. A
+    # declaration-presence result is exposed only by a caller that explicitly
+    # refreshed its manifest AND requested a physical file check.
+    if refresh_manifest and verify_local_files:
+        counts["already_local_declared"] = 0
     examples: list[dict[str, str]] = []
     seen: set[str] = set()
+    # A verified declaration is local presence, not an authenticated Kobo
+    # receipt. Keep one bounded physical-check budget for the entire preview.
+    presence_seconds_remaining = 8.0
 
     for raw in manifest:
         if not isinstance(raw, dict):
@@ -467,6 +475,43 @@ def kobo_backup_preview(
                         account_id=account_id, item_id=product_id,
                     ):
                         reason = "attention_required"
+                        # Only an explicit, fresh-file preview can recognize
+                        # physical presence. Mere recording never proves
+                        # the EPUB exists or authorizes an acquisition.
+                        if (verify_local_files and refresh_manifest
+                                and session is not None
+                                and presence_seconds_remaining > 0):
+                            from .library_declared_presence import verify_declared_presence
+                            storage_at_start = self.storage
+
+                            def source_current() -> bool:
+                                return bool(
+                                    self.storage is storage_at_start
+                                    and session.connected
+                                    and any(value is session for value in self._sessions.values())
+                                    and len(session.accounts) == 1
+                                    and session.accounts[0].identity_id == identity_id
+                                    and session.accounts[0].unique_id == account_id
+                                    and self.storage.identity_for_connection(
+                                        "kobo", credential_id) == identity_id
+                                )
+
+                            checked_started = time.monotonic()
+                            try:
+                                presence = verify_declared_presence(
+                                    self, identity_id=identity_id,
+                                    provider_id="kobo", credential_id=credential_id,
+                                    account_id=account_id, item_id=product_id,
+                                    source_current=source_current,
+                                    seconds=presence_seconds_remaining,
+                                )
+                            finally:
+                                presence_seconds_remaining = max(
+                                    0.0, presence_seconds_remaining
+                                    - max(0.0, time.monotonic() - checked_started),
+                                )
+                            if presence.status == "declared_current":
+                                reason = "already_local_declared"
                 except DeclarationRejected:
                     # Malformed user statements cannot authorize a fresh GET.
                     reason = "attention_required"
@@ -506,6 +551,7 @@ def kobo_backup_preview(
             _item_reasons[product_id] = reason
         if len(examples) < 20 and reason not in {
             "already_local_linked", "already_local_verified",
+            "already_local_declared",
         }:
             item_digest = hashlib.sha256(
                 (credential_id + "\\x00" + product_id).encode("utf-8")
@@ -1003,7 +1049,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
         "scanned": 0, "malformed_manifest_items": 0, "duplicate_manifest_items": 0,
         "provider_rejected_manifest_items": 0, "attempted": 0, "pending": 0,
-        "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
+        "completed": 0, "downloaded": 0, "unchanged": 0,
+        "already_local_declared": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "items_blocked_by_scope": 0, "attempts_saved": 0,
         "blocked_non_retryable": 0,
@@ -1075,7 +1122,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     authoritative_manifest_ids: dict[str, set[str]] = {}
     prunable_credentials: set[str] = set()
     source_metrics = (
-        "scanned", "attempted", "downloaded", "unchanged", "pending",
+        "scanned", "attempted", "downloaded", "unchanged",
+        "already_local_declared", "pending",
         "attention_required", "errors", "remaining", "reconcile_pending",
         "reconcile_skipped", "items_blocked_by_scope", "blocked_non_retryable",
         "malformed_manifest_items", "duplicate_manifest_items",
@@ -1137,6 +1185,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             break
 
         unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
+        declared_budget = {"remaining": 8.0}
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
         # Persist "manifest_fetch" before contacting the provider: if the
@@ -1276,6 +1325,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     unlinked_local_count, adapter_available, adept_state,
                     index, len(manifest), summary, defer_item_event, logger,
                     retry_scope_blocked=retry_scope_blocked,
+                    session=session, declared_budget=declared_budget,
                 ):
                     item_committed = True
                     continue
@@ -1734,7 +1784,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
-def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False, session=None, declared_budget=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -1886,6 +1936,56 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         except DeclarationRejected:
             declared, declaration_error = False, True
         if declared or declaration_error:
+            # Kobo sync already holds the global acquisition lock. Reuse the
+            # exact scoped/fresh Core verifier without reacquiring that
+            # non-reentrant lock, and keep one 8s budget per provider source.
+            # A verified *personal declaration* counts as local presence,
+            # never as a Kobo acquisition receipt.
+            if (declared and session is not None and declared_budget is not None
+                    and declared_budget["remaining"] > 0):
+                from .library_declared_presence import verify_declared_presence
+                storage_at_start = self.storage
+                identity_id = base_record["identity_id"]
+                credential_id = base_record["credential_id"]
+                account_id = base_record["account_id"]
+
+                def source_current():
+                    return bool(
+                        self.storage is storage_at_start
+                        and session.connected
+                        and session.provider_id == "kobo"
+                        and session.credential_id == credential_id
+                        and any(value is session for value in self._sessions.values())
+                        and len(session.accounts) == 1
+                        and session.accounts[0].identity_id == identity_id
+                        and session.accounts[0].unique_id == account_id
+                        and self.storage.identity_for_connection(
+                            "kobo", credential_id) == identity_id
+                    )
+
+                started = time.monotonic()
+                try:
+                    presence = verify_declared_presence(
+                        self, identity_id=identity_id, provider_id="kobo",
+                        credential_id=credential_id, account_id=account_id,
+                        item_id=product_id, source_current=source_current,
+                        seconds=declared_budget["remaining"],
+                        _acquisition_lock_held=True,
+                    )
+                finally:
+                    declared_budget["remaining"] = max(
+                        0.0, declared_budget["remaining"]
+                        - max(0.0, time.monotonic() - started),
+                    )
+                if presence.status == "declared_current":
+                    # No backup_put here: the compatibility projection would
+                    # insert another entitlement for the same right. A personal
+                    # declaration is NOT a backup row or provider receipt.
+                    # Store only the scoped run checkpoint below.
+                    summary["already_local_declared"] += 1
+                    emit("already_local_declared", current=index + 1,
+                         total=total, title=title, item_id=product_id)
+                    return True
             code = ("declared_link_recorded" if declared
                     else "declared_links_unavailable")
             message = ("Correspondance locale déclarée : vérifier le fichier avant "

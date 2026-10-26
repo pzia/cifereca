@@ -5,6 +5,7 @@ from urllib.parse import quote
 from typing import Any
 
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from cifereca.plugin_api import ProviderError
 
@@ -52,7 +53,7 @@ class KoboVaultClient:
         self.token = str(token or "").strip()
         self.last_manifest_rejections: list[dict[str, str]] = []
         self.last_search_merge_rejections: list[dict[str, str]] = []
-        self.client = httpx.Client(
+        self.client = HTTPX_TRANSPORT.client(producer="provider.kobo",
             headers={
                 "Accept": "application/json",
                 "User-Agent": "cifereca-kobo/1.2.1",

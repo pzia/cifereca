@@ -61,7 +61,7 @@ from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .core import loan_accounts, loan_download_projection, loan_adept_fulfillment
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
-from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
+from .plugin_api import AttentionRequired, Cancelled, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
 from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 from .core.provider_collection_cache import ProviderCollectionSnapshotStore
@@ -132,6 +132,15 @@ _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ciferec
 # Serialize automatic loan check-and-record within this process. Opening sync
 # additionally holds the existing cross-process acquisition lock.
 _AUTOMATIC_LOAN_GUARD = Lock()
+
+
+class _LoanDownloadAdmissionRefused(ProviderConfigurationError):
+    """One typed local eligibility refusal, preserving the legacy exception kind."""
+
+    def __init__(self, code: str):
+        super().__init__("Ce prêt ne permet pas une acquisition numérique")
+        self.code = code
+
 
 class LibraryService:
     """Application service orchestrating provider plugins.
@@ -2852,7 +2861,7 @@ class LibraryService:
         from .core.public_provider_diagnostics import registered_public_provider_id
         started = time.monotonic()
 
-        def emit(status: str, code: str) -> None:
+        def emit(status: str, code: str, *, phase: str = "terminal") -> None:
             try:
                 provider = registered_public_provider_id(
                     self.registry, getattr(loan, "source_provider", None),
@@ -2862,9 +2871,10 @@ class LibraryService:
                     "operation_kind": "download_loan", "status": status,
                     "code": code if type(code) is str and code in CODES
                             else "unclassified_error",
-                    # No phase more specific than completion is attested
-                    # across every early admission and ADEPT failure path.
-                    "phase": "terminal",
+                    # An explicit local eligibility refusal is observed at
+                    # admission. Other outcomes remain terminal because their
+                    # precise phase is not universally attested.
+                    "phase": phase,
                     "duration_ms": trace_duration_ms(time.monotonic() - started) or 0,
                 })
             except Exception:
@@ -2874,12 +2884,21 @@ class LibraryService:
 
         try:
             result = self._reacquire_digital_loan_impl(loan)
+        except Cancelled:
+            # The provider or task stopped cooperatively. Keep the original
+            # cancellation signal and use the existing terminal journal code,
+            # never misreport a provider failure or a completed download.
+            emit("cancelled", "operation_cancelled")
+            raise
         except AttentionRequired as exc:
             try:
                 code = exc.code
             except Exception:
                 code = None
             emit("attention_required", code)
+            raise
+        except _LoanDownloadAdmissionRefused as exc:
+            emit("refused", exc.code, phase="admission")
             raise
         except ProviderConfigurationError:
             emit("failed", "provider_failure")
@@ -2907,8 +2926,32 @@ class LibraryService:
         Preserve a usable previous acquisition/binding on failed re-acquisition.
         A successful re-acquisition publishes a distinct file if one exists.
         """
+        # Keep the existing can_download_loan admission contract: other
+        # real callers/test fixtures may override it to authorize an explicit
+        # action. Only AFTER that boolean rejects the action do we inspect
+        # the read-only eligibility explanation. This is local state only,
+        # never an extra provider GET or a new eligibility veto.
         if not self.can_download_loan(loan):
-            raise ProviderConfigurationError("Ce prêt ne permet pas une acquisition numérique")
+            try:
+                eligibility = self.loan_download_eligibility(loan)
+            except Exception:
+                # The diagnostic explanation must never change the existing
+                # business refusal, including legacy overrides/mocks.
+                eligibility = None
+            code = eligibility.get("code") if type(eligibility) is dict else None
+            if (
+                type(eligibility) is not dict
+                or eligibility.get("available") is not False
+                or type(code) is not str
+                or code not in {
+                    "not_digital", "provider_unavailable",
+                    "provider_disconnected", "download_unsupported",
+                }
+            ):
+                # State can change between the boolean decision and its
+                # explanation. Do not invent a more specific provider cause.
+                code = "unclassified_error"
+            raise _LoanDownloadAdmissionRefused(code)
         try:
             with InterProcessLock(acquisition_lock_file()):
                 bound_identity_id = self.storage.identity_for_connection(

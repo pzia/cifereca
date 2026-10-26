@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, quote_plus, quote, urlsplit, parse_qsl
 import httpx
+from cifereca.plugin_api import HTTPX_TRANSPORT
 import xml.etree.ElementTree as ET
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 
@@ -342,7 +343,7 @@ class EbooksSession(ProviderSession):
         # close() permanently closes an httpx.Client. Only a fresh
         # cookie-free transport can serve a subsequent explicit connect().
         # Both OPDS and legacy simulation share this lifecycle.
-        return httpx.Client(
+        return HTTPX_TRANSPORT.client(producer="provider.ebooksgratuits",
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={

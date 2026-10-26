@@ -104,7 +104,7 @@ class AnonymousRedirect:
 
 def test_redirect_disables_follow_and_strips_tracking(monkeypatch):
     AnonymousRedirect.status, AnonymousRedirect.location, AnonymousRedirect.calls = 302, TRACK, []
-    monkeypatch.setattr(public_client.httpx, "Client", AnonymousRedirect)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", AnonymousRedirect)
     assert public_client.resolve_readzis_recommendation(SHARE, lid="42") == BOOK
     assert [c for c in AnonymousRedirect.calls if c[0] == "get"] == [("get", SHARE)]
     assert TRACK not in repr(AnonymousRedirect.calls)
@@ -123,7 +123,7 @@ def test_unqualified_redirects_never_start_product_get(monkeypatch, location, st
     class Case(AnonymousRedirect):
         pass
     Case.status, Case.location, Case.calls = status, location, []
-    monkeypatch.setattr(public_client.httpx, "Client", Case)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", Case)
     with pytest.raises(ProviderError) as caught:
         public_client.resolve_readzis_recommendation(SHARE, lid="42")
     assert SECRET not in str(caught.value)
@@ -143,14 +143,14 @@ def test_redirect_query_is_ignored_entirely(monkeypatch, query):
     class Case(AnonymousRedirect):
         pass
     Case.status, Case.location, Case.calls = 302, BOOK + query, []
-    monkeypatch.setattr(public_client.httpx, "Client", Case)
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client", Case)
     assert public_client.resolve_readzis_recommendation(SHARE, lid="42") == BOOK
     assert [c for c in Case.calls if c[0] == "get"] == [("get", SHARE)]
     assert query not in repr(Case.calls) if query else True
 
 
 def test_unqualified_source_never_opens_socket(monkeypatch):
-    monkeypatch.setattr(public_client.httpx, "Client",
+    monkeypatch.setattr(public_client.HTTPX_TRANSPORT, "client",
                         lambda **kw: (_ for _ in ()).throw(AssertionError("HTTP")))
     with pytest.raises(ProviderCapabilityError):
         public_client.resolve_readzis_recommendation(SHARE, lid="43")

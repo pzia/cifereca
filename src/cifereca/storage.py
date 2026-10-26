@@ -1599,6 +1599,38 @@ class Storage:
                             )
                     else:
                         placement_metadata = None
+                # A catalog entry bound to a placement can carry an
+                # independent, explicit identity/source/edition/artifact.
+                # The relocation below rewrites its identity/provider (and
+                # possibly merges its placement ID). That is only safe when
+                # none of its recorded coordinates contradicts the owning
+                # placement: a row pointing to an old path must not become
+                # evidence of another account's or edition's ownership.
+                # Check both source and destination before any SQL mutation.
+                if old_row:
+                    owners = {old_row[0]: old_row}
+                    if target_row is not None:
+                        owners[target_row[0]] = target_row
+                    for placement_key, catalog_identity, catalog_provider, catalog_item, catalog_artifact in db.execute(
+                        "SELECT placement_id,identity_id,provider_id,item_id,artifact_id "
+                        "FROM catalog_entries WHERE placement_id IN (?,?)",
+                        (old_row[0], target_row[0] if target_row else old_row[0]),
+                    ):
+                        owner = owners.get(placement_key)
+                        if owner is None:
+                            raise ValueError("relocate_catalog_scope_conflict")
+                        for recorded, expected in (
+                            (catalog_identity, owner[2]),
+                            (catalog_provider, owner[3]),
+                            (catalog_item, owner[5]),
+                            (catalog_artifact, owner[4]),
+                        ):
+                            if (recorded not in (None, "") and (
+                                type(recorded) is not str
+                                or type(expected) is not str
+                                or not expected or recorded != expected
+                            )):
+                                raise ValueError("relocate_catalog_scope_conflict")
                 if any(
                     row[0] not in (None, "", identity_id)
                     for row in db.execute(
@@ -1680,6 +1712,51 @@ class Storage:
                     db.execute("DELETE FROM placements WHERE placement_id=?", (pid,))
                 else:
                     db.execute("UPDATE placements SET path=?,updated_at=? WHERE placement_id=?", (new, now, pid))
+            # Folder names once served as synthetic owner IDs for legacy
+            # unconfigured trees. Only an EXPLICIT, journaled directory
+            # migration may adopt those inferred owners; an ordinary scan
+            # must never do so. Requalify them in this same SQLite commit,
+            # after relocating paths and before the post-migration scan.
+            for change in plan["changes"]:
+                identity = str(change["identity_id"])
+                destination = str(change["new"])
+                for legacy in {
+                    Path(str(change["old"])).name,
+                    Path(destination).name,
+                }:
+                    if legacy == identity or not legacy:
+                        continue
+                    if any(
+                        db.execute(
+                            f"SELECT 1 FROM {table} WHERE identity_id=? LIMIT 1",
+                            (legacy,),
+                        ).fetchone()
+                        for table in (
+                            "identities", "entitlements", "acquisition_ledger",
+                            "provider_connections",
+                        )
+                    ):
+                        # A registered/attested owner is not a folder alias.
+                        continue
+                    prefix = destination + "/"
+                    inferred = db.execute(
+                        "SELECT placement_id FROM placements "
+                        "WHERE identity_id=? AND (path=? OR "
+                        "substr(path,1,length(?))=?)",
+                        (legacy, destination, prefix, prefix),
+                    ).fetchall()
+                    for (placement_id,) in inferred:
+                        db.execute(
+                            "UPDATE placements SET identity_id=?,updated_at=? "
+                            "WHERE placement_id=? AND identity_id=?",
+                            (identity, now, placement_id, legacy),
+                        )
+                        db.execute(
+                            "UPDATE catalog_entries SET identity_id=?,updated_at=? "
+                            "WHERE placement_id=? AND "
+                            "(identity_id IS NULL OR identity_id=?)",
+                            (identity, now, placement_id, legacy),
+                        )
             for provider, credential, item, path in db.execute("SELECT provider_id,credential_id,item_id,local_path FROM backup_items").fetchall():
                 new = rewrite_path(path, mappings, root)
                 if new != path:
@@ -2851,8 +2928,9 @@ class Storage:
         self, *, source_id: str, started_at: int,
         status: str, attempted: int, downloaded: int,
         skipped: int, failed: int,
+        declared_local: int = 0, declared_pending: int = 0,
     ) -> bool:
-        """Write bounded public counters only, with a stale-run SQL guard."""
+        """Write bounded account-scoped counters with a stale-run SQL guard."""
         import re
         if (type(source_id) is not str
                 or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
@@ -2863,6 +2941,9 @@ class Storage:
                 or any(type(value) is not int or not 0 <= value <= 8
                        for value in (attempted, downloaded, failed))
                 or type(skipped) is not int or not 0 <= skipped <= 2048
+                or type(declared_local) is not int or not 0 <= declared_local <= skipped
+                or type(declared_pending) is not int or not 0 <= declared_pending <= 2048
+                or (status == "complete" and declared_pending != 0)
                 or downloaded > attempted
                 or failed > attempted + 1
                 or (status == "complete" and failed != 0)
@@ -2895,6 +2976,8 @@ class Storage:
                 "version": 1, "started_at": started_at, "status": status,
                 "attempted": attempted, "downloaded": downloaded,
                 "skipped": skipped, "failed": failed,
+                "already_local_declared": declared_local,
+                "declared_needs_review": declared_pending,
             }, sort_keys=True, separators=(",", ":"))
             db.execute(
                 "UPDATE metadata SET value=? WHERE key=?",
@@ -2942,9 +3025,11 @@ class Storage:
         except (ValueError, TypeError):
             return empty
         counts = ("attempted", "downloaded", "skipped", "failed")
-        if (type(result) is not dict or set(result) != {
-                "version", "started_at", "status", *counts,
-            } or type(result.get("version")) is not int
+        receipt_keys = {"version", "started_at", "status", *counts}
+        declared_keys = {"already_local_declared", "declared_needs_review"}
+        if (type(result) is not dict
+                or set(result) not in (receipt_keys, receipt_keys | declared_keys)
+                or type(result.get("version")) is not int
                 or result["version"] != 1 or type(result.get("started_at")) is not int
                 or result["started_at"] != started
                 or type(result.get("status")) is not str
@@ -2964,10 +3049,20 @@ class Storage:
                     result[key] != 0 for key in counts
                 ))):
             return empty
+        if declared_keys <= set(result):
+            if (any(type(result.get(key)) is not int
+                    or not 0 <= result[key] <= 2048 for key in declared_keys)
+                    or result["already_local_declared"] > result["skipped"]
+                    or (result["status"] in {"running", "complete"}
+                        and result["declared_needs_review"] != 0)
+                    or (result["status"] == "running"
+                        and result["already_local_declared"] != 0)):
+                return empty
         return {
             "status": result["status"], "started_at": started,
             "next_eligible_at": started + 3600,
             **{key: result[key] for key in counts},
+            **{key: result[key] for key in declared_keys if key in result},
         }
 
     def source_materialization_evidence(
@@ -3425,12 +3520,25 @@ class Storage:
             db.execute("DELETE FROM artifact_variants WHERE variant_id=?", (str(variant_id),))
 
     def artifact_delete_if_unreferenced(self, artifact_id: str) -> bool:
+        # A placement is not the only live reference to content-addressed
+        # bytes. An unplaced catalogue notice, acquisition receipt or variant
+        # with a *different* source can still refer to this artifact. Deleting
+        # the authority record would orphan those links in reconciliation.
+        artifact_id = str(artifact_id)
         with self._lock, self._connect() as db:
-            placement = db.execute("SELECT 1 FROM placements WHERE artifact_id=? LIMIT 1", (str(artifact_id),)).fetchone()
-            variant = db.execute("SELECT 1 FROM artifact_variants WHERE source_artifact_id=? LIMIT 1", (str(artifact_id),)).fetchone()
-            if placement or variant:
-                return False
-            db.execute("DELETE FROM artifacts WHERE artifact_id=?", (str(artifact_id),))
+            for table, column in (
+                ("placements", "artifact_id"),
+                ("catalog_entries", "artifact_id"),
+                ("acquisition_ledger", "artifact_id"),
+                ("artifact_variants", "source_artifact_id"),
+                ("artifact_variants", "artifact_id"),
+            ):
+                if db.execute(
+                    f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1",
+                    (artifact_id,),
+                ).fetchone():
+                    return False
+            db.execute("DELETE FROM artifacts WHERE artifact_id=?", (artifact_id,))
             return True
 
     def artifact_variant_find(self, *, source_sha256: str, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> dict[str, Any] | None:
@@ -3469,6 +3577,22 @@ class Storage:
         path = str(Path(str(row.get("path") or "")).expanduser().resolve())
         placement_id = str(row.get("placement_id") or self._stable_id("placement", path))
         with self._lock, self._connect() as db:
+            # Inserting an already known path must neither transfer its
+            # account/provider/edition nor return a non-existent placement ID.
+            # Lock the read + upsert against concurrent SQLite writers.
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT placement_id,identity_id,provider_id,source_item_id "
+                "FROM placements WHERE path=?", (path,),
+            ).fetchone()
+            if current is not None:
+                for stored, proposed in zip(
+                    current[1:],
+                    (row.get("identity_id"), row.get("provider_id"),
+                     row.get("source_item_id")),
+                ):
+                    if stored and proposed and stored != proposed:
+                        raise ValueError("placement_scope_conflict")
             db.execute(
                 "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET artifact_id=excluded.artifact_id,identity_id=COALESCE(excluded.identity_id,placements.identity_id),"
@@ -3487,7 +3611,12 @@ class Storage:
                     "WHERE placement_id=(SELECT placement_id FROM placements WHERE path=?)",
                     (now, path),
                 )
-        return placement_id
+            # ON CONFLICT(path) keeps the original primary key; callers must
+            # receive that actual key rather than their proposed new one.
+            canonical = db.execute(
+                "SELECT placement_id FROM placements WHERE path=?", (path,),
+            ).fetchone()
+            return str(canonical[0])
 
     def placements(self, *, state: str | None = None) -> list[dict[str, Any]]:
         columns = ["placement_id", "artifact_id", "path", "identity_id", "provider_id", "source_item_id", "state", "last_seen_at", "metadata_json", "created_at", "updated_at"]
@@ -3503,13 +3632,22 @@ class Storage:
             row=dict(zip(columns,record)); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
-    def placements_mark_missing(self, root: Path, seen_paths: set[str], *, seen_at: int | None = None) -> int:
+    def placements_mark_missing(
+        self, root: Path, seen_paths: set[str], *, seen_at: int | None = None,
+        candidate_placement_ids: set[str] | None = None,
+    ) -> int:
         root_resolved = root.expanduser().resolve()
         now = int(seen_at or time.time())
         changed = 0
         with self._lock, self._connect() as db:
             rows = db.execute("SELECT placement_id,path,state FROM placements").fetchall()
             for placement_id, path_text, state in rows:
+                # A concurrent acquisition may have created or reactivated
+                # this row after the scan started. It is not a valid negative
+                # candidate for a snapshot that predates its presence.
+                if (candidate_placement_ids is not None
+                        and placement_id not in candidate_placement_ids):
+                    continue
                 try:
                     # Do not resolve the *stored* leaf or its parents here:
                     # a previously indexed book replaced by a symlink could
@@ -3538,6 +3676,26 @@ class Storage:
         row = dict(item); now = int(time.time())
         entry_id = str(row.get("catalog_entry_id") or self._stable_id("catalog", row.get("placement_id"), row.get("artifact_id"), row.get("item_id")))
         with self._lock, self._connect() as db:
+            # A local catalog entry's ID must not silently move its book to a
+            # different physical placement, identity, provider or edition.
+            # Explicit relocation/reconciliation use their own reviewed paths.
+            # Remote-only entries (without a placement) retain their normal
+            # provider-catalog refresh semantics.
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT placement_id,identity_id,provider_id,item_id "
+                "FROM catalog_entries WHERE catalog_entry_id=?", (entry_id,),
+            ).fetchone()
+            if current is not None and current[0]:
+                if row.get("placement_id") != current[0]:
+                    raise ValueError("catalog_entry_scope_conflict")
+                for stored, proposed in zip(
+                    current[1:],
+                    (row.get("identity_id"), row.get("provider_id"),
+                     row.get("item_id")),
+                ):
+                    if stored and proposed and stored != proposed:
+                        raise ValueError("catalog_entry_scope_conflict")
             db.execute(
                 "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,provider_id,item_id,local_state,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=excluded.artifact_id,placement_id=excluded.placement_id,"
@@ -3609,6 +3767,39 @@ class Storage:
             "local_state=excluded.local_state,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at"
         )
         with self._lock, self._connect() as db:
+            # Batch writes have the same ownership contract as
+            # catalog_entry_put. Validate the complete batch before SQL writes
+            # so one conflicting local row cannot partially publish others.
+            db.execute("BEGIN IMMEDIATE")
+            staged: dict[str, tuple[Any, Any, Any, Any]] = {}
+            unique_ids = list(dict.fromkeys(ids))
+            for offset in range(0, len(unique_ids), 800):
+                chunk = unique_ids[offset:offset + 800]
+                placeholders = ",".join("?" for _ in chunk)
+                for record in db.execute(
+                    "SELECT catalog_entry_id,placement_id,identity_id,provider_id,item_id "
+                    f"FROM catalog_entries WHERE catalog_entry_id IN ({placeholders}) "
+                    "AND placement_id IS NOT NULL", tuple(chunk),
+                ):
+                    staged[str(record[0])] = tuple(record[1:])
+            for raw in rows:
+                entry_id = str(raw[0])
+                current = staged.get(entry_id)
+                proposed = (raw[2], raw[6], raw[7], raw[8])
+                if current is not None and current[0]:
+                    if proposed[0] != current[0] or any(
+                        stored and new and stored != new
+                        for stored, new in zip(current[1:], proposed[1:])
+                    ):
+                        raise ValueError("catalog_entry_scope_conflict")
+                # Even repeated IDs within one batch must not transfer the
+                # placement introduced by an earlier row of that same batch.
+                staged[entry_id] = (
+                    proposed[0],
+                    proposed[1] or (current[1] if current else None),
+                    proposed[2] or (current[2] if current else None),
+                    proposed[3] or (current[3] if current else None),
+                )
             db.executemany(sql, rows)
         return ids
 

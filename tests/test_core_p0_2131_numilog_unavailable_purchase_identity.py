@@ -69,7 +69,10 @@ def test_valid_owned_not_downloadable_purchase_stays_visible_as_right_without_do
             lambda *_args, **_kwargs: pytest.fail("unavailable editions must not download"),
         )
         outcome = execute(broker, account.identity_id, "startup")
-        assert outcome.ok and outcome.facts["status"] == "complete"
+        # A valid owned right without a deliverable EPUB remains known,
+        # but cannot make the local-materialization run 'complete'.
+        assert not outcome.ok and outcome.facts["status"] == "blocked"
+        assert outcome.facts["blocked"] == 1
         assert outcome.facts["attempted"] == outcome.facts["downloaded"] == 0
         rights = service.storage.entitlements(provider_id="numilog")
         assert len(rights) == 1

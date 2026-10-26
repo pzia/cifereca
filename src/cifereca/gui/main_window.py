@@ -1983,6 +1983,26 @@ class MainWindow(Adw.ApplicationWindow):
         def ok(result):
             self.refresh_library(False); self.refresh_recent(); self._render_dashboard()
             self.loan_page.detail.show_loan(loan)
+            # A completed TaskRunner callback is not evidence of a completed
+            # book acquisition: Core may return attention_required or
+            # retryable_error without throwing. Do not announce "Livre récupéré"
+            # or mark the activity successful for those business outcomes.
+            if type(result) is not dict or result.get("status") != "complete":
+                from cifereca.core.diagnostic_loan_download import CODES
+                state = result.get("status") if type(result) is dict else None
+                detail = {
+                    "attention_required": "Intervention requise pour récupérer le prêt",
+                    "retryable_error": "Récupération du prêt à réessayer",
+                }.get(state, "Récupération du prêt non confirmée")
+                code = result.get("code") if type(result) is dict else None
+                if type(code) is str and code in CODES:
+                    detail += f" · code : {code}"
+                reporter = getattr(self, "_activity_result", None)
+                if callable(reporter):
+                    reporter(detail, success=False)
+                else:
+                    self.show_error(detail, "Téléchargement non terminé")
+                return
             suffix = " · restitution ADEPT disponible" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
             result_message = "Livre récupéré" + suffix
             reporter = getattr(self, "_activity_result", None)

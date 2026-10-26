@@ -947,7 +947,8 @@ class PluginPackagingTests(unittest.TestCase):
             self.assertEqual(first_zip.read_bytes(), second_zip.read_bytes())
             metadata = validate_plugin_zip(first_zip)
             self.assertEqual(metadata["package"]["id"], "org.cifereca.integration.cifericaopds")
-            self.assertEqual(metadata["package"]["version"], "0.1.0")
+            source_manifest = json.loads((plugin / "cifereca-plugin.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["package"]["version"], source_manifest["package"]["version"])
             self.assertEqual(metadata["plugins"][0]["type"], "provider.collection")
             self.assertFalse(metadata["plugins"][0]["enabled_by_default"])
 

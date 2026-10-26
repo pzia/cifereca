@@ -33,8 +33,12 @@ def test_revoked_declaration_reopens_preview_even_after_attention_checkpoint(tmp
     try:
         blocked = service.sync_kobo_backup()
         assert blocked["attempted"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "book-1")[
-            "attention_code"] == "declared_link_recorded"
+        assert blocked["already_local_declared"] == 1
+        # The scoped checkpoint captures the verified presence. Creating a
+        # compatibility backup would fabricate a second entitlement and
+        # poison the next verification, so no backup/receipt is persisted.
+        assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
+        assert service.storage.acquisitions(provider_id="kobo") == []
         observed, = scan_identity_roots({"alice": (book.parents[1],)}).files
         undo = declare_local_link(service, observation=observed, revoke=relation, **scope)
         assert undo.status == "revoke_preview"

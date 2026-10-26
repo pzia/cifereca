@@ -199,7 +199,15 @@ class Diagnostics:
         if not fields:
             return
         status = fields["status"]
-        severity = logging.INFO if status == "success" else logging.WARNING
+        # A terminal provider refusal or download failure is an ERROR, not
+        # a generic warning. Otherwise the canonical Diagnostics journal's
+        # "Erreurs" filter hides precisely the incidents the user requested.
+        # Cancellation/retry/attention remain warnings, success stays info.
+        severity = (
+            logging.INFO if status == "success" else
+            logging.ERROR if status in {"failed", "refused"} else
+            logging.WARNING
+        )
         record = self.enabled and (self.level != "errors" or status != "success")
         if record:
             entry = DiagnosticEntry(

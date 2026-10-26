@@ -103,7 +103,9 @@ def test_startup_skips_conflicting_placement_without_consuming_signed_delivery(
         first = execute(broker, account.identity_id, "startup")
         assert first.facts["attempted"] == 0
         assert first.facts["downloaded"] == 0
-        assert first.facts["skipped"] == 1
+        assert not first.ok and first.facts["status"] == "blocked"
+        assert first.facts["skipped"] == 0
+        assert first.facts["blocked"] == 1
         assert first.facts["failed"] == 0
         assert target.read_bytes() == b"FAKE_UNVERIFIED_FILE"
         assert service.storage.acquisitions(provider_id="numilog") == []

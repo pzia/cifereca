@@ -9,6 +9,12 @@ description: Contrat impératif des logs pour Core et plugins, journal intégral
 
 Lire [le contrat canonique](../../../docs/LOGGING-CONTRACT.md) et [#2900](https://github.com/pzia/cifereca/issues/2900). **Il prévaut sur toute ancienne liste blanche ou consigne d'expurgation.**
 
+## Confidentialité : limiter les travaux aux credentials
+
+**Seuls les credentials d'authentification sont des secrets à protéger** : mot de passe, jeton d'accès/refresh, cookie de session authentifiant, clé API/privée et lien signé d'accès. Un identifiant de compte ou `credential_id` n'est pas un secret. Les erreurs, stack traces, messages, HTTP, chemins, noms, titres, emails, identifiants, journaux et captures *sans credential* n'exigent **aucune tâche de confidentialité spécifique** : ni expurgation, ni ticket, ni nouvelle recette, ni limitation du diagnostic.
+
+La protection des credentials s'effectue par les permissions locales restrictives et l'absence de transfert/publication automatique non volontaire ; l'export demandé par l'utilisateur demeure **brut**, après confirmation. Ne pas créer de mécanisme de masquage général ; préserver la seule règle visuelle historique login/mot de passe dans Diagnostics.
+
 ## Règles à respecter
 
 - Journaliser **toutes les données effectivement émises sans aucune expurgation** dans le Core, les plugins, le journal disque, le terminal, le broker, la recherche ou l'export **brut**.

@@ -230,7 +230,7 @@ def fetch_explorer_page(
     provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
-    search: str = "",
+    search: str = "", sort_order: str = "asc",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -254,11 +254,19 @@ def fetch_explorer_page(
     }
     if type(search) is not str or len(search) > 500:
         raise ValueError("invalid diagnostics search")
+    if type(sort_order) is not str or sort_order not in {"asc", "desc"}:
+        raise ValueError("invalid diagnostics sort order")
+    if source != "journal" and sort_order != "asc":
+        raise ValueError("global ordering requires canonical journal")
     if source == "journal":
         if reason_code or verified_domain:
             raise ValueError("raw journal does not attest a domain or reason code")
-        # Only the canonical journal has a Core-side pre-pagination text search.
+        # Only the canonical journal has Core-side pre-pagination search and
+        # full-retention ordering. The ascending default omits the new kwarg
+        # to remain compatible with older Core brokers.
         query["search"] = search
+        if sort_order == "desc":
+            query["sort_order"] = "desc"
     # Older Core versions can still serve the unfiltered page. Require the
     # optional new broker keyword ONLY for an explicitly selected code;
     # never silently downgrade a global filter to local 50-item search.
@@ -329,16 +337,21 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         connection = published_connection_attempt(raw)
         if connection is not None:
             safe.update(connection)
-        # Full text search is explicitly local to this 50-item broker page.
-        searchable = " ".join(
-            safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
-        )
-        if reconciliation is not None:
-            searchable += " " + " ".join(reconciliation.values())
-        if provider is not None:
-            searchable += " " + provider
-        if search and search.casefold() not in searchable.casefold():
-            continue
+        # Legacy sources only: their search was limited to the loaded page.
+        # For the canonical journal, Core ALREADY searched the complete raw
+        # event (operation, phase, reason_code, task_ref, detail) BEFORE
+        # pagination. A second search over this short display projection
+        # would discard legitimate Core matches during selection/copy.
+        if search and raw.get("source") != "journal":
+            searchable = " ".join(
+                safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
+            )
+            if reconciliation is not None:
+                searchable += " " + " ".join(reconciliation.values())
+            if provider is not None:
+                searchable += " " + provider
+            if search.casefold() not in searchable.casefold():
+                continue
         # Detailed GTK inspection is opt-in. AI previews keep the minimal
         # operational projection and must never inherit arbitrary detail.
         if include_detail is True and "detail" in raw:
@@ -354,7 +367,15 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             instant = datetime.min.replace(tzinfo=timezone.utc)
         return instant, row["event_id"]
 
-    results.sort(key=chronological_key, reverse=newest_first)
+    if results and all(row["source"] == "journal" for row in results):
+        # Core already ordered all retained records before slicing the page.
+        # Do not scramble equal timestamps by the SHA-derived event_id: the
+        # incoming stable physical tie order is authoritative.
+        results.sort(key=lambda row: chronological_key(row)[0],
+                     reverse=newest_first)
+    else:
+        # Historic feeds had only a local page ordering contract.
+        results.sort(key=chronological_key, reverse=newest_first)
     return results
 
 
