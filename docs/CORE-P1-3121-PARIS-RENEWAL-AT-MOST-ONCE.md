@@ -1,5 +1,15 @@
 # Core P1 #3121 — prolongation Paris sûre, explicite et non répétable
 
+## Lecture typée de l'inventaire (#3197)
+
+Le précontrôle de prolongation utilise `read_loan_inventory` : un seul snapshot
+pour un fournisseur opt-in, sinon une seule lecture v1 adaptée en
+`partial/legacy_unverified`. Les états `failed/cancelled` refusent le POST et
+la création du checkpoint, même s'ils contiennent un prêt renouvelable.
+Un résultat partiel peut autoriser uniquement sa ligne positive exacte ;
+il ne prouve aucune absence. `last_loan_errors` n'est pas consulté.
+Les gardes d'epoch et le checkpoint de non-répétition restent applicables.
+
 ## Défaillance corrigée
 
 Le parcours `LibraryService.renew(loan)` acceptait un prêt issu d'un
@@ -19,7 +29,7 @@ nouvelle échéance n'ait été confirmée.
   connecté, `renew_loan=True`, session/enregistrement Core/identité/epoch
   contrôlés via `LoanActionScopeLease`. Tout changement d'identité,
   y compris A→B→A, invalide la tentative.
-- Une seule lecture fraîche `session.loans(account)` pour le **même
+- Une seule lecture fraîche `read_loan_inventory(session, account)` pour le **même
   emprunteur**. La permission exige exactement une ligne du même ID,
   branche, support, édition et source, `renewable=True`, et un JSON Paris
   positif `CanRenew=True` avec l'ID effectivement envoyé. Ni le cache
