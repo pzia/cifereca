@@ -264,7 +264,41 @@ class LocalCatalog:
         provider_id: str | None = None,
     ) -> dict[str, Any]:
         """Index one newly materialized artifact without scanning the library."""
-        path = path.expanduser().resolve()
+        # A targeted index is a claim about *this library's* physical copy.
+        # resolve() alone follows a supplied file/directory symlink and may
+        # silently register an external PDF/EPUB under a chosen account.
+        # The configured library root itself may intentionally be a symlink.
+        submitted = Path(os.path.abspath(path.expanduser()))
+        root_alias = Path(os.path.abspath(self.root))
+        root_resolved = self.root.resolve()
+        relative = None
+        anchor = None
+        for candidate_root in (root_alias, root_resolved):
+            try:
+                relative = submitted.relative_to(candidate_root)
+                anchor = candidate_root
+                break
+            except ValueError:
+                continue
+        if relative is None or anchor is None:
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "catalog_index_path_not_local"}
+
+        def linked_child() -> bool:
+            current = anchor
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    return True
+            return False
+
+        if linked_child():
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "catalog_index_path_not_local"}
+        path = submitted.resolve()
+        if not path.is_relative_to(root_resolved) or linked_child():
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "catalog_index_path_not_local"}
         if path.is_dir():
             return self._index_bundle(
                 path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
