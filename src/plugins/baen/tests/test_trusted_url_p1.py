@@ -85,13 +85,13 @@ def test_public_item_url_is_rejected_before_any_http(bad,tmp_path):
 
 def test_search_skips_off_origin_and_keeps_only_baen_cards():
     html = ('''<a href="https://evil.example/allbooks/book">External</a>'''
-            '''<a href="/allbooks/category/book">Valid</a>'''
+            '''<a href="/allbooks/valid-book">Valid</a>'''
             '''<a href="//evil.example/allbooks/other">Injected</a>''')
     s=rig(html)
     try:
         rows=s.search("free")
         assert [x.title for x in rows] == ["Valid"]
-        assert rows[0].friendly_url == BASE + "/allbooks/category/book"
+        assert rows[0].friendly_url == BASE + "/allbooks/valid-book"
         assert len(s.client.calls)==1
     finally:
         s.close()
