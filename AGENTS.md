@@ -46,6 +46,10 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 
 Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2/P3.
 
+## Persistance impérative du rôle `backlog`
+
+Lorsqu'un utilisateur choisit explicitement **« rôle backlog »**, l'agent ne fait **que de l'analyse et du ticketing** (triage, investigation en lecture seule, issues, priorités, dépendances, critères d'acceptation et handoffs). Il **ne passe jamais de lui-même** en `focus`, `core`, `plugins`, `ux` ou `cicd` et ne prend aucune tâche d'implémentation, test actif, branche/PR, merge ou livraison. Les commandes de continuation (« next », « next max », « go max », « continue », « termine », « avance au maximum ») conservent ce rôle, même pour un P0 ou un sujet débloqué. **Seule une demande explicite de l'utilisateur** autorise une exception, limitée à l'action demandée ; ensuite le rôle backlog reprend sauf ordre exprès de changement de rôle. Les mécanismes généraux de `focus` ne prévalent pas sur ce verrouillage. Voir [règles impératives du rôle backlog](.agents/roles/backlog.md#verrouillage-strict-du-rôle-impératif).
+
 ## Coordination anti-concurrence : un propriétaire par résolution (#889)
 
 **Le rôle se détermine par le comportement à corriger et la responsabilité sur le fichier, pas par qui a découvert l'anomalie.** Une issue peut avoir plusieurs intervenants successifs, mais **un seul pilote actif de la même résolution** ; y compris quand plusieurs agents portent le même rôle. Les frontières restent applicables aux priorités P0–P3 ; une urgence P0 ne dispense pas de consulter les travaux déjà engagés.
