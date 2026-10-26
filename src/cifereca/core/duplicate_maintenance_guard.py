@@ -28,6 +28,42 @@ def _mentions_exact_path(value: object, path: str, *, depth: int = 0) -> bool:
     return False
 
 
+# Only these three additional canonical tables may be scanned. Keep the table
+# names a closed internal allowlist; never accept SQL identifiers from plugins.
+_EXTRA_METADATA_TABLES = frozenset({"entitlements", "artifacts", "placements"})
+
+
+def canonical_metadata_mentions_path(
+    db: sqlite3.Connection, path: str, *,
+    tables: tuple[str, ...] = ("entitlements", "artifacts", "placements"),
+) -> bool | None:
+    """True if referenced, False if clear, None if evidence is incomplete.
+
+    This is a *read-only* bounded check. An invalid JSON envelope or deep
+    unknown structure is not proof that a path is free for rename/deletion.
+    Path strings are exact: SHA and title do not authorize relinking.
+    """
+    if type(path) is not str or not path or any(
+        table not in _EXTRA_METADATA_TABLES for table in tables
+    ):
+        return None
+    for table in tables:
+        for index, (raw,) in enumerate(db.execute(
+            f"SELECT metadata_json FROM {table} LIMIT 100001"
+        )):
+            if index >= 100000 or type(raw) is not str or len(raw) > 1024 * 1024:
+                return None
+            try:
+                value = json.loads(raw)
+            except (ValueError, TypeError, RecursionError):
+                return None
+            if type(value) is not dict:
+                return None
+            if _mentions_exact_path(value, path):
+                return True
+    return False
+
+
 def candidate_has_active_dependencies(storage, *, placement_id: str, path: str) -> bool:
     """True if deleting this path would orphan a known independent reference.
 
@@ -89,6 +125,11 @@ def candidate_has_active_dependencies(storage, *, placement_id: str, path: str) 
                     return True
                 if type(value) is not dict or _mentions_exact_path(value, path):
                     return True
+            # A right, immutable artifact or independently stored placement
+            # may retain this exact physical path in its JSON metadata.
+            # These records survive duplicate deletion and must not be orphaned.
+            if canonical_metadata_mentions_path(db, path) is not False:
+                return True
             # User declarations have their own strict private schema/budget,
             # and the source-bound file path is not a receipt we can replace.
             # An invalid declaration namespace cannot prove non-dependency.
