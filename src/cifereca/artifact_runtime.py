@@ -816,13 +816,61 @@ class LibraryMaintenanceBrokerImpl:
             if (type(digest) is not str or len(digest) != 64
                     or type(size) is not int or size < 0
                     or path.is_symlink() or kept_path.is_symlink()
-                    or not path.is_file() or not kept_path.is_file()
-                    or path.stat().st_size != size or kept_path.stat().st_size != size
-                    or sha256_file(path) != digest or sha256_file(kept_path) != digest):
+                    or not path.is_file() or not kept_path.is_file()):
                 raise Conflict("Octets du doublon non vérifiés")
-            path.unlink()
+            try:
+                deleted_stat = os.stat(path, follow_symlinks=False)
+                kept_stat = os.stat(kept_path, follow_symlinks=False)
+                if (not stat.S_ISREG(deleted_stat.st_mode)
+                        or not stat.S_ISREG(kept_stat.st_mode)
+                        or deleted_stat.st_size != size or kept_stat.st_size != size
+                        or sha256_file(path) != digest
+                        or sha256_file(kept_path) != digest):
+                    raise Conflict("Octets du doublon non vérifiés")
+                fingerprint = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                for selected, expected in ((path, deleted_stat), (kept_path, kept_stat)):
+                    now = os.stat(selected, follow_symlinks=False)
+                    if any(getattr(now, key) != getattr(expected, key) for key in fingerprint):
+                        raise Conflict("Octets du doublon non vérifiés")
+            except OSError:
+                raise Conflict("Octets du doublon non vérifiés") from None
+            # Commit removal of the unreferenced placement FIRST. A failed
+            # SQLite transaction leaves both verified physical paths intact;
+            # a crash afterwards leaves an extra, recoverable duplicate, not
+            # a 'present' SQLite row pointing at an already deleted book.
             self.service.storage.placement_delete(request.placement_id)
-            return LibraryMutationResult(True,1,plan.summary)
+            # The old file is now an optional cleanup target. Never unlink a
+            # name that was replaced or rebound while SQLite committed, and
+            # never destroy the remaining copy after its inode changed.
+            cleanup_pending = True
+            try:
+                if (not candidate_has_active_dependencies(
+                    self.service.storage,
+                    placement_id=request.placement_id,
+                    path=str(path),
+                ) and self.service.storage.placement_for_path(path) is None):
+                    current_deleted = os.stat(path, follow_symlinks=False)
+                    current_kept = os.stat(kept_path, follow_symlinks=False)
+                    if (
+                        stat.S_ISREG(current_deleted.st_mode)
+                        and stat.S_ISREG(current_kept.st_mode)
+                        and all(
+                            getattr(current_deleted, key) == getattr(deleted_stat, key)
+                            and getattr(current_kept, key) == getattr(kept_stat, key)
+                            for key in fingerprint
+                        )
+                    ):
+                        path.unlink()
+                        cleanup_pending = False
+            except OSError:
+                pass
+            return LibraryMutationResult(
+                True, 1, plan.summary,
+                warnings=(
+                    ("Fichier doublon conservé : nettoyage local à vérifier.",)
+                    if cleanup_pending else ()
+                ),
+            )
         if request.operation == "replace_cover":
             if not request.book_id or not request.cover_artifact_id: raise ValueError("book_id and cover_artifact_id required")
             cover=self.service.storage.artifact_get(request.cover_artifact_id)
