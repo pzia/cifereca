@@ -39,6 +39,7 @@ def _baen_explicit_download_offer(html_text, detail_url):
         r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
         html_text, re.I | re.S,
     )
+    generic_download = None
     for href, label in links:
         text = ' '.join(re.sub('<[^>]+>', ' ', html.unescape(label)).split()).casefold()
         candidate = urljoin(detail_url, href)
@@ -48,9 +49,13 @@ def _baen_explicit_download_offer(html_text, detail_url):
         if path.endswith(('.pdf', '.mobi', '.azw', '.azw3')):
             continue
         epub_attested = 'epub' in text or path.endswith('.epub')
-        if 'download' in text or epub_attested:
-            return candidate, epub_attested
-    return None, False
+        if epub_attested:
+            # Prefer the explicit EPUB offer even when a generic "Download"
+            # button appears earlier in the same product page.
+            return candidate, True
+        if 'download' in text and generic_download is None:
+            generic_download = candidate
+    return generic_download, False
 
 
 def _public_epub_filename(title, detail_url):
