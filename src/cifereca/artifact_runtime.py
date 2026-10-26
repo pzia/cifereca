@@ -534,6 +534,46 @@ class LibraryReadBrokerImpl:
         return self._view(entries, logical, identity_id=identity_id)
 
 
+def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict | None) -> bool:
+    """Same bytes are not authority to delete another identity/right's file.
+
+    Placements do not store credential/account. If multiple recorded owners
+    share an identity/provider/edition, Core cannot prove which one owns either
+    path and refuses destruction. Repeated at execution after preview.
+    """
+    if not isinstance(row, dict) or not isinstance(keep, dict):
+        return False
+    for key in ("placement_id", "artifact_id", "identity_id", "provider_id", "path"):
+        if not isinstance(row.get(key), str) or not row[key]:
+            return False
+        if not isinstance(keep.get(key), str) or not keep[key]:
+            return False
+    if (row["placement_id"] == keep["placement_id"]
+            or row["path"] == keep["path"]
+            or row["artifact_id"] != keep["artifact_id"]
+            or row["identity_id"] != keep["identity_id"]
+            or row["provider_id"] != keep["provider_id"]
+            or row.get("source_item_id") != keep.get("source_item_id")
+            or row.get("state") != "present"
+            or keep.get("state") != "present"):
+        return False
+    provider, edition = row["provider_id"], row.get("source_item_id")
+    if provider in {"kobo", "numilog", "paris"}:
+        if not isinstance(edition, str) or not edition:
+            return False
+        # The local placement has no borrower coordinate: even historical
+        # rights on another credential must not be silently coalesced.
+        owners = {
+            (right.get("credential_id"), right.get("account_id"))
+            for right in storage.entitlements(provider_id=provider)
+            if right.get("identity_id") == row["identity_id"]
+            and right.get("item_id") == edition
+        }
+        if len(owners) > 1:
+            return False
+    return True
+
+
 @dataclass(slots=True)
 class LibraryMaintenanceBrokerImpl:
     service: Any
@@ -556,8 +596,8 @@ class LibraryMaintenanceBrokerImpl:
         if op == "delete_duplicate":
             row=self.service.storage.placement_get(request.placement_id); keep=self.service.storage.placement_get(request.keep_placement_id)
             if row is None or keep is None: raise NotFound("Placement inconnu", code="placement_not_found")
-            if not row.get("artifact_id") or row.get("artifact_id") != keep.get("artifact_id"):
-                raise Conflict("Les placements ne référencent pas le même artefact", code="placement_not_duplicate")
+            if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
+                raise Conflict("Doublon hors du même périmètre vérifié", code="placement_not_duplicate")
             return LibraryMutationPlan(op, "Supprimer le doublon physique vérifié", request, destructive=True, changes=(request.placement_id,), warnings=("Le fichier du placement sera supprimé.",))
         if op == "replace_cover":
             return LibraryMutationPlan(op, "Remplacer la couverture canonique", request, changes=(request.book_id, request.cover_artifact_id))
@@ -692,7 +732,8 @@ class LibraryMaintenanceBrokerImpl:
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: return LibraryMutationResult(True,0,"Placement déjà absent")
             keep=self.service.storage.placement_get(request.keep_placement_id)
-            if keep is None or row.get("artifact_id") != keep.get("artifact_id"): raise Conflict("Le doublon n'est plus vérifiable", code="placement_not_duplicate")
+            if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
+                raise Conflict("Le doublon n'est plus vérifiable", code="placement_not_duplicate")
             path=Path(str(row.get("path") or ""))
             if path.exists(): path.unlink()
             self.service.storage.placement_delete(request.placement_id)
