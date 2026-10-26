@@ -147,6 +147,12 @@ class BnfCatalogueSession(ProviderSession):
             if not re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", query):
                 raise ProviderError("BnF : ISBN attendu sur 10 ou 13 caractères")
         if len(query) < 2:
+            # A nonempty one-letter query is skipped locally, not an SRU
+            # response proving zero matching bibliographic records.
+            if query:
+                self.last_search_warnings.append(
+                    'partial_results : requête trop courte ; BnF non interrogée'
+                )
             return []
         relation = "adj" if field == "isbn" else "all"
         try:
