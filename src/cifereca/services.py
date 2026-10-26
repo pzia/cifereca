@@ -537,6 +537,9 @@ class LibraryService:
             self._search_generation += 1
             self.last_search = []
             self.last_search_warnings = []
+            # The Loans page reads this projection synchronously. Retire the
+            # old profile's loans before any asynchronous refresh can arrive.
+            self.last_loans = []
         # History and bookings are identity-scoped snapshots. Invalidate them
         # at the service boundary so non-UI callers cannot observe data that
         # belonged to the previously selected identity.
@@ -855,6 +858,7 @@ class LibraryService:
 
     def refresh_identity_loans(self, force: bool = False, identity_id: str | None = None) -> list[Loan]:
         identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+        request_epoch = self._account_context_epoch
         rows: list[Loan] = []
         seen: set[tuple[str, str, str, str]] = set()
         accounts = self.accounts_for_identity(identity_id)
@@ -870,7 +874,13 @@ class LibraryService:
                 if key not in seen:
                     seen.add(key); rows.append(loan)
         rows.sort(key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-        self.last_loans = rows
+        # A worker for Alice may finish after switching Alice -> Bob -> Alice.
+        # Its private result is returned to the guarded caller, but must never
+        # overwrite the current profile projection after an epoch transition.
+        with self._search_generation_lock:
+            if (self._account_context_epoch == request_epoch
+                    and getattr(self.current_identity, "identity_id", None) == identity_id):
+                self.last_loans = rows
         if force and identity_id:
             self.refresh_adept_inventory(identity_id)
         return rows
