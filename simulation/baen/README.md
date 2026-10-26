@@ -18,6 +18,8 @@ python3 simulation/datasetctl.py down ux-small
 | `?q=auth-required`, `?q=access-denied` | HTTP 401 et 403, refus sans repli public périmé |
 | `?q=rate-limit`, `?q=down` | HTTP 429, HTTP 503 |
 | `?q=layout-change` | HTTP 200 non qualifié : résultat partiel, pas zéro attesté |
+| `?q=fixture-canonical` | **Sélecteur purement synthétique**, fournit 3 ancres `product-item-link` vers `/<slug>.html` et marqueurs Free Library ; ne qualifie pas la vraie recherche `q` |
+| `/<slug>.html` | Fiche produit publique canonique synthétique, équivalente au détail `/allbooks/{slug}` |
 | Recherche `q=nothing` | Deux marqueurs exacts de zéro uniquement pour le corpus vide |
 | `/allbooks/{slug}` | Détail WebScription : titre, auteur, date, ISBN, lien EPUB optionnel |
 | `/downloads/{slug}.epub` | EPUB fictif valide généré localement, type MIME `application/epub+zip` |
