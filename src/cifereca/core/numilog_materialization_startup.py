@@ -258,7 +258,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and row.source_credential == account.credential_id
                 and row.source_collection == "library"
                 and row.scenario == "NUMILOG_LIBRARY"
-                and row.owned is True and row.downloadable is True
+                and row.owned is True
                 and row.id == row.record_id
                 and _item_id(row.record_id, account.credential_id)
                 and count[row.record_id] == 1
@@ -268,6 +268,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # and durable claim are per account, so the download quota
                 # must reset for each independently opted-in account.
                 if attempts - previous[1] >= _MAX_ITEMS_PER_OPENING:
+                    # The per-opening quota leaves purchases unexamined.
+                    # A partial batch must never be reported as complete.
+                    blocked += 1
+                    trace.fail('preflight_failed')
                     break
                 if control is not None and callable(getattr(control, "check_cancelled", None)):
                     control.check_cancelled()
@@ -318,7 +322,12 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     continue
                 if (prior.ok is not True
                         or prior.facts.get("status") != "candidate_unverified"):
-                    skipped += 1
+                    # A prior receipt, conflicting placement, missing proof or
+                    # non-downloadable purchased title does not attest a
+                    # local file. Keep it pending instead of counting a
+                    # silently skipped purchase in a 'complete' sync.
+                    blocked += 1
+                    trace.fail('preflight_failed')
                     continue
 
                 def admission() -> SearchResult:
