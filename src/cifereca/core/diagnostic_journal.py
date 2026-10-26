@@ -119,6 +119,23 @@ def _make_event(match, identity, offset):
                 or type(document.get("schema_version")) is not int
                 or document["schema_version"] != 1):
             structured_unreadable = True
+        elif (any(
+            key in document and type(document[key]) is not kind
+            for key, kind in (
+                ("message", str), ("category", str), ("operation", str),
+                ("status", str), ("detail", dict), ("task_ref", str),
+            )
+        ) or (
+            "duration_ms" in document and (
+                type(document["duration_ms"]) is not int
+                or not 0 <= document["duration_ms"] <= 86_400_000
+            )
+        )):
+            # A schema-1 field present with the WRONG TYPE is not evidence
+            # of a missing operation/status/owner. Never silently replace it
+            # with "unknown", empty detail or an invented default while
+            # claiming a complete history. Preserve the raw DIAG_JSON text.
+            structured_unreadable = True
         else:
             message = document.get("message") if type(document.get("message")) is str else message
             category = document.get("category") if type(document.get("category")) is str else category
