@@ -14,6 +14,8 @@ Le guide canonique est [AGENTS.md](../../AGENTS.md). La politique de réalisatio
 
 Un rôle actif par étape, avec un livrable vérifiable. En mode classique, le rôle reste celui choisi dans le fil ; en mode `focus`, l'orchestrateur réévalue et peut en changer à chaque étape. Aucun rôle ne franchit la frontière d'un autre pour éviter un handoff.
 
+**Exception de persistance obligatoire pour `backlog` :** tant que l'utilisateur n'a pas explicitement demandé de changement de rôle ou une action hors rôle précise, `backlog` demeure exclusivement analyse + ticketing, y compris sur « next max », urgence P0 et handoffs. La continuation n'active pas `focus`. Une autorisation ponctuelle ne change pas durablement le rôle. Voir [backlog](backlog.md#verrouillage-strict-du-rôle-impératif).
+
 « Seul cicd fusionne » inclut **focus lorsqu'il assume explicitement `cicd` / `merger`** : il peut effectuer lui-même les contrôles, la fusion et la vérification de clôture, selon [le profil cicd](cicd.md), sans transfert obligatoire à un autre fil. Après une étape Core/Plugins, annoncer une nouvelle étape cicd avant toute fusion ; transmettre à un autre cicd reste possible si utile. Les permissions, reviews, protections, gates sur le SHA pertinent et tentatives de résolution mécanique des conflits restent obligatoires ; les arbitrages métier reviennent au propriétaire. `ux` / `simulation` demeure indépendant et exclu de focus ; une release exige un ordre explicite.
 
 Lire le profil concerné avant d'agir ; les issues GitHub portent l'état, la priorité et le prochain handoff. Les PR portent le code et ses validations, jamais un journal opérationnel poussé directement dans main.
