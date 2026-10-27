@@ -362,13 +362,22 @@ def _inert_search_source_state(session: object) -> tuple[object, object, object]
         return None
     if type(state) is not dict:
         return None
-    provider = state.get("provider_id")
+    # Established lightweight/catalogue sessions may declare *inert class
+    # scalars* rather than setting instance fields in __init__. Static lookup
+    # preserves those providers without executing an arbitrary property or
+    # __getattribute__ callback (potential network I/O).
+    def scalar(name: str, default: object = None) -> object:
+        if name in state:
+            return state[name]
+        return inspect.getattr_static(session, name, default)
+
+    provider = scalar("provider_id")
     # Catalogue-only virtual providers may have no credential at all.
     # Preserve their historical public search eligibility.
-    credential = state.get("credential_id", "")
+    credential = scalar("credential_id", "")
     if credential is None:
         credential = ""
-    connected = state.get("connected")
+    connected = scalar("connected")
     if type(provider) is not str or not provider or type(credential) is not str:
         return None
     return (provider, credential, connected)
