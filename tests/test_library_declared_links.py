@@ -16,7 +16,7 @@ from tests.test_library_reconciliation import epub
 from tests.test_sync_state_contract import _service
 
 
-@pytest.fixture(params=['numilog', 'kobo', 'paris'])
+@pytest.fixture(params=['numilog', 'kobo', 'paris', 'test.vendor-a', 'test.vendor-b'])
 def rig(request, tmp_path, monkeypatch):
     service = _service(tmp_path)
     root = tmp_path / 'EBooks' / 'hugues'

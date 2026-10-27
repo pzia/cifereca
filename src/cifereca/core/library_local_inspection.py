@@ -824,7 +824,6 @@ class LocalInspection:
                 and bool(right['loan_id'])
             )
             if (scope is not None and scope[0] == identity_id
-                    and scope[1] in ('kobo', 'numilog', 'paris', 'bnf-pret')
                     and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
