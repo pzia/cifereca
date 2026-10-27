@@ -90,8 +90,12 @@ def known_public_fallback_page(
             or type(page_size) is not int or not 1 <= page_size <= _MAX_RESULTS
             or page * page_size >= _MAX_CATALOG_ROWS):
         return empty("invalid_page")
+    # A public notice is qualified by its scoped, fresh, catalogue-only
+    # evidence below, NEVER by a hard-coded supplier allow/deny-list.
+    # The same provider may publish both public notices and private purchases;
+    # only public collections without entitlement/placement are eligible.
     if (type(identity_id) is not str or not identity_id
-            or type(provider_id) is not str or provider_id in {"", "numilog"}
+            or type(provider_id) is not str or not provider_id
             or type(query) is not str or len(query.strip()) < 2):
         return empty("unavailable")
     current = int(time.time()) if now is None else int(now)
