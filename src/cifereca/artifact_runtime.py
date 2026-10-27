@@ -961,6 +961,11 @@ class LibraryMaintenanceBrokerImpl:
                 placement for placement in self.service.storage.placements()
                 if str(placement.get("artifact_id") or "") == request.artifact_id
             ]
+            # Multi-placement retirement needs one SQLite transaction that
+            # revalidates all references. Until that API exists, refuse this
+            # destructive action rather than allow a partially applied batch.
+            if len(placements) > 1:
+                raise _VariantScopeConflict("Variante à placements multiples")
             evidence = self.service.storage.artifact_get(str(request.artifact_id or ""))
             digest = evidence.get("sha256") if type(evidence) is dict else None
             size = evidence.get("size") if type(evidence) is dict else None
