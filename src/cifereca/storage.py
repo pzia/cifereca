@@ -2718,10 +2718,23 @@ class Storage:
             "artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),"
             "last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),error_code=excluded.error_code,"
             "error_message=excluded.error_message,attention_code=excluded.attention_code,metadata_json=excluded.metadata_json,"
-            "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at"
+            "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at "
+            # A stable acquisition ID may predate a complete account scope.
+            # A collision must not update another borrower or provider's
+            # state, artifact, identity or entitlement.
+            "WHERE acquisition_ledger.provider_id=excluded.provider_id "
+            "AND acquisition_ledger.credential_id=excluded.credential_id "
+            "AND acquisition_ledger.account_id IS excluded.account_id "
+            "AND acquisition_ledger.item_id=excluded.item_id "
+            "AND (acquisition_ledger.identity_id IS NULL "
+            "OR excluded.identity_id IS NULL "
+            "OR acquisition_ledger.identity_id=excluded.identity_id) "
+            "AND (acquisition_ledger.entitlement_id IS NULL "
+            "OR excluded.entitlement_id IS NULL "
+            "OR acquisition_ledger.entitlement_id=excluded.entitlement_id)"
         )
         with self._lock, self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
                 "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
                 "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
@@ -2734,6 +2747,8 @@ class Storage:
                     self._json_dump(row.get("metadata")), now, now, row.get("identity_id"),
                 ),
             )
+            if not insert_only and cursor.rowcount != 1:
+                raise ValueError("acquisition_source_scope_conflict")
         return acquisition_id
 
     def acquisition_get(self, acquisition_id: str) -> dict[str, Any] | None:
