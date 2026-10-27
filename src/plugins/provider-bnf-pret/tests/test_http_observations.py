@@ -36,7 +36,7 @@ def test_failed_http_keeps_exact_status_and_endpoint_without_retry(endpoint, sta
     assert len({row['detail']['request_ref'] for row in rows}) == 1
     assert 'http_status' not in rows[0]['detail']
     assert rows[-1]['detail']['http_status'] == status
-    assert rows[-1]['detail']['content_type'] == 'text/html; charset=UTF-8'
+    assert rows[-1]['detail']['content_type'] == 'text/html'
     assert rows[-1]['detail']['logical_endpoint'] == endpoint
     assert rows[-1]['status'] == 'failed'
     assert rows[-1]['duration_ms'] >= 0
@@ -160,3 +160,63 @@ def test_authentication_has_no_new_http_observations(caplog):
         assert observations(caplog) == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('endpoint,header,label', [
+    ('activity', 'text/html; charset=PRIVATE-user-secret', 'text/html'),
+    ('loan_token', 'application/vnd.adobe.adept+xml; boundary=PRIVATE-user-secret',
+     'application/vnd.adobe.adept+xml'),
+    ('loan_token', 'application/x-PRIVATE-user-secret', 'other'),
+])
+def test_private_response_header_parameters_never_enter_canonical_journal(
+    endpoint, header, label, caplog,
+):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            403, headers={'content-type': header}, content=b'PRIVATE forbidden response',
+        )
+    client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with caplog.at_level(logging.INFO, logger='cifereca'):
+            with pytest.raises(ReaderHTTPError):
+                if endpoint == 'activity':
+                    client.activity()
+                else:
+                    client.loan_token('synthetic-loan', SIGNED)
+        rows = observations(caplog)
+        assert len(requests) == 1 and len(rows) == 3
+        assert rows[1]['detail']['content_type'] == label
+        assert rows[-1]['detail']['content_type'] == label
+        assert rows[-1]['detail']['http_status'] == 403
+        assert 'PRIVATE' not in caplog.text
+    finally:
+        client.close()
+
+
+def test_unexpected_reader_exception_text_never_enters_journal(
+    monkeypatch, caplog,
+):
+    from contextlib import contextmanager
+
+    client = ReaderHTTPClient(transport=httpx.MockTransport(
+        lambda request: pytest.fail('unexpected outbound HTTP request'),
+    ))
+
+    @contextmanager
+    def raise_private(*_args, **_kwargs):
+        raise ReaderHTTPError('PRIVATE reader cookie signed URL')
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(client.http, 'stream', raise_private)
+    try:
+        with caplog.at_level(logging.INFO, logger='cifereca'):
+            with pytest.raises(ReaderHTTPError, match='PRIVATE'):
+                client.activity()
+        rows = observations(caplog)
+        assert len(rows) == 2
+        assert rows[-1]['detail']['code'] == 'unexpected_failure'
+        assert 'PRIVATE' not in caplog.text
+    finally:
+        client.close()
