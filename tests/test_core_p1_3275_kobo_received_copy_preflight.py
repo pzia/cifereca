@@ -118,8 +118,8 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
     """B's own Vault manifest does not adopt a locally received copy as backup.
 
     The same product ID appears in A's transferred file and B's independent,
-    account-scoped Kobo manifest. A repeated B sync must not download, invent
-    an acquisition, or create a second placement while reconciliation waits.
+    account-scoped Kobo manifest. A repeated B sync must not download,
+    mark an acquisition complete or duplicate placements while awaiting linkage.
     """
     from tests.test_kobo_backup_guard import (
         KoboSession,
@@ -167,7 +167,16 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
         assert first["attempted"] == 0 and first["downloaded"] == 0
         assert first["reconcile_pending"] == 1
         assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
-        assert service.storage.acquisitions() == []
+        # B's positive OWN manifest creates a legitimate discovery in the
+        # acquisition ledger. It is NOT a completed download of A's bytes.
+        discoveries = service.storage.acquisitions()
+        assert len(discoveries) == 1
+        assert discoveries[0]["credential_id"] == "vault-b"
+        assert discoveries[0]["identity_id"] == "bob"
+        assert discoveries[0]["item_id"] == "book-1"
+        assert discoveries[0]["status"] == "discovered"
+        assert discoveries[0]["attempt_count"] == 0
+        assert discoveries[0]["artifact_id"] is None
 
         second = service.sync_kobo_backup_account("vault-b")
         assert second["attempted"] == 0 and second["downloaded"] == 0
@@ -179,6 +188,11 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
                     and p.get("metadata", {}).get("materialized_from") == source_placement_id]) == 1
         assert src.read_bytes() == original_bytes
         assert received.read_bytes() == original_bytes
-        assert service.storage.acquisitions() == []
+        again_discoveries = service.storage.acquisitions()
+        assert len(again_discoveries) == 1
+        assert again_discoveries[0]["acquisition_id"] == discoveries[0]["acquisition_id"]
+        assert again_discoveries[0]["status"] == "discovered"
+        assert again_discoveries[0]["attempt_count"] == 0
+        assert again_discoveries[0]["artifact_id"] is None
     finally:
         service.close()
