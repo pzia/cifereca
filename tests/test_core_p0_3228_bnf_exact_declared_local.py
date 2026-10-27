@@ -103,7 +103,9 @@ def test_stale_declared_loan_blocks_get_without_mutating_old_file(
         current = service.storage.entitlements(
             provider_id=loan.source_provider, state="active",
         )[0]
-        service.storage.entitlement_put({**current, "loan_id": "different-loan"})
+        # A provider right may become inactive; its loan_id is an immutable
+        # source coordinate and Storage correctly rejects a silent rewrite.
+        service.storage.entitlement_put({**current, "state": "inactive"})
     else:
         service.storage.provider_connection_put({
             "identity_id": account.identity_id, "provider_id": account.provider_id,
