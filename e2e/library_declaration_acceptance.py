@@ -290,7 +290,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         # CoreUI #3275: an attested placement is NOT a manually declared
         # right/file correspondence. The native detail must not reuse the
         # manual-consent success label for this independent path.
-        visible_labels = '\\n'.join(
+        visible_labels = '\n'.join(
             w.get_text() for w in walk(controller.dialog)
             if isinstance(w, Gtk.Label) and w.get_mapped()
         )
