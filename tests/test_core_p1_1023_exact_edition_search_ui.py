@@ -70,3 +70,44 @@ def test_two_remote_editions_do_not_share_one_legacy_placement_callback():
     rows = host.search_page.show_rows.call_args.args[0]
     assert [r.key for r in rows] == ["paris:A", "paris:B"]
     assert all(r.options["action_label"] is None for r in rows)
+
+
+def test_remote_results_with_shared_supplier_ui_id_remain_independently_selectable():
+    """A Paris id omits credential/collection even when mirror-v2 distinguishes both."""
+    host = _host()
+    first = _remote("EDITION-A")
+    second = replace(first, title="Collection B", source_collection="cat-B")
+    third = replace(first, title="Compte B", source_credential="credential-B")
+    books = [first, second, third]
+    host._remote_search_results = books
+    host._populate_search(books, announce=False)
+    rows = host.search_page.show_rows.call_args.args[0]
+    assert len(rows) == 3
+    keys = [row.key for row in rows]
+    assert len(set(keys)) == 3
+    assert len(host.search_objects) == 3
+    assert {host.search_objects[key].title for key in keys} == {
+        "Dumas", "Collection B", "Compte B",
+    }
+    assert all(row.options["action_callback"] is None for row in rows)
+
+    # A re-ordered progressive batch must not swap the selected supplier
+    # edition under an existing UI key.
+    original_keys = {item.title: key for key, item in host.search_objects.items()}
+    host._remote_search_results = list(reversed(books))
+    host._populate_search(host._remote_search_results, announce=False)
+    assert {item.title: key for key, item in host.search_objects.items()} == original_keys
+
+
+def test_unqualified_remote_id_collision_keeps_both_rows_without_false_scope():
+    host = _host()
+    first = replace(_remote("EDITION-A"), source_credential="", title="Historique A")
+    second = replace(first, title="Historique B", docbase="")
+    books = [first, second]
+    host._remote_search_results = books
+    host._populate_search(books, announce=False)
+    rows = host.search_page.show_rows.call_args.args[0]
+    assert len(rows) == 2
+    assert len({row.key for row in rows}) == 2
+    assert len(host.search_objects) == 2
+    assert all(row.options["action_callback"] is None for row in rows)
