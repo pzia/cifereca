@@ -179,7 +179,7 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
         # path, widget text, geometry or private traceback.
         "maintenance-tools-920", "maintenance-tools-1024",
         "maintenance-tools-1280", "maintenance-tools-1366",
-        "maintenance-tools-1600",
+        "maintenance-tools-1600", "maintenance-tools-1728",
     }:
         return {}
     root = source.resolve().parent / scenario

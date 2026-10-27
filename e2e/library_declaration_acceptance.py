@@ -15,16 +15,8 @@ from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
 
-def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, checkpoint, done):
-    # Exercise the same real consent flow with opaque providers on two
-    # existing sizes; larger scenarios retain the Numilog regression case.
-    provider_id = {920: 'test.vendor-a', 1024: 'test.vendor-b'}.get(
-        report.get('width'), 'numilog',
-    )
-    report['checks']['native_declaration_started'] = True
-    checkpoint('maint_declaration_start')
-    tmp = tempfile.TemporaryDirectory()
-    root = Path(tmp.name)
+def _fixture(root, provider_id, *, attested=False):
+    """One real SQLite/file scope, with existing evidence only in attested mode."""
     library = root / 'library'
     directory = library / 'declared'
     directory.mkdir(parents=True)
@@ -54,12 +46,41 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         'identity_id': 'default', 'provider_id': provider_id,
         'credential_id': account.credential_id, 'label': 'Synthetic',
     })
-    service.storage.entitlement_put({
-        'entitlement_id': 'synthetic-right', 'identity_id': 'default',
-        'provider_id': provider_id, 'credential_id': account.credential_id,
-        'account_id': account.unique_id, 'item_id': 'synthetic-item',
-        'state': 'active', 'entitlement_type': 'owned',
-    })
+    if attested:
+        # Historical acquisition before a manual move. A missing OLD path
+        # is not an absent book: the exact same bytes are now at book.
+        service.storage.backup_put({
+            'identity_id': 'default', 'provider_id': 'kobo',
+            'credential_id': account.credential_id, 'account_id': account.unique_id,
+            'item_id': 'synthetic-item', 'revision_id': 'synthetic-revision',
+            'title': 'Synthetic declaration', 'format': 'epub',
+            'local_path': str(directory / 'kobo' / 'historical.epub'),
+            'status': 'reconcile_required', 'size': book.stat().st_size,
+            'sha256': digest, 'entitlement_type': 'owned',
+        })
+    else:
+        service.storage.entitlement_put({
+            'entitlement_id': 'synthetic-right', 'identity_id': 'default',
+            'provider_id': provider_id, 'credential_id': account.credential_id,
+            'account_id': account.unique_id, 'item_id': 'synthetic-item',
+            'state': 'active', 'entitlement_type': 'owned',
+        })
+    return service, book, directory, digest
+
+
+def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
+             checkpoint, done, attested=False):
+    # Keep the existing declaration path, then exercise attested placement
+    # through the SAME production controller and separate native consent.
+    provider_id = 'kobo' if attested else {
+        920: 'test.vendor-a', 1024: 'test.vendor-b',
+    }.get(report.get('width'), 'numilog')
+    report['checks']['native_declaration_started'] = True
+    checkpoint('maint_declaration_start')
+    tmp = tempfile.TemporaryDirectory()
+    service, book, directory, digest = _fixture(
+        Path(tmp.name), provider_id, attested=attested,
+    )
     # Quiescent fixture snapshot; WAL replay has its own Core tests. The
     # subsequent preview/commit runs with real reusable writer connections.
     service.storage.close()
@@ -170,9 +191,25 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
 
     def right_selected(row):
         report['checks']['native_declaration_right_is_selected'] = True
+        if attested:
+            until(lambda: button('Préparer le rattachement').get_visible(),
+                  choose_attested_file)
+            return
         until(lambda: any(isinstance(w, Gtk.Label)
                           and 'Fichiers non liés · comparaison manuelle' in w.get_text()
                           for w in walk(controller.dialog)), file_view_visible)
+
+    def choose_attested_file():
+        if any(isinstance(w, Gtk.Label)
+               and 'Fichiers non liés · comparaison manuelle' in w.get_text()
+               for w in walk(controller.dialog)):
+            file_view_visible()
+            return
+        click(button('Comparer tous les fichiers non liés'),
+              lambda: until(lambda: any(
+                  isinstance(w, Gtk.Label)
+                  and 'Fichiers non liés · comparaison manuelle' in w.get_text()
+                  for w in walk(controller.dialog)), file_view_visible))
 
     def file_view_visible():
         report['checks']['native_declaration_manual_files_visible'] = True
@@ -186,7 +223,93 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         report['checks']['native_declaration_one_file_available'] = True
         assert session.declaration_context(right.key, files[0].key) is not None
         report['checks']['native_declaration_core_pair_admissible'] = True
+        if attested:
+            row = next(w for w in walk(controller.dialog)
+                       if isinstance(w, Gtk.ListBoxRow)
+                       and getattr(w, '_manual_file_key', None) == files[0].key)
+            click(row, lambda: until(
+                lambda: row.get_parent().get_selected_row() is row,
+                attested_prepare))
+            return
         until(lambda: button('Déclarer ce lien…').get_sensitive(), expand)
+
+    cancelled_placement = [False]
+
+    def attested_prepare():
+        assert service.storage.placement_for_path(book) is None
+        assert {table: rows(table) for table in unchanged} == unchanged
+        click(button('Préparer le rattachement'), lambda: until(
+            lambda: button('Vérifier les preuves actuelles…').get_visible(),
+            attested_revalidate))
+
+    def attested_revalidate():
+        assert guided_step().startswith('3/4')
+        assert 'lecture seule' in guided_step()
+        assert {table: rows(table) for table in unchanged} == unchanged
+        click(button('Vérifier les preuves actuelles…'), lambda: until(
+            lambda: button('Confirmer le placement local…').get_visible()
+            and button('Confirmer le placement local…').get_sensitive(),
+            attested_preview))
+
+    def attested_preview():
+        assert guided_step().startswith('4/4')
+        assert {table: rows(table) for table in unchanged} == unchanged
+        assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
+        report['checks']['P0_2842_native_attested_preview_no_write'] = True
+        click(button('Confirmer le placement local…'), lambda: until(
+            lambda: message() is not None, attested_consent))
+
+    def attested_consent():
+        assert {table: rows(table) for table in unchanged} == unchanged
+        if not cancelled_placement[0]:
+            cancelled_placement[0] = True
+            click(button('Annuler', message()), lambda: until(
+                lambda: message() is None, attested_cancelled))
+            return
+        click(button('Confirmer le placement', message()), lambda: until(
+            lambda: service.storage.placement_for_path(book) is not None
+            and guided_step().startswith('Placement enregistré'),
+            attested_committed))
+
+    def attested_cancelled():
+        assert {table: rows(table) for table in unchanged} == unchanged
+        report['checks']['P0_2842_native_attested_cancel_no_write'] = True
+        attested_prepare()
+
+    def attested_committed():
+        placement = service.storage.placement_for_path(book)
+        assert placement['identity_id'] == 'default'
+        assert placement['provider_id'] == 'kobo'
+        assert placement['source_item_id'] == 'synthetic-item'
+        assert placement['artifact_id'] == 'sha256:' + digest
+        assert placement['state'] == 'present'
+        assert rows('entitlements') == unchanged['entitlements']
+        assert rows('artifacts') == unchanged['artifacts']
+        assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
+        assert not declarations()
+        report['checks']['P0_2842_native_attested_confirm_persists_placement'] = True
+        until(lambda: button('Annuler le dernier placement…').get_visible()
+              and button('Annuler le dernier placement…').get_sensitive(),
+              attested_undo)
+
+    def attested_undo():
+        click(button('Annuler le dernier placement…'), lambda: until(
+            lambda: message() is not None, attested_undo_consent))
+
+    def attested_undo_consent():
+        assert service.storage.placement_for_path(book) is not None
+        click(button('Confirmer l’annulation', message()), lambda: until(
+            lambda: service.storage.placement_for_path(book) is None
+            and message() is not None
+            and 'Annulation du placement confirmée' in message().get_body(),
+            attested_finished))
+
+    def attested_finished():
+        assert {table: rows(table) for table in unchanged} == unchanged
+        assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
+        report['checks']['P0_2842_native_attested_undo_restores_references'] = True
+        click(button('Fermer', message()), lambda: until(
+            lambda: message() is None, close_fixture))
 
     def expand():
         report['checks']['native_declaration_right_selected'] = True
@@ -250,11 +373,19 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         report['checks']['P0_2797_declaration_native_revoke_keeps_history'] = True
         if provider_id in ('test.vendor-a', 'test.vendor-b'):
             report['checks']['P0_3171_native_opaque_provider_consent'] = True
+        close_fixture()
+
+    def close_fixture():
         controller.clear()
         host.destroy()
         service.close()
         tmp.cleanup()
-        done()
+        if attested:
+            done()
+        else:
+            exercise(parent=parent, Gtk=Gtk, Adw=Adw, GLib=GLib, Pango=Pango,
+                     device=device, until=until, walk=walk, report=report,
+                     checkpoint=checkpoint, done=done, attested=True)
 
     host.present()
     until(host.get_mapped, start)

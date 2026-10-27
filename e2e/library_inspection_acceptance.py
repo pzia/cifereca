@@ -177,7 +177,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         def click():
             report['checks']['inspection_click_dispatched']=True
             device.click_widget(response)
-            until(lambda: _inspection_geometry_ready(controller), initial)
+            # This action performs a real 600-file offline scan before GTK
+            # can allocate its window. Keep navigation's short deadline,
+            # but allow this measured worker step its own bounded budget.
+            until(lambda: _inspection_geometry_ready(controller), initial,
+                  timeout=18.0)
         until(allocated,click)
 
     def initial():
