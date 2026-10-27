@@ -455,7 +455,13 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     raw_error = getattr(source, "error", None)
     # Provider errors are opaque; never display their text, paths or URLs.
     error_present = type(raw_error) is str and bool(raw_error)
-    if error_present or status in {"error", "failed"}:
+    # The Core broker marks a legitimately partial loan inventory as
+    # status=partial with its own fixed compatibility text in error. This
+    # marker is not a provider exception: treating any nonempty error as a
+    # fatal alert mislabels positive BnF/Paris loans with unknown coverage.
+    # Keep unknown/private errors severe, including under partial status.
+    core_partial_marker = status == "partial" and raw_error == "Synchronisation partielle"
+    if status in {"error", "failed"} or (error_present and not core_partial_marker):
         candidates.append(("error", "Synchronisation : échec — action nécessaire"))
     elif status in {"blocked", "attention_required"}:
         candidates.append(("warning", "Synchronisation : action nécessaire"))
