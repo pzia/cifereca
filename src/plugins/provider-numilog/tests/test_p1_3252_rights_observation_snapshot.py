@@ -38,6 +38,12 @@ def session(*, with_broker=True):
     )
     obj.connected = True
     broker.account_id = "numilog:" + obj.scope
+    # A normal connected NumilogSession publishes exactly this provider
+    # Account. Older library-only tests did not need to populate it.
+    obj._accounts = [Account(
+        display_name="Test provider account", unique_id=broker.account_id,
+        provider_id="numilog", credential_id=obj.credential_id,
+    )]
     return obj, broker
 
 
