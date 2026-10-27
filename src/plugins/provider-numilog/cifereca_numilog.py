@@ -434,6 +434,97 @@ class NumilogSession(ProviderSession):
             self._diag('bibliothèque',items=len(normalized))
             return normalized
 
+    def rights_observation_snapshot(self, account):
+        """Optional #3252 read: purchased Numilog cards, never acquisitions.
+
+        The Core identity broker MUST resolve exactly one owner before and
+        after the authenticated MesLivres GET. The legacy library() path may
+        remain readable without this broker, but it cannot attest ownership
+        for the versioned rights-observation API. One read, no delivery URL.
+        """
+        from datetime import datetime, timezone
+        from cifereca.plugin_api import (
+            Account, ProviderRightsScope, ProviderRightObservation,
+            ProviderRightsSnapshot,
+        )
+
+        with self.lock:
+            expected_account = 'numilog:' + self.scope
+            if (
+                type(account) is not Account or not self.connected
+                or account.provider_id != 'numilog'
+                or account.credential_id != self.credential_id
+                or account.unique_id != expected_account
+                or type(account.identity_id) is not str
+                or not account.identity_id
+                or len(self._accounts) != 1
+                or self._accounts[0].unique_id != expected_account
+                or self._accounts[0].credential_id != self.credential_id
+            ):
+                raise ProviderCapabilityError(
+                    'Numilog : portée de preuves d’achats indisponible'
+                )
+            owner = self._inventory_owner_or_none()
+            if (
+                type(owner) is not tuple or len(owner) != 3
+                or owner[0] != 'broker'
+                or owner[2] != (account.identity_id,)
+            ):
+                raise ProviderCapabilityError(
+                    'Numilog : propriétaire unique non attesté pour les achats'
+                )
+            rows = self._rows()  # Validated authenticated MesLivres, without delivery.
+            if (
+                not self.connected
+                or self._inventory_owner_or_none() != owner
+                or len(self._accounts) != 1
+                or self._accounts[0].unique_id != expected_account
+                or self._accounts[0].credential_id != self.credential_id
+            ):
+                raise ProviderCapabilityError(
+                    'Numilog : identité propriétaire modifiée ; observations arrêtées'
+                )
+            observed = datetime.now(timezone.utc).isoformat()
+            observations = []
+            for row in rows:
+                # Parse results are provider-controlled. Never invent rights
+                # from an absent/ambiguous variant or title: use only the
+                # canonical MesLivres record ID and no public product match.
+                try:
+                    if type(row) is not dict:
+                        raise ValueError
+                    record = self._id(row)
+                    if type(record) is not str or not record.startswith(
+                        'numilog:' + self.scope + ':'
+                    ):
+                        raise ValueError
+                    observations.append(ProviderRightObservation(
+                        edition_id=record, right_id=record, kind='purchase',
+                        state='active', evidence_kind='provider_response',
+                        evidence_ref='numilog.meslivres',
+                        observed_at=observed, delivery='unknown',
+                    ))
+                except (ValueError, KeyError, TypeError, IndexError):
+                    # A malformed authenticated card makes this read
+                    # incomplete; never present its absence as a revocation.
+                    continue
+            if self._inventory_owner_or_none() != owner or not self.connected:
+                raise ProviderCapabilityError(
+                    'Numilog : identité propriétaire modifiée ; observations arrêtées'
+                )
+            # MesLivres pages are bounded and duplicate rows are discarded
+            # by _rows(): do NOT claim an exhaustive entitlement snapshot.
+            return ProviderRightsSnapshot(
+                scope=ProviderRightsScope(
+                    account.identity_id, 'numilog', self.credential_id,
+                    expected_account,
+                ),
+                rights=tuple(observations),
+                status='partial', coverage='partial',
+                pagination_complete=False, branch='meslivres',
+                observed_at=observed, snapshot_ref='numilog.meslivres',
+            )
+
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
 
