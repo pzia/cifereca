@@ -4,6 +4,8 @@ No HTTP POST, Adobe mutation, filesystem removal or real provider traffic.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -25,6 +27,7 @@ def test_inflight_clock_skew_preserves_post_guard_but_unblocks_inventory(
 ):
     loan = _loan()
     session = Session([])
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     service = _library(tmp_path, session=session)
     key = return_key("paris", "paris-a", "linked-b", loan.id)
     try:
@@ -65,7 +68,9 @@ def test_untrusted_clock_never_reaches_provider_or_logs_as_private_text(
         record["requested_at"] = raw_time
         service.storage.metadata_set(key, json.dumps(record))
         outcome = service.verify_return_digital(loan)
-        assert outcome["status"] in {"request_sent", "provider_return_confirmed"}
+        # A malformed clock may trigger read-only recovery, but a legacy
+        # empty list is no longer evidence that the provider returned it.
+        assert outcome["status"] in {"request_sent", "verification_unavailable"}
         assert session.posts == []
         assert "SECRET" not in caplog.text
     finally:

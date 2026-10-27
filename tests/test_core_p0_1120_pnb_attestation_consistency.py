@@ -5,6 +5,8 @@ No ReturnDigitalLoan POST, ADEPT call, real inventory, or artifact mutation.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 import json
 
 import pytest
@@ -80,6 +82,7 @@ def test_conflicting_durable_success_rechecked_in_inventory_only(
 ):
     verification, checked_at = invalid
     session = Session([])
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     service = _library(tmp_path, session=session)
     loan = _loan()
     key = return_key("paris", "paris-a", "linked-b", loan.id)

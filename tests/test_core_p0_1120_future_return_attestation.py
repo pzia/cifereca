@@ -5,6 +5,8 @@ No provider return POST, ADEPT mutation, HTTP or local artifact deletion.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -61,6 +63,7 @@ def test_invalid_or_private_timestamp_does_not_attest(value):
 
 def test_future_confirmed_pnb_checkpoint_is_read_only_rechecked_without_post(tmp_path):
     session = Session([])
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     service = _library(tmp_path, session=session)
     loan = _loan()
     key = return_key("paris", "paris-a", "linked-b", loan.id)
@@ -94,6 +97,7 @@ def test_future_confirmed_adobe_first_checkpoint_rechecks_paris_without_replayin
     tmp_path,
 ):
     service, loan, paris = adept_setup(tmp_path)
+    attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         calls = stub_adept(service)
         key = adept_return_key("paris", "alice-paris", "linked-123", loan.id)

@@ -1,73 +1,68 @@
-"""#3197: legacy Paris return-completeness cannot invoke supplier getters.
+"""#3197: legacy mutable statuses never attest Paris loan returns.
 
-Synthetic object-only checks: no ReturnDigitalLoan, session GET or ADEPT call.
+Exercise the Core SQLite flow with in-memory providers, not HTTP or ADEPT.
+Legacy positive loans remain observable; absence needs typed DILICOM coverage.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from cifereca.core.loan_return_verification import (
-    _paris_digital_inventory_complete,
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+from tests.test_core_0982_loan_return_reconciliation import (
+    Session, _library, _loan,
 )
 
 
-def test_legacy_plain_memory_syracuse_only_keeps_existing_compatibility_rule():
-    assert _paris_digital_inventory_complete(
-        SimpleNamespace(last_loan_errors=[]),
-    )
-    assert _paris_digital_inventory_complete(
-        SimpleNamespace(last_loan_errors=[{"upstream": "SYRACUSE"}]),
-    )
-    assert not _paris_digital_inventory_complete(
-        SimpleNamespace(last_loan_errors=[{"upstream": "DILICOM"}]),
-    )
-
-
-@pytest.mark.parametrize("shape", [
-    None, {"upstream": "SYRACUSE"}, ("SYRACUSE",),
-    [{"upstream": "SYRACUSE"}] * 65,
-    [{"upstream": "other"}],
+@pytest.mark.parametrize("legacy_status", [
+    [], [{"upstream": "SYRACUSE"}], [{"upstream": "DILICOM"}], None,
 ])
-def test_unknown_or_oversized_legacy_status_cannot_attest_digital_coverage(shape):
-    assert not _paris_digital_inventory_complete(
-        SimpleNamespace(last_loan_errors=shape),
-    )
+def test_empty_v1_never_attests_absence_or_replays_return(tmp_path, legacy_status):
+    loan = _loan()
+    session = Session([])
+    session.last_loan_errors = legacy_status
+    service = _library(tmp_path, session=session)
+    try:
+        first = service.return_digital(loan)
+        assert first["status"] == "verification_unavailable"
+        assert first["verification"] == "unavailable"
+        assert first["provider_inventory_verified"] is False
+        assert first["request_accepted"] is True
+        assert session.posts == [(loan.id, "linked-b")]
+        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
+        assert session.posts == [(loan.id, "linked-b")]
+        assert session.checks == ["linked-b", "linked-b"]
+    finally:
+        service.close()
 
 
-def test_hostile_property_is_never_invoked_by_return_verification():
-    events = []
-    class ProviderSessionWithGetter:
-        @property
-        def last_loan_errors(self):
-            events.append("remote request")
-            raise RuntimeError("provider call forbidden on verification")
-
-    assert not _paris_digital_inventory_complete(ProviderSessionWithGetter())
-    assert events == []
-
-
-def test_dynamic_attribute_fallback_is_not_executed_for_missing_status():
-    events = []
-    class DynamicProviderSession:
-        def __getattr__(self, key):
-            events.append(key)
-            raise RuntimeError("unexpected plugin resolution")
-    assert not _paris_digital_inventory_complete(DynamicProviderSession())
-    assert events == []
+def test_legacy_positive_presence_remains_observable(tmp_path):
+    loan = _loan()
+    session = Session([loan])
+    service = _library(tmp_path, session=session)
+    try:
+        first = service.return_digital(loan)
+        assert first["status"] == "still_active"
+        assert first["verification"] == "still_present"
+        assert session.posts == [(loan.id, "linked-b")]
+        assert session.checks == ["linked-b"]
+    finally:
+        service.close()
 
 
-def test_custom_sequence_does_not_run_provider_iteration_or_length():
-    events = []
-    class HostileSequence(list):
-        def __len__(self):
-            events.append("len")
-            raise RuntimeError("plugin invoked")
-        def __iter__(self):
-            events.append("iter")
-            raise RuntimeError("plugin invoked")
-    assert not _paris_digital_inventory_complete(
-        SimpleNamespace(last_loan_errors=HostileSequence()),
-    )
-    assert events == []
+def test_pending_legacy_return_requires_subsequent_typed_proof(tmp_path):
+    loan = _loan()
+    session = Session([])
+    service = _library(tmp_path, session=session)
+    try:
+        assert service.return_digital(loan)["status"] == "verification_unavailable"
+        session.last_loan_errors = []
+        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
+        attest_paris_dilicom_complete(session, credential_id="paris-a")
+        result = service.verify_return_digital(loan)
+        assert result["status"] == "provider_return_confirmed"
+        assert result["verification"] == "provider_absent"
+        assert result["provider_inventory_verified"] is True
+        assert session.posts == [(loan.id, "linked-b")]
+        assert session.checks == ["linked-b"] * 3
+    finally:
+        service.close()

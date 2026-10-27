@@ -5,6 +5,8 @@ No live Paris requests, ADEPT mutation, file deletion, or acquisition.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
@@ -77,7 +79,7 @@ def test_adept_first_return_cannot_confirm_absence_from_bad_paris_row(tmp_path, 
         svc.close()
 
 
-def test_genuine_paris_loan_list_and_empty_list_keep_historical_meaning(tmp_path):
+def test_genuine_paris_loan_list_and_typed_empty_inventory_have_distinct_meaning(tmp_path):
     session = Session([_loan()])
     svc = _library(tmp_path, session=session)
     try:
@@ -85,6 +87,7 @@ def test_genuine_paris_loan_list_and_empty_list_keep_historical_meaning(tmp_path
         assert active["status"] == "still_active"
         assert active["provider_inventory_verified"] is False
         session.inventory = []
+        attest_paris_dilicom_complete(session, credential_id="paris-a")
         verified = svc.verify_return_digital(_loan())
         assert verified["status"] == "provider_return_confirmed"
         assert verified["provider_inventory_verified"] is True

@@ -5,6 +5,8 @@ No Adobe or provider HTTP call, and no duplicate return POST is permitted.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 import json
 
 from tests.test_core_0982_loan_return_reconciliation import _library, _loan, Session
@@ -19,6 +21,7 @@ def test_inventory_exception_class_name_is_not_persisted_or_replayed(tmp_path):
             raise AssertionError("Do not stringify private inventory failure")
     HostileInventoryFailure.__name__ = PRIVATE
     session = Session([])
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
     loan = _loan()
     try:
