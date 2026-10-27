@@ -113,14 +113,66 @@ def test_legacy_null_account_requires_explicit_migration_not_upsert(tmp_path):
         storage.close()
 
 
-def test_explicit_insert_only_discovery_does_not_rewrite_foreign_receipt(tmp_path):
+@pytest.mark.parametrize("change", [
+    {"identity_id": "reader-b"},
+    {"provider_id": "numilog"},
+    {"credential_id": "card-b"},
+    {"account_id": "member-b"},
+    {"account_id": ""},
+    {"account_id": None},
+    {"item_id": "edition-2"},
+    {"entitlement_id": "right-b"},
+])
+def test_explicit_insert_only_discovery_rejects_foreign_receipt_without_mutation(
+    tmp_path, change,
+):
+    storage = Storage(tmp_path / "canonical.sqlite")
+    try:
+        storage.acquisition_put(_record())
+        before = storage.acquisition_get("acq-same-id")
+        with pytest.raises(ValueError, match="^acquisition_source_scope_conflict$"):
+            storage.acquisition_put(
+                _record(**change, status="pending"), insert_only=True,
+            )
+        assert storage.acquisition_get("acq-same-id") == before
+        assert len(storage.acquisitions()) == 1
+    finally:
+        storage.close()
+
+
+def test_insert_only_same_exact_owner_is_idempotent_and_keeps_receipt(tmp_path):
     storage = Storage(tmp_path / "canonical.sqlite")
     try:
         storage.acquisition_put(_record())
         before = storage.acquisition_get("acq-same-id")
         assert storage.acquisition_put(
-            _record(identity_id="reader-b", status="pending"), insert_only=True,
+            _record(status="pending", title="Old catalogue title",
+                    artifact_id=None, metadata={"untrusted": True}),
+            insert_only=True,
         ) == "acq-same-id"
+        assert storage.acquisition_get("acq-same-id") == before
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("changes", [
+    ({"identity_id": None}, {"identity_id": "reader-a"}),
+    ({"identity_id": "reader-a"}, {"identity_id": None}),
+    ({"entitlement_id": None}, {"entitlement_id": "right-a"}),
+    ({"entitlement_id": "right-a"}, {"entitlement_id": None}),
+    ({"account_id": None}, {"account_id": ""}),
+    ({"account_id": ""}, {"account_id": None}),
+])
+def test_insert_only_legacy_unknown_scope_requires_explicit_reconciliation(
+    tmp_path, changes,
+):
+    storage = Storage(tmp_path / "canonical.sqlite")
+    try:
+        initial, subsequent = changes
+        storage.acquisition_put(_record(**initial))
+        before = storage.acquisition_get("acq-same-id")
+        with pytest.raises(ValueError, match="^acquisition_source_scope_conflict$"):
+            storage.acquisition_put(_record(**subsequent), insert_only=True)
         assert storage.acquisition_get("acq-same-id") == before
     finally:
         storage.close()
