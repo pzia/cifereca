@@ -20,10 +20,13 @@ def _inert_session_state(session: object) -> dict[str, Any] | None:
     A descriptor shadowing a ProviderSession scalar makes the account/session
     boundary unprovable: the plugin's own action might see another value.
     """
-    if not isinstance(session, ProviderSession):
-        return None
+    # isinstance() on an ABC may consult session.__class__, which invokes
+    # an overridden __getattribute__ and can perform provider I/O. Inspect
+    # the real class first, without touching the session object.
     klass = type(session)
     if getattr_static(klass, "__getattribute__", None) is not object.__getattribute__:
+        return None
+    if not issubclass(klass, ProviderSession):
         return None
     sentinel = object()
     for key in ("connected", "provider_id", "credential_id", "_epoch", "_closed"):
