@@ -193,12 +193,13 @@ DESCRIPTOR = ProviderDescriptor(
 class KoboSession(ProviderSession):
     """Projection of Kobo-Vault API 2.3+ into Paris' Provider model."""
 
-    def __init__(self, *, config: Any, storage: Any, diagnostics: Any, catalog_factory=None, runtime_capabilities=None, **kwargs: Any) -> None:
+    def __init__(self, *, config: Any, storage: Any, diagnostics: Any, catalog_factory=None, runtime_capabilities=None, identity_broker=None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.config = config
         self.storage = storage
         self.diagnostics = diagnostics
         self.runtime_capabilities = runtime_capabilities
+        self.identity_broker = identity_broker
         base_url = str(self.options.get("base_url") or "").strip()
         token = str(self.credentials.get("api_token") or "").strip()
         timeout = float(self.options.get("timeout_seconds") or (config.request_timeout_seconds("kobo", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
@@ -670,6 +671,119 @@ class KoboSession(ProviderSession):
         self._ensure_personal_binding(bound_account, generation)
         return rows
 
+    def _rights_owner_snapshot(self, expected_account: str):
+        """Freeze exact Core owner candidates, including duplicates/ambiguity."""
+        broker = self.identity_broker
+        if broker is None:
+            return None
+        try:
+            bindings = broker.accounts()
+            if type(bindings) not in (tuple, list):
+                return None
+            owners = []
+            for ref in bindings:
+                if (getattr(ref, "provider_id", None) == "kobo"
+                        and getattr(ref, "account_id", None) == expected_account):
+                    identity = getattr(ref, "identity_id", None)
+                    owners.append(identity if type(identity) is str else "")
+            return (id(broker), tuple(sorted(owners)))
+        except Exception:
+            return None
+
+    def rights_observation_snapshot(self, account: Account):
+        """Optional #3252 account-scoped read, NEVER a backup or entitlement.
+
+        The existing library() already guards Vault GET, duplicate product
+        IDs, foreign rows and in-flight reconnects. Require the Core identity
+        broker as a second owner fence; never infer owner from Account.identity_id
+        supplied by an untrusted direct caller. A partial positive observation
+        cannot revoke absent purchases or authorize a download.
+        """
+        from datetime import datetime, timezone
+        from cifereca.plugin_api import (
+            ProviderRightsScope, ProviderRightObservation,
+            ProviderRightsSnapshot,
+        )
+
+        if (type(account) is not Account
+                or type(account.identity_id) is not str
+                or not account.identity_id
+                or not self.connected or len(self._accounts) != 1):
+            raise ProviderCapabilityError(
+                "Kobo-Vault : portée des observations de droits indisponible"
+            )
+        bound = self._accounts[0]
+        generation = self._personal_binding_generation
+        if (account.provider_id != "kobo"
+                or account.credential_id != self.credential_id
+                or account.unique_id != bound.unique_id
+                or bound.provider_id != "kobo"
+                or bound.credential_id != self.credential_id
+                or not _strict_account_scope(bound.unique_id)):
+            raise ProviderCapabilityError(
+                "Kobo-Vault : compte des observations de droits incohérent"
+            )
+        account_id = bound.unique_id
+        owner = self._rights_owner_snapshot(account_id)
+        if owner is None or owner[1] != (account.identity_id,):
+            raise ProviderCapabilityError(
+                "Kobo-Vault : propriétaire unique non attesté pour les droits"
+            )
+        self._ensure_personal_binding(bound, generation)
+        results = self.library()  # ONE existing authenticated Vault GET.
+        self._ensure_personal_binding(bound, generation)
+        if (self._rights_owner_snapshot(account_id) != owner
+                or bound.unique_id != account_id):
+            raise ProviderCapabilityError(
+                "Kobo-Vault : propriétaire modifié pendant la lecture"
+            )
+        observed = datetime.now(timezone.utc).isoformat()
+        observed_rights = []
+        for row in results:
+            if type(row) is not SearchResult or row.owned is not True:
+                continue
+            if (type(row.record_id) is not str
+                    or _strict_product_id({"product_id": row.record_id})
+                    != row.record_id
+                    or row.source_provider != "kobo"
+                    or row.source_credential != self.credential_id
+                    or row.source_collection not in ("library", "archived")):
+                continue
+            meta = row.metadata
+            if type(meta) is not dict:
+                continue
+            if ("account_id" in meta and
+                    (type(meta["account_id"]) is not str
+                     or meta["account_id"] != account_id)):
+                continue
+            archived = meta.get("archived")
+            if archived is not None and type(archived) is not bool:
+                continue
+            observed_rights.append(ProviderRightObservation(
+                edition_id=row.record_id, right_id=row.record_id,
+                kind="purchase",
+                state=("inactive" if archived is True
+                       or row.source_collection == "archived" else "active"),
+                evidence_kind="provider_response",
+                evidence_ref="kobo.personal_manifest",
+                observed_at=observed, delivery="unknown",
+            ))
+        self._ensure_personal_binding(bound, generation)
+        if (self._rights_owner_snapshot(account_id) != owner
+                or bound.unique_id != account_id):
+            raise ProviderCapabilityError(
+                "Kobo-Vault : propriétaire modifié pendant la lecture"
+            )
+        return ProviderRightsSnapshot(
+            scope=ProviderRightsScope(
+                account.identity_id, "kobo", self.credential_id, account_id,
+            ),
+            rights=tuple(observed_rights),
+            status="partial", coverage="partial",
+            pagination_complete=False, branch="personal_manifest",
+            observed_at=observed, snapshot_ref="kobo.personal_manifest",
+        )
+
     def backup_manifest(self) -> list[dict[str, Any]]:
         # No diagnostic may outlive the previous manifest if fetching raises.
         self.backup_manifest_rejection_count = 0
@@ -961,6 +1075,7 @@ class KoboPlugin(ProviderPlugin):
 
     def activate(self, context):
         self._runtime_capabilities = context.broker("runtime.capabilities")
+        self._identity_broker = context.broker("identities")
         if self._runtime_capabilities is None:
             raise ProviderError("Kobo : broker runtime.capabilities requis et indisponible")
         resolved = context.select_service(
@@ -976,6 +1091,7 @@ class KoboPlugin(ProviderPlugin):
     def deactivate(self):
         self._catalog_factory = None
         self._runtime_capabilities = None
+        self._identity_broker = None
 
     def create_session(
         self,
@@ -996,6 +1112,7 @@ class KoboPlugin(ProviderPlugin):
             options=options,
             catalog_factory=getattr(self, '_catalog_factory', None),
             runtime_capabilities=getattr(self, "_runtime_capabilities", None),
+            identity_broker=getattr(self, "_identity_broker", None),
             config=config,
             storage=storage,
             diagnostics=diagnostics,
