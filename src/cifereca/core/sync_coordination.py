@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 from contextlib import ExitStack
+from inspect import getattr_static
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -94,7 +95,13 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # Adopt the optional atomic inventory envelope only where the plugin
         # explicitly implements it. Legacy providers retain the established
         # loans()/cache behavior, without a second network read.
-        typed_inventory = callable(getattr(session, "loan_inventory_snapshot", None))
+        # A provider property/getattr may issue HTTP even during a mere
+        # typed-vs-legacy capability check. Treat any statically declared
+        # reader as opt-in; read_loan_inventory rejects unsafe descriptors
+        # without falling back to a second legacy network GET.
+        typed_inventory = (
+            getattr_static(session, "loan_inventory_snapshot", None) is not None
+        )
         snapshot = None
         with measure("loan_refresh_ms"):
             if typed_inventory:
@@ -628,8 +635,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         account.credential_id, account.unique_id,
                         self._account_context_epoch,
                     )
-                    if session is not None and callable(
-                        getattr(session, "loan_inventory_snapshot", None)
+                    # Never invoke a provider getter while selecting the
+                    # typed path. A malformed declared reader must fail
+                    # closed instead of being demoted to legacy loans().
+                    if session is not None and (
+                        getattr_static(session, "loan_inventory_snapshot", None)
+                        is not None
                     ):
                         # Exactly one provider read, with the provider's atomic
                         # status and branch evidence. Never infer a missing
