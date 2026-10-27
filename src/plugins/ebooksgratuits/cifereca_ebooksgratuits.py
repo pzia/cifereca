@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, html, re, unicodedata
+import hashlib, html, re, unicodedata, logging
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -8,6 +8,8 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 import xml.etree.ElementTree as ET
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
+
+_DOWNLOAD_TRACE = logging.getLogger('cifereca.plugins.ebooksgratuits')
 
 BASE='https://www.ebooksgratuits.com/'
 MAX_REQUESTED_PAGES = 101  # Pages 0..100, not an unbounded upstream scan.
@@ -558,11 +560,23 @@ class EbooksSession(ProviderSession):
         except Cancelled:
             raise  # Cancellation is cooperative control flow, never a failed EPUB.
         except (TemporaryUnavailable, UnsupportedOperation, Conflict) as exc:
+            # Keep the observed broker failure in the shared raw Core/plugin
+            # journal; the closed UI-facing result below is not a substitute
+            # for its real URL/status/cause when diagnosing a partial outage.
+            _DOWNLOAD_TRACE.error(
+                "EPUB fetch failed provider=%s record_id=%s url=%s",
+                self.provider_id, item.record_id, item.download_url,
+                exc_info=True,
+            )
             failure = _public_download_error(exc)
         except Exception:
-            # Neither arbitrary ProviderError messages nor transport exception
-            # chains may escape the plugin boundary (signed URL, file path,
-            # response body). The broker uses the typed branches above.
+            _DOWNLOAD_TRACE.error(
+                "EPUB fetch failed provider=%s record_id=%s url=%s",
+                self.provider_id, item.record_id, item.download_url,
+                exc_info=True,
+            )
+            # Keep the established non-authorizing, closed business outcome.
+            # Only the raw journal retains the original exception/traceback.
             failure = ProviderError('Ebooks libres et gratuits : download_unavailable')
         if failure is not None:
             # Raise OUTSIDE the handler: "from None" suppresses traceback
