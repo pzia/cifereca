@@ -428,3 +428,19 @@ def test_malformed_capability_descriptor_does_not_execute_custom_getters():
     assert runtime.availability == "unknown" and not runtime.usable
     assert all(item.publication_status == "unverified" for item in static)
     assert touched == []
+
+
+@pytest.mark.parametrize("op", ["loan.list", "loan.borrow", "loan.download_token"])
+def test_closed_session_with_stale_connected_marker_is_unavailable(op):
+    # A stale connected=True must not re-enable a previously closed session.
+    a = account()
+    d = descriptor(borrow=True, digital=True)
+    s = ParisActions(d, a)
+    assert fact(op, d, s, a).availability == "supported"
+    s.__dict__["_closed"] = True
+    assert s.__dict__["connected"] is True
+    outcome = fact(op, d, s, a)
+    assert outcome.availability == "unavailable"
+    assert outcome.reason_code == "session_unavailable"
+    assert not outcome.usable and not outcome.session_ready
+    # The safety check is local; no method, account getter or network call.
