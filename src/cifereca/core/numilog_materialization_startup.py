@@ -325,7 +325,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     # The per-opening quota leaves purchases unexamined.
                     # A partial batch must never be reported as complete.
                     blocked += 1
-                    trace.record_item(position, 'quota_reached')
+                    trace.record_item(position, 'quota_reached', item_id=row.record_id)
                     trace.fail('preflight_failed')
                     break
                 if control is not None and callable(getattr(control, "check_cancelled", None)):
@@ -335,7 +335,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             source_id,
                         ) != consent_revision
                         or not same_source()):
-                    trace.record_item(position, "consent_revoked")
+                    trace.record_item(position, "consent_revoked", item_id=row.record_id)
                     trace.fail("consent_revoked")
                     failures += 1
                     break
@@ -346,7 +346,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     if presence_seconds_remaining <= 0:
                         blocked += 1
                         declared_pending += 1
-                        trace.record_item(position, 'declared_needs_review')
+                        trace.record_item(position, 'declared_needs_review', item_id=row.record_id)
                         trace.fail('preflight_failed')
                         continue
                     presence_started = monotonic()
@@ -372,11 +372,11 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     if presence.status == 'declared_current':
                         declared_local += 1
                         skipped += 1
-                        trace.record_item(position, 'already_local_declared')
+                        trace.record_item(position, 'already_local_declared', item_id=row.record_id)
                         continue
                     blocked += 1
                     declared_pending += 1
-                    trace.record_item(position, 'declared_needs_review')
+                    trace.record_item(position, 'declared_needs_review', item_id=row.record_id)
                     trace.fail('preflight_failed')
                     continue
                 # The offline preflight conservatively reports *any*
@@ -407,7 +407,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             control.check_cancelled()
                         if verified:
                             skipped += 1
-                            trace.record_item(position, 'already_local_verified')
+                            trace.record_item(position, 'already_local_verified', item_id=row.record_id)
                             continue
                 # The fresh authenticated inventory is authoritative for
                 # delivery capability. SQLite's older owned right may omit
@@ -415,7 +415,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # an explicit no-download observation from THIS source.
                 if row.downloadable is not True:
                     blocked += 1
-                    trace.record_item(position, 'not_downloadable')
+                    trace.record_item(position, 'not_downloadable', item_id=row.record_id)
                     trace.fail('preflight_failed')
                     continue
                 if (prior.ok is not True
@@ -436,6 +436,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             "source_changed", "invalid_source",
                             "invalid_item_id",
                         } else "preflight_failed",
+                        item_id=row.record_id,
                     )
                     trace.fail('preflight_failed')
                     continue
@@ -470,7 +471,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     observe("index")
                     index_delivered(broker.service, acquired, title=row.title)
                     total += 1
-                    trace.record_item(position, 'acquired')
+                    trace.record_item(position, 'acquired', item_id=row.record_id)
                     if control is not None and callable(getattr(control, "report", None)):
                         control.report(current=total, message="Sauvegarde Numilog")
                 except Cancelled:
@@ -480,7 +481,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     # the independently authorized remaining purchases.
                     # Never retry this edition in this run, never replay its
                     # signed ACSM, and preserve the first failure phase/code.
-                    trace.record_item(position, 'acquisition_failed')
+                    trace.record_item(position, 'acquisition_failed', item_id=row.record_id)
                     trace.fail()
                     failures += 1
                     continue
