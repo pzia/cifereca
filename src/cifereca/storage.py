@@ -1721,11 +1721,15 @@ class Storage:
                     )
                 ):
                     raise ValueError("relocate_scope_conflict")
-                db.execute(
-                    "UPDATE backup_items SET local_path=?,identity_id=COALESCE(identity_id,?) "
-                    "WHERE local_path=? AND provider_id=?",
-                    (new_text, identity_id, old_text, provider_id),
-                )
+                # Relocation is never an ownership attestation. In particular,
+                # a no-op rename must not fill a historical NULL identity;
+                # actual moves already refuse ambiguous legacy owners above.
+                if old_text != new_text:
+                    db.execute(
+                        "UPDATE backup_items SET local_path=? "
+                        "WHERE local_path=? AND provider_id=? AND identity_id=?",
+                        (new_text, old_text, provider_id, identity_id),
+                    )
                 if old_row:
                     old_placement_id = str(old_row[0])
                     placement_id = old_placement_id
