@@ -167,8 +167,10 @@ def test_ambiguous_offer_or_bad_timestamp_and_session_scope_are_refused():
         scope(credential="")
     with pytest.raises(ValueError, match="invalid_rights_observation_contract"):
         replace(snap(), schema_version="cifereca.rights.observation/2")
-    with pytest.raises(ValueError, match="invalid_rights_observation_resume"):
+    with pytest.raises(ValueError, match="unproven_rights_observation_completeness"):
         replace(snap(), resume_cursor="next")
+    with pytest.raises(ValueError, match="invalid_rights_observation_resume"):
+        replace(snap(coverage="partial"), resume_cursor="next")
 
 
 def test_no_io_no_plugin_or_storage_mutation_boundary():
