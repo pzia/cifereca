@@ -578,6 +578,11 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
             or keep.get("state") != "present"):
         return False
     provider, edition = row["provider_id"], row.get("source_item_id")
+    # Without an explicit edition/source reference, identical EPUB bytes
+    # could come from unrelated imports or acquisitions. There is no
+    # canonical, scope-verified keeper: fail closed even with zero rights.
+    if type(edition) is not str or not edition:
+        return False
     # The placement omits credential/borrower. The entitlement ownership
     # constraint applies to EVERY provider, not a hardcoded set of sellers.
     # An unscoped placement cannot be removed if this identity has rights
