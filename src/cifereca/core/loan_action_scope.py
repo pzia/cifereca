@@ -14,17 +14,41 @@ from ..models import Account, Loan
 from ..providers.base import ProviderSession
 
 
+def _inert_session_state(session: object) -> dict[str, Any] | None:
+    """Only inspect initialized memory, never provider getters or proxies.
+
+    A descriptor shadowing a ProviderSession scalar makes the account/session
+    boundary unprovable: the plugin's own action might see another value.
+    """
+    if not isinstance(session, ProviderSession):
+        return None
+    klass = type(session)
+    if getattr_static(klass, "__getattribute__", None) is not object.__getattribute__:
+        return None
+    sentinel = object()
+    for key in ("connected", "provider_id", "credential_id", "_epoch", "_closed"):
+        shadow = getattr_static(klass, key, sentinel)
+        if shadow is not sentinel and hasattr(type(shadow), "__get__"):
+            return None
+    try:
+        data = object.__getattribute__(session, "__dict__")
+    except (AttributeError, TypeError):
+        return None
+    return data if type(data) is dict else None
+
+
 def _inert_session_accounts(session: object) -> list[Account] | tuple[Account, ...] | None:
     """Read base ProviderSession's initialized accounts without plugin code.
 
     An override of the public property, a dynamic session registry or an
     oversized list cannot authorize a remote loan action. No getter is run.
     """
-    if not isinstance(session, ProviderSession):
+    state = _inert_session_state(session)
+    if state is None:
         return None
     if getattr_static(type(session), "accounts", None) is not ProviderSession.__dict__["accounts"]:
         return None
-    values = object.__getattribute__(session, "__dict__").get("_accounts")
+    values = state.get("_accounts")
     return values if type(values) in (list, tuple) and len(values) <= 512 else None
 
 
@@ -62,12 +86,14 @@ class LoanActionScopeLease:
         """
         try:
             account, session, loan = self._account, self._session, self._loan
-            if (type(account) is not Account or type(loan) is not Loan
+            session_state = _inert_session_state(session)
+            if (session_state is None
+                    or type(account) is not Account or type(loan) is not Loan
                     or type(self._context_epoch) is not int
                     or type(getattr(service, "_account_context_epoch", None)) is not int
                     or service._account_context_epoch != self._context_epoch
-                    or getattr(session, "_epoch", None) != self._provider_epoch
-                    or getattr(session, "_closed", False) is True):
+                    or session_state.get("_epoch") != self._provider_epoch
+                    or session_state.get("_closed") is True):
                 return False
             exact = (
                 account.identity_id, account.provider_id,
@@ -96,9 +122,9 @@ class LoanActionScopeLease:
                     or loan.source_credential != credential
                     or loan.source_account_id not in allowed_borrowers
                     or type(loan.id) is not str or not loan.id
-                    or getattr(session, "connected", None) is not True
-                    or getattr(session, "provider_id", None) != provider
-                    or getattr(session, "credential_id", None) != credential):
+                    or session_state.get("connected") is not True
+                    or session_state.get("provider_id") != provider
+                    or session_state.get("credential_id") != credential):
                 return False
             identity = getattr(service, "current_identity", None)
             if (getattr(identity, "identity_id", None) != identity_id
@@ -140,6 +166,9 @@ def capture_loan_action_scope(
     epoch = getattr(service, "_account_context_epoch", None)
     if type(epoch) is not int:
         return None
+    session_state = _inert_session_state(session)
+    if session_state is None:
+        return None
     lease = LoanActionScopeLease(
         _account=account, _session=session, _loan=loan,
         _expected_identity_id=expected_identity_id,
@@ -148,7 +177,7 @@ def capture_loan_action_scope(
             account.credential_id, account.unique_id,
         ),
         _loan_fields=_exact_loan_fields(loan),
-        _context_epoch=epoch, _provider_epoch=getattr(session, "_epoch", None),
+        _context_epoch=epoch, _provider_epoch=session_state.get("_epoch"),
     )
     return lease if lease.current(service) else None
 
