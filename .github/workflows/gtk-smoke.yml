@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload GTK smoke verdict only
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gtk-smoke-verdict
           path: ${{ runner.temp }}/gtk-smoke-public/result.json

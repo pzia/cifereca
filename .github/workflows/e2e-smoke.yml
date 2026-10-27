@@ -164,7 +164,7 @@ jobs:
 
       - name: Upload privacy-safe E2E verdicts only
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-core-summary
           path: ${{ runner.temp }}/cifereca-e2e-public/summary.json
