@@ -219,9 +219,15 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     try:
         from .library_audit_roots import configured_identity_roots
         from .local_candidate_screen import screen_local_candidates
+        # Older manually imported ACSM books can live in either directory.
+        # Both are possible presence hints only: neither folder name proves
+        # the edition, BnF loan, ADEPT licence or authorization to attach it.
         roots = tuple(
-            root / 'manual' for root in
-            configured_identity_roots(service.config, account.identity_id)[account.identity_id]
+            root / directory
+            for root in configured_identity_roots(
+                service.config, account.identity_id,
+            )[account.identity_id]
+            for directory in ('manual', 'acsm-import')
         )
         catalogue = service.storage.catalog_entries(
             state='local', identity_id=account.identity_id, limit=8193,
