@@ -341,6 +341,13 @@ def sync_source_phase_summary(source: object) -> str:
             continue
         raw_status = getattr(row, "status", None)
         status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
+        if (phase == "materialize" and type(raw_status) is str
+                and raw_status == "not_supported"
+                and _public_sync_provider_slug(source) == "numilog"):
+            # The generic materialization broker only supports Kobo. Numilog
+            # has a separate consent/status row on this same page; this header
+            # must not claim that all Numilog local downloads are unsupported.
+            status = "Voir « Sauvegarde automatique des achats Numilog »"
         attempt = _timestamp_label(getattr(row, "last_attempt", ""))
         success = _timestamp_label(getattr(row, "last_success", ""))
         detail = heading + " : " + status
