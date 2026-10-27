@@ -59,23 +59,23 @@ def fixture():
 
 def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
     session, a, b = fixture()
-    # Freeze A after loans(a) has written last_loan_errors but BEFORE its
-    # snapshot computes per-branch coverage. The B thread attempts to
-    # overwrite the same v1 mutable facade by calling legacy loans(b).
+    # Freeze the scoped branch observation for A while its snapshot is still
+    # being constructed. B's legacy loans() must not interleave a branch GET;
+    # neither result relies on mutable last_loan_errors.
     read_a_complete, unblock_a, read_b_started, read_b_complete = (
         Event(), Event(), Event(), Event()
     )
-    legacy_loans = session.loans
+    original_read = session._read_loans_for_account
 
-    def frozen_loans(account):
-        rows = legacy_loans(account)
+    def frozen_read(account):
+        rows, failures = original_read(account)
         if account.unique_id == a.unique_id:
             read_a_complete.set()
             if not unblock_a.wait(10):
                 raise AssertionError("Synthetic read A timed out")
-        return rows
+        return rows, failures
 
-    session.loans = frozen_loans
+    session._read_loans_for_account = frozen_read
 
     def run_b():
         read_b_started.set()
@@ -90,8 +90,8 @@ def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
             task_b = pool.submit(run_b)
             assert read_b_started.wait(10)
             try:
-                # The snapshot must protect BOTH the upstream read and its
-                # interpretation of the mutable v1 last_loan_errors.
+                # The lock covers the read and classification of the typed
+                # snapshot while an independent legacy read waits.
                 assert not read_b_complete.wait(0.15)
             finally:
                 unblock_a.set()
@@ -109,7 +109,7 @@ def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
         assert snap_a.loans[0].identity_id == "identity-A"
         assert len(rows_b) == 2
         assert all(row.source_account_id == "reader-B" for row in rows_b)
-        assert session.last_loan_errors == []
+        assert "last_loan_errors" not in vars(session)
         assert session.client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
             ("DILICOM", "reader-B"), ("SYRACUSE", "reader-B"),
