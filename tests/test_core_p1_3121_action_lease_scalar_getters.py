@@ -88,3 +88,28 @@ def test_lease_revoked_if_getter_installed_after_initial_capture(
     assert not lease.current(service)
     assert invoked == []
     assert downloaded == []
+
+
+def test_shadow_type_metaclass_lookup_is_not_invoked_by_lending_lease(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, _state, downloaded = connected_core
+    triggered = []
+    class UntrustedMeta(type):
+        def __getattribute__(klass, key):
+            if key == "__get__":
+                triggered.append(key)
+                raise RuntimeError("metaclass getter may perform HTTP")
+            return super().__getattribute__(key)
+
+    class UntrustedClassAttribute(metaclass=UntrustedMeta):
+        pass
+
+    # A non-descriptor class shadow does not supersede initialized
+    # instance memory; examining its type may not call its metaclass.
+    monkeypatch.setattr(
+        type(session), "connected", UntrustedClassAttribute(), raising=False,
+    )
+    assert _capture(service, session, account, loan) is not None
+    assert triggered == []
+    assert downloaded == []
