@@ -5,6 +5,8 @@ ReturnDigitalLoan, ADEPT mutation, GET, or file deletion is performed.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 import json
 
 import pytest
@@ -87,9 +89,10 @@ def test_adobe_first_paris_inventory_verification_has_identical_guard(
         service.close()
 
 
-def test_syracuse_only_failure_still_allows_exact_dilicom_confirmation(tmp_path):
+def test_typed_dilicom_proof_is_independent_from_syracuse_failure(tmp_path):
     session = Session([])
     session.last_loan_errors = [{"upstream": "SYRACUSE", "error": PRIVATE}]
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     service = _library(tmp_path, session=session)
     loan = _loan()
     try:
@@ -106,6 +109,7 @@ def test_syracuse_only_failure_still_allows_exact_dilicom_confirmation(tmp_path)
     second_root.mkdir()
     service2, loan2, paris2 = adept_setup(second_root)
     paris2.last_loan_errors = [{"upstream": "SYRACUSE", "error": PRIVATE}]
+    attest_paris_dilicom_complete(paris2, credential_id="alice-paris")
     try:
         assert service2.verify_paris_return_inventory(loan2) == {
             "status": "provider_return_confirmed",
