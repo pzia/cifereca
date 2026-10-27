@@ -995,6 +995,9 @@ class LibraryMaintenanceBrokerImpl:
                         or candidate_has_active_dependencies(
                             self.service.storage,
                             placement_id=placement_id, path=str(path),
+                            removable_variant={
+                                **placement, "source_artifact_id": source_id,
+                            },
                         )):
                     raise _VariantScopeConflict("Références de variante non vérifiables")
                 seen_paths.add(path)
