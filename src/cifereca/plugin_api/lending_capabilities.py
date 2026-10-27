@@ -279,7 +279,119 @@ def validate_lending_publication(
     return tuple(output)
 
 
+
+# An optional, version-additive observation facet. It is deliberately NOT a
+# parser for Syracuse/DILICOM (or any other vendor-specific payload).
+# Plugin adapters may project ONLY actual, exact-branch account observations.
+# No operation, provider getter, HTTP call or entitlement write is performed.
+BorrowerEligibilityState = Literal[
+    "unsupported", "unavailable", "unverified", "temporarily_blocked",
+    "eligible_observed",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class BorrowerOperationEvidence:
+    """Already-observed values for ONE account, branch and operation.
+
+    `subscription`, `remaining_loans` and `permission` are optional
+    observed facts, not inferred from general account login, stock-level
+    CanLoan or a different library backend. Unknown means unobserved.
+    """
+    identity_id: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+    branch: str
+    operation: str
+    subscription: Literal["valid", "renewal_pending", "expired", "unknown"] = "unknown"
+    remaining_loans: int | None = None
+    permission: Literal["allowed", "denied", "unknown"] = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class BorrowerOperationEligibility:
+    """Presentation evidence only; never authorization for a remote action."""
+    state: BorrowerEligibilityState
+    reason_code: str
+    operation: str
+    branch: str
+
+
+def assess_borrower_operation_eligibility(
+    capability: LendingOperationFact, *, account: Account,
+    branch: str, evidence: BorrowerOperationEvidence | None = None,
+) -> BorrowerOperationEligibility:
+    """Combine static capability and exact borrower observation without I/O.
+
+    An observed blocker wins over other UNKNOWN fields only AFTER matching
+    the entire identity/provider/credential/borrower/branch/operation.
+    No proof means unverified; even eligible_observed is NOT lending consent
+    or a bypass of the provider's final borrow admission.
+    """
+    operation = "loan.borrow"
+    requested_branch = branch if type(branch) is str and branch else ""
+    def outcome(state: BorrowerEligibilityState, code: str):
+        return BorrowerOperationEligibility(state, code, operation, requested_branch)
+
+    if type(capability) is not LendingOperationFact or capability.operation != operation:
+        return outcome("unverified", "capability_unverified")
+    if capability.availability == "unsupported":
+        return outcome("unsupported", "operation_unsupported")
+    if capability.availability == "unavailable":
+        return outcome("unavailable", "session_unavailable")
+    if (capability.availability != "supported"
+            or capability.manifest_declared is not True
+            or capability.descriptor_declared is not True
+            or capability.method_implemented is not True
+            or capability.session_ready is not True):
+        return outcome("unverified", "capability_unverified")
+    if (type(account) is not Account
+            or not requested_branch or len(requested_branch) > 64
+            or any(not (c.isascii() and (c.islower() or c.isdigit()
+                         or c in "._-")) for c in requested_branch)
+            or type(evidence) is not BorrowerOperationEvidence):
+        return outcome("unverified", "borrower_evidence_unavailable")
+    scopes = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, requested_branch, operation,
+    )
+    observed = (
+        evidence.identity_id, evidence.provider_id, evidence.credential_id,
+        evidence.account_id, evidence.branch, evidence.operation,
+    )
+    if (any(type(v) is not str or len(v) > 1024 or "\x00" in v for v in scopes + observed)
+            or not account.identity_id or not account.provider_id
+            or not account.credential_id or observed != scopes):
+        return outcome("unverified", "borrower_scope_unverified")
+    if (type(evidence.subscription) is not str
+            or evidence.subscription not in {
+                "valid", "renewal_pending", "expired", "unknown"
+            } or type(evidence.permission) is not str
+            or evidence.permission not in {"allowed", "denied", "unknown"}
+            or (evidence.remaining_loans is not None and (
+                type(evidence.remaining_loans) is not int
+                or not 0 <= evidence.remaining_loans <= 10000
+            ))):
+        return outcome("unverified", "borrower_evidence_invalid")
+    # Readiness is per borrow action. Renewal pending must never invalidate
+    # login or hide previously acquired loans, even below the quota.
+    if evidence.subscription in {"renewal_pending", "expired"}:
+        return outcome("temporarily_blocked", "subscription_not_borrowable")
+    if evidence.remaining_loans == 0:
+        return outcome("temporarily_blocked", "quota_reached")
+    if evidence.permission == "denied":
+        return outcome("temporarily_blocked", "borrow_permission_denied")
+    if (evidence.subscription != "valid"
+            or evidence.remaining_loans is None
+            or evidence.permission != "allowed"):
+        return outcome("unverified", "borrow_permission_unverified")
+    return outcome("eligible_observed", "borrow_permission_observed")
+
+
 __all__ = [
     "LendingAvailability", "LendingOperationFact", "assess_lending_operation",
     "LendingPublicationStatus", "LendingPublicationFact", "validate_lending_publication",
+    "BorrowerEligibilityState", "BorrowerOperationEvidence",
+    "BorrowerOperationEligibility", "assess_borrower_operation_eligibility",
 ]
