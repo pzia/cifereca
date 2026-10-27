@@ -179,6 +179,38 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         return ({'status': 'unchanged'} if usable else
                 {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
 
+    # A user-confirmed declaration is separate from an ADEPT receipt.
+    # Require the exact current right AND loan transaction to match, and
+    # revalidate the existing file without granting any supplier provenance.
+    # This check runs while the caller holds the acquisition lock, before
+    # any new signed GET. A stale declaration never authorizes downloading.
+    try:
+        from .library_declared_links import has_active_declared_link
+        declared_scope = dict(
+            identity_id=account.identity_id, provider_id=loan.source_provider,
+            credential_id=account.credential_id, account_id=account.unique_id,
+            item_id=loan.record_id,
+        )
+        declared = has_active_declared_link(service.storage, **declared_scope)
+    except Exception:
+        return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
+    if not current():
+        return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
+    if declared:
+        try:
+            from .library_declared_presence import verify_declared_presence
+            presence = verify_declared_presence(
+                service, **declared_scope, source_current=current,
+                expected_loan_id=loan.id, _acquisition_lock_held=True,
+            )
+        except Exception:
+            return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
+        if not current():
+            return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
+        if presence.status == 'declared_current':
+            return {'status': 'declared_local'}
+        return {'status': 'attention_required', 'code': 'bnf_local_declaration_needs_review'}
+
     # An older manual ACSM/EPUB or indexed manual placement may already
     # represent this title. Titles are *hints*, not proof of the same edition
     # or licence: stop before a new signed GET and request a deliberate
