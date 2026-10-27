@@ -3778,7 +3778,9 @@ class Storage:
                 ))
                 or placement_id == keep_placement_id
                 or candidate_path == kept_path
-                or source_item_id is not None and type(source_item_id) is not str):
+                # A missing edition cannot establish two placements'
+                # common ownership even if no entitlement exists today.
+                or type(source_item_id) is not str or not source_item_id):
             raise ValueError("duplicate_retire_scope_invalid")
         from .core.duplicate_maintenance_guard import (
             candidate_has_active_dependencies_in_db,
@@ -3803,31 +3805,20 @@ class Storage:
                 raise ValueError("duplicate_retire_scope_changed")
             # The keeper/candidate rows omit the credential and borrower:
             # inspect rights for EVERY provider under the same write lock.
-            # An edition-less placement is safe only if there are no rights
-            # for this identity/provider to associate with it.
-            if not source_item_id:
-                if db.execute(
-                    "SELECT 1 FROM entitlements WHERE provider_id=? "
-                    "AND (identity_id=? OR identity_id IS NULL) LIMIT 1",
-                    (provider_id, identity_id),
-                ).fetchone():
-                    raise ValueError("duplicate_retire_unscoped_owner")
-            else:
-                # Older rights can have an unset identity. Their owner is
-                # unknown, not a reason to silently coalesce two placements.
-                if db.execute(
-                    "SELECT 1 FROM entitlements WHERE provider_id=? "
-                    "AND item_id=? AND identity_id IS NULL LIMIT 1",
-                    (provider_id, source_item_id),
-                ).fetchone():
-                    raise ValueError("duplicate_retire_unscoped_owner")
-                owners = set(db.execute(
-                    "SELECT credential_id,account_id FROM entitlements "
-                    "WHERE provider_id=? AND identity_id=? AND item_id=?",
-                    (provider_id, identity_id, source_item_id),
-                ))
-                if len(owners) > 1:
-                    raise ValueError("duplicate_retire_ambiguous_owner")
+            # Older rights without an identity cannot prove the local owner.
+            if db.execute(
+                "SELECT 1 FROM entitlements WHERE provider_id=? "
+                "AND item_id=? AND identity_id IS NULL LIMIT 1",
+                (provider_id, source_item_id),
+            ).fetchone():
+                raise ValueError("duplicate_retire_unscoped_owner")
+            owners = set(db.execute(
+                "SELECT credential_id,account_id FROM entitlements "
+                "WHERE provider_id=? AND identity_id=? AND item_id=?",
+                (provider_id, identity_id, source_item_id),
+            ))
+            if len(owners) > 1:
+                raise ValueError("duplicate_retire_ambiguous_owner")
             if candidate_has_active_dependencies_in_db(
                 db, placement_id=placement_id, path=candidate_path,
             ):

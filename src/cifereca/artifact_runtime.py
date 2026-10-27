@@ -578,17 +578,18 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
             or keep.get("state") != "present"):
         return False
     provider, edition = row["provider_id"], row.get("source_item_id")
-    # The placement omits credential/borrower. The entitlement ownership
-    # constraint applies to EVERY provider, not a hardcoded set of sellers.
-    # An unscoped placement cannot be removed if this identity has rights
-    # whose item it cannot be compared with.
+    # Without an explicit edition/source reference, identical EPUB bytes
+    # could come from unrelated imports or acquisitions. There is no
+    # canonical, scope-verified keeper: fail closed even with zero rights.
+    if type(edition) is not str or not edition:
+        return False
+    # The placement omits credential/borrower. Check all providers and
+    # preserve the unknown provenance of legacy unattributed rights.
     rights = [
         right for right in storage.entitlements(provider_id=provider)
         if right.get("identity_id") == row["identity_id"]
         or right.get("identity_id") is None
     ]
-    if not isinstance(edition, str) or not edition:
-        return not rights
     matching = [right for right in rights if right.get("item_id") == edition]
     # A legacy NULL identity is not proof that the right belongs to this
     # placement. Never silently discard this ambiguous ownership evidence.

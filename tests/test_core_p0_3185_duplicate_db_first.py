@@ -336,3 +336,36 @@ def test_legacy_null_identity_other_edition_does_not_block(tmp_path):
         assert not candidate.exists() and kept.is_file()
     finally:
         service.storage.close()
+
+@pytest.mark.parametrize("unknown_edition", [None, ""])
+def test_duplicate_without_recorded_edition_cannot_be_retired_even_without_rights(
+    tmp_path, unknown_edition,
+):
+    service, broker, request, candidate, kept, artifact = _rig(tmp_path)
+    try:
+        # Matching SHA, identity and provider alone cannot establish that
+        # two manual/imported copies have interchangeable provenance.
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                "UPDATE placements SET source_item_id=? WHERE placement_id IN (?,?)",
+                (unknown_edition, request.placement_id, request.keep_placement_id),
+            )
+        with pytest.raises(Conflict):
+            broker.plan(request)
+        # The storage primitive is also fail-closed if invoked directly
+        # without the broker's preflight.
+        with pytest.raises(ValueError, match="duplicate_retire_scope_invalid"):
+            service.storage.placement_retire_duplicate_atomic(
+                placement_id=request.placement_id,
+                keep_placement_id=request.keep_placement_id,
+                candidate_path=str(candidate),
+                kept_path=str(kept),
+                artifact_id=artifact.artifact_id,
+                identity_id="id1", provider_id="local",
+                source_item_id=unknown_edition,
+            )
+        assert candidate.read_bytes() == kept.read_bytes() == b"book-data"
+        assert service.storage.placement_get(request.placement_id) is not None
+        assert service.storage.placement_get(request.keep_placement_id) is not None
+    finally:
+        service.storage.close()
