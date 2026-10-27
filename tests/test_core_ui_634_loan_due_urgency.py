@@ -59,7 +59,7 @@ def test_loan_list_sorts_only_after_existing_filters():
     assert "if self.loan_filter != 'all' and loan.medium != self.loan_filter" in source
     assert "loan_due_presentation" in source
     assert "ranked_rows.sort(key=lambda item: item[0])" in source
-    assert "Retour {fr_date(loan.due_at)}" in source
+    assert "loan_row_metadata(loan.due_at, due" in source
 
 
 def test_badge_style_is_recycled_safely_between_rows():
