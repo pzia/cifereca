@@ -1320,28 +1320,39 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
     return None
 
 
-def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, bool]:
-    """Distinguish identical supplier IDs across accounts and editions.
+def mirrored_catalogue_scoped_id(
+    identity_id: str, provider_id: str, record_id: str, credential_id: str,
+    docbase: str, source_collection: str | None,
+) -> str | None:
+    """Canonical Core v2 cache key for ONE exact known supplier notice.
 
-    Legacy incomplete coordinates keep their historic key but cannot gain a
-    version-2 attestation or an actionable SearchResult from the cache.
+    This is a pure local-key calculation, not a right, catalogue GET or proof
+    that the notice's account is currently connected. Empty collection is
+    an exact absent collection, never a wildcard over other editions.
     """
     parts = (
-        identity_id, row.source_provider, row.record_id, row.source_credential,
-        row.docbase, row.source_collection or "",
+        identity_id, provider_id, record_id, credential_id,
+        docbase, source_collection if source_collection is not None else "",
     )
-    qualified = (
-        all(type(value) is str and 0 < len(value) <= 512
-            and "\x00" not in value for value in parts[:5])
-        and type(parts[5]) is str and len(parts[5]) <= 512
-        and "\x00" not in parts[5]
-        and (row.source_collection is None or type(row.source_collection) is str)
-    )
-    if not qualified:
-        legacy = f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}"
-        return hashlib.sha256(legacy.encode()).hexdigest(), False
+    if (any(type(value) is not str or not value or len(value) > 512
+            or "\x00" in value for value in parts[:5])
+            or type(parts[5]) is not str or len(parts[5]) > 512
+            or "\x00" in parts[5]):
+        return None
     scope = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(("mirror-v2\0" + scope).encode()).hexdigest(), True
+    return hashlib.sha256(("mirror-v2\0" + scope).encode()).hexdigest()
+
+
+def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, bool]:
+    """Keep historical incomplete scopes read-only; never infer a source."""
+    scoped = mirrored_catalogue_scoped_id(
+        identity_id, row.source_provider, row.record_id,
+        row.source_credential, row.docbase, row.source_collection,
+    )
+    if scoped is not None:
+        return scoped, True
+    legacy = f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}"
+    return hashlib.sha256(legacy.encode()).hexdigest(), False
 
 
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
