@@ -60,10 +60,14 @@ def test_underlying_business_callbacks_are_unchanged():
     assert "window.navigate('sync')" in source
     assert "window.open_library_folder()" in source
 
-def test_sync_page_explains_metadata_only_and_global_download_not_embedded():
+def test_sync_page_explains_inventory_and_distinct_opt_in_downloads():
     path = ROOT / "src/cifereca/gui/sync_controller.py"
     text = path.read_text(encoding="utf-8")
-    assert "Synchroniser met à jour les notices et droits en ligne, sans télécharger de livre" in text
-    assert "Les outils et téléchargements se trouvent dans chaque compte" in text
+    assert "Synchroniser actualise les notices et droits en ligne" in text
+    assert "explicitement autorisé les téléchargements automatiques" in text
+    assert "par exemple les prêts BnF" in text
+    assert "cette action peut aussi récupérer des fichiers" in text
+    assert "Ces autorisations se règlent séparément dans chaque compte" in text
+    assert "sans télécharger de livre" not in text
     assert "self.service.sync_kobo_backup(progress=progress)" in text
     assert "self.service.sync_kobo_backup(" not in _method("_build_library_page")
