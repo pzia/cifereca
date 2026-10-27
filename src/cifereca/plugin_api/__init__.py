@@ -10,6 +10,10 @@ from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
+from .lending_borrower_eligibility import (
+    BorrowerEligibilityStatus, BorrowerOperationEvidence,
+    BorrowerEligibilityFact, assess_borrower_eligibility,
+)
 from .lending_actions import (
     LENDING_ACTION_CONTRACT, LendingActionOrigin, LendingActionOriginPolicy,
     LendingActionAdmission, assess_lending_action, LendingActionStatus,
@@ -83,6 +87,8 @@ __all__ = [
     "LLMRequest", "LLMResult", "LLMService",
     "ProviderCollection", "ProviderCollectionSnapshot", "VirtualProviderEntry", "ProviderCollectionValidationError", "validate_provider_collection_snapshot",
     "INVENTORY_CONTRACT", "LoanInventoryScope", "LoanBranchCoverage", "LoanInventorySnapshot", "legacy_loan_inventory", "read_loan_inventory",
+    "BorrowerEligibilityStatus", "BorrowerOperationEvidence",
+    "BorrowerEligibilityFact", "assess_borrower_eligibility",
     "LENDING_ACTION_CONTRACT", "LendingActionOrigin", "LendingActionOriginPolicy",
     "LendingActionAdmission", "assess_lending_action", "LendingActionStatus",
     "LendingActionOutcome",
