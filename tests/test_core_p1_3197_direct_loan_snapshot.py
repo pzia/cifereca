@@ -132,3 +132,29 @@ def test_legacy_plugin_without_snapshot_keeps_exact_one_read(tmp_path):
         assert service.storage.cache_get("account", _loan_cache_key(a)) is not None
     finally:
         service.close()
+
+
+def test_direct_typed_reader_property_is_not_evaluated_or_retried(tmp_path):
+    # Opening/source Sync already use static probing. The direct reader must
+    # offer the same no-getter-I/O guarantee before choosing typed vs v1.
+    from tests.test_core_p1_3197_static_sync_probe import _poison_snapshot
+
+    service = _service(tmp_path)
+    try:
+        selected = account()
+        service.accounts = [selected]
+        session, typed_calls = attached(service, selected)
+        session.loans = lambda _account: pytest.fail("unexpected v1 provider GET")
+        probes = []
+        hostile = _poison_snapshot(session, probes)
+        service._sessions[service._session_key("paris", "card")] = hostile
+
+        with pytest.raises(ProviderConfigurationError, match="loan_inventory_read_unavailable"):
+            service._loans_for_account(selected, force=True)
+        assert probes == []
+        assert typed_calls == []
+        assert service.storage.cache_get("account", _loan_cache_key(selected)) is None
+        assert service.storage.entitlements(provider_id="paris") == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
