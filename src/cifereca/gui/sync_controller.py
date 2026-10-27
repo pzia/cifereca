@@ -1088,11 +1088,15 @@ def _refresh_sync_page(self) -> None:
             # absolute import avoids an unbound __package__ in that runner.
             from cifereca.gui.numilog_materialization_status import describe_run
             consent_history = ""
+            consent_diagnostics = ""
             status_reader = getattr(broker, "numilog_materialization_run_status", None)
             if callable(status_reader):
                 try:
                     summary = status_reader(source.source_id)
-                    consent_history = describe_run(consent_mode, summary)
+                    consent_history = describe_run(
+                        consent_mode, summary, compact=True,
+                    )
+                    consent_diagnostics = describe_run(consent_mode, summary)
                 except Exception:
                     consent_history = "Dernier bilan indisponible."
             consent_row = Adw.ActionRow()
@@ -1134,6 +1138,22 @@ def _refresh_sync_page(self) -> None:
             )
             add_sync_action(consent_row, consent_button)
             group.add(sync_action_row(consent_row))
+            if consent_diagnostics and consent_diagnostics != consent_history:
+                # The headline is concise; all observed counters, task refs,
+                # item decisions and schedule remain inspectable in this
+                # account's own initially-collapsed diagnostic disclosure.
+                disclosure = Gtk.Expander(label="Détails et diagnostics · sauvegarde")
+                disclosure.set_expanded(False)
+                disclosure.set_margin_start(12)
+                disclosure.set_margin_end(12)
+                disclosure.set_margin_bottom(12)
+                diagnostic_text = Gtk.Label(label=consent_diagnostics, xalign=0)
+                diagnostic_text.set_wrap(True)
+                diagnostic_text.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                diagnostic_text.set_width_chars(1)
+                diagnostic_text.set_hexpand(True)
+                disclosure.set_child(diagnostic_text)
+                group.add(disclosure)
 
             def change_numilog_consent(
                 button, sid=source.source_id, expected_identity=source.identity_id,
