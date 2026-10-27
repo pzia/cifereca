@@ -879,10 +879,18 @@ def _session_for_account(self, account: Account | None=None) -> ProviderSession:
 def _session_for_source(self, provider_id: str, credential_id: str | None=None) -> ProviderSession:
     if not self._provider_enabled_for_identity(provider_id):
         raise ProviderConfigurationError(f"Provider désactivé ou indisponible: {provider_id}")
-    if credential_id:
+    if credential_id is not None:
+        # A source item/loan carrying an explicit credential never belongs to
+        # another connected session of that provider. In particular a removed
+        # or disconnected B must not silently fall back to active A; an empty
+        # credential is still an explicit coordinate, not a wildcard.
         key = self._session_key(provider_id, credential_id)
-        if key in self._sessions:
-            return self._sessions[key]
+        session = self._sessions.get(key)
+        if session is None:
+            raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
+        return session
+    # Only legacy callers which provided NO credential may resolve a
+    # provider-wide session. This is never used to remap an explicit source.
     for session in self._sessions.values():
         if session.provider_id == provider_id and session.connected:
             return session
