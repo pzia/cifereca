@@ -9,6 +9,7 @@ from cifereca.core.numilog_materialization_checkpoint import (
     NumilogIndexResumeRejected,
 )
 from tests.test_core_p0_numilog_acsm_provenance import acsm_case, _delivered
+from tests.test_numilog_owned_library_download import case  # fixture for acsm_case
 
 
 @pytest.mark.parametrize(("fault", "reason"), [
