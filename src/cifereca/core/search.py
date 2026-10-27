@@ -252,7 +252,7 @@ def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
         # as "Astronomie" or "Cartographie". Longer terms retain the
         # historical case/accent-insensitive substring matching.
         return all(
-            bool(re.search(r"(?<!\\w)" + re.escape(token) + r"(?!\\w)", folded))
+            bool(re.search(r"(?<!\w)" + re.escape(token) + r"(?!\w)", folded))
             if len(token) == 1 else token in folded
             for token in tokens
         )
