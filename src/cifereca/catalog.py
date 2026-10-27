@@ -368,10 +368,17 @@ class LocalCatalog:
         existing = self.storage.placement_for_path(Path(path_text))
         placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
         identity_hint, provider_hint = self._path_hints(path)
+        identity_hint = identity_id or identity_hint
         legacy = self._legacy_provenance(path)
+        # The ordinary scan already rejects cross-identity legacy receipts.
+        # Targeted indexing must apply the SAME rule: a historical backup
+        # mentioning this path is not provenance for a different library.
+        if legacy and (
+            not identity_hint or legacy.get("identity_id") != identity_hint
+        ):
+            legacy = None
         if legacy:
             provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
-        identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
         proposed_item = item_id or (legacy.get("item_id") if legacy else None)
         if existing and any((
