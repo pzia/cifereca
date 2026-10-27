@@ -191,3 +191,38 @@ def test_cooperative_explicit_cancellation_is_one_warning_not_provider_failure(
     assert event["detail"]["code"] == "operation_cancelled"
     assert query_journal(log_file, provider_id="paris", severity="error")["total"] == 0
     assert query_journal(log_file, provider_id="paris", severity="warning")["total"] == 1
+
+
+@pytest.mark.parametrize("kind", ("provider_failure", "unexpected_failure", "attention"))
+def test_explicit_failure_raw_trace_keeps_observed_loan_and_exception(
+    kind, caplog,
+):
+    """A business code is not a replacement for the observed raw failure."""
+    from cifereca.plugin_api import AttentionRequired
+    service, loan, _checks = setup_service("provider_disconnected")
+    if kind == "provider_failure":
+        exc = ProviderConfigurationError("HTTP 403 on observed source path")
+    elif kind == "unexpected_failure":
+        exc = RuntimeError("original provider response was malformed")
+    else:
+        exc = AttentionRequired("original ADEPT rejection", code="adept_identity_unproven")
+    def fail(_loan):
+        raise exc
+    service._reacquire_digital_loan_impl = fail
+    with caplog.at_level(logging.WARNING, logger="cifereca"):
+        with pytest.raises(type(exc)) as raised:
+            service.reacquire_digital_loan(loan)
+    assert raised.value is exc
+    traces = [
+        rec for rec in caplog.records
+        if "TRACE explicit loan recovery" in rec.getMessage()
+    ]
+    assert len(traces) == 1
+    observed = traces[0].getMessage()
+    assert "provider=paris" in observed
+    assert "loan_id=private-loan-id" in observed
+    assert traces[0].exc_info[1] is exc
+    (event,) = service.diagnostics.snapshot()
+    assert event["detail"]["provider_id"] == "paris"
+    assert event["detail"]["status"] in {"failed", "attention_required"}
+    assert event["detail"]["phase"] == "terminal"

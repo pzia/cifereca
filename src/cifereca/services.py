@@ -2950,7 +2950,9 @@ class LibraryService:
             # Preserve the original observed exception in the raw journal;
             # truncating it to a closed reason destroys provider evidence.
             _TRACE_LOG.warning(
-                "TRACE explicit loan recovery attention required", exc_info=True,
+                "TRACE explicit loan recovery attention required provider=%s loan_id=%s",
+                getattr(loan, "source_provider", None), getattr(loan, "id", None),
+                exc_info=True,
             )
             try:
                 code = exc.code
@@ -2963,13 +2965,17 @@ class LibraryService:
             raise
         except ProviderConfigurationError:
             _TRACE_LOG.error(
-                "TRACE explicit loan recovery provider failure", exc_info=True,
+                "TRACE explicit loan recovery provider failure provider=%s loan_id=%s",
+                getattr(loan, "source_provider", None), getattr(loan, "id", None),
+                exc_info=True,
             )
             emit("failed", "provider_failure")
             raise
         except Exception:
             _TRACE_LOG.error(
-                "TRACE explicit loan recovery unexpected failure", exc_info=True,
+                "TRACE explicit loan recovery unexpected failure provider=%s loan_id=%s",
+                getattr(loan, "source_provider", None), getattr(loan, "id", None),
+                exc_info=True,
             )
             emit("failed", "unclassified_error")
             raise
