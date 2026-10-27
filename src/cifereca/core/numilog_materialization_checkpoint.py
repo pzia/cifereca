@@ -247,7 +247,7 @@ def index_delivered(service, acquisition, *, title=None, selected=False, expecte
                 # Never infer provenance from the folder name or a title.
                 # The storage transaction independently checks the exact
                 # manual ACSM ledger, account, byte hash, placement, catalog
-                # and global artifact collisions. A refusal carries only the
+                # and same-owner/unknown-owner artifact collisions. A refusal carries only the
                 # fixed failed-gate code; NEVER skip the atomic adoption.
                 adoption = service.storage.numilog_checkpoint_adopt_acsm_placement(
                     acquisition_id, expected_path=str(path), diagnose=True,

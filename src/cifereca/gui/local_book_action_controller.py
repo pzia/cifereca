@@ -23,7 +23,7 @@ _NUMILOG_INDEX_REFUSAL_LABELS = {
     "placement_missing": "Placement local d’origine introuvable ou ambigu.",
     "placement_conflict": "Placement local incompatible avec l’identité ou la source.",
     "catalogue_conflict": "Notice du catalogue contradictoire ou ambiguë.",
-    "artifact_shared_elsewhere": "Même empreinte déjà utilisée par un autre placement.",
+    "artifact_shared_elsewhere": "Même empreinte déjà utilisée par un placement du même profil ou de propriétaire inconnu.",
     "competing_receipts": "Plusieurs reçus concurrents pour cet achat.",
     "adoption_unavailable": "Validation du placement d’origine indisponible.",
     "selected_identity_changed": "L’identité sélectionnée n’est plus celle du reçu.",

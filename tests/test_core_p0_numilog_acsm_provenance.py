@@ -137,7 +137,7 @@ def test_exact_numilog_acsm_delivery_reconciles_existing_file_and_two_scans(
     "missing_manual_ledger", "manual_foreign_owner",
     "manual_wrong_artifact", "manual_wrong_acsm",
     "placement_foreign_owner", "catalog_wrong_purchase",
-    "second_catalog_row", "foreign_artifact_placement",
+    "second_catalog_row", "same_owner_artifact_placement",
 ])
 def test_ambiguous_acsm_provenance_stays_pending_without_network(
     acsm_case, mutation,
@@ -189,7 +189,7 @@ def test_ambiguous_acsm_provenance_stays_pending_without_network(
         storage.placement_put({
             "placement_id": "foreign-second-placement",
             "artifact_id": placed["artifact_id"], "path": str(foreign),
-            "identity_id": "foreign", "provider_id": "numilog",
+            "identity_id": case.account.identity_id, "provider_id": "numilog",
             "source_item_id": "different-purchase", "state": "present",
         })
     before_bytes = path.read_bytes()
@@ -446,3 +446,97 @@ def test_publication_guard_does_not_trust_unattested_existing_acsm_file(
         r["item_id"] == case.item.record_id
         for r in storage.acquisitions(provider_id="numilog")
     )
+
+
+@pytest.mark.parametrize("providers", [("numilog", "numilog"), ("kobo", "paris")])
+def test_independent_copies_in_three_profiles_do_not_block_exact_local_adoption(
+    acsm_case, tmp_path, monkeypatch, providers,
+):
+    case = acsm_case
+    acquired, receipt_id, path = _delivered(case)
+    service, storage = case.service, case.service.storage
+    original = path.read_bytes()
+    copies = []
+    for index, provider in enumerate(providers):
+        owner = f"independent-owner-{index}"
+        storage.identity_put({"identity_id": owner, "label": owner})
+        copy = Path(service.config.get("library.directory")) / owner / provider / "copy.epub"
+        copy.parent.mkdir(parents=True)
+        copy.write_bytes(original)
+        result = service.catalog_index_path(
+            copy, item_id=f"independent-item-{index}", provider_id=provider, identity_id=owner,
+        )
+        assert result["status"] == "indexed"
+        placement = storage.placement_for_path(copy)
+        entry = next(row for row in storage.catalog_entries()
+                     if row["placement_id"] == placement["placement_id"])
+        ledger_id = f"independent-receipt-{index}"
+        storage.acquisition_put({
+            "acquisition_id": ledger_id, "provider_id": provider, "identity_id": owner,
+            "credential_id": f"independent-credential-{index}",
+            "account_id": f"independent-account-{index}", "item_id": placement["source_item_id"],
+            "artifact_id": placement["artifact_id"], "status": "complete",
+            "metadata": {"path": str(copy), "origin": "synthetic-independent-delivery"},
+        })
+        copies.append((copy, placement, entry, storage.acquisition_get(ledger_id)))
+    before_rights = storage.entitlements()
+    for _ in range(2):
+        result = service.resume_numilog_materialization(receipt_id)
+        assert result.path == path and result.indexed["status"] == "indexed"
+        assert storage.acquisition_get(receipt_id)["status"] == "complete"
+        assert storage.placement_for_path(path)["source_item_id"] == case.item.record_id
+        assert path.read_bytes() == original
+        assert storage.entitlements() == before_rights
+        for copy, placement, entry, ledger in copies:
+            assert copy.read_bytes() == original
+            assert storage.placement_get(placement["placement_id"]) == placement
+            assert storage.catalog_entry_get(entry["catalog_entry_id"]) == entry
+            assert storage.acquisition_get(ledger["acquisition_id"]) == ledger
+    assert len(case.deliveries) == 1
+    assert len([p for p in storage.placements()
+                if p["artifact_id"] == result.artifact_id]) == 3
+
+    # Automatic inventory after the explicit repair recognizes presence,
+    # rather than replacing the EPUB because other profiles share its SHA.
+    from time import time
+    from cifereca.brokers import SynchronizationBrokerImpl
+    from cifereca.core import numilog_materialization_startup as startup
+    from tests.test_core_p0_numilog_auto_materialization import _authorize
+    broker = SynchronizationBrokerImpl(service)
+    _authorize(broker, broker._source_id(case.account))
+    case.session.library = lambda: [case.item]
+    case.session.download_direct = lambda *_a, **_k: pytest.fail("existing file downloaded again")
+    for offset in (0, 7200):
+        monkeypatch.setattr(startup, "time", lambda: time() + offset)
+        outcome = startup.execute(broker, case.account.identity_id, "startup")
+        assert outcome.ok and outcome.facts["status"] == "complete"
+        assert outcome.facts["skipped"] == 1
+        assert outcome.facts["attempted"] == outcome.facts["blocked"] == 0
+        assert path.read_bytes() == original
+        for copy, placement, entry, ledger in copies:
+            assert copy.read_bytes() == original
+            assert storage.placement_get(placement["placement_id"]) == placement
+            assert storage.catalog_entry_get(entry["catalog_entry_id"]) == entry
+            assert storage.acquisition_get(ledger["acquisition_id"]) == ledger
+    assert len(case.deliveries) == 1
+
+
+@pytest.mark.parametrize("owner", [None, "", "deleted-profile", "default"])
+def test_shared_copy_with_unknown_or_same_owner_still_blocks_adoption(acsm_case, owner):
+    case = acsm_case
+    acquired, receipt_id, path = _delivered(case)
+    storage = case.service.storage
+    copy = path.parent / "unresolved-copy.epub"
+    copy.write_bytes(path.read_bytes())
+    original = storage.placement_for_path(path)
+    storage.placement_put({
+        "placement_id": "unresolved-copy", "artifact_id": original["artifact_id"],
+        "path": str(copy), "identity_id": owner, "provider_id": "numilog",
+        "source_item_id": "unresolved-edition", "state": "present",
+    })
+    with pytest.raises(ProviderConfigurationError):
+        case.service.resume_numilog_materialization(receipt_id)
+    assert storage.placement_for_path(path) == original
+    assert storage.acquisition_get(receipt_id)["status"] == "attention_required"
+    assert path.read_bytes() == copy.read_bytes()
+    assert len(case.deliveries) == 1

@@ -3433,10 +3433,17 @@ class Storage:
                         artifact_id, identity, "numilog", acsm_sha, "local"
                     )):
                 return refused("catalogue_conflict")
+            # Content-addressed artifacts can legitimately back independent
+            # copies in several profiles. Adoption changes only this verified
+            # placement and its exact catalogue row, never the shared artifact
+            # ownership or another profile's provenance. Still reject another
+            # sourced placement of the same owner, or an unresolvable owner.
             other = db.execute(
-                "SELECT 1 FROM placements WHERE artifact_id=? AND path<>? "
-                "AND source_item_id IS NOT NULL LIMIT 1",
-                (artifact_id, expected_path),
+                "SELECT 1 FROM placements AS p WHERE p.artifact_id=? AND p.path<>? "
+                "AND p.source_item_id IS NOT NULL AND (p.identity_id=? OR "
+                "NOT EXISTS (SELECT 1 FROM identities AS i "
+                "WHERE i.identity_id=p.identity_id)) LIMIT 1",
+                (artifact_id, expected_path, identity),
             ).fetchone()
             if other is not None:
                 return refused("artifact_shared_elsewhere")

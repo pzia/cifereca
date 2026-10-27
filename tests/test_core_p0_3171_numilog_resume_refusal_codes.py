@@ -46,15 +46,15 @@ def test_atomic_refusal_identifies_failed_gate_without_changing_evidence(
             "local_state": "local",
         })
     elif fault == "shared_artifact_elsewhere":
-        # Same content hash, a different identity and an independent path.
-        # This is a genuine ambiguity: DO NOT silently merge ownership.
+        # Distinct paths with the same SHA and the SAME owner remain ambiguous.
+        # Registered foreign owners are covered by the positive regression.
         for owner in ("foreign-1", "foreign-2"):
             another = tmp_path / (owner + ".epub")
             another.write_bytes(original)
             storage.placement_put({
                 "placement_id": owner,
                 "artifact_id": placement["artifact_id"], "path": str(another),
-                "identity_id": owner, "provider_id": "numilog",
+                "identity_id": case.account.identity_id, "provider_id": "numilog",
                 "source_item_id": "different-edition", "state": "present",
             })
     else:
