@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from cifereca.core.search import (
     KnownCatalogSearch, LocalLibrarySearch, filter_loaded_results,
-    local_search_evidence,
+    local_search_evidence, local_match_explanation,
 )
 
 
@@ -101,3 +101,24 @@ def test_local_and_known_catalogue_use_the_same_relevance_without_provider_calls
     ]
     assert all(call[0] in {"local", "catalog"} for call in calls)
     assert not known.search("prix du quai", identity_id="bob")
+
+
+def test_local_match_explanation_uses_attested_fields_and_respects_explicit_filter():
+    record = row("x", "Le prix oublié", series="Enquête au quai",
+                 description="Une autre histoire")
+    assert local_search_evidence(record, "prix du quai") == (180, ("title", "series"))
+    assert local_match_explanation(record, "prix du quai") == (
+        "Correspondance : Titre · Série"
+    )
+    assert local_match_explanation(record, "prix du quai", field="title") == ""
+    assert local_match_explanation(record, "introuvable") == ""
+    assert local_match_explanation(record, "") == ""
+
+
+def test_local_match_explanation_never_attributes_private_metadata_or_remote_proof():
+    record = row("x", "Histoire", description="Le Prix du Quai",
+                 source_credential="private_token", signed_url="https://private.invalid/secret")
+    assert local_match_explanation(record, "prix quai") == "Correspondance : Résumé"
+    assert local_match_explanation(record, "private_token") == ""
+    assert local_match_explanation(record, '"prix du quai"') == "Correspondance : Résumé"
+    assert local_match_explanation(record, '"prix quai"') == ""
