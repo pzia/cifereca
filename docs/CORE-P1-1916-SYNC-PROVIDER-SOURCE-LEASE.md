@@ -7,7 +7,7 @@ de credential pendant un `session.search` bloquant**, sans changement de
 profil : l'ancienne session pouvait ensuite alimenter `last_search`, la
 projection SQLite ou le cache, comme si sa connexion existait toujours.
 
-Chaque recherche synchrone capture désormais la **liste de ses sessions
+Chaque recherche synchrone **et progressive** capture désormais la **liste de ses sessions
 effectivement sélectionnées** avec leur triplet mémoire
 `provider_id / credential_id / connected`. Après la découverte, après
 chaque I/O et avant publication/cache, le Core exige :
@@ -18,15 +18,15 @@ chaque I/O et avant publication/cache, le Core exige :
 Une reconnexion avec les mêmes paramètres ne réhabilite jamais les résultats
 d'une ancienne instance. Les valeurs de provenance sont lues **directement
 depuis la mémoire d'instance**, sans getter de plugin, et ne sont ni écrites
-dans les diagnostics ni exposées à l'UI. Un bail révoqué rend `[]`,
+dans les diagnostics ni exposées à l'UI. Un bail synchrone révoqué rend `[]` ; le parcours progressif\nannule ses lots et événements non publiés (`summary.cancelled=True`),
 n'ajoute pas de notice et n'envoie aucune requête supplémentaire.
 
-Six cas offline dans
+Cas offline dans
 `tests/test_core_p1_1916_sync_search_source_lease.py` :
 remplacement de session même provider+credential, credential muté,
 déconnexion, remplacement pendant lecture cache, disparition durant
 découverte et source stable.
 
-**Non couverts ici** : migration des autres chemins `search_progressive`,
+**Non couverts ici** :
 états complets live/fallback/stale et UX de panne publique #1916. Le bail
 n'autorise ni téléchargement ni changement de droits.
