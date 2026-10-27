@@ -145,7 +145,8 @@ def test_versioned_contract_is_frozen_without_implicit_fallback():
     assert matrix.exact("metadata.enrichment", "edition",
                         identity_id="a", account_id="b", edition_id="paper-1") is None
     assert asdict(value)["schema_version"] == 1
-    assert asdict(value)["authorizes_mutation"] if False else True  # not serialized
+    assert "authorizes_mutation" not in asdict(value)
+    assert value.authorizes_mutation is False
     with pytest.raises(FrozenInstanceError):
         value.status = "unsupported"
 
