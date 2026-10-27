@@ -167,6 +167,37 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
     return total, tuple(matched_fields)
 
 
+_LOCAL_MATCH_LABELS = {
+    "title": "Titre",
+    "series": "Série",
+    "collection": "Collection",
+    "author": "Auteur",
+    "subject": "Sujet",
+    "award": "Prix littéraire",
+    "description": "Résumé",
+    "publisher": "Éditeur",
+    "identifier": "Identifiant",
+    "language": "Langue",
+}
+
+
+def local_match_explanation(row: Mapping[str, Any], query: str, *, field: str = "all") -> str:
+    """Explain attested local matches; never claim a remote catalogue hit.
+
+    Explicit field searches retain their strict semantics and cannot acquire
+    an all-fields reason. The score remains available via local_search_evidence.
+    """
+    if (type(query) is not str or not query.strip()
+            or str(field or "all").casefold() != "all"):
+        return ""
+    score, fields = local_search_evidence(row, query)
+    if not score or not fields:
+        return ""
+    return "Correspondance : " + " · ".join(
+        _LOCAL_MATCH_LABELS[name] for name in fields if name in _LOCAL_MATCH_LABELS
+    )
+
+
 def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
     # Explicit Author/Title/ISBN/... keep their old strict field semantics.
     if str(field or "all").casefold() == "all":
@@ -439,4 +470,4 @@ class KnownCatalogSearch:
         )
 
 
-__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "local_search_evidence", "available_formats", "project_acquisition_offer_formats", "support_kind"]
+__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "local_search_evidence", "local_match_explanation", "available_formats", "project_acquisition_offer_formats", "support_kind"]
