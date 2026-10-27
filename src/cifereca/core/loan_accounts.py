@@ -6,6 +6,9 @@ then requires the exact connected provider/credential session. The service
 retains all locks, provider requests, verification and repeated-return guards.
 """
 
+from inspect import getattr_static
+from types import SimpleNamespace
+
 
 def account_for_loan(loan, *, accounts, current_account_get, configuration_error):
     """Resolve the exact recorded borrower, preserving legacy-cache fallback."""
@@ -69,7 +72,21 @@ def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, 
         )
     key = session_key(loan.source_provider, loan.source_credential)
     session = lookup_session(key)
-    if getattr(session, 'connected', None) is not True:
+    # This is an admission preflight, not a provider status refresh. A
+    # connected property or overridden __getattribute__ could issue HTTP
+    # before the Core's later loan-action scope lease is even captured.
+    # Only a real initialized scalar may establish session readiness.
+    session_type = type(session)
+    # The legacy tests/plugins also accept SimpleNamespace sessions. Its
+    # built-in C __getattribute__ is inert, unlike a plugin override.
+    safe_lookup = getattr_static(session_type, '__getattribute__', None)
+    connected = (
+        getattr_static(session, 'connected', None)
+        if safe_lookup in (
+            object.__getattribute__, SimpleNamespace.__getattribute__,
+        ) else None
+    )
+    if connected is not True:
         raise attention_error(
             "La connexion exacte de l'emprunteur est indisponible.",
             code='loan_return_source_unavailable',
