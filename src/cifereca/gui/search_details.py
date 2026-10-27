@@ -171,6 +171,13 @@ def _search_detail_error(
 def _load_known_detail(self: SearchDetailHost, item):
     if getattr(self, "_closed", False):
         return
+    # A cached GTK callback may outlive a switch of identity even if a
+    # previous widget reference is retained. Refuse it before provider I/O.
+    metadata = getattr(item, "metadata", None)
+    if (type(metadata) is dict and metadata.get("catalogue_scope_version") == 2
+            and metadata.get("known_catalog_identity_id") !=
+            getattr(getattr(self.service, "current_identity", None), "identity_id", None)):
+        return
     # Explicitly opening a known-catalogue detail supersedes a previous
     # holdings request, even if the selected list key stays unchanged.
     self._search_detail_request_generation += 1
