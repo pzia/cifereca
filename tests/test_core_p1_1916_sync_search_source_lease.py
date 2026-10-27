@@ -201,3 +201,27 @@ def test_progressive_stable_source_can_publish_and_cache(tmp_path):
         assert service.last_search == list(batches[0].results)
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("credential", ["absent", "none"])
+def test_public_provider_without_credential_keeps_search_compatibility(
+    tmp_path, credential,
+):
+    service = _service(tmp_path)
+    session = _FakeSession("public")
+    if credential == "absent":
+        del session.credential_id
+    else:
+        session.credential_id = None
+    service._sessions = {"public": session}
+    try:
+        # The fake session's test search builds a credential-bearing result;
+        # the Core route guard itself must not reject its public query.
+        session.search = lambda *_args, **_kwargs: []
+        assert service.search("Maritime Library", force=True) == []
+        assert service.last_search == []
+        summary = service.search_progressive("Maritime Library", force=True)
+        assert summary.cancelled is False
+        assert summary.providers_completed == 1
+    finally:
+        service.close()
