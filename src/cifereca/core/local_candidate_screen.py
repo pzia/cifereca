@@ -28,9 +28,22 @@ class LocalCandidateScreen:
 
 
 def _title(value: object) -> str:
+    """Conservative bibliographic *review* key, never licence evidence.
+
+    Historical EPUB OPF and provider catalogues can disagree only on accents,
+    apostrophes or punctuation. They still name a possible pre-GET candidate
+    and must not silently trigger a second ADEPT import. Exact folded token
+    equality is required: no substring, stemming, ISBN or fuzzy matching.
+    """
     if type(value) is not str or len(value) > _MAX_TITLE:
         return ""
-    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    tokens = "".join(
+        character if character.isalnum() else " "
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    return " ".join(tokens.split())
 
 
 def _path_in_roots(value: object, roots: tuple[Path, ...]) -> bool:
