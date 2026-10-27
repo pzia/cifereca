@@ -16,7 +16,7 @@ from gi.repository import Gtk, Adw
 from ..models import Loan
 from ..core.loan_source_identity import loan_source_key
 from .book_widgets import BookListItem
-from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts
+from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
 from .query_controls import MultiSelect
 from .task_runner import TaskPriority
@@ -106,7 +106,7 @@ def _render_loans(self) -> None:
             continue
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
-        meta = f"Retour {fr_date(loan.due_at)} · {loan.document_type or loan.provider}"
+        meta = loan_row_metadata(loan.due_at, due, document_type=loan.document_type, provider=loan.provider)
         ranked_rows.append((
             due.sort_key,
             BookListItem(
