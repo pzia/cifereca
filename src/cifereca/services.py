@@ -1145,6 +1145,23 @@ class LibraryService:
         from .core.capability_inventory import capability_matrices_for_identity
         return capability_matrices_for_identity(self, identity_id=identity_id)
 
+    def capability_matrices_with_precollected_evidence(
+        self, identity_id: str | None = None, *,
+        sync_sources=(), loan_snapshots=(),
+    ):
+        """Project already collected Sync/loan observations without provider I/O.
+
+        Snapshots must have been bound to the exact active identity/credential
+        by the caller. A displayed capability never grants an action.
+        """
+        from .core.capability_snapshot_inventory import (
+            capability_matrices_with_precollected_evidence,
+        )
+        return capability_matrices_with_precollected_evidence(
+            self, identity_id=identity_id,
+            sync_sources=sync_sources, loan_snapshots=loan_snapshots,
+        )
+
     @staticmethod
     def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
         return search_orchestration._search_contract_warning(session, field, scope, facade_type=LibraryService)
