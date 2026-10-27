@@ -482,6 +482,39 @@ def main():
         assert view.selected_identity_id() == "alice"
         assert view._master._page.store.get_n_items() == 1
         report["checks"]["P1_1354_real_gtk_exact_notice_core_navigation_no_network"] = True
+        # Same real GTK Recommandations view, but Search no longer has the
+        # variant loaded. The optional cache-only Core gateway is probed
+        # without returning rights or calling any supplier. The Core/SQLite
+        # resolver itself is tested with real Storage outside this E2E probe.
+        known_calls = []
+        state["window"].can_open_loaded_search_notice = lambda **_kw: False
+        state["window"].can_open_known_search_notice = lambda **kw: (
+            kw.get("record_id") == "edition-reopened"
+            and kw.get("credential") == "fixture-public"
+            and kw.get("identity_id") == "alice"
+        )
+        state["window"].open_known_search_notice = lambda **kw: (
+            known_calls.append(kw.copy()) or True
+        )
+        selected_row = view._master._page.selection.get_selected_item()
+        assert selected_row is not None
+        view._selected_row(selected_row)
+        cached_buttons = [
+            widget for widget in walk(view.widget)
+            if isinstance(widget, Gtk.Button)
+            and str(getattr(widget, "_cifereca_action_id", "")).startswith(
+                "recommendation.known-notice."
+            )
+        ]
+        assert len(cached_buttons) == 1
+        assert not known_calls
+        cached_buttons[0].emit("clicked")
+        assert len(known_calls) == 1
+        assert known_calls[0]["record_id"] == "edition-reopened"
+        assert len(state["searches"]) == 1
+        state["known_button"] = cached_buttons[0]
+        state["known_calls"] = known_calls
+        report["checks"]["P0_1354_real_gtk_known_notice_gateway_explicit_only"] = True
         # Returning to recommendations preserves identity and the selection
         # without resurrecting an earlier Core/GTK callback.
         view._master._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
@@ -496,6 +529,8 @@ def main():
         assert len(state["searches"]) == 1
         state["exact_button"].emit("clicked")
         state["stale_page_button"].emit("clicked")
+        state["known_button"].emit("clicked")
+        assert len(state["known_calls"]) == 1  # detached cached button inert
         assert state["exact_navigations"] == ["search"]
         assert state["exact_selected"] == ["fixture:core-loaded-1"]
         report["checks"]["return_to_list_keeps_old_action_inert"] = True
