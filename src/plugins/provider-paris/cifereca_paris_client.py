@@ -276,6 +276,11 @@ class ParisClient:
             private_operation = (
                 category == "AUTH"
                 or (category == "API" and operation.startswith("summary "))
+                # A supplier-controlled ListLoans JSON error.message can
+                # embed borrower IDs, signed links, or a private HTML body.
+                # Keep the structured error class and closed reason/status;
+                # never reflect arbitrary exception text into diagnostics.
+                or (category == "API" and operation.startswith("loans "))
                 or (category == "CATALOG" and (
                     operation.startswith("search ")
                     or operation.startswith("history cover search ")

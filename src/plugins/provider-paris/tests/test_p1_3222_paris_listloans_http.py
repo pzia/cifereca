@@ -182,3 +182,37 @@ def test_listloans_transport_error_is_not_an_empty_manifest():
 def test_listloans_error_type_cannot_carry_arbitrary_message():
     with pytest.raises(ValueError, match="paris_loans_reason_invalid"):
         ParisLoanListError("private-login=" + PRIVATE, status=404)
+
+
+
+@pytest.mark.parametrize("failure", ["json_error_message", "json_error_list"])
+def test_listloans_supplier_error_text_never_reaches_diagnostics_or_logs(
+    failure, caplog,
+):
+    # A well-formed JSON error may still contain private provider-controlled
+    # content. Structured HTTP codes remain available; raw text does not.
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        body = {"success": False}
+        if failure == "json_error_message":
+            body["message"] = "Borrower " + PRIVATE
+        else:
+            body["errors"] = ["Signed URL: https://private.invalid/" + PRIVATE]
+        return httpx.Response(200, json=body)
+
+    session, account, diagnostics = _fixture(handler)
+    try:
+        with pytest.raises(ProviderConfigurationError):
+            session.loan_inventory_snapshot(account)
+        assert len(requests) == 2
+        assert all(request.url.path.endswith("/ListLoans") for request in requests)
+        assert PRIVATE not in repr(diagnostics.events)
+        assert PRIVATE not in caplog.text
+        assert session.last_loan_errors == [
+            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
+            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
+        ]
+    finally:
+        session.close()
