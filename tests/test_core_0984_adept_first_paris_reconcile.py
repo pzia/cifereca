@@ -1,6 +1,8 @@
 """P0 #984 — ADEPT-first Paris return, without duplicate mutation or PNB POST."""
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 from types import SimpleNamespace as NS
 from dataclasses import replace
 from threading import Event
@@ -89,6 +91,7 @@ def stub_adept(service, *, already_returned=False, failure=False):
 
 def test_adept_return_then_paris_absence_confirmed_without_pnb_post(tmp_path):
     service, loan, paris = setup(tmp_path)
+    attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         calls = stub_adept(service)
         first = service.return_loan_prefer_adept(loan)
@@ -143,6 +146,8 @@ def test_adept_return_verification_unavailable_never_claims_paris_absence(tmp_pa
         assert result["adobe_return_confirmed"] is True
         assert paris.posts == 0
         paris.last_loan_errors = []
+        assert service.verify_loan_return(loan)["status"] == "partial"
+        attest_paris_dilicom_complete(paris, credential_id="alice-paris")
         assert service.verify_loan_return(loan)["status"] == "paris_return_confirmed"
         assert paris.posts == 0
     finally:
@@ -180,6 +185,7 @@ def test_adobe_mutation_failure_persists_and_cannot_be_replayed(tmp_path):
 
 def test_crash_after_adobe_call_recovers_from_inventory_only(tmp_path):
     service, loan, paris = setup(tmp_path)
+    attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         calls = stub_adept(service, already_returned=True)
         key = adept_return_key("paris", "alice-paris", "linked-123", loan.id)
