@@ -8,6 +8,28 @@ from __future__ import annotations
 from ..plugin_api import Cancelled, UserFacingError
 
 
+# These reasons are produced by Core *inside the atomic adoption transaction*
+# for a previously delivered Numilog ACSM. No exception string, receipt, URL,
+# path, SHA or provider metadata is ever presented to a user.
+_NUMILOG_INDEX_REFUSAL_LABELS = {
+    "invalid_target": "Cible de reprise invalide.",
+    "receipt_missing": "Reçu de livraison introuvable.",
+    "receipt_scope_invalid": "Propriétaire ou droit du reçu incohérent.",
+    "receipt_invalid": "Métadonnées du reçu incohérentes.",
+    "receipt_root_invalid": "Racine de livraison non conforme.",
+    "path_not_canonical": "Emplacement initial ACSM non conforme.",
+    "manual_receipt_missing": "Reçu d’import ACSM d’origine introuvable.",
+    "manual_receipt_mismatch": "Reçu d’import ACSM incompatible avec la livraison.",
+    "artifact_mismatch": "Empreinte ou taille de l’artefact incohérente.",
+    "placement_missing": "Placement local d’origine introuvable ou ambigu.",
+    "placement_conflict": "Placement local incompatible avec l’identité ou la source.",
+    "catalogue_conflict": "Notice du catalogue contradictoire ou ambiguë.",
+    "artifact_shared_elsewhere": "Même empreinte déjà utilisée par un autre placement.",
+    "competing_receipts": "Plusieurs reçus concurrents pour cet achat.",
+    "adoption_unavailable": "Validation du placement d’origine indisponible.",
+}
+
+
 def _add_owned_download(window, detail, item, TaskPriority):
     resolve = getattr(window.service, 'owned_library_download_target', None)
     if not callable(resolve):
@@ -48,7 +70,13 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 return window.service.obtain_owned_library_item(target)
             except Cancelled:
                 raise
-            except Exception:
+            except Exception as exc:
+                if resume:
+                    from ..core.numilog_materialization_checkpoint import (
+                        NumilogIndexResumeRejected,
+                    )
+                    if isinstance(exc, NumilogIndexResumeRejected):
+                        raise  # Only the closed reason code, never the error text.
                 raise RuntimeError(failure) from None
         def done(result):
             if current() and getattr(result, 'path', None) is not None:
@@ -59,7 +87,17 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 invalidate_search_snapshot(window)
         def failed(_exc):
             if current():
-                window.show_error(failure, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
+                message = failure
+                if resume:
+                    from ..core.numilog_materialization_checkpoint import (
+                        NumilogIndexResumeRejected,
+                    )
+                    if isinstance(_exc, NumilogIndexResumeRejected):
+                        reason = _exc.reason_code
+                        message += " " + _NUMILOG_INDEX_REFUSAL_LABELS.get(
+                            reason, "Vérification du placement à reprendre.",
+                        )
+                window.show_error(message, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
         window.runner.submit('Reprise d’indexation Numilog…' if resume else f'Téléchargement du livre {label} possédé…',
                              work, done, failed, control=_button, priority=TaskPriority.USER_ACTION,
                              kind='index' if resume else 'obtain')
