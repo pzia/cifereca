@@ -10,9 +10,56 @@ from types import SimpleNamespace
 import pytest
 
 from cifereca.plugin_api import Account, ProviderCapabilityError
-from tests.test_p1_3252_owned_inventory_owner_rebind import (
-    session, owned_row, _candidate_broker,
-)
+from cifereca_numilog import NumilogSession
+
+
+class IdentityBroker:
+    def __init__(self):
+        self.owner = "identity-A"
+        self.calls = 0
+        self.account_id = ""
+
+    def accounts(self):
+        self.calls += 1
+        if self.owner is None:
+            return []
+        return [SimpleNamespace(
+            provider_id="numilog", account_id=self.account_id,
+            identity_id=self.owner,
+        )]
+
+
+def session(*, with_broker=True):
+    broker = IdentityBroker()
+    obj = NumilogSession(
+        credential_id="synthetic-account", label="Numilog",
+        credentials={}, options={}, config={}, diagnostics=None,
+        identity_broker=broker if with_broker else None,
+    )
+    obj.connected = True
+    broker.account_id = "numilog:" + obj.scope
+    return obj, broker
+
+
+def owned_row():
+    return {
+        "lid": "42", "variant": "()", "title": "Livre synthétique",
+        "cover": None, "public_url": None,
+    }
+
+
+def _candidate_broker(session_obj, identities):
+    broker = SimpleNamespace(identities=list(identities), calls=0)
+    def accounts():
+        broker.calls += 1
+        return [
+            SimpleNamespace(provider_id="numilog",
+                            account_id="numilog:" + session_obj.scope,
+                            identity_id=owner)
+            for owner in broker.identities
+        ]
+    broker.accounts = accounts
+    return broker
 
 
 def bound_account(session_obj, identity="identity-A"):
