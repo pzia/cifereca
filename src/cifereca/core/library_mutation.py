@@ -18,99 +18,228 @@ from ..plugin_api import BundleError, load_bundle_manifest
 
 
 def materialize_to_identity(self, placement_id: str, target_identity_id: str) -> dict[str, Any]:
-    """Materialize an existing Artifact for another Identity without reacquisition.
+    """Send an independent local copy, never an entitlement for the recipient.
 
-    0.9.0.1 deliberately performs targeted catalog registration here. A full
-    catalog scan after a one-file hardlink/copy made this visible user action
-    proportional to the entire library size.
+    All existing target files retain their ownership. Only a previously
+    recorded copy from this exact placement may be reused or repaired.
     """
+    import stat
+    import tempfile
+    from ..library_files import safe_library_component
+
     source = self.storage.placement_get(placement_id)
     if not source or source.get("state") != "present":
         raise ProviderConfigurationError("Placement source local introuvable")
-    src = Path(str(source.get("path") or ""))
+    owner = str(source.get("identity_id") or "")
+    if not owner or self.identity_by_id(owner) is None:
+        raise ProviderConfigurationError("Provenance de l'identité source non attestée")
+    target_identity = self.identity_by_id(target_identity_id)
+    if target_identity is None or target_identity_id == owner:
+        raise ProviderConfigurationError("Identité cible absente ou identique à la source")
+
+    root = self.library_dir().expanduser().resolve()
+    src = Path(str(source.get("path") or "")).expanduser()
+    # A stored relative path, a symlink or an escaped parent is never a
+    # source of bytes authorized for cross-identity publication.
+    if (not src.is_absolute() or ".." in src.parts or src.is_symlink()
+            or not src.resolve().is_relative_to(root) or src.resolve() != src):
+        raise ProviderConfigurationError("Emplacement source hors de la bibliothèque")
     if not src.is_file() and not src.is_dir():
         raise ProviderConfigurationError("Artifact source introuvable")
     is_bundle = src.is_dir()
-    source_bundle = None
     if is_bundle:
+        # copytree follows symlinks by default: reject them, including links
+        # hidden in a playlist/manifest subdirectory.
+        if any(path.is_symlink() for path in src.rglob("*")):
+            raise ProviderConfigurationError("Lien symbolique interdit dans le bundle")
         try:
             source_bundle = load_bundle_manifest(src, verify=True)
         except BundleError as exc:
-            raise ProviderConfigurationError(f"Bundle source invalide: {exc}") from exc
-    target_identity = self.identity_by_id(target_identity_id)
-    if target_identity is None:
-        raise ProviderConfigurationError(f"Identité cible inconnue: {target_identity_id}")
+            raise ProviderConfigurationError("Bundle source invalide") from exc
+    else:
+        if not stat.S_ISREG(src.stat().st_mode):
+            raise ProviderConfigurationError("Artifact source non régulier")
+        source_digest = sha256_file(src)
+
     provider = str(source.get("provider_id") or "shared")
+    identity_part = safe_library_component(
+        target_identity.directory_name or target_identity_id, "default",
+    )
+    provider_part = safe_library_component(provider, "local")
+    identity_dir = root / identity_part
+    expected_dir = identity_dir / provider_part
+    # Do this before the service creates any directories: a symlink to an
+    # external directory must not be followed by mkdir or by a later copy.
+    if (identity_dir.is_symlink() or expected_dir.is_symlink()
+            or identity_dir.resolve() != identity_dir
+            or expected_dir.resolve() != expected_dir):
+        raise ProviderConfigurationError("Répertoire cible symbolique interdit")
+    dest_dir = self.library_identity_provider_dir(target_identity_id, provider)
+    if (dest_dir.is_symlink() or dest_dir.resolve() != expected_dir
+            or not dest_dir.resolve().is_relative_to(root)):
+        raise ProviderConfigurationError("Répertoire cible hors bibliothèque")
+
     source_entries = [
         row for row in self.storage.catalog_entries()
         if str(row.get("placement_id") or "") == str(placement_id)
     ]
+    if len(source_entries) > 1:
+        raise ProviderConfigurationError("Notices source ambiguës")
     source_entry = source_entries[0] if source_entries else {}
-    dest_dir = self.library_identity_provider_dir(target_identity_id, provider)
-    dest = dest_dir / src.name
-    unchanged = False
-    if dest.exists():
-        if is_bundle and dest.is_dir():
-            try:
-                unchanged = load_bundle_manifest(dest, verify=True).bundle_sha256 == source_bundle.bundle_sha256
-            except BundleError:
-                unchanged = False
-        elif not is_bundle and dest.is_file():
-            unchanged = sha256_file(dest) == sha256_file(src)
-        if not unchanged:
-            stem, suffix = dest.stem, dest.suffix; n = 2
-            while dest.exists():
-                dest = dest_dir / f"{stem} ({n}){suffix}"; n += 1
-    if not unchanged:
-        if is_bundle:
-            shutil.copytree(src, dest)
-        else:
-            try:
-                os.link(src, dest)
-            except OSError:
-                shutil.copy2(src, dest)
-
     artifact_id = str(source.get("artifact_id") or "").strip()
     item_id = str(source.get("source_item_id") or source_entry.get("item_id") or "").strip() or None
+
+    def verified_target(path: Path) -> bool:
+        if (path.is_symlink() or path.resolve() != path
+                or not path.is_relative_to(dest_dir)):
+            return False
+        if is_bundle:
+            if not path.is_dir() or any(p.is_symlink() for p in path.rglob("*")):
+                return False
+            try:
+                return (load_bundle_manifest(path, verify=True).bundle_sha256
+                        == source_bundle.bundle_sha256)
+            except BundleError:
+                return False
+        return (path.is_file() and sha256_file(path) == source_digest)
+
+    # A same-name, same-SHA file owned by B is NOT a copy created by A:
+    # neither its metadata nor its credential/rights may be overwritten.
+    owned_copy = None
+    for row in self.storage.placements():
+        meta = row.get("metadata") or {}
+        if (row.get("identity_id") == target_identity_id
+                and row.get("provider_id") == provider
+                and str(row.get("source_item_id") or "") == str(item_id or "")
+                and row.get("artifact_id") == artifact_id
+                and row.get("state") == "present"
+                and type(meta) is dict
+                and meta.get("materialized_from") == placement_id):
+            path = Path(str(row.get("path") or ""))
+            if path.parent == dest_dir and path != src and verified_target(path):
+                owned_copy = (path, row)
+                break
+
+    def copy_regular(dest: Path, *, replace: bool = False) -> None:
+        # Publish an independent inode: never os.link(source, destination).
+        # Temporary file and exclusive link also refuse a dangling symlink
+        # created concurrently at the final destination.
+        fd, temporary = tempfile.mkstemp(prefix=".cifereca-send-", dir=dest_dir)
+        os.close(fd)
+        temp = Path(temporary)
+        try:
+            opened = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(opened, "rb") as input_stream, temp.open("wb") as out:
+                if not stat.S_ISREG(os.fstat(input_stream.fileno()).st_mode):
+                    raise ProviderConfigurationError("Artifact source non régulier")
+                shutil.copyfileobj(input_stream, out)
+                out.flush()
+                os.fsync(out.fileno())
+            if sha256_file(temp) != source_digest or sha256_file(src) != source_digest:
+                raise ProviderConfigurationError("Source modifiée pendant la copie")
+            if replace:
+                if not verified_target(dest):
+                    raise ProviderConfigurationError("Destination modifiée pendant la copie")
+                os.replace(temp, dest)
+            else:
+                os.link(temp, dest)  # Exclusive destination; never hardlink src.
+        finally:
+            temp.unlink(missing_ok=True)
+
+    if owned_copy:
+        dest, existing = owned_copy
+        if not is_bundle and os.path.samefile(src, dest):
+            copy_regular(dest, replace=True)  # Repair a legacy hardlink.
+            status = "complete"
+        else:
+            return {
+                "status": "unchanged", "path": str(dest),
+                "placement_id": existing["placement_id"],
+                "target_identity_id": target_identity_id, "provider_id": provider,
+            }
+    else:
+        dest = dest_dir / src.name
+        stem, suffix = dest.stem, dest.suffix
+        n = 2
+        # A symbolic-link destination is a hard error, even when dangling.
+        if dest.is_symlink():
+            raise ProviderConfigurationError("Lien symbolique cible interdit")
+        while os.path.lexists(dest):
+            dest = dest_dir / f"{stem} ({n}){suffix}"
+            n += 1
+            if dest.is_symlink():
+                raise ProviderConfigurationError("Lien symbolique cible interdit")
+        if is_bundle:
+            shutil.copytree(src, dest)
+            try:
+                if not verified_target(dest):
+                    raise ProviderConfigurationError("Bundle copié non vérifié")
+            except Exception:
+                shutil.rmtree(dest)
+                raise
+        else:
+            copy_regular(dest)
+        status = "complete"
+
+    if not dest.resolve().is_relative_to(root) or dest.resolve() != dest:
+        raise ProviderConfigurationError("Destination hors bibliothèque")
+
     if artifact_id:
         stat_target = (dest / ".cifereca-bundle.json") if is_bundle else dest
-        stat = stat_target.stat()
-        try:
-            relative = str(dest.resolve().relative_to(self.library_dir().resolve()))
-        except ValueError:
-            relative = dest.name
+        size_stat = stat_target.stat()
         placement_meta = {
-            "relative_path": relative, "mtime_ns": int(stat.st_mtime_ns),
-            "materialized_from": placement_id, "artifact_kind": "bundle" if is_bundle else "file",
+            "relative_path": str(dest.relative_to(root)),
+            "mtime_ns": int(size_stat.st_mtime_ns),
+            "materialized_from": placement_id,
+            "artifact_kind": "bundle" if is_bundle else "file",
+            "transfer_kind": "local_copy",
+            "file_origin_identity_id": owner,
         }
         if is_bundle:
-            placement_meta["manifest_size"] = int(stat.st_size)
+            placement_meta["manifest_size"] = int(size_stat.st_size)
         else:
-            placement_meta["file_size"] = int(stat.st_size)
+            placement_meta["file_size"] = int(size_stat.st_size)
         new_placement_id = self.storage.placement_put({
-            "artifact_id": artifact_id, "path": str(dest), "identity_id": target_identity_id,
-            "provider_id": provider, "source_item_id": item_id, "state": "present",
+            "artifact_id": artifact_id, "path": str(dest),
+            "identity_id": target_identity_id, "provider_id": provider,
+            "source_item_id": item_id, "state": "present",
             "last_seen_at": int(time.time()), "metadata": placement_meta,
         })
-        metadata = dict(source_entry.get("metadata") or {})
-        metadata["path"] = str(dest.resolve())
-        metadata["materialized_from"] = placement_id
+        # Source account credentials, rights and entitlement flags belong to
+        # A. The recipient gets a local file with origin, not an owned item.
+        allowed = {
+            "description", "summary", "subjects", "series", "collection",
+            "authors", "publisher", "language", "languages", "isbn",
+            "cover_url", "thumbnail_url", "media_format", "artifact_kind",
+        }
+        metadata = {
+            k: v for k, v in dict(source_entry.get("metadata") or {}).items()
+            if k in allowed
+        }
+        metadata.update({
+            "path": str(dest), "materialized_from": placement_id,
+            "file_origin_identity_id": owner, "transfer_kind": "local_copy",
+        })
         self.storage.catalog_entry_put({
             "artifact_id": artifact_id, "placement_id": new_placement_id,
-            "title": source_entry.get("title") or src.stem, "author": source_entry.get("author"),
+            "title": source_entry.get("title") or src.stem,
+            "author": source_entry.get("author"),
             "media_format": source_entry.get("media_format") or src.suffix.lstrip(".").lower(),
             "identity_id": target_identity_id, "provider_id": provider, "item_id": item_id,
             "local_state": "local", "metadata": metadata,
         })
     else:
-        self.catalog_index_path(
+        indexed = self.catalog_index_path(
             dest, title=str(source_entry.get("title") or src.stem), item_id=item_id,
             identity_id=target_identity_id, provider_id=provider,
         )
+        new_placement_id = indexed.get("placement_id") if type(indexed) is dict else None
     return {
-        "status": "unchanged" if unchanged else "complete", "path": str(dest),
+        "status": status, "path": str(dest),
+        "placement_id": new_placement_id,
         "target_identity_id": target_identity_id, "provider_id": provider,
     }
+
 
 
 def catalog_scan(self, *, repair_misnamed: bool=False, force_covers: bool=False) -> dict[str, Any]:
