@@ -1025,6 +1025,10 @@ class LibraryMaintenanceBrokerImpl:
                             raise _VariantScopeConflict("Octets de variante non vérifiés")
                     finally:
                         os.close(fd)
+                except _VariantScopeConflict:
+                    # A verified checksum/size mismatch is an integrity
+                    # refusal, not an unavailable filesystem inspection.
+                    raise
                 except (OSError, RuntimeError):
                     raise _VariantScopeConflict("Fichier variante non vérifiable") from None
                 verified.append((placement_id, path, named))
