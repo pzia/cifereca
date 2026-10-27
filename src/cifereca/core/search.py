@@ -92,7 +92,19 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
     if field == "isbn":
         return _values(row.get("isbn")) + _values(row.get("item_id")) + _values(meta.get("isbn")) + _values(meta.get("isbns"))
     if field == "subject":
-        return _values(meta.get("subjects")) + _values(meta.get("subject")) + _bundle_member_values(row, field)
+        # The explicit Sujet filter must cover the same known, already
+        # indexed bibliographic classifications as the all-fields search.
+        # Do not traverse arbitrary nested supplier payloads or invent
+        # provider-side filtering capabilities.
+        search = meta.get("search_result")
+        search = search if isinstance(search, Mapping) else {}
+        return (
+            _values(meta.get("subjects")) + _values(meta.get("subject"))
+            + _values(meta.get("themes")) + _values(meta.get("keywords"))
+            + _values(meta.get("tags")) + _values(meta.get("genres"))
+            + _values(meta.get("categories")) + _values(search.get("subjects"))
+            + _bundle_member_values(row, field)
+        )
     if field == "series":
         return _values(meta.get("series")) + _bundle_member_values(row, field)
     if field == "collection":
