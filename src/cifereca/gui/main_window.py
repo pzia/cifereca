@@ -1508,6 +1508,28 @@ class MainWindow(Adw.ApplicationWindow):
             source_collection=source_collection, identity_id=identity_id,
         )
 
+    def can_open_known_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        from .known_search_notice_navigation import can_open_known_search_notice
+        return can_open_known_search_notice(
+            self, provider=provider, credential=credential,
+            record_id=record_id, docbase=docbase,
+            source_collection=source_collection, identity_id=identity_id,
+        )
+
+    def open_known_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        from .known_search_notice_navigation import open_known_search_notice
+        return open_known_search_notice(
+            self, provider=provider, credential=credential,
+            record_id=record_id, docbase=docbase,
+            source_collection=source_collection, identity_id=identity_id,
+        )
+
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
         from .search_host_port import SearchRunPort
         return search_controller.run_search(SearchRunPort(self), force, keyboard=keyboard)
