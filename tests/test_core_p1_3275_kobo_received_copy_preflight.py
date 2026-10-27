@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cifereca.core.kobo_backup import _indexed_kobo_catalog_paths
 from cifereca.library_files import sha256_file
 from tests.test_core0925_open_destinations import _service
@@ -106,5 +108,77 @@ def test_forged_received_marker_without_matching_placement_does_not_bypass_guard
         })
         assert service.kobo_unlinked_local_count("bob") == 1
         assert _indexed_kobo_catalog_paths(service)[("bob", "item-2")] == [other]
+    finally:
+        service.close()
+
+
+def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
+    tmp_path, monkeypatch,
+):
+    """B's own Vault manifest does not adopt a locally received copy as backup.
+
+    The same product ID appears in A's transferred file and B's independent,
+    account-scoped Kobo manifest. A repeated B sync must not download, invent
+    an acquisition, or create a second placement while reconciliation waits.
+    """
+    from tests.test_kobo_backup_guard import (
+        KoboSession,
+        _manifest_row,
+        _service as kobo_backup_service,
+    )
+
+    service = kobo_backup_service(tmp_path)
+    try:
+        src, source_placement_id = _kobo_source(service, tmp_path)
+        sent = service.materialize_to_identity(source_placement_id, "bob")
+        received = Path(sent["path"])
+        original_bytes = src.read_bytes()
+        assert received.read_bytes() == original_bytes
+        assert service.kobo_unlinked_local_count("bob") == 0
+
+        service.storage.provider_connection_put({
+            "identity_id": "bob", "provider_id": "kobo",
+            "credential_id": "vault-b", "label": "Bob Kobo",
+        })
+        a_session = service._sessions[service._session_key("kobo", "vault-1")]
+        b_session = KoboSession(
+            descriptor=a_session.descriptor,
+            credential_id="vault-b",
+            label="Bob Kobo",
+            credentials={},
+            options={},
+            manifest=[_manifest_row()],
+        )
+        b_session.connect()
+        service._sessions[service._session_key("kobo", "vault-b")] = b_session
+        monkeypatch.setattr(
+            service, "_execute_kobo_acquisition",
+            lambda *_args, **_kwargs: pytest.fail(
+                "Received A bytes must not become B's automatic download"
+            ),
+        )
+
+        first = service.sync_kobo_backup(credential_id="vault-b")
+        linked = service.storage.backup_get("kobo", "vault-b", "book-1")
+        assert linked is not None
+        assert linked["identity_id"] == "bob"
+        assert linked["credential_id"] == "vault-b"
+        assert linked["status"] in {"reconcile_required", "reconcile_conflict"}
+        assert first["attempted"] == 0 and first["downloaded"] == 0
+        assert first["reconcile_pending"] == 1
+        assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
+        assert service.storage.acquisitions() == []
+
+        second = service.sync_kobo_backup(credential_id="vault-b")
+        assert second["attempted"] == 0 and second["downloaded"] == 0
+        assert second["reconcile_skipped"] >= 1
+        assert service.storage.backup_get("kobo", "vault-b", "book-1")["status"] == linked["status"]
+        assert service.materialize_to_identity(source_placement_id, "bob")["status"] == "unchanged"
+        assert len([p for p in service.storage.placements()
+                    if p.get("identity_id") == "bob"
+                    and p.get("metadata", {}).get("materialized_from") == source_placement_id]) == 1
+        assert src.read_bytes() == original_bytes
+        assert received.read_bytes() == original_bytes
+        assert service.storage.acquisitions() == []
     finally:
         service.close()
