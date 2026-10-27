@@ -3318,7 +3318,8 @@ class Storage:
 
     def numilog_checkpoint_adopt_acsm_placement(
         self, acquisition_id: str, *, expected_path: str,
-    ) -> bool:
+        diagnose: bool = False,
+    ) -> bool | str:
         """Bind a broker-indexed Numilog ACSM file to one proven owned receipt.
 
         The ADEPT import initially indexes the ACSM sha as its source item.
@@ -3332,12 +3333,19 @@ class Storage:
         import re
         from pathlib import Path
 
+        # An optional internal diagnostic returns only a *fixed refusal code*
+        # from the same SQLite transaction that makes the adoption decision.
+        # The pre-existing bool API, on-disk data and safe-failure behavior
+        # are unchanged. Never publish private row keys or paths.
+        def refused(code: str) -> bool | str:
+            return code if diagnose is True else False
+
         if (type(acquisition_id) is not str
                 or re.fullmatch(r"numilog-materialization:[0-9a-f]{32}",
                                 acquisition_id) is None
                 or type(expected_path) is not str
                 or not expected_path or "\0" in expected_path):
-            return False
+            return refused("invalid_target")
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             record = db.execute(
@@ -3347,7 +3355,7 @@ class Storage:
                 (acquisition_id,),
             ).fetchone()
             if record is None:
-                return False
+                return refused("receipt_missing")
             identity, credential, account, item_id, status, receipt_raw = record
             from .core.numilog_manifest_rights import _scoped_record_id
             if (not all(type(v) is str and v for v in
@@ -3357,7 +3365,7 @@ class Storage:
                     or acquisition_id != self._stable_id(
                         "numilog-materialization", identity, credential, account, item_id,
                     )):
-                return False
+                return refused("receipt_scope_invalid")
             receipt = self._json_load(receipt_raw)
             if (type(receipt) is not dict
                     or receipt.get("kind") != "numilog_delivered_artifact_v1"
@@ -3367,15 +3375,15 @@ class Storage:
                     or re.fullmatch(r"[0-9a-f]{64}", receipt["sha256"]) is None
                     or type(receipt.get("size")) is not int
                     or receipt["size"] <= 0):
-                return False
+                return refused("receipt_invalid")
             source_root = receipt.get("root")
             if type(source_root) is not str:
-                return False
+                return refused("receipt_root_invalid")
             path = Path(expected_path)
             parent = path.parent
             if (not path.is_absolute() or str(parent.parent) != source_root
                     or re.fullmatch(r"acsm-([0-9a-f]{64})", parent.name) is None):
-                return False
+                return refused("path_not_canonical")
             acsm_sha = parent.name[5:]
             manual_id = "manual-acsm:" + hashlib.sha256(
                 (identity + ":" + acsm_sha).encode("utf-8"),
@@ -3387,7 +3395,7 @@ class Storage:
                 (manual_id,),
             ).fetchone()
             if manual_row is None:
-                return False
+                return refused("manual_receipt_missing")
             m_provider, m_credential, m_identity, m_item, m_status, m_artifact, m_raw = manual_row
             m_meta = self._json_load(m_raw)
             artifact_id = "sha256:" + receipt["sha256"]
@@ -3397,24 +3405,24 @@ class Storage:
                     or type(m_meta) is not dict
                     or m_meta.get("source_acsm_sha256") != acsm_sha
                     or m_meta.get("path") != expected_path):
-                return False
+                return refused("manual_receipt_mismatch")
             art = db.execute(
                 "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
                 (artifact_id,),
             ).fetchone()
             if art != (receipt["sha256"], receipt["size"]):
-                return False
+                return refused("artifact_mismatch")
             placements = db.execute(
                 "SELECT placement_id,artifact_id,identity_id,provider_id,"
                 "source_item_id,state FROM placements WHERE path=?",
                 (expected_path,),
             ).fetchall()
             if len(placements) != 1:
-                return False
+                return refused("placement_missing")
             pid, pa, pi, pp, pitem, state = placements[0]
             if (pa != artifact_id or pi != identity or pp != "numilog"
                     or pitem != acsm_sha or state != "present"):
-                return False
+                return refused("placement_conflict")
             catalogs = db.execute(
                 "SELECT catalog_entry_id,artifact_id,identity_id,provider_id,"
                 "item_id,local_state FROM catalog_entries WHERE placement_id=? LIMIT 2",
@@ -3424,21 +3432,21 @@ class Storage:
                     or catalogs[0][1:] != (
                         artifact_id, identity, "numilog", acsm_sha, "local"
                     )):
-                return False
+                return refused("catalogue_conflict")
             other = db.execute(
                 "SELECT 1 FROM placements WHERE artifact_id=? AND path<>? "
                 "AND source_item_id IS NOT NULL LIMIT 1",
                 (artifact_id, expected_path),
             ).fetchone()
             if other is not None:
-                return False
+                return refused("artifact_shared_elsewhere")
             competitors = db.execute(
                 "SELECT acquisition_id FROM acquisition_ledger WHERE "
                 "provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
                 (credential, item_id),
             ).fetchall()
             if len(competitors) != 1 or competitors[0][0] != acquisition_id:
-                return False
+                return refused("competing_receipts")
             # Both provenance rows change together. A crash/SQL error cannot
             # leave a placement adopted without its matching catalog entry.
             stamp = int(time.time())
@@ -3454,7 +3462,7 @@ class Storage:
             )
             if updated.rowcount != 1 or changed.rowcount != 1:
                 raise ValueError("stale_numilog_acsm_provenance")
-            return True
+            return "adopted" if diagnose is True else True
 
     def numilog_checkpoint_complete(
         self, acquisition_id: str, *, identity_id: str, credential_id: str,
