@@ -1044,6 +1044,41 @@ class LocalInspection:
                     states=tuple(sorted(set(case.states) | {'declared_link_recorded'})),
                     details=case.details + '\n\n' + note,
                 )
+        # #2847: classify the references to an audited missing pathname
+        # without touching the provider, the filesystem or live SQLite. A
+        # snapshot omits nested operational metadata and user declarations;
+        # even zero visible references is NEVER permission to delete a row.
+        # Build the lookup once, not one full-table scan per old placement.
+        path_catalog = Counter(
+            row.get('placement_id')
+            for row in audit.snapshot.tables.get('catalog_entries', ())
+            if row.get('identity_id') == identity_id
+            and type(row.get('placement_id')) is str
+        )
+        path_backups = Counter(
+            row.get('local_path')
+            for row in audit.snapshot.tables.get('backup_items', ())
+            if row.get('identity_id') == identity_id
+            and type(row.get('local_path')) is str
+        )
+        artifact_placements = Counter(
+            row.get('artifact_id')
+            for row in placements if row.get('identity_id') == identity_id
+            and type(row.get('artifact_id')) is str
+        )
+        artifact_acquisitions = Counter(
+            row.get('artifact_id')
+            for row in audit.snapshot.tables.get('acquisition_ledger', ())
+            if row.get('identity_id') == identity_id
+            and type(row.get('artifact_id')) is str
+        )
+        edition_rights = Counter(
+            (row.get('provider_id'), row.get('item_id'))
+            for row in audit.snapshot.tables.get('entitlements', ())
+            if row.get('identity_id') == identity_id
+            and type(row.get('provider_id')) is str
+            and type(row.get('item_id')) is str
+        )
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
                 continue
@@ -1062,8 +1097,41 @@ class LocalInspection:
                 }[bucket]
                 case_states.add(variant)
                 label = STATES[variant]
+            details = evidence('placements', index)
+            if state == 'stored_path_missing':
+                placement = placements[index]
+                artifact_id = placement.get('artifact_id')
+                edition = placement.get('source_item_id')
+                provider = placement.get('provider_id')
+                reference_counts = (
+                    ('Notices directement liées au placement',
+                     path_catalog[placement.get('placement_id')]),
+                    ('Anciennes sauvegardes portant ce chemin',
+                     path_backups[placement.get('path')]),
+                    ('Autres emplacements du même artefact dans cette identité',
+                     max(0, artifact_placements[artifact_id] - 1)
+                     if type(artifact_id) is str and artifact_id else 0),
+                    ('Acquisitions référençant cet artefact dans cette identité',
+                     artifact_acquisitions[artifact_id]
+                     if type(artifact_id) is str and artifact_id else 0),
+                    ('Droits enregistrés pour cette source et cette édition',
+                     edition_rights[(provider, edition)]
+                     if type(provider) is str and type(edition) is str and edition
+                     else 0),
+                )
+                details += (
+                    '\n\nPrévisualisation des références enregistrées (lecture seule) :\n'
+                    + '\n'.join(
+                        f'• {name} : {count}' for name, count in reference_counts
+                    )
+                    + '\nLes métadonnées opérationnelles JSON, déclarations et '
+                    'références hors du périmètre inspecté ne sont pas qualifiées '
+                    'par ce résumé. Même zéro référence visible ne prouve pas '
+                    'que le placement puisse être supprimé. Fichier et références '
+                    'à revérifier avant toute action explicite ; aucune mutation effectuée.'
+                )
             if not add('path', index, label+' · '+_text(placements[index].get('placement_id')),
-                       'unattributed', case_states, evidence('placements', index)):
+                       'unattributed', case_states, details):
                 break
             self._case_search[f'path:{index}'] = _searchable(
                 label + ' ' + _text(placements[index].get('placement_id'))[:128]
