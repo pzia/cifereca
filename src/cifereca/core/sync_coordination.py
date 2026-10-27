@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 from contextlib import ExitStack
-from inspect import getattr_static
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -665,7 +664,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         # Do not persist any row from an ambiguous account batch;
                         # avoid displaying or logging provider-controlled details.
                         raise ProviderConfigurationError("loan_source_scope_mismatch")
-                    if snapshot is not None and not _registered_typed_loan_scope_current(
+                    if not _registered_typed_loan_scope_current(
                         self, account, session, typed_scope,
                     ):
                         raise ProviderConfigurationError("loan_source_scope_changed")
@@ -678,9 +677,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         snapshot.status == "partial"
                         and snapshot.reason_code == "legacy_unverified"
                     )
-                    inventory_partial = (
-                        snapshot.status == "partial"
-                    ) or legacy_unverified
+                    inventory_partial = snapshot.status == "partial"
                     if inventory_partial:
                         # Unknown v1 coverage is not a *provider error*: do
                         # not inflate failure counts (or blame an acquisition).
