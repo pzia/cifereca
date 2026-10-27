@@ -106,6 +106,11 @@ def _render_loans(self) -> None:
             continue
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
+        # BnF (and other providers) can supply a verified author on the
+        # exact loan. Display that author without borrowing names from a
+        # homonymous catalogue record or another loan's thumbnail.
+        if type(loan.author) is str and loan.author.strip():
+            subtitle = loan.author.strip() + " · " + subtitle
         meta = loan_row_metadata(loan.due_at, due, document_type=loan.document_type, provider=loan.provider)
         ranked_rows.append((
             due.sort_key,
