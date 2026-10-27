@@ -99,3 +99,24 @@ def test_refreshed_live_kobo_preview_preserves_read_only_partial_classification(
         assert service.storage.backup_list("kobo", "vault-1") == []
     finally:
         service.close()
+
+
+def test_ambiguous_kobo_borrowers_remain_read_only_but_cannot_be_replaced_mid_read(
+    tmp_path, monkeypatch,
+):
+    service, session = _service(tmp_path, MANIFEST)
+    session._accounts.append(replace(session.accounts[0], unique_id="other"))
+    try:
+        stable = service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        assert stable["preview_only"] is True
+        assert stable["acquisition_authorized"] is False
+        original = session.backup_manifest
+        def changed_during_http():
+            rows = original()
+            session._accounts[1] = replace(session.accounts[1])
+            return rows
+        monkeypatch.setattr(session, "backup_manifest", changed_during_http)
+        with pytest.raises(ProviderConfigurationError, match="Source Kobo modifiée"):
+            service.kobo_backup_preview("vault-1", refresh_manifest=True)
+    finally:
+        service.close()
