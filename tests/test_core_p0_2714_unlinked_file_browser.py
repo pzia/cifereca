@@ -35,8 +35,8 @@ def test_six_numilog_unlinked_files_are_selectable_without_metadata_right_match(
     assert len(page.cases) == 3
     assert all(case.key.startswith('file:') for case in page.cases)
     assert all('confirmed_link' not in case.states for case in page.cases)
-    assert 'Titre caché 5' in page.cases[-1].label
-    assert session.unconfirmed_files(query='titre cache 4').total == 1
+    assert 'Titre caché volume-5' in page.cases[-1].label
+    assert session.unconfirmed_files(query='titre cache volume-4').total == 1
     assert session.unconfirmed_files(query='code-5').total == 1
     assert session.unconfirmed_files(query='PRIVATE_NOT_IN_LIST').total == 0
     assert session.unconfirmed_files(
@@ -143,11 +143,11 @@ def test_in_memory_filter_is_no_io_after_evidence_snapshot(
         raise AssertionError('unexpected filesystem scan during file filtering')
     monkeypatch.setattr(os, 'open', cannot_open)
     selected = session.unconfirmed_files(
-        query='titre cache 5', limit=25, sort='title',
+        query='titre cache volume-5', limit=25, sort='title',
         media_format='epub', sha_state='calculated', epub_crc='confirmed',
     )
     assert selected.total == 1
-    assert 'Titre caché 5' in selected.cases[0].label
+    assert 'Titre caché volume-5' in selected.cases[0].label
     session.close()
 
 
