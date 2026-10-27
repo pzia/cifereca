@@ -24,6 +24,7 @@ def _render_search_results(host):
         "_catalogue_edition_scope",
         "_exact_known_catalogue_scope",
         "_exact_remote_catalogue_scope",
+        "_remote_result_row_keys",
         "_render_search_results",
     )
     functions = [
