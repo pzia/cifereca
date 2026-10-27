@@ -47,6 +47,7 @@ class CapabilityEvidence:
     field: str = ""
     identity_id: str = ""
     account_id: str = ""
+    credential_id: str = ""
     edition_id: str = ""
     enabled: bool | None = None
     connected: bool | None = None
@@ -57,7 +58,7 @@ class CapabilityEvidence:
             value = getattr(self, key)
             if type(value) is not str or not _KEY.fullmatch(value):
                 raise ValueError("capability_invalid_key")
-        for key in ("field", "identity_id", "account_id", "edition_id"):
+        for key in ("field", "identity_id", "account_id", "credential_id", "edition_id"):
             value = getattr(self, key)
             if (type(value) is not str or len(value) > 256
                     or "\0" in value or "\n" in value or "\r" in value):
@@ -106,20 +107,21 @@ class CapabilityMatrix:
             if type(row) is not CapabilityEvidence or row.provider_id != self.provider_id:
                 raise ValueError("capability_owner_mismatch")
             key = (row.operation, row.scope, row.field, row.identity_id,
-                   row.account_id, row.edition_id)
+                   row.account_id, row.credential_id, row.edition_id)
             if key in seen:
                 raise ValueError("capability_duplicate_scope")
             seen.add(key)
 
     def exact(
         self, operation: str, scope: str, *, field: str = "",
-        identity_id: str = "", account_id: str = "", edition_id: str = "",
+        identity_id: str = "", account_id: str = "",
+        credential_id: str = "", edition_id: str = "",
     ) -> CapabilityEvidence | None:
         """No fallback from public to account, all to author, or A to B."""
         for row in self.observations:
             if (row.operation, row.scope, row.field, row.identity_id,
-                    row.account_id, row.edition_id) == (
-                    operation, scope, field, identity_id, account_id, edition_id):
+                    row.account_id, row.credential_id, row.edition_id) == (
+                    operation, scope, field, identity_id, account_id, credential_id, edition_id):
                 return row
         return None
 
