@@ -119,6 +119,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         loan.id, loan.record_id,
     )
     core_epoch = service._account_context_epoch
+    consent_revision = service.storage.metadata_get(policy_key(account) + '.revision')
     session = service._sessions.get(
         service._session_key('bnf-pret', account.credential_id),
     )
@@ -128,6 +129,9 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         try:
             return (
                 enabled(service, account)
+                and service.storage.metadata_get(
+                    policy_key(account) + '.revision'
+                ) == consent_revision
                 and service._account_context_epoch == core_epoch
                 and service._sessions.get(
                     service._session_key('bnf-pret', account.credential_id),
