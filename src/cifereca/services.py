@@ -1147,9 +1147,9 @@ class LibraryService:
 
     def capability_matrices_with_precollected_evidence(
         self, identity_id: str | None = None, *,
-        sync_sources=(), loan_snapshots=(),
+        sync_sources=(), loan_snapshots=(), rights_snapshots=(),
     ):
-        """Project already collected Sync/loan observations without provider I/O.
+        """Project precollected Sync/loan/rights read states without provider I/O.
 
         Snapshots must have been bound to the exact active identity/credential
         by the caller. A displayed capability never grants an action.
@@ -1160,6 +1160,7 @@ class LibraryService:
         return capability_matrices_with_precollected_evidence(
             self, identity_id=identity_id,
             sync_sources=sync_sources, loan_snapshots=loan_snapshots,
+            rights_snapshots=rights_snapshots,
         )
 
     @staticmethod
