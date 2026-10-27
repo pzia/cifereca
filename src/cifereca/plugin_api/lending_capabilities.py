@@ -105,10 +105,21 @@ def assess_lending_operation(
         # account registries are unverified until a separate trusted adapter
         # exists; never invoke them merely to render action availability.
         session_data = None
-        if (session is not None and isinstance(session, ProviderSession)
+        # isinstance() on an ABC may evaluate an instance's dynamic
+        # __class__ attribute. This *read-only* inspection must never
+        # execute a provider __getattribute__ (possibly issuing HTTP).
+        # Validate the class, not the instance, before reading raw memory.
+        if (klass is not None
+                and isinstance(klass, type)
+                and issubclass(klass, ProviderSession)
+                and getattr_static(klass, "__getattribute__", None)
+                    is object.__getattribute__
                 and getattr_static(klass, "accounts", None) is
                     ProviderSession.__dict__["accounts"]):
-            session_data = object.__getattribute__(session, "__dict__")
+            try:
+                session_data = object.__getattribute__(session, "__dict__")
+            except (AttributeError, TypeError):
+                session_data = None
             if type(session_data) is not dict:
                 session_data = None
         if session_data is None:
