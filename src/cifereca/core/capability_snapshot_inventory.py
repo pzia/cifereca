@@ -103,7 +103,8 @@ def capability_matrices_with_precollected_evidence(
                 connected=currently_connected[provider],
             )
             for row in projected.observations
-            if row.operation in ("loan.inventory", "loan.inventory.branch")
+            if (row.operation == "loan.inventory" and row.scope == "account")
+            or row.operation == "loan.inventory.branch"
         )
 
     return tuple(
