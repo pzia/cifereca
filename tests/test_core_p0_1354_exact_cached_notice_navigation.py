@@ -139,6 +139,24 @@ def test_B_disconnected_with_A_still_connected_cannot_reuse_A_session(tmp_path):
         service.close()
 
 
+def test_disabled_connection_never_exposes_cached_holdings_action(tmp_path):
+    service, win, events, rows, coords = _prepare(tmp_path)
+    try:
+        assert can_open_known_search_notice(win, **coords)
+        # Account suspension/disablement must trump a connected flag that is
+        # still True in the stale in-memory provider session.
+        service.storage.provider_connection_put({
+            "identity_id": "default", "provider_id": "paris",
+            "credential_id": "reader-A", "enabled": False,
+        })
+        assert not can_open_known_search_notice(win, **coords)
+        assert not open_known_search_notice(win, **coords)
+        assert events == [] and rows == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
+
+
 def test_explicit_navigation_revokes_when_identity_or_catalogue_changes(tmp_path):
     service, win, events, rows, coords = _prepare(tmp_path)
     try:
