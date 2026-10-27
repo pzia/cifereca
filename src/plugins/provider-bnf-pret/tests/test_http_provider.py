@@ -72,6 +72,38 @@ class HTTPProviderTests(unittest.TestCase):
         s.close()
         with self.assertRaises(ProviderConfigurationError): s.loans(a)
 
+    def test_typed_partial_inventory_replaces_mutable_v1_error_sidechannel(self):
+        s, calls, state = self.make()
+        try:
+            account, = s.connect()
+            account.identity_id = 'profile-a'
+            prior = len(calls)
+            positive = s.loan_inventory_snapshot(account)
+            self.assertEqual(len(calls), prior + 1)
+            self.assertEqual(positive.status, 'partial')
+            self.assertEqual(positive.reason_code, 'inventory_not_exhaustive')
+            self.assertEqual(len(positive.loans), 1)
+            self.assertEqual(len(positive.branches), 1)
+            self.assertEqual((positive.branches[0].upstream,
+                              positive.branches[0].completeness),
+                             ('bnf_html', 'partial'))
+            self.assertNotIn('last_loan_errors', vars(s))
+
+            # An empty observed page is NOT proof that an earlier right
+            # ended. One typed read is the only authoritative envelope.
+            state['activity'] = '<section class="active-loans"></section>'
+            prior = len(calls)
+            empty = s.loan_inventory_snapshot(account)
+            self.assertEqual(len(calls), prior + 1)
+            self.assertEqual(empty.loans, ())
+            self.assertEqual(empty.status, 'partial')
+            self.assertEqual(empty.reason_code, 'inventory_not_exhaustive')
+            self.assertEqual(empty.branches[0].completeness, 'partial')
+            self.assertNotIn('last_loan_errors', vars(s))
+            self.assertFalse(any('/loans/' in p for _, _, p in calls))
+        finally:
+            s.close()
+
     def test_positive_loan_cover_reaches_core_without_extra_http(self):
         activity = ('<section class="active-loans">'
                     '<div class="js-loan">'
