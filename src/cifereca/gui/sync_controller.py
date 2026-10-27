@@ -1086,7 +1086,7 @@ def _refresh_sync_page(self) -> None:
             # hash files or resolve ADEPT merely to render a page.
             # This controller is also executed by the headless GTK harness;
             # absolute import avoids an unbound __package__ in that runner.
-            from cifereca.gui.numilog_materialization_status import describe_run
+            from cifereca.gui.numilog_materialization_status import describe_run, compact_run_caption
             consent_history = ""
             status_reader = getattr(broker, "numilog_materialization_run_status", None)
             if callable(status_reader):
@@ -1113,8 +1113,12 @@ def _refresh_sync_page(self) -> None:
                 consent_subtitle = (
                     "Sauvegarde planifiée indisponible. Aucun téléchargement automatique."
                 )
+            # Keep the long, per-item diagnostic and task reference out of
+            # the account card header: they remain available on explicit
+            # disclosure below, without shrinking the card typography.
             consent_row.set_subtitle(
-                consent_subtitle + (" " + consent_history if consent_history else "")
+                consent_subtitle + ("\n" + compact_run_caption(consent_history)
+                                    if consent_history else "")
             )
             consent_button = self.action_button(
                 "Désactiver la sauvegarde" if consent_mode == "on_start"
@@ -1134,6 +1138,21 @@ def _refresh_sync_page(self) -> None:
             )
             add_sync_action(consent_row, consent_button)
             group.add(sync_action_row(consent_row))
+            if consent_history:
+                run_details = Gtk.Expander(
+                    label="Détails du dernier essai de sauvegarde"
+                )
+                run_details.set_expanded(False)
+                run_details.set_margin_start(12)
+                run_details.set_margin_end(12)
+                run_details.set_margin_bottom(12)
+                diagnostic_label = Gtk.Label(label=consent_history, xalign=0)
+                diagnostic_label.set_wrap(True)
+                diagnostic_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                diagnostic_label.set_width_chars(1)
+                diagnostic_label.set_selectable(True)
+                run_details.set_child(diagnostic_label)
+                group.add(run_details)
 
             def change_numilog_consent(
                 button, sid=source.source_id, expected_identity=source.identity_id,
