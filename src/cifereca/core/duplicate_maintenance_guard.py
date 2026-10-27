@@ -64,7 +64,10 @@ def canonical_metadata_mentions_path(
     return False
 
 
-def candidate_has_active_dependencies(storage, *, placement_id: str, path: str) -> bool:
+def candidate_has_active_dependencies(
+    storage, *, placement_id: str, path: str,
+    removable_variant: dict | None = None,
+) -> bool:
     """True if deleting this path would orphan a known independent reference.
 
     Every query is local and read-only; ambiguity or an unavailable SQLite
@@ -72,26 +75,64 @@ def candidate_has_active_dependencies(storage, *, placement_id: str, path: str) 
     Historical acquisition metadata is conservatively treated as a reference
     when it names the exact active path: it must be classified/migrated in a
     separate, explicit operation, not discarded by a one-click cleanup.
+    Only a variant deletion may pass removable_variant to exempt its own
+    proven single derived catalogue projection (retired in the same action).
     """
     if type(path) is not str or not path or type(placement_id) is not str or not placement_id:
         return True
     try:
         with storage._lock, storage._connect() as db:
-            if db.execute(
-                "SELECT 1 FROM catalog_entries WHERE placement_id=? LIMIT 1",
+            # Ordinary duplicate deletion always preserves linked catalogue
+            # rows. Deleting a *derived variant* is different: its one own,
+            # explicitly marked projection is retired alongside its placement.
+            # Never exempt another edition/account or a second catalogue row.
+            owned_catalog_id = None
+            linked = db.execute(
+                "SELECT catalog_entry_id,artifact_id,identity_id,provider_id,"
+                "item_id,metadata_json FROM catalog_entries WHERE placement_id=?",
                 (placement_id,),
-            ).fetchone():
-                return True
-            # A catalogue projection may name the candidate path in its
-            # metadata despite referring to a different placement identifier.
-            # Do not silently erase that operational pointer either.
-            for (raw,) in db.execute("SELECT metadata_json FROM catalog_entries"):
+            ).fetchall()
+            if linked:
+                if (type(removable_variant) is not dict or len(linked) != 1
+                        or any(type(removable_variant.get(k)) is not str
+                               or not removable_variant[k]
+                               for k in ("artifact_id", "identity_id",
+                                         "provider_id", "source_item_id",
+                                         "source_artifact_id"))):
+                    return True
+                cid, artifact, identity, provider, item, raw = linked[0]
+                if (artifact, identity, provider, item) != (
+                    removable_variant["artifact_id"],
+                    removable_variant["identity_id"],
+                    removable_variant["provider_id"],
+                    removable_variant["source_item_id"],
+                ):
+                    return True
+                owned_catalog_id = cid
+            # A catalogue projection may name this path even if it points to
+            # a different placement. The one removable variant projection
+            # must prove an exact direct path and no other nested reference.
+            for cid, raw in db.execute(
+                "SELECT catalog_entry_id,metadata_json FROM catalog_entries"
+            ):
                 if type(raw) is not str or len(raw) > 1024 * 1024:
                     return True
                 try:
                     value = json.loads(raw)
                 except (ValueError, TypeError, RecursionError):
                     return True
+                if type(value) is not dict:
+                    return True
+                if cid == owned_catalog_id:
+                    if (value.get("variant") is not True
+                            or value.get("source_artifact_id")
+                               != removable_variant["source_artifact_id"]
+                            or value.get("path") != path
+                            or any(_mentions_exact_path(item, path)
+                                   for key, item in value.items()
+                                   if key != "path")):
+                        return True
+                    continue
                 if _mentions_exact_path(value, path):
                     return True
             if db.execute(
