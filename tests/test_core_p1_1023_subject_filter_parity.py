@@ -95,3 +95,25 @@ def test_library_and_known_catalogue_keep_identity_scope_and_local_only():
             "Héraldique", identity_id="bob", field="subject",
         )] == ["other-edition"]
     assert calls and all(row[0] in {"library", "catalogue"} for row in calls)
+
+
+def test_one_letter_subject_qualifier_is_not_a_substring_of_unrelated_tags():
+    edition_a = _item("edition-A", "alice",
+                      subjects=["Sujet A", "Culture"],
+                      tags=["Astronomie"])
+    edition_b = _item("edition-B", "alice",
+                      subjects=["Sujet B", "Culture"],
+                      tags=["Cartographie"])
+    assert filter_loaded_results(
+        [edition_a, edition_b], "Sujet A", field="subject",
+    ) == [edition_a]
+    assert filter_loaded_results(
+        [edition_a, edition_b], "Sujet B", field="subject",
+    ) == [edition_b]
+    # Multi-letter partial matching of genuine classification words remains.
+    assert filter_loaded_results(
+        [edition_a, edition_b], "Astronom", field="subject",
+    ) == [edition_a]
+    assert filter_loaded_results(
+        [edition_a, edition_b], "Cartograph", field="subject",
+    ) == [edition_b]
