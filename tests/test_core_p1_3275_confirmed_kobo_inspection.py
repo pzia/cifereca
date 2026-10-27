@@ -69,7 +69,13 @@ def test_independently_attested_kobo_receipt_projects_confirmed_link_after_reope
             row.key.startswith("file:")
             for row in reopened.page(state="declared_link_recorded").cases
         )
-        assert reopened.unconfirmed_files().total == 0
+        # This fixture also retains the *original* Kobo EPUB at a second
+        # path. Confirming the selected copy must not mark another file as
+        # confirmed or hide that independent, still-unlinked observation.
+        remaining = reopened.unconfirmed_files()
+        assert remaining.total == 1
+        assert str(case.original) in remaining.cases[0].details
+        assert str(case.target) not in remaining.cases[0].details
         assert case.target.read_bytes() == original_bytes
     finally:
         reopened.close()
