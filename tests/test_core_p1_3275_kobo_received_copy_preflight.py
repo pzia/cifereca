@@ -158,7 +158,7 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
             ),
         )
 
-        first = service.sync_kobo_backup(credential_id="vault-b")
+        first = service.sync_kobo_backup_account("vault-b")
         linked = service.storage.backup_get("kobo", "vault-b", "book-1")
         assert linked is not None
         assert linked["identity_id"] == "bob"
@@ -169,7 +169,7 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
         assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
         assert service.storage.acquisitions() == []
 
-        second = service.sync_kobo_backup(credential_id="vault-b")
+        second = service.sync_kobo_backup_account("vault-b")
         assert second["attempted"] == 0 and second["downloaded"] == 0
         assert second["reconcile_skipped"] >= 1
         assert service.storage.backup_get("kobo", "vault-b", "book-1")["status"] == linked["status"]
