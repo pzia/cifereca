@@ -7,6 +7,7 @@ retains all locks, provider requests, verification and repeated-return guards.
 """
 
 from inspect import getattr_static
+from types import SimpleNamespace
 
 
 def account_for_loan(loan, *, accounts, current_account_get, configuration_error):
@@ -76,11 +77,14 @@ def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, 
     # before the Core's later loan-action scope lease is even captured.
     # Only a real initialized scalar may establish session readiness.
     session_type = type(session)
+    # The legacy tests/plugins also accept SimpleNamespace sessions. Its
+    # built-in C __getattribute__ is inert, unlike a plugin override.
+    safe_lookup = getattr_static(session_type, '__getattribute__', None)
     connected = (
         getattr_static(session, 'connected', None)
-        if getattr_static(session_type, '__getattribute__', None)
-            is object.__getattribute__
-        else None
+        if safe_lookup in (
+            object.__getattribute__, SimpleNamespace.__getattribute__,
+        ) else None
     )
     if connected is not True:
         raise attention_error(
