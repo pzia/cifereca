@@ -1320,6 +1320,32 @@ class Storage:
         except (TypeError, ValueError):
             attempt_count_value = 0
         with self._lock, self._connect() as db:
+            # #3196: an independently advanced canonical acquisition must
+            # never be overwritten by a replay of its historical Kobo row.
+            # Compare the LAST committed projection state, not the incoming
+            # state: the incoming value is not an attestation of the ledger.
+            # Both reads and the subsequent mirror share this SQLite writer
+            # lock/transaction. Genuine compatible pending -> complete
+            # transitions still propagate through the existing mirror.
+            previous = db.execute(
+                "SELECT status FROM backup_items WHERE provider_id=? "
+                "AND credential_id=? AND item_id=?",
+                (str(item.get("provider_id") or ""),
+                 str(item.get("credential_id") or ""),
+                 str(item.get("item_id") or "")),
+            ).fetchone()
+            canonical = db.execute(
+                "SELECT status FROM acquisition_ledger WHERE acquisition_id=?",
+                (self._acquisition_id_for(item),),
+            ).fetchone()
+            if canonical is not None and (
+                previous is None
+                or self._generic_status(previous[0]) != canonical[0]
+            ):
+                # Fail closed BEFORE writing the legacy projection, entitlement
+                # or artifact. Explicit reconciliation must establish why
+                # canonical and v0.7 histories disagree; neither wins by age.
+                raise ValueError("backup_canonical_status_diverged")
             # A legacy projection PK omits identity/account. Refuse an
             # explicit conflicting owner atomically: neither the 0.7 row nor
             # the canonical right/receipt may change on an ambiguous rebind.
