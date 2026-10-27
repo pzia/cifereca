@@ -29,6 +29,11 @@ def audit_backup_projection(
         "scope_mismatch": 0, "status_divergence": 0,
         "artifact_divergence": 0, "placement_missing": 0,
         "placement_scope_mismatch": 0,
+        # Reverse coverage: canonical acquisitions absent from the legacy
+        # mirror are NOT missing rights or a reason to recreate a v0.7 row.
+        "canonical_scanned": 0, "canonical_without_projection": 0,
+        "canonical_projection_owner_conflict": 0,
+        "canonical_projection_scope_unverified": 0,
     }
     if (
         type(identity_id) is not str or not 0 < len(identity_id) <= 1024
@@ -62,9 +67,40 @@ def audit_backup_projection(
                     "ORDER BY credential_id,item_id LIMIT ?",
                     (identity_id, max_rows + 1),
                 ).fetchall()
-                if len(rows) > max_rows:
+                # Read the authoritative acquisitions as well. A legacy-only
+                # scan cannot see receipts added directly to the canonical
+                # ledger during the forward migration. Both budgets must be
+                # complete BEFORE any counts become audit evidence.
+                canonical = db.execute(
+                    "SELECT credential_id,account_id,item_id FROM acquisition_ledger "
+                    "WHERE provider_id='kobo' AND identity_id=? "
+                    "ORDER BY credential_id,item_id,account_id LIMIT ?",
+                    (identity_id, max_rows + 1),
+                ).fetchall()
+                if len(rows) > max_rows or len(canonical) > max_rows:
                     result["status"] = "budget_exceeded"
                     return result
+                result["canonical_scanned"] = len(canonical)
+                for credential, account, item in canonical:
+                    if (type(credential) is not str or not credential
+                            or type(item) is not str or not item):
+                        result["canonical_projection_scope_unverified"] += 1
+                        continue
+                    legacy = db.execute(
+                        "SELECT identity_id,account_id FROM backup_items "
+                        "WHERE provider_id='kobo' AND credential_id=? AND item_id=?",
+                        (credential, item),
+                    ).fetchone()
+                    if legacy is None:
+                        result["canonical_without_projection"] += 1
+                    elif (type(account) is not str or not account
+                          or type(legacy[0]) is not str or not legacy[0]
+                          or type(legacy[1]) is not str or not legacy[1]):
+                        # A missing owner must never be filled from the
+                        # currently selected user or the same SHA/title.
+                        result["canonical_projection_scope_unverified"] += 1
+                    elif legacy != (identity_id, account):
+                        result["canonical_projection_owner_conflict"] += 1
                 for row in rows:
                     (provider, credential, account, item, right_type,
                      loan_id, owner, status, sha, path) = row
