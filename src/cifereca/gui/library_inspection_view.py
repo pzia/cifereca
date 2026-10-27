@@ -884,7 +884,9 @@ class LocalInspectionController:
                 )
                 manual_total[0] = page.total
                 manual_toggle.set_label(
-                    'Voir les pistes descriptives'
+                    'Voir les pistes au titre seul'
+                    if candidate_kind[0] == 'title_only'
+                    else 'Voir les pistes descriptives'
                     if candidate_kind[0] == 'descriptive'
                     else 'Voir les candidats exacts'
                 )
@@ -945,7 +947,17 @@ class LocalInspectionController:
                 reset_pair(selected.key if selected is not None else None)
                 return
             manual_toggle.set_label('Comparer tous les fichiers non liés')
-            if candidate_kind[0] == 'descriptive':
+            if candidate_kind[0] == 'title_only':
+                candidate_title.set_text(
+                    'Pistes très incertaines · titre seul (auteur manquant)'
+                )
+                candidate_note.set_text(
+                    'Même titre seulement : des ouvrages ou éditions différents '
+                    'peuvent le partager. Aucune preuve de prêt, licence ADEPT, '
+                    'fournisseur, compte ou placement. Sélection et confirmation '
+                    'explicites requises.'
+                )
+            elif candidate_kind[0] == 'descriptive':
                 candidate_title.set_text(
                     'Pistes descriptives · titre et auteur OPF'
                 )
@@ -1498,6 +1510,15 @@ class LocalInspectionController:
                         candidate_items[0] = session.descriptive_files(case.key)
                         candidate_kind[0] = (
                             'descriptive' if candidate_items[0] else 'none'
+                        )
+                    if not candidate_items[0]:
+                        # This weaker hint is strictly separate from an
+                        # exact bibliographic ID and from title+author. The
+                        # Core only offers it when one author's unknown,
+                        # never when both known author sets disagree.
+                        candidate_items[0] = session.title_only_files(case.key)
+                        candidate_kind[0] = (
+                            'title_only' if candidate_items[0] else 'none'
                         )
                     candidate_index[0] = 0
                     manual_mode[0] = False
