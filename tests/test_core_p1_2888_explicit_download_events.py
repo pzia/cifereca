@@ -172,6 +172,24 @@ def test_parser_rejects_fake_log_codes_noncanonical_json_and_private_payload():
         assert public_log_fields(line) == {}
 
 
+def test_raw_journal_keeps_original_chained_transport_cause(caplog):
+    # The business event is still a closed provider_failure, but the raw
+    # journal must not substitute it for the actual observed HTTP error.
+    source = OSError("SYNTHETIC transport: HTTP 403 at /loans/exact?format=acsm")
+    failure = ProviderConfigurationError("SYNTHETIC source action failed")
+    failure.__cause__ = source
+    service, _ = _service(error=failure)
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        with pytest.raises(ProviderConfigurationError):
+            service.reacquire_digital_loan(_loan())
+    assert str(failure) in caplog.text
+    assert str(source) in caplog.text
+    assert "The above exception was the direct cause" in caplog.text
+    record, = service.diagnostics.snapshot()
+    assert record["detail"]["code"] == "provider_failure"
+    assert record["detail"]["provider_id"] == "paris"
+
+
 def test_failed_diagnostics_cannot_transform_a_real_success_or_error():
     service, _ = _service(outcome={"status": "complete"})
     service.diagnostics.add_core_loan_download = lambda *_: (_ for _ in ()).throw(
