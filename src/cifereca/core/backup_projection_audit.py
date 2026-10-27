@@ -93,9 +93,12 @@ def audit_backup_projection(
                     ).fetchone()
                     if legacy is None:
                         result["canonical_without_projection"] += 1
-                    elif (type(account) is not str or not account
+                    elif (type(account) is not str
                           or type(legacy[0]) is not str or not legacy[0]
-                          or type(legacy[1]) is not str or not legacy[1]):
+                          or type(legacy[1]) is not str):
+                        # Some providers use the exact empty account ID for
+                        # their primary borrower. Empty is attested scope;
+                        # NULL is unverified and must not be inferred.
                         # A missing owner must never be filled from the
                         # currently selected user or the same SHA/title.
                         result["canonical_projection_scope_unverified"] += 1
