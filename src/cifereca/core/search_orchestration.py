@@ -815,6 +815,12 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
 
 def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any) -> tuple[list[SearchResult], list[str], str, str]:
     """Worker-only optional stream. Gaps/errors do not poison the cache."""
+    identity = getattr(self, "current_identity", None)
+    credential = getattr(session, "credential_id", None)
+    if _source_in_retry_after(self, session, identity):
+        code = "SearchTemporarilyUnavailable"
+        message = _search_problem_label(code)
+        return [], [message], code, message
     try:
         outcome = consume_provider_stream(
             session.search_stream(
@@ -843,9 +849,18 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         return self._search_provider_session(
             session, query, scope, field=field, content_types=content_types,
         )
-    except Exception:
-        # Stream faults must never echo plugin class names or descriptor labels.
-        # Preserve a typed terminal failure for the caller without its payload.
+    except Exception as exc:
+        # The transport can fail while opening or iterating the stream.
+        # Reuse classic search semantics: only attested public outages allow
+        # local fallback; authentication/access/proxy refusals remain distinct.
+        from ..search_failures import search_failure_code
+        code = search_failure_code(exc)
+        if code is not None:
+            if code == "SearchTemporarilyUnavailable":
+                _record_source_retry_after(self, session, identity, credential, exc)
+            message = _search_problem_label(code)
+            return [], [message], code, message
+        # Unknown stream failures retain their existing business result.
         return [], ["Recherche en flux indisponible"], "StreamProviderFailed", "Recherche en flux indisponible"
 
 
