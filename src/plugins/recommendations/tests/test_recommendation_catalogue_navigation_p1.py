@@ -679,3 +679,75 @@ def test_pagination_never_looks_beyond_256_variants_or_invents_actions():
     assert not any(a.id.startswith("recommendation.exact-notice.")
                    for a in detail.actions)
     assert not searches
+
+
+def test_exact_known_cache_only_variant_routes_to_shared_search_without_network():
+    view, identity, searches, _detail, row = _view((_variant(),))
+    checks, opens, details = [], [], []
+
+    def has_loaded(**coords):
+        checks.append(("loaded", coords.copy()))
+        return False
+
+    def has_known(**coords):
+        checks.append(("known", coords.copy()))
+        return True
+
+    view.host = NS(
+        search_books=lambda *a, **kw: searches.append((a, kw)) or True,
+        can_open_loaded_search_notice=has_loaded,
+        open_loaded_search_notice=lambda **_: (_ for _ in ()).throw(
+            AssertionError("not loaded")
+        ),
+        can_open_known_search_notice=has_known,
+        open_known_search_notice=lambda **coord: opens.append(coord) or True,
+    )
+    view._master.show_detail = details.append
+    view._selected_row(row)
+    actions = [action for action in details[-1].actions
+               if action.id.startswith("recommendation.known-notice.")]
+    assert len(actions) == 1
+    assert not searches and not opens
+    assert [scope for scope, _coord in checks] == ["loaded", "known"]
+    assert actions[0].callback() is True
+    assert len(opens) == 1 and opens[0]["credential"] == "vault-1"
+    assert opens[0]["docbase"] == "BOOKS" and opens[0]["source_collection"] == "catalogue"
+    assert searches == []
+    identity[0] = "reader-2"
+    assert actions[0].callback() is False
+    assert len(opens) == 1
+
+
+def test_known_cache_callback_refuses_stale_ranking_and_prefers_loaded_notice():
+    view, _identity, searches, _detail, row = _view((_variant(),))
+    details, calls = [], []
+    available = {"loaded": False, "known": True}
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **_: available["loaded"],
+        open_loaded_search_notice=lambda **_: calls.append("loaded") or True,
+        can_open_known_search_notice=lambda **_: available["known"],
+        open_known_search_notice=lambda **_: calls.append("known") or True,
+        search_books=lambda *a, **kw: searches.append((a, kw)) or True,
+    )
+    view._master.show_detail = details.append
+    view._selected_row(row)
+    cached, = [a for a in details[-1].actions
+               if a.id.startswith("recommendation.known-notice.")]
+    view._selected_row(None)
+    assert cached.callback() is False and not calls
+
+    available["loaded"] = True
+    view._selected_row(row)
+    loaded, = [a for a in details[-1].actions
+               if a.id.startswith("recommendation.loaded-notice.")]
+    assert loaded.callback() is True
+    assert calls == ["loaded"]
+    # Cached callback never upgrades its rights when ranking is replaced.
+    previous = view._ranked_by_key[row.key]
+    view._ranked_by_key[row.key] = RankedCandidate(
+        item=previous.item, score=previous.score, reasons=previous.reasons,
+        sources=previous.sources,
+        notices=(_variant(record="different-edition"),),
+    )
+    assert loaded.callback() is False
+    assert calls == ["loaded"] and searches == []
