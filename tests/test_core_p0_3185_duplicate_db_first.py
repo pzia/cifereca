@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from cifereca.plugin_api import LibraryMutationRequest
+from cifereca import artifact_runtime
+from cifereca.plugin_api import Conflict, LibraryMutationRequest
 from tests.test_core_p0_3185_duplicate_dependencies import _rig
 
 
@@ -16,11 +17,11 @@ def test_sqlite_commit_failure_leaves_both_files_and_all_placements(tmp_path, mo
     service, broker, request, candidate, kept, _ = _rig(tmp_path)
     plan = broker.plan(request)
 
-    def failed_delete(_placement_id):
+    def failed_delete(**_coordinates):
         assert kept.read_bytes() == candidate.read_bytes() == b"book-data"
         raise RuntimeError("synthetic DB unavailable")
 
-    monkeypatch.setattr(service.storage, "placement_delete", failed_delete)
+    monkeypatch.setattr(service.storage, "placement_retire_duplicate_atomic", failed_delete)
     with pytest.raises(RuntimeError, match="synthetic DB unavailable"):
         broker.run(plan)
     assert candidate.read_bytes() == kept.read_bytes() == b"book-data"
@@ -73,16 +74,16 @@ def test_inode_changed_during_sqlite_commit_must_not_unlink_any_copy(
 ):
     service, broker, request, candidate, kept, _ = _rig(tmp_path)
     plan = broker.plan(request)
-    original_delete = service.storage.placement_delete
+    original_delete = service.storage.placement_retire_duplicate_atomic
 
-    def committed_then_replaced(placement_id):
-        original_delete(placement_id)
+    def committed_then_replaced(**coordinates):
+        original_delete(**coordinates)
         selected = candidate if changed == "candidate" else kept
         replacement = selected.with_name("other-file.tmp")
         replacement.write_bytes(b"foreign-replacement")
         replacement.replace(selected)
 
-    monkeypatch.setattr(service.storage, "placement_delete", committed_then_replaced)
+    monkeypatch.setattr(service.storage, "placement_retire_duplicate_atomic", committed_then_replaced)
     outcome = broker.run(plan)
     assert outcome.ok and outcome.warnings
     assert candidate.is_file() and kept.is_file()
@@ -95,10 +96,10 @@ def test_path_rebound_to_another_placement_after_commit_is_preserved(
 ):
     service, broker, request, candidate, kept, artifact = _rig(tmp_path)
     plan = broker.plan(request)
-    original_delete = service.storage.placement_delete
+    original_delete = service.storage.placement_retire_duplicate_atomic
 
-    def committed_then_rebound(placement_id):
-        original_delete(placement_id)
+    def committed_then_rebound(**coordinates):
+        original_delete(**coordinates)
         service.storage.placement_put({
             "path": str(candidate), "artifact_id": artifact.artifact_id,
             "identity_id": "other-identity", "provider_id": "local",
@@ -106,7 +107,7 @@ def test_path_rebound_to_another_placement_after_commit_is_preserved(
             "metadata": {"source": "synthetic-new-owner"},
         })
 
-    monkeypatch.setattr(service.storage, "placement_delete", committed_then_rebound)
+    monkeypatch.setattr(service.storage, "placement_retire_duplicate_atomic", committed_then_rebound)
     outcome = broker.run(plan)
     assert outcome.ok and outcome.warnings
     assert candidate.read_bytes() == kept.read_bytes() == b"book-data"
@@ -123,3 +124,64 @@ def test_normal_duplicate_deletion_still_removes_unreferenced_physical_copy(tmp_
     assert outcome.ok and outcome.changed == 1 and outcome.warnings == ()
     assert not candidate.exists() and kept.read_bytes() == b"book-data"
     assert service.storage.placement_get(request.placement_id) is None
+
+
+def test_new_catalogue_dependency_during_hash_blocks_atomic_delete(tmp_path, monkeypatch):
+    service, broker, request, candidate, kept, artifact = _rig(tmp_path)
+    plan = broker.plan(request)
+    original_hash = artifact_runtime.sha256_file
+    inserted = False
+
+    def attach_after_precheck(path):
+        nonlocal inserted
+        if path == candidate and not inserted:
+            inserted = True
+            service.storage.catalog_entry_put({
+                "artifact_id": artifact.artifact_id,
+                "placement_id": request.placement_id,
+                "title": "New active notice", "identity_id": "id1",
+                "provider_id": "local", "item_id": "book-1",
+                "local_state": "local", "metadata": {"path": str(candidate)},
+            })
+        return original_hash(path)
+
+    monkeypatch.setattr(artifact_runtime, "sha256_file", attach_after_precheck)
+    try:
+        with pytest.raises(Conflict, match="Le doublon n\u0027est plus vérifiable"):
+            broker.run(plan)
+        assert inserted
+        assert candidate.read_bytes() == kept.read_bytes() == b"book-data"
+        assert service.storage.placement_get(request.placement_id) is not None
+        assert any(row.get("placement_id") == request.placement_id
+                   for row in service.storage.catalog_entries())
+    finally:
+        service.storage.close()
+
+
+def test_keeper_owner_changed_during_hash_blocks_atomic_delete(tmp_path, monkeypatch):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    plan = broker.plan(request)
+    original_hash = artifact_runtime.sha256_file
+    changed = False
+
+    def rebind_keeper_after_precheck(path):
+        nonlocal changed
+        if path == candidate and not changed:
+            changed = True
+            with service.storage._lock, service.storage._connect() as db:
+                db.execute(
+                    "UPDATE placements SET identity_id=? WHERE placement_id=?",
+                    ("different-owner", request.keep_placement_id),
+                )
+        return original_hash(path)
+
+    monkeypatch.setattr(artifact_runtime, "sha256_file", rebind_keeper_after_precheck)
+    try:
+        with pytest.raises(Conflict, match="Le doublon n\u0027est plus vérifiable"):
+            broker.run(plan)
+        assert changed
+        assert candidate.is_file() and kept.is_file()
+        assert service.storage.placement_get(request.placement_id) is not None
+        assert service.storage.placement_get(request.keep_placement_id)["identity_id"] == "different-owner"
+    finally:
+        service.storage.close()
