@@ -3619,6 +3619,94 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("DELETE FROM artifact_variants WHERE variant_id=?", (str(variant_id),))
 
+    def artifact_variant_retire_atomic(
+        self, *, variant_id: str, artifact_id: str,
+        source_artifact_id: str, placement_id: str | None,
+        placement_path: str | None,
+    ) -> None:
+        """Retire one checked derivative and its own placement in ONE commit.
+
+        Caller attests the file bytes and loan/identity scope under its
+        acquisition lock. SQLite coordinates are rechecked under BEGIN
+        IMMEDIATE, including the complete independent-reference guard; if
+        any step fails, both the placement and variant remain in SQLite.
+        Physical unlink is intentionally done by the caller AFTER commit.
+        """
+        if (not all(type(v) is str and v for v in
+                    (variant_id, artifact_id, source_artifact_id))
+                or artifact_id == source_artifact_id
+                or (placement_id is None) != (placement_path is None)
+                or (placement_id is not None and (
+                    type(placement_id) is not str or not placement_id
+                    or type(placement_path) is not str or not placement_path))):
+            raise ValueError("variant_retire_scope_invalid")
+        from .core.duplicate_maintenance_guard import (
+            candidate_has_active_dependencies_in_db,
+        )
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            variant = db.execute(
+                "SELECT variant_id,source_artifact_id FROM artifact_variants "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchall()
+            if variant != [(variant_id, source_artifact_id)]:
+                raise ValueError("variant_retire_changed")
+            placements = db.execute(
+                "SELECT placement_id,path,identity_id,provider_id,"
+                "source_item_id,state,metadata_json FROM placements "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchall()
+            if placement_id is None:
+                if placements:
+                    raise ValueError("variant_retire_placement_changed")
+            else:
+                if (len(placements) != 1
+                        or placements[0][0:2] != (placement_id, placement_path)):
+                    raise ValueError("variant_retire_placement_changed")
+                _, path, identity, provider, edition, state, raw = placements[0]
+                try:
+                    meta = json.loads(raw)
+                except (TypeError, ValueError, RecursionError):
+                    raise ValueError("variant_retire_provenance_invalid") from None
+                if (type(meta) is not dict or meta.get("variant") is not True
+                        or meta.get("source_artifact_id") != source_artifact_id
+                        or state != "present"
+                        or any(type(v) is not str or not v
+                               for v in (identity, provider, edition))
+                        or candidate_has_active_dependencies_in_db(
+                            db, placement_id=placement_id, path=path,
+                            removable_variant={
+                                "artifact_id": artifact_id,
+                                "identity_id": identity,
+                                "provider_id": provider,
+                                "source_item_id": edition,
+                                "source_artifact_id": source_artifact_id,
+                            },
+                        )):
+                    raise ValueError("variant_retire_references_changed")
+                db.execute(
+                    "DELETE FROM catalog_entries WHERE placement_id=?",
+                    (placement_id,),
+                )
+                if db.execute(
+                    "DELETE FROM placements WHERE placement_id=? "
+                    "AND path=? AND artifact_id=?",
+                    (placement_id, path, artifact_id),
+                ).rowcount != 1:
+                    raise ValueError("variant_retire_placement_changed")
+            if db.execute(
+                "DELETE FROM artifact_variants WHERE variant_id=? "
+                "AND artifact_id=? AND source_artifact_id=?",
+                (variant_id, artifact_id, source_artifact_id),
+            ).rowcount != 1:
+                raise ValueError("variant_retire_changed")
+            for purpose in ("read", "export", "transfer"):
+                db.execute(
+                    "UPDATE metadata SET value='' WHERE key=? AND value=?",
+                    (f"artifact.variant.preferred.{source_artifact_id}.{purpose}",
+                     artifact_id),
+                )
+
     def artifact_delete_if_unreferenced(self, artifact_id: str) -> bool:
         # A placement is not the only live reference to content-addressed
         # bytes. An unplaced catalogue notice, acquisition receipt or variant
