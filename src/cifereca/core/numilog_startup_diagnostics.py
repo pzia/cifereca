@@ -209,7 +209,10 @@ class StartupTrace:
         if len(self.item_decisions) == 8:
             self.items_truncated = True
         else:
-            self.item_decisions.append({"position": position, "decision": decision})
+            # The structured journal serializes nested objects with sorted
+            # JSON keys, whereas its closed human-readable companion uses
+            # Python insertion order. Match both representations exactly.
+            self.item_decisions.append({"decision": decision, "position": position})
 
     def fields(self, phase, code, status):
         cause_phase = self.cause[0] if self.cause else phase
