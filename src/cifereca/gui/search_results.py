@@ -89,6 +89,37 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
             self.toast("Résultats partiels · certaines sources sont indisponibles.", 6)
 
 
+
+def _exact_known_catalogue_scope(row: dict[str, Any]) -> tuple[str, ...] | None:
+    """Trust the already-scoped SQLite v2 coordinates, not title or ISBN."""
+    meta = row.get("metadata")
+    if type(meta) is not dict or meta.get("catalogue_scope_version") != 2:
+        return None
+    return _catalogue_edition_scope(
+        row.get("provider_id"), meta.get("source_credential"),
+        row.get("item_id"), meta.get("docbase"), meta.get("source_collection"),
+    )
+
+
+def _catalogue_edition_scope(
+    provider: object, credential: object, record: object,
+    docbase: object, collection: object,
+) -> tuple[str, ...] | None:
+    if (any(type(value) is not str or not value or len(value) > 512
+            for value in (provider, credential, record, docbase))
+            or (collection is not None and
+                (type(collection) is not str or len(collection) > 512))):
+        return None
+    return (provider, credential, record, docbase, collection or "")
+
+
+def _exact_remote_catalogue_scope(item: SearchResult) -> tuple[str, ...] | None:
+    return _catalogue_edition_scope(
+        item.source_provider, item.source_credential, item.record_id,
+        item.docbase, item.source_collection,
+    )
+
+
 def _render_search_results(self) -> int:
     if not hasattr(self, "search_page"):
         return 0
@@ -122,13 +153,39 @@ def _render_search_results(self) -> int:
         if identity and any(item.source_provider == "kobo" for item in self._remote_search_results)
         else {}
     )
-    remote_keys = {(item.source_provider, item.source_credential, item.record_id) for item in self._remote_search_results}
-    linked_placements = {linked[key]['placement_id'] for key in remote_keys if key in linked}
+    remote_keys = {
+        (item.source_provider, item.source_credential, item.record_id)
+        for item in self._remote_search_results
+    }
+    remote_exact = {
+        scope for item in self._remote_search_results
+        if (scope := _exact_remote_catalogue_scope(item)) is not None
+    }
+    # A legacy acquisition link is only (provider, credential, product).
+    # If multiple editions share those coordinates, never assign B's local
+    # placement/open action to A solely because their product IDs match.
+    variants: dict[tuple[str, str, str], set[tuple[str, ...]]] = {}
+    for scope in remote_exact:
+        variants.setdefault(scope[:3], set()).add(scope)
+    for known in self._search_local_objects.values():
+        scope = _exact_known_catalogue_scope(known)
+        if scope is not None:
+            variants.setdefault(scope[:3], set()).add(scope)
+    ambiguous = {key for key, scopes in variants.items() if len(scopes) > 1}
+    linked_placements = {
+        linked[key]["placement_id"] for key in remote_keys
+        if key in linked and key not in ambiguous
+    }
     ui_rows: list[BookListItem] = []
     for known in state.filter(self._search_local_objects.values()):
-        if known.get('placement_id') in linked_placements: continue
-        known_key = (known.get('provider_id'), known.get('source_credential') or (known.get('metadata') or {}).get('source_credential'), str(known.get('item_id') or ''))
-        if known_key in remote_keys and not known.get('local'): continue
+        if known.get("placement_id") in linked_placements:
+            continue
+        # Suppress only the exact same v2 account + docbase + collection row.
+        # Historical unscoped rows may look redundant but are not proof that
+        # they correspond to the current live supplier edition.
+        exact_known = _exact_known_catalogue_scope(known)
+        if not known.get("local") and exact_known in remote_exact:
+            continue
         ui_rows.append(BookListItem(str(known["key"]), str(known.get("title") or "Sans titre"), str(known.get("author") or ""),
             local_match_explanation(known, state.text, field=state.field),
             self.service.provider_display_name(str(known.get("provider_id") or "local")), known.get("thumbnail_url")))
@@ -177,8 +234,9 @@ def _render_search_results(self) -> int:
         meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
         # An offline public result is never evidence of a current entitlement,
         # a download offer or a verified local placement.
-        placement = None if stale_known else linked.get(
-            (item.source_provider, item.source_credential, item.record_id)
+        placement_key = (item.source_provider, item.source_credential, item.record_id)
+        placement = None if (stale_known or placement_key in ambiguous) else linked.get(
+            placement_key
         )
         # Public Numilog has neither an authenticated download entitlement
         # nor an acquisition action. Never consult the direct-download broker
