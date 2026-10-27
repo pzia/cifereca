@@ -164,14 +164,22 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                 ]
                 result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
                 result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
+                # Confirmed user declarations are present local files, not
+                # new ADEPT deliveries and not provider-verified receipts.
+                result['files_declared_local'] = sum(
+                    row['status'] == 'declared_local' for row in outcomes
+                )
                 # A file needing an explicit local reconciliation is not
                 # newly materialized or already linked. Emit only an aggregate
                 # counter; no title, path, loan ID or licence in sync facts.
                 result['files_reconciliation_required'] = sum(
-                    row.get('code') == 'bnf_local_candidate_reconciliation_required'
+                    row.get('code') in {
+                        'bnf_local_candidate_reconciliation_required',
+                        'bnf_local_declaration_needs_review',
+                    }
                     for row in outcomes
                 )
-                if any(row['status'] not in {'complete', 'unchanged', 'skipped'} for row in outcomes):
+                if any(row['status'] not in {'complete', 'unchanged', 'declared_local', 'skipped'} for row in outcomes):
                     result['status'] = 'partial'
         # A v1 loans() list never proves full branch coverage, even when
         # last_loan_errors is empty or absent. That mutable side channel is
