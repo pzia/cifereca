@@ -16,7 +16,8 @@ from .library_sqlite_freshness import sqlite_source_stamp
 from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
-             'paris': 'Paris', 'local': 'Local (origine attestée)',
+             'paris': 'Paris', 'bnf-pret': 'BnF Prêt',
+             'local': 'Local (origine attestée)',
              'unattributed': 'Fichiers sans provenance attestée', 'other': 'Autre'}
 STATES = {
     'all': 'Tous les états', 'confirmed_link': 'Lien confirmé',
@@ -73,7 +74,7 @@ def _text(value):
 
 
 def _provider(value):
-    return value if value in ('kobo', 'numilog', 'paris', 'local') else 'other'
+    return value if value in ('kobo', 'numilog', 'paris', 'bnf-pret', 'local') else 'other'
 
 
 def _display_book(title, authors, fallback):
@@ -813,8 +814,18 @@ class LocalInspection:
                         matching_artifacts[0].get('size'),
                     )
             scope = right_scope(right)
+            # BnF's existing Core declaration workflow may only record an
+            # active, exact loan. A catalogue entry, an expired entitlement
+            # or a book title is not a valid BnF loan/file association.
+            bnf_exact_loan = (
+                right.get('state') == 'active'
+                and right.get('entitlement_type') == 'loan'
+                and type(right.get('loan_id')) is str
+                and bool(right['loan_id'])
+            )
             if (scope is not None and scope[0] == identity_id
-                    and scope[1] in ('kobo', 'numilog', 'paris')
+                    and scope[1] in ('kobo', 'numilog', 'paris', 'bnf-pret')
+                    and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
             if scope is not None and right.get('provider_id') == 'numilog':
