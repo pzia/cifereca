@@ -28,7 +28,7 @@ def _inert_session_state(session: object) -> dict[str, Any] | None:
     sentinel = object()
     for key in ("connected", "provider_id", "credential_id", "_epoch", "_closed"):
         shadow = getattr_static(klass, key, sentinel)
-        if shadow is not sentinel and hasattr(type(shadow), "__get__"):
+        if shadow is not sentinel and getattr_static(type(shadow), "__get__", None) is not None:
             return None
     try:
         data = object.__getattribute__(session, "__dict__")
