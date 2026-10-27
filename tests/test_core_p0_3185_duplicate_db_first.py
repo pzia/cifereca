@@ -185,3 +185,89 @@ def test_keeper_owner_changed_during_hash_blocks_atomic_delete(tmp_path, monkeyp
         assert service.storage.placement_get(request.keep_placement_id)["identity_id"] == "different-owner"
     finally:
         service.storage.close()
+
+
+def _assign_fictitious_provider(service, request, provider):
+    # The fixture starts with a local placement. Both copies and the retained
+    # catalogue now share a fictitious provider; no real provider I/O occurs.
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "UPDATE placements SET provider_id=? WHERE placement_id IN (?,?)",
+            (provider, request.placement_id, request.keep_placement_id),
+        )
+        db.execute(
+            "UPDATE catalog_entries SET provider_id=? WHERE placement_id=?",
+            (provider, request.keep_placement_id),
+        )
+
+
+def _put_right(service, provider, borrower):
+    service.storage.entitlement_put({
+        "provider_id": provider, "identity_id": "id1",
+        "credential_id": "credential-" + borrower,
+        "account_id": borrower, "item_id": "book-1",
+        "entitlement_type": "owned", "state": "active",
+        "metadata": {},
+    })
+
+
+def test_unknown_provider_multiple_right_owners_block_preview(tmp_path):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    try:
+        provider = "synthetic-loan-provider"
+        _assign_fictitious_provider(service, request, provider)
+        _put_right(service, provider, "first")
+        _put_right(service, provider, "second")
+        with pytest.raises(Conflict):
+            broker.plan(request)
+        assert candidate.is_file() and kept.is_file()
+        assert service.storage.placement_get(request.placement_id) is not None
+    finally:
+        service.storage.close()
+
+
+def test_unknown_provider_second_owner_during_hash_blocks_commit(tmp_path, monkeypatch):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    try:
+        provider = "synthetic-loan-provider"
+        _assign_fictitious_provider(service, request, provider)
+        _put_right(service, provider, "first")
+        plan = broker.plan(request)
+        original_hash = artifact_runtime.sha256_file
+        inserted = False
+
+        def attach_second_owner(path):
+            nonlocal inserted
+            if path == candidate and not inserted:
+                inserted = True
+                _put_right(service, provider, "second")
+            return original_hash(path)
+
+        monkeypatch.setattr(artifact_runtime, "sha256_file", attach_second_owner)
+        with pytest.raises(Conflict, match="Le doublon n'est plus vérifiable"):
+            broker.run(plan)
+        assert inserted
+        assert candidate.is_file() and kept.is_file()
+        assert service.storage.placement_get(request.placement_id) is not None
+        assert len(service.storage.entitlements(provider_id=provider)) == 2
+    finally:
+        service.storage.close()
+
+
+def test_unscoped_placement_with_provider_right_is_not_deletable(tmp_path):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    try:
+        provider = "synthetic-loan-provider"
+        _assign_fictitious_provider(service, request, provider)
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                "UPDATE placements SET source_item_id=NULL WHERE placement_id IN (?,?)",
+                (request.placement_id, request.keep_placement_id),
+            )
+        _put_right(service, provider, "first")
+        with pytest.raises(Conflict):
+            broker.plan(request)
+        assert candidate.is_file() and kept.is_file()
+        assert service.storage.placement_get(request.placement_id) is not None
+    finally:
+        service.storage.close()

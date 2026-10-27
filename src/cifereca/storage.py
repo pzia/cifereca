@@ -3801,9 +3801,18 @@ class Storage:
             )
             if row != expected or kept != expected_keep:
                 raise ValueError("duplicate_retire_scope_changed")
-            if provider_id in {"kobo", "numilog", "paris"}:
-                if not source_item_id:
-                    raise ValueError("duplicate_retire_scope_changed")
+            # The keeper/candidate rows omit the credential and borrower:
+            # inspect rights for EVERY provider under the same write lock.
+            # An edition-less placement is safe only if there are no rights
+            # for this identity/provider to associate with it.
+            if not source_item_id:
+                if db.execute(
+                    "SELECT 1 FROM entitlements WHERE provider_id=? "
+                    "AND identity_id=? LIMIT 1",
+                    (provider_id, identity_id),
+                ).fetchone():
+                    raise ValueError("duplicate_retire_unscoped_owner")
+            else:
                 owners = set(db.execute(
                     "SELECT credential_id,account_id FROM entitlements "
                     "WHERE provider_id=? AND identity_id=? AND item_id=?",
