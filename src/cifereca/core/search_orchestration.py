@@ -23,6 +23,40 @@ from ..plugin_api import ProviderSearchEvent, ProviderSearchStream
 from ..core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 
 
+def _log_observed_stream_failure(provider_id: str, phase: str, error: Exception) -> None:
+    """Keep original stream causes in the raw journal, without extra I/O.
+
+    A misbehaving provider exception may itself raise from __str__; a logger
+    must not turn an already failed search into an unhandled callback crash.
+    The fallback captures the original class/args and Python call stack,
+    without changing the public closed error code or performing another GET.
+    """
+    logger = logging.getLogger("cifereca")
+    try:
+        # Python's traceback formatter silently replaces an exception whose
+        # __str__ raises with '<exception str() failed>'. Always record the
+        # ORIGINAL args separately, even when traceback formatting succeeds.
+        # Rendering those args eagerly also prevents a hostile __repr__ from
+        # failing later inside a logging handler.
+        try:
+            observed_args = repr(error.args)
+        except Exception:
+            observed_args = "<unrenderable>"
+        logger.warning(
+            "TRACE provider search stream failure provider_id=%s stage=%s "
+            "exception_type=%s exception_args=%s",
+            provider_id, phase, type(error).__name__, observed_args,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+    except Exception:
+        # Diagnostics must never turn a provider failure into a second crash.
+        logger.warning(
+            "TRACE provider search stream failure provider_id=%s stage=%s "
+            "exception_type=%s journal_fallback=true",
+            provider_id, phase, type(error).__name__,
+        )
+
+
 def _search_query_variants(cls, query: str) -> list[str]:
     """Return a small set of progressively looser catalogue queries.
 
@@ -866,6 +900,9 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
     except SearchStreamCancelled:
         return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
     except SearchStreamFailure as exc:
+        _log_observed_stream_failure(
+            session.provider_id, "stream_validation", exc,
+        )
         publish(ProviderSearchEvent(
             session.provider_id, generation, 0, "reset",
             message="resync after invalid/incomplete stream",
@@ -876,6 +913,9 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
             session, query, scope, field=field, content_types=content_types,
         )
     except Exception as exc:
+        _log_observed_stream_failure(
+            session.provider_id, "stream_delivery", exc,
+        )
         # The transport can fail while opening or iterating the stream.
         # Reuse classic search semantics: only attested public outages allow
         # local fallback; authentication/access/proxy refusals remain distinct.
