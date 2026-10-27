@@ -225,3 +225,36 @@ def test_public_provider_without_credential_keeps_search_compatibility(
         assert summary.providers_completed == 1
     finally:
         service.close()
+
+
+
+def test_inert_source_lease_accepts_class_scalar_without_dynamic_getters():
+    from cifereca.core.search_orchestration import _inert_search_source_state
+
+    class LegacyCatalogue:
+        provider_id = "public-legacy"
+        credential_id = "synthetic-card"
+        connected = True
+
+    legacy = LegacyCatalogue()
+    assert _inert_search_source_state(legacy) == (
+        "public-legacy", "synthetic-card", True,
+    )
+    # A closed/changed class-level scalar revokes an in-flight lease.
+    LegacyCatalogue.connected = False
+    assert _inert_search_source_state(legacy) == (
+        "public-legacy", "synthetic-card", False,
+    )
+
+    observed = []
+
+    class HostileCatalogue(LegacyCatalogue):
+        connected = True
+
+        @property
+        def credential_id(self):
+            observed.append("network getter")
+            raise AssertionError("lease capture must not invoke provider I/O")
+
+    assert _inert_search_source_state(HostileCatalogue()) is None
+    assert observed == []
