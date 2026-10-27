@@ -39,7 +39,7 @@ def capability_matrices_for_identity(
     for plugin in service.registry.all():
         descriptor = getattr(plugin, "descriptor", None)
         provider_id = getattr(descriptor, "id", None)
-        if provider_id in wanted:
+        if type(provider_id) is str and provider_id in wanted:
             # Duplicate descriptors are not a reason to select whichever
             # registered last and accidentally publish a wrong declaration.
             if provider_id in descriptors:
