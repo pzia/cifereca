@@ -208,6 +208,8 @@ class BnfProviderSession(ProviderSession):
         with self._lock:
             if (self._closed or not self.connected or len(self._accounts) != 1
                     or account is not self._accounts[0] or type(loan) is not Loan
+                    or account.provider_id != self.provider_id
+                    or account.credential_id != self.credential_id
                     or loan.source_provider != self.provider_id
                     or loan.source_credential != self.credential_id
                     or loan.source_account_id != account.unique_id
@@ -217,6 +219,26 @@ class BnfProviderSession(ProviderSession):
                     or self._observed_loans.get(loan.id) != loan.record_id):
                 raise ProviderConfigurationError('loan_not_observed')
             epoch = self._epoch
+            # Account and Loan are mutable even while this session lock is held:
+            # the Core can rebind them during activity() or loan_token(). Pin
+            # both scopes and refuse a token GET/publication after any change.
+            account_scope = (account.provider_id, account.credential_id,
+                             account.unique_id, account.identity_id)
+            loan_scope = (loan.id, loan.record_id, loan.provider, loan.medium,
+                          loan.state, loan.source_provider, loan.source_credential,
+                          loan.source_account_id, loan.identity_id)
+            loan_id, resource_id = loan.id, loan.record_id
+
+            def scope_current():
+                return (
+                    (account.provider_id, account.credential_id,
+                     account.unique_id, account.identity_id) == account_scope
+                    and (loan.id, loan.record_id, loan.provider, loan.medium,
+                         loan.state, loan.source_provider, loan.source_credential,
+                         loan.source_account_id, loan.identity_id) == loan_scope
+                    and self._observed_loans.get(loan_id) == resource_id
+                )
+
             try:
                 # No stale loan can trigger the GET: re-read the exact Web
                 # account and demand the same loan/resource pair right now.
@@ -236,18 +258,26 @@ class BnfProviderSession(ProviderSession):
                 # Invalidate BEFORE the token GET, not only after it.
                 if self._closed or epoch != self._epoch or not self.connected:
                     raise ReaderHTTPError('session_closed')
+                if not scope_current():
+                    raise ReaderHTTPError('loan_not_observed')
                 matching = [row for row in fresh.loans
-                            if row.loan_id == loan.id and row.resource_id == loan.record_id]
+                            if row.loan_id == loan_id and row.resource_id == resource_id]
                 if len(matching) != 1:
                     raise ReaderHTTPError('loan_not_observed')
                 # Do not downgrade to unsigned GET when BnF's signed action
                 # is absent or synthesized outside this HTML page.
-                signed_url = signed_acsm_action(activity_html, loan.id, loan.record_id)
+                signed_url = signed_acsm_action(activity_html, loan_id, resource_id)
                 if signed_url is None:
                     raise ReaderHTTPError('url_refused')
                 if self._closed or epoch != self._epoch or not self.connected:
                     raise ReaderHTTPError('session_closed')
-                token = self.client.loan_token(loan.id, signed_url)
+                if not scope_current():
+                    raise ReaderHTTPError('loan_not_observed')
+                token = self.client.loan_token(loan_id, signed_url)
+                if self._closed or epoch != self._epoch:
+                    raise ReaderHTTPError('session_closed')
+                if not scope_current():
+                    raise ReaderHTTPError('loan_not_observed')
                 validate_loan_token(token)
                 if self._closed or epoch != self._epoch:
                     raise ReaderHTTPError('session_closed')
@@ -255,6 +285,9 @@ class BnfProviderSession(ProviderSession):
                 if self._closed or epoch != self._epoch:
                     path.unlink(missing_ok=True)
                     raise ReaderHTTPError('session_closed')
+                if not scope_current():
+                    path.unlink(missing_ok=True)
+                    raise ReaderHTTPError('loan_not_observed')
                 # URLs / opaque loan ids must not enter the generic Core
                 # catalogue, diagnostics or acquisition hook.
                 return path, ''
