@@ -108,6 +108,12 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     )
 
     def still_bound() -> bool:
+        # Static inspection does not run provider-defined attribute getters.
+        # A property or a malformed explicit closure marker is not proof
+        # that the prior authenticated session remains open.
+        closed = getattr_static(session, "_closed", None)
+        if closed is not None and closed is not False:
+            return False
         return (
             getattr(self, "_account_context_epoch", None) == epoch
             and self.accounts is accounts
