@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from cifereca.core.search import file_format
+from cifereca.core.search import file_format, local_match_explanation
 from cifereca.gui.query_model import QueryState, result_row
 from cifereca.models import SearchResult
 
@@ -22,7 +22,8 @@ class Row:
 
 def _host():
     methods = [n for n in ast.parse(OWNER.read_text()).body if isinstance(n, ast.FunctionDef)]
-    env = {"BookListItem": Row, "result_row": result_row, "file_format": file_format}
+    env = {"BookListItem": Row, "result_row": result_row, "file_format": file_format,
+           "local_match_explanation": local_match_explanation}
     module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations")], level=0), *methods], type_ignores=[]))
     exec(compile(module, str(OWNER), "exec"), env)
