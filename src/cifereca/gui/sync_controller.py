@@ -1150,7 +1150,12 @@ def _refresh_sync_page(self) -> None:
                 diagnostic_label.set_wrap(True)
                 diagnostic_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
                 diagnostic_label.set_width_chars(1)
-                diagnostic_label.set_selectable(True)
+                # GTK4 exposes selectable labels, but the existing headless
+                # sync-page test double only models layout/label methods.
+                # Do not make that optional cosmetic feature a prerequisite
+                # for showing a persisted diagnostics summary.
+                if callable(getattr(diagnostic_label, "set_selectable", None)):
+                    diagnostic_label.set_selectable(True)
                 run_details.set_child(diagnostic_label)
                 group.add(run_details)
 
