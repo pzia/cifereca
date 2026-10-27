@@ -68,7 +68,9 @@ def test_untrusted_clock_never_reaches_provider_or_logs_as_private_text(
         record["requested_at"] = raw_time
         service.storage.metadata_set(key, json.dumps(record))
         outcome = service.verify_return_digital(loan)
-        assert outcome["status"] in {"request_sent", "provider_return_confirmed"}
+        # A malformed clock may trigger read-only recovery, but a legacy
+        # empty list is no longer evidence that the provider returned it.
+        assert outcome["status"] in {"request_sent", "verification_unavailable"}
         assert session.posts == []
         assert "SECRET" not in caplog.text
     finally:
