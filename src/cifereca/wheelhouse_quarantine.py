@@ -18,7 +18,7 @@ from packaging.version import InvalidVersion, Version
 
 from .plugins.python_quarantine import (
     QuarantineRejected, _https_pypi_release, check_pip_report,
-    quarantine_duration, _UNSET,
+    quarantine_duration, quarantine_eligibility, _UNSET,
 )
 
 MANIFEST = "wheelhouse-provenance.json"
@@ -92,7 +92,7 @@ def _timestamp(raw: object, now: datetime, *,
         _reject()
     if now - stamp < minimum_age:
         _reject("dependency_too_recent", quarantine_hours=quarantine_hours,
-                eligible_at=stamp + minimum_age)
+                eligible_at=quarantine_eligibility(stamp, minimum_age))
     return stamp
 
 
