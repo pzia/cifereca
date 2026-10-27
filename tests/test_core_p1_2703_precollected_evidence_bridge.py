@@ -120,10 +120,25 @@ def test_cross_identity_or_unregistered_source_never_leaks_evidence():
         LibraryService.capability_matrices_with_precollected_evidence(
             service, "alice", loan_snapshots=(unknown,),
         )
+    disabled_for_bob = replace(
+        _loan_snapshot(identity="bob"),
+        scope=LoanInventoryScope("bob", "kobo", "vault-a", "card-a"),
+    )
     with pytest.raises(ValueError, match="capability_provider_not_admitted"):
+        LibraryService.capability_matrices_with_precollected_evidence(
+            service, "bob", loan_snapshots=(disabled_for_bob,),
+        )
+    # Paris remains admitted for Bob but disconnected; an older loan
+    # observation must not turn that source back online.
+    bob = _by_provider(
         LibraryService.capability_matrices_with_precollected_evidence(
             service, "bob", loan_snapshots=(_loan_snapshot(identity="bob"),),
         )
+    )
+    assert bob["paris"].exact(
+        "loan.inventory", "account", identity_id="bob",
+        account_id="card-a", credential_id="vault-a",
+    ).connected is False
 
 
 def test_empty_unknown_identity_is_not_a_wildcard_and_does_not_fetch():
