@@ -167,6 +167,43 @@ def test_b_own_manifest_plus_received_a_file_needs_explicit_user_declaration(
         assert confirmed.file_mutations == 0
         assert declarations.has_active_declared_link(service.storage, **scope)
 
+        # After explicit consent the inspected file remains a *declaration*,
+        # not a verified Kobo receipt or a confirmed acquisition/placement.
+        # Reopening the UI inspection must still find the exact B pair.
+        post = audit_library(service.storage.path, {"bob": (root_b,)})
+        assert post.redacted()["status"] == "complete", post.redacted()["reasons"]
+        second_inspection = LocalInspection(
+            post, lambda: True, "bob", roots=(root_b,), service=service,
+        )
+        try:
+            declared = second_inspection.page(state="declared_link_recorded").cases
+            assert any(row.key.startswith("right:") for row in declared)
+            assert any(row.key.startswith("file:") for row in declared)
+            assert any(
+                "Association manuelle enregistrée" in row.label
+                for row in declared if row.key.startswith("right:")
+            )
+            assert not any(
+                row.key.startswith("file:")
+                for row in second_inspection.page(state="confirmed_link").cases
+            )
+            selected_right = next(
+                row for row in declared if row.key.startswith("right:")
+            )
+            selected_file = next(
+                row for row in declared if row.key.startswith("file:")
+            )
+            review = second_inspection.preview_declared_link(
+                selected_right.key, selected_file.key,
+            )
+            assert review["status"] == "already_declared"
+            assert review["presence_state"] == "present_declared"
+            assert review["trust"] == "user_declaration"
+            assert review["revoke_available"] is True
+            assert "plan_token" not in review
+        finally:
+            second_inspection.close()
+
         # A's right never appears under B and the independent B user
         # statement never manufactures a completed supplier receipt.
         original_placements = [
