@@ -459,6 +459,7 @@ class NumilogSession(ProviderSession):
                 or not account.identity_id
                 or len(self._accounts) != 1
                 or self._accounts[0].unique_id != expected_account
+                or self._accounts[0].provider_id != 'numilog'
                 or self._accounts[0].credential_id != self.credential_id
             ):
                 raise ProviderCapabilityError(
@@ -479,6 +480,7 @@ class NumilogSession(ProviderSession):
                 or self._inventory_owner_or_none() != owner
                 or len(self._accounts) != 1
                 or self._accounts[0].unique_id != expected_account
+                or self._accounts[0].provider_id != 'numilog'
                 or self._accounts[0].credential_id != self.credential_id
             ):
                 raise ProviderCapabilityError(
@@ -504,7 +506,7 @@ class NumilogSession(ProviderSession):
                         evidence_ref='numilog.meslivres',
                         observed_at=observed, delivery='unknown',
                     ))
-                except (ValueError, KeyError, TypeError, IndexError):
+                except (ValueError, KeyError, TypeError, IndexError, AttributeError):
                     # A malformed authenticated card makes this read
                     # incomplete; never present its absence as a revocation.
                     continue
