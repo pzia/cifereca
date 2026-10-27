@@ -9,6 +9,7 @@ branch-local datetime imports remain late imports.
 from __future__ import annotations
 
 from inspect import getattr_static
+from types import SimpleNamespace
 from typing import Any
 from ..models import Account, Loan
 
@@ -92,6 +93,24 @@ def _paris_loan_presence(rows: list[Loan], loan: Loan) -> bool | None:
     ) else None
 
 
+def _return_inventory_session_connected_inert(session: Any) -> bool:
+    """Revalidate an already-selected session without invoking provider code.
+
+    The check runs both before and after an inventory GET. A provider can
+    replace an ordinary connected boolean with a property or override
+    __getattribute__ during that GET. Neither may be evaluated merely to
+    verify a possible loan return. Synthetic SimpleNamespace v1 sessions
+    retain their original inert in-memory compatibility.
+    """
+    klass = type(session)
+    lookup = getattr_static(klass, "__getattribute__", None)
+    if lookup not in (
+        object.__getattribute__, SimpleNamespace.__getattribute__,
+    ):
+        return False
+    return getattr_static(session, "connected", None) is True
+
+
 def _read_paris_return_presence(self: Any, account: Account, session: Any,
                                 loan: Loan) -> bool:
     """Read one exact borrower; only typed branch coverage can prove absence.
@@ -123,7 +142,7 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
             and self._sessions.get(
                 self._session_key(account.provider_id, account.credential_id)
             ) is session
-            and getattr(session, "connected", False) is True
+            and _return_inventory_session_connected_inert(session)
         )
 
     if not still_bound():
