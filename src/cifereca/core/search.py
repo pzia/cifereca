@@ -246,6 +246,16 @@ def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
     if not tokens:
         return True
     folded = _fold(" ".join(_field_values(row, field)))
+    if str(field or "").casefold() == "subject":
+        # One-letter qualifiers in a multi-word subject (e.g. "Sujet A")
+        # must be complete words, not letters inside unrelated tags such
+        # as "Astronomie" or "Cartographie". Longer terms retain the
+        # historical case/accent-insensitive substring matching.
+        return all(
+            bool(re.search(r"(?<!\\w)" + re.escape(token) + r"(?!\\w)", folded))
+            if len(token) == 1 else token in folded
+            for token in tokens
+        )
     return all(token in folded for token in tokens)
 
 
