@@ -177,10 +177,13 @@ def test_p0_fatal_phase_is_not_downgraded_by_core_partial_compatibility_marker()
     )
 
 
-def test_p0_bnf_partial_source_card_displays_warning_not_fatal_icon():
+def test_p0_partial_source_card_displays_warning_not_fatal_icon():
+    # The headless broker double implements the generic Paris source row,
+    # not the extra BnF auto-download toggle. Both providers exercise the
+    # identical Core-owned partial marker in the projection tests above.
     source = _source(
-        provider_id="bnf-pret", source_id="bnf-partial",
-        label="BnF Prêt", status="partial", sync_capable=True,
+        provider_id="paris", source_id="paris-partial",
+        label="Prêts partiels", status="partial", sync_capable=True,
         error="Synchronisation partielle", phase_states=(
             NS(phase="discover_rights", status="partial"),
         ),
