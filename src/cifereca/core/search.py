@@ -366,6 +366,25 @@ class LocalLibrarySearch:
         )
 
 
+def _known_catalogue_scope_key(
+    provider: str, item_id: str, meta: Mapping[str, Any],
+) -> tuple[str, str, str, str, str, str]:
+    """Do not collapse provider IDs reused by distinct accounts/editions.
+
+    Historical rows without Core's scoped mirror version remain searchable
+    through their old deduplication path, but cannot be used as source proof.
+    """
+    credential = meta.get("source_credential")
+    docbase = meta.get("docbase")
+    collection = meta.get("source_collection")
+    if (meta.get("catalogue_scope_version") == 2
+            and type(credential) is str and credential
+            and type(docbase) is str and docbase
+            and (collection is None or type(collection) is str)):
+        return ("exact", provider, item_id, credential, docbase, collection or "")
+    return ("historical", provider, item_id, "", "", "")
+
+
 class KnownCatalogSearch:
     """Network-free search over all already-known SQLite catalogue facts.
 
@@ -397,7 +416,7 @@ class KnownCatalogSearch:
         text = str(query or "").strip()
         if len(text) < 2:
             return []
-        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        merged: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
         # Catalogue is the broad known set. Local/right rows below override it
         # because they carry stronger state and paths.
         for raw in self._catalog_entries():
@@ -408,7 +427,7 @@ class KnownCatalogSearch:
             provider = str(row.get("provider_id") or "local")
             item_id = str(row.get("item_id") or row.get("artifact_id") or row.get("catalog_entry_id") or "")
             meta = _metadata(row)
-            merged[(provider, item_id)] = {
+            merged[_known_catalogue_scope_key(provider, item_id, meta)] = {
                 "key": f"known:{row.get('catalog_entry_id')}",
                 "title": str(row.get("title") or "Sans titre"),
                 "author": row.get("author"),
@@ -430,7 +449,7 @@ class KnownCatalogSearch:
             row = dict(raw)
             provider = str(row.get("provider_id") or "local")
             item_id = str(row.get("item_id") or row.get("artifact_id") or row.get("key") or "")
-            key = (provider, item_id)
+            key = _known_catalogue_scope_key(provider, item_id, _metadata(row))
             previous = merged.get(key, {})
             merged[key] = {**previous, **row, "metadata": {**_metadata(previous), **_metadata(row)}}
         return filter_loaded_results(

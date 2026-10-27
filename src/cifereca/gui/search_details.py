@@ -62,8 +62,19 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         if item.get("source") == "known_catalog":
             candidate = self._known_search_result(item)
             if candidate:
+                # A cached button may outlive a selection, new search or
+                # identity A→B→A. Check the captured Search generation BEFORE
+                # requesting holdings, not only when the response returns.
+                context = self._search_detail_request_context()
+                expected_key = row.key
                 show = Gtk.Button(label="Disponibilités / téléchargement")
-                show.connect("clicked", lambda _b: self._load_known_detail(candidate))
+                show.connect(
+                    "clicked",
+                    lambda _b, notice=candidate, key=expected_key, ctx=context: (
+                        self._load_known_detail(notice)
+                        if self._search_detail_context_current(key, ctx) else None
+                    ),
+                )
                 actions.append(show)
         extend = Gtk.Button(label="En ligne")
         extend.add_css_class("suggested-action")
@@ -159,6 +170,13 @@ def _search_detail_error(
 
 def _load_known_detail(self: SearchDetailHost, item):
     if getattr(self, "_closed", False):
+        return
+    # A cached GTK callback may outlive a switch of identity even if a
+    # previous widget reference is retained. Refuse it before provider I/O.
+    metadata = getattr(item, "metadata", None)
+    if (type(metadata) is dict and metadata.get("catalogue_scope_version") == 2
+            and metadata.get("known_catalog_identity_id") !=
+            getattr(getattr(self.service, "current_identity", None), "identity_id", None)):
         return
     # Explicitly opening a known-catalogue detail supersedes a previous
     # holdings request, even if the selected list key stays unchanged.

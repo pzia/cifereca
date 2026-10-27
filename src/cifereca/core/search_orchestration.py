@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import hashlib
+import json
 import inspect
 import re
 from concurrent.futures import FIRST_COMPLETED, wait
@@ -1319,6 +1320,30 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
     return None
 
 
+def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, bool]:
+    """Distinguish identical supplier IDs across accounts and editions.
+
+    Legacy incomplete coordinates keep their historic key but cannot gain a
+    version-2 attestation or an actionable SearchResult from the cache.
+    """
+    parts = (
+        identity_id, row.source_provider, row.record_id, row.source_credential,
+        row.docbase, row.source_collection or "",
+    )
+    qualified = (
+        all(type(value) is str and 0 < len(value) <= 512
+            and "\x00" not in value for value in parts[:5])
+        and type(parts[5]) is str and len(parts[5]) <= 512
+        and "\x00" not in parts[5]
+        and (row.source_collection is None or type(row.source_collection) is str)
+    )
+    if not qualified:
+        legacy = f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}"
+        return hashlib.sha256(legacy.encode()).hexdigest(), False
+    scope = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(("mirror-v2\0" + scope).encode()).hexdigest(), True
+
+
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
     """Persist progressively discovered remote catalog metadata (0.8.3)."""
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
@@ -1339,7 +1364,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             for right in self.storage.entitlements(provider_id=provider_id, state="active")
             if right.get("entitlement_type") == "owned"
         })
-    keyed: list[tuple[str, SearchResult, str]] = []
+    keyed: list[tuple[str, SearchResult, str, bool]] = []
     for row in rows:
         owned = row.owned is True and (
             row.source_provider not in {"kobo", "numilog"} or
@@ -1352,11 +1377,11 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
             "remote_catalog"
         )
-        key = hashlib.sha256(f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}".encode()).hexdigest()
-        keyed.append((key, row, state))
-    existing_by_id = self.storage.catalog_entries_by_ids([key for key, _row, _state in keyed])
+        key, qualified = _mirrored_catalogue_key(identity_id, row)
+        keyed.append((key, row, state, qualified))
+    existing_by_id = self.storage.catalog_entries_by_ids([key for key, _row, _state, _qualified in keyed])
     upserts: list[dict[str, Any]] = []
-    for key, row, state in keyed:
+    for key, row, state, qualified in keyed:
         existing = existing_by_id.get(key)
         if existing and existing.get("local_state") == "local":
             continue
@@ -1414,6 +1439,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
                 "published_at": row.published_at, "type": row.type, "medium": row.medium,
                 "mirrored_at": now, "description": row.description,
+                "catalogue_scope_version": 2 if qualified else None,
             },
         })
     self.storage.catalog_entries_upsert_many(upserts)
