@@ -99,7 +99,8 @@ def _receipt_local_file_verified(service, account: Account, row: dict, path: Pat
         return False
 
 
-def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
+def materialize(service, account: Account, loan: Loan, *, control=None,
+                physical_scan_cache: dict | None = None) -> dict:
     """Called only under the existing source/opening sync acquisition lock."""
     if not enabled(service, account) or type(loan) is not Loan:
         return {'status': 'skipped'}
@@ -205,6 +206,44 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         return {'status': 'attention_required', 'code': (
             'bnf_local_candidate_reconciliation_required'
             if local.reason == 'local_candidate_found'
+            else 'bnf_local_evidence_unavailable'
+        )}
+
+    # An old manually imported EPUB may not have any SQLite reference.
+    # Consult only configured manual/ roots via Core's bounded, no-follow
+    # physical inventory. OPF title equality is a REVIEW HINT, never a loan
+    # or ADEPT grant. A partial/unsafe scan must not certify absence.
+    try:
+        from .local_physical_title_candidates import observe_physical_local_titles
+        cache_key = (account.identity_id, roots, core_epoch, consent_revision,
+                     provider_epoch)
+        physical = (
+            physical_scan_cache.get(cache_key)
+            if type(physical_scan_cache) is dict else None
+        )
+        if physical is None:
+            if control is not None:
+                control.check_cancelled()
+            physical = observe_physical_local_titles(
+                identity_id=account.identity_id, roots=roots,
+            )
+            if type(physical_scan_cache) is dict:
+                physical_scan_cache[cache_key] = physical
+        if control is not None:
+            control.check_cancelled()
+        physical_result = physical.screen(
+            identity_id=account.identity_id, title=loan.title,
+        )
+    except Cancelled:
+        raise
+    except Exception:
+        return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
+    if not current():
+        return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
+    if physical_result.status == 'needs_reconciliation':
+        return {'status': 'attention_required', 'code': (
+            'bnf_local_candidate_reconciliation_required'
+            if physical_result.reason == 'local_candidate_found'
             else 'bnf_local_evidence_unavailable'
         )}
     # A signed ACSM is a private short-lived candidate. If admission fails
