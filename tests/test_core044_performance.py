@@ -68,7 +68,8 @@ def test_remote_mirror_uses_subset_lookup_and_batch_upsert(tmp_path: Path, monke
         monkeypatch.setattr(service.storage, "catalog_entries", forbidden_catalog_scan)
         assert service._mirror_remote_results(rows, identity_id=identity_id) == 2
         assert forbidden_calls == 0
-        keys = [hashlib.sha256(f"mirror\0{identity_id}\0remote\0{row.record_id}".encode()).hexdigest() for row in rows]
+        from cifereca.core.search_orchestration import _mirrored_catalogue_key
+        keys = [_mirrored_catalogue_key(identity_id, row)[0] for row in rows]
         mirrored = service.storage.catalog_entries_by_ids(keys)
         assert set(mirrored) == set(keys)
         assert {row["item_id"] for row in mirrored.values()} == {"1", "2"}
