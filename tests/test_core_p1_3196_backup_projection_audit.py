@@ -28,6 +28,10 @@ def test_initial_canonical_mirror_matches_legacy_projection(tmp_path):
             "scope_mismatch": 0, "status_divergence": 0,
             "artifact_divergence": 0, "placement_missing": 0,
             "placement_scope_mismatch": 0,
+            "canonical_scanned": 1,
+            "canonical_without_projection": 0,
+            "canonical_projection_owner_conflict": 0,
+            "canonical_projection_scope_unverified": 0,
         }
         # The audit does not inspect filesystem presence or grant a right.
         assert not (tmp_path / "book.epub").exists()
@@ -167,5 +171,75 @@ def test_invalid_or_oversized_scope_rejected_without_db_read(tmp_path, owner, ca
         result = audit_backup_projection(db, identity_id=owner, max_rows=cap)
         assert result["status"] == "invalid_scope"
         assert result["scanned"] == 0
+    finally:
+        db.close()
+
+
+def test_reverse_audit_finds_canonical_acquisition_without_legacy_row(tmp_path):
+    """A canonical receipt remains authoritative even if no backup row exists."""
+    db = Storage(tmp_path / "books.sqlite3")
+    try:
+        _put(db, identity="alice", item="legacy")
+        db.acquisition_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "alice-credential", "account_id": "library",
+            "item_id": "canonical-only", "title": "Canonical book",
+            "status": "complete",
+        })
+        canonical = db.acquisitions(provider_id="kobo")
+        result = audit_backup_projection(db, identity_id="alice")
+        assert result["status"] == "complete"
+        assert result["scanned"] == 1
+        assert result["canonical_scanned"] == 2
+        assert result["canonical_without_projection"] == 1
+        assert result["canonical_projection_owner_conflict"] == 0
+        assert [x["item_id"] for x in db.backup_list("kobo")] == ["legacy"]
+        assert db.acquisitions(provider_id="kobo") == canonical
+    finally:
+        db.close()
+
+
+def test_reverse_audit_does_not_claim_a_different_borrower_or_unknown_owner(
+    tmp_path,
+):
+    db = Storage(tmp_path / "books.sqlite3")
+    try:
+        _put(db, identity="alice", item="different-borrower")
+        _put(db, identity="alice", item="unknown-owner")
+        with db._lock, db._connect() as conn:
+            conn.execute(
+                "UPDATE acquisition_ledger SET account_id='other-borrower' "
+                "WHERE item_id='different-borrower'"
+            )
+            conn.execute(
+                "UPDATE backup_items SET account_id=NULL "
+                "WHERE item_id='unknown-owner'"
+            )
+        result = audit_backup_projection(db, identity_id="alice")
+        assert result["status"] == "complete"
+        assert result["canonical_scanned"] == 2
+        assert result["canonical_without_projection"] == 0
+        assert result["canonical_projection_owner_conflict"] == 1
+        assert result["canonical_projection_scope_unverified"] == 1
+    finally:
+        db.close()
+
+
+def test_reverse_audit_refuses_over_budget_canonical_scope_without_partial_totals(
+    tmp_path,
+):
+    db = Storage(tmp_path / "books.sqlite3")
+    try:
+        for item in ("one", "two"):
+            db.acquisition_put({
+                "identity_id": "alice", "provider_id": "kobo",
+                "credential_id": "alice-credential", "account_id": "library",
+                "item_id": item, "title": "Book", "status": "discovered",
+            })
+        result = audit_backup_projection(db, identity_id="alice", max_rows=1)
+        assert result["status"] == "budget_exceeded"
+        assert all(value == 0 for key, value in result.items() if key != "status")
+        assert len(db.acquisitions(provider_id="kobo")) == 2
+        assert db.backup_list("kobo") == []
     finally:
         db.close()
