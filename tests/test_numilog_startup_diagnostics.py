@@ -271,7 +271,7 @@ def test_diagnostic_cannot_replace_newer_claim_or_authoritative_receipt(tmp_path
     finally: service.close()
 
 
-def test_real_taskrunner_gui_worker_preserves_kind_failure_reference_and_safe_popup(tmp_path, caplog):
+def test_real_taskrunner_auto_failure_preserves_reference_without_a_modal(tmp_path, caplog):
     from tests.test_core_p0_981_redacted_task_traces import _runner
     from cifereca.gui.numilog_materialization_startup import dispatch_after_opening
     service, account, session, calls, broker, sid = _setup(tmp_path)
@@ -283,6 +283,8 @@ def test_real_taskrunner_gui_worker_preserves_kind_failure_reference_and_safe_po
     window.service = service
     window.plugin_manager = NS(broker=lambda _name:broker)
     window.runner = runner
+    from unittest.mock import Mock
+    window.toast = Mock()
     try:
         _authorize(broker, sid)
         session.library = explode
@@ -297,8 +299,10 @@ def test_real_taskrunner_gui_worker_preserves_kind_failure_reference_and_safe_po
         assert summary['code'] == 'manifest_failed'
         assert summary['attempted'] == summary['downloaded'] == 0
         assert any(row[0]=='finished' and row[1][3] is False for row in displayed)
-        assert window.show_error.called
-        assert 'PRIVATE' not in repr(window.show_error.call_args)
+        window.show_error.assert_not_called()
+        window.toast.assert_called_once_with(
+            'Sauvegarde Numilog à vérifier ; consultez Synchronisation.')
+        assert 'PRIVATE' not in repr(window.toast.call_args)
         assert 'PRIVATE' not in caplog.text and calls == []
     finally:
         runner.close(); service.close()
