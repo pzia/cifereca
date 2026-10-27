@@ -104,7 +104,10 @@ class DeclarationActions:
         def read():
             return self.session.preview_declared_link(
                 *pair, revoke=revoke,
-                cancelled=lambda: not self._current(pair, generation),
+                # Worker cancellation reads only a scalar generation. GTK
+                # selection/window and session.valid() are checked on
+                # the UI thread and independently by Core at commit.
+                cancelled=lambda: self.generation != generation,
             )
 
         def completed(result):
@@ -196,7 +199,10 @@ class DeclarationActions:
             def commit():
                 return self.session.confirm_declared_link(
                     *pair, user_confirmed=True,
-                    cancelled=lambda: not self._current(pair, generation),
+                    # Worker cancellation reads only a scalar generation. GTK
+                # selection/window and session.valid() are checked on
+                # the UI thread and independently by Core at commit.
+                cancelled=lambda: self.generation != generation,
                 )
 
             def completed(result):
