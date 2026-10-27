@@ -1335,6 +1335,54 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
     return None
 
 
+
+# SearchService/Paris resource fields observed in #3415. The Core only keeps
+# evidence produced by that exact source; provider payloads are not generic
+# credentials, entitlement or acquisition evidence.
+_PARIS_RESOURCE_FACET_FIELDS = {
+    "subjects": "Subj",
+    "tags": "Tags",
+    "paris_blog_categories": "BlogPostCategories",
+    "paris_blog_tags": "BlogPostTags",
+}
+
+
+def _safe_paris_resource_facets(
+    metadata: dict[str, Any], scenario: str,
+) -> dict[str, Any]:
+    """Persist bounded, already-attested Paris fields for the exact edition."""
+    if scenario not in {"CATALOGUE", "EBOOKS"}:
+        return {}
+    evidence = metadata.get("bibliography_evidence")
+    if type(evidence) is not dict:
+        return {}
+
+    fields: dict[str, Any] = {}
+    proofs: dict[str, dict[str, str]] = {}
+    for name, source_field in _PARIS_RESOURCE_FACET_FIELDS.items():
+        raw_values = metadata.get(name)
+        proof = evidence.get(name)
+        if type(raw_values) is not list or not 1 <= len(raw_values) <= 12:
+            continue
+        expected = {
+            "source": "paris.syracuse.search",
+            "source_field": "Resource." + source_field,
+            "scope": scenario,
+            "confidence": "upstream_field_present",
+            "freshness": "search_response",
+        }
+        if type(proof) is not dict or proof != expected:
+            continue
+        cleaned = _safe_public_search_text(name, raw_values)
+        if type(cleaned) is not list or len(cleaned) != len(raw_values):
+            continue
+        fields[name] = cleaned
+        proofs[name] = expected
+    if proofs:
+        fields["bibliography_evidence"] = proofs
+    return fields
+
+
 def mirrored_catalogue_scoped_id(
     identity_id: str, provider_id: str, record_id: str, credential_id: str,
     docbase: str, source_collection: str | None,
@@ -1428,6 +1476,10 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             safe = _safe_public_search_text(name, raw_meta.get(name))
             if safe is not None:
                 allowed_meta[name] = safe
+        if row.source_provider == "paris":
+            # Only observed Resource fields + their exact scenario-specific
+            # evidence; never persist raw SearchService response dictionaries.
+            allowed_meta.update(_safe_paris_resource_facets(raw_meta, row.scenario))
         # The generic youth-age contract is also edition-scoped and already
         # structured. Keep only its validated bounds/kind and harmless original
         # label; never persist a raw nested provider age object, provenance
