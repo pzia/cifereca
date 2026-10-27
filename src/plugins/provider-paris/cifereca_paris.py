@@ -608,7 +608,7 @@ class ParisProviderSession(ProviderSession):
         finally:
             self.last_search_warnings = list(self.client.last_search_warnings)
             self.last_search_response_facets = [
-                dict(facet) for facet in self.client.last_search_response_facets
+                dict(facet) for facet in getattr(self.client, "last_search_response_facets", ())
             ]
 
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
