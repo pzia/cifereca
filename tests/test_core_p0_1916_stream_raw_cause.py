@@ -70,8 +70,11 @@ def test_malformed_stream_reset_preserves_original_validation_cause(
     batches = []
     try:
         with caplog.at_level(logging.WARNING, logger="cifereca"):
+            # One-token query keeps the existing reset/resync assertion
+            # scoped to a single variant. A multi-token query legitimately
+            # tries additional text variants after a recoverable bad stream.
             result = lib.search_progressive(
-                "Synthetic book", force=True, on_batch=batches.append,
+                "Book", force=True, on_batch=batches.append,
             )
         assert result.result_count == 1
         assert source.stream_calls == 1
