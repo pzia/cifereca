@@ -876,6 +876,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         include_redundant_merged=include_redundant_merged,
     )
     searchable.sort(key=lambda row: row.provider_id)
+    source_leases = tuple(
+        (session, _inert_search_source_state(session))
+        for session in searchable
+    )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
     pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
     types = tuple(sorted(content_types or ()))
@@ -888,10 +892,22 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
-        return (
-            search_generation == self._search_generation
-            and self.current_identity is identity
-        )
+        if (search_generation != self._search_generation
+                or self.current_identity is not identity):
+            return False
+        # A provider can be reconnected without a profile transition. Its
+        # old in-flight worker is then no longer authorized to publish a
+        # batch, a stream event, a mirror or an unscoped cache result.
+        try:
+            registered = tuple(self._sessions.values())
+        except RuntimeError:
+            return False
+        for session, expected in source_leases:
+            if (expected is None or expected[2] is not True
+                    or not any(item is session for item in registered)
+                    or _inert_search_source_state(session) != expected):
+                return False
+        return True
 
     def request_cancelled() -> bool:
         with self._search_generation_lock:
