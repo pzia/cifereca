@@ -2121,7 +2121,7 @@ class LocalInspection:
                 'le fichier OPF. Des livres/éditions différents peuvent '
                 'porter le même titre. Aucun droit, compte, prêt, provenance '
                 'ADEPT ni placement n’est attesté par cette suggestion. '
-                'Comparaison et confirmation explicites indispensables.\\n\\n'
+                'Comparaison et confirmation explicites indispensables.\n\n'
                 + self._cases[key].details
             ),
         ) for key in self._title_only_file_keys.get(right_key, ())
