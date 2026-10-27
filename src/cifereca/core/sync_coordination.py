@@ -20,6 +20,29 @@ from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
 
+def _sync_loan_inventory_observation(self, account: Account, session: Any):
+    """Read exactly once, preserving v1 Core normalization until migration.
+
+    Typed sessions use the validated atomic envelope. Legacy installations
+    still depend on the facade's account cache, positive normalization and
+    provider/session lease checks. Retiring that path before their Plugin API
+    migration loses positive loans; never mistake a v1 list for completeness.
+    The two synchronization entrypoints share this one selection point.
+    """
+    from ..plugin_api.loan_inventory import read_loan_inventory
+    if session is not None and getattr_static(
+        session, "loan_inventory_snapshot", None,
+    ) is not None:
+        snapshot = read_loan_inventory(session, account)
+        if snapshot.status in {"failed", "cancelled"}:
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+        return snapshot, list(snapshot.loans)
+    # No second read after a failed/malformed typed snapshot, even when the
+    # v1 list reader is available. The legacy facade also covers test shims
+    # and currently installed v1 plugins which do not publish an envelope.
+    return None, self._loans_for_account(account, force=True)
+
+
 def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
     """Synchronize one explicit account/source without changing account selection.
 
@@ -92,26 +115,12 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             account.credential_id, account.unique_id,
             self._account_context_epoch,
         )
-        # Adopt the optional atomic inventory envelope only where the plugin
-        # explicitly implements it. Legacy providers retain the established
-        # loans()/cache behavior, without a second network read.
-        # A provider property/getattr may issue HTTP even during a mere
-        # typed-vs-legacy capability check. Treat any statically declared
-        # reader as opt-in; read_loan_inventory rejects unsafe descriptors
-        # without falling back to a second legacy network GET.
-        typed_inventory = (
-            getattr_static(session, "loan_inventory_snapshot", None) is not None
-        )
-        snapshot = None
+        # One selection point for typed envelope and installed v1 adapters.
+        # Legacy positive lists can never certify missing/returned loans.
         with measure("loan_refresh_ms"):
-            if typed_inventory:
-                from ..plugin_api.loan_inventory import read_loan_inventory
-                snapshot = read_loan_inventory(session, account)
-                if snapshot.status in {"failed", "cancelled"}:
-                    raise ProviderConfigurationError("loan_inventory_read_unavailable")
-                loans = list(snapshot.loans)
-            else:
-                loans = self._loans_for_account(account, force=True)
+            snapshot, loans = _sync_loan_inventory_observation(
+                self, account, session,
+            )
         if not _opening_loans_scoped(account, source_scope[0], loans):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
         matching = [
@@ -651,29 +660,17 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     session = self._sessions.get(
                         self._session_key(account.provider_id, account.credential_id),
                     )
-                    snapshot = None
                     typed_scope = (
                         account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id,
                         self._account_context_epoch,
                     )
-                    # Never invoke a provider getter while selecting the
-                    # typed path. A malformed declared reader must fail
-                    # closed instead of being demoted to legacy loans().
-                    if session is not None and (
-                        getattr_static(session, "loan_inventory_snapshot", None)
-                        is not None
-                    ):
-                        # Exactly one provider read, with the provider's atomic
-                        # status and branch evidence. Never infer a missing
-                        # loan/return from the envelope or a successful GET.
-                        from ..plugin_api.loan_inventory import read_loan_inventory
-                        snapshot = read_loan_inventory(session, account)
-                        if snapshot.status in {"failed", "cancelled"}:
-                            raise ProviderConfigurationError("loan_inventory_read_unavailable")
-                        account_loans = list(snapshot.loans)
-                    else:
-                        account_loans = self._loans_for_account(account, force=True)
+                    # Preserve legacy positive normalization while typed
+                    # snapshots carry coverage; neither allows unproven
+                    # negative rights changes or a second provider read.
+                    snapshot, account_loans = _sync_loan_inventory_observation(
+                        self, account, session,
+                    )
                     logger.info(
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
