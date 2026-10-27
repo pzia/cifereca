@@ -17,6 +17,29 @@ from cifereca_bnf_pret_signed_action import signed_loan_url
 ORIGIN = 'https://pret.bnf.fr'
 ACTIVITY = ORIGIN + '/my_profile/activity'
 
+# An HTTP Content-Type is untrusted and may include arbitrary parameters
+# (including tokens) or unrecognised vendor extensions. Diagnostics retain
+# only a finite media-type label, never the original response header.
+_OBSERVED_MIME_TYPES = frozenset({
+    'text/html', 'application/xhtml+xml', 'application/octet-stream',
+    'application/vnd.adobe.adept+xml', 'application/xml', 'text/xml',
+    'text/plain', 'application/pdf', 'application/epub+zip',
+})
+_OBSERVED_ERRORS = frozenset({
+    'operation_timeout', 'mutation_refused', 'post_redirect_refused',
+    'redirect_invalid', 'redirect_limit', 'auth_required', 'access_denied',
+    'rate_limited', 'http_unavailable', 'unexpected_content', 'html_limit',
+    'transport_unavailable', 'url_refused', 'download_redirect_refused',
+    'token_limit', 'invalid_loan_token',
+})
+
+
+def _observed_mime(value: object) -> str:
+    if type(value) is not str or not value:
+        return 'missing'
+    media_type = value.partition(';')[0].strip().lower()
+    return media_type if media_type in _OBSERVED_MIME_TYPES else 'other'
+
 
 class ReaderHTTPError(RuntimeError):
     """Only closed codes may leave this transport boundary."""
@@ -122,13 +145,17 @@ class ReaderHTTPClient:
         try:
             with self.http.stream(method, url, **kwargs) as response:
                 detail.update(http_status=response.status_code,
-                              content_type=response.headers.get('content-type', ''))
+                              content_type=_observed_mime(response.headers.get('content-type', '')))
                 self._observe(dict(detail, event='response'), 'running', started)
                 yield response
         except Exception as exc:
-            code = (str(exc) if isinstance(exc, ReaderHTTPError) else
-                    'transport_unavailable' if isinstance(exc, (httpx.HTTPError, UnicodeError))
-                    else 'unexpected_failure')
+            code = (
+                str(exc) if isinstance(exc, ReaderHTTPError)
+                and str(exc) in _OBSERVED_ERRORS
+                else 'transport_unavailable'
+                if isinstance(exc, (httpx.HTTPError, UnicodeError))
+                else 'unexpected_failure'
+            )
             self._observe(dict(detail, event='terminal', code=code), 'failed', started)
             raise
         else:
