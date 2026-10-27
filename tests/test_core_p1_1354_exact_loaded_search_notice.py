@@ -191,12 +191,20 @@ def test_search_scope_stamp_binds_identity_query_and_local_only():
     source = (Path(__file__).resolve().parents[1] /
               "src/cifereca/gui/search_results.py")
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    fn = next(node for node in tree.body
-              if isinstance(node, ast.FunctionDef)
-              and node.name == "_populate_search")
+    # The adapter now delegates edition-safe row keys to CoreUI helpers.
+    # Keep this GTK-free compilation isolated, but include the *real* helper
+    # definitions rather than silently testing a stale function alone.
+    required = {
+        "_populate_search", "_remote_result_row_keys",
+        "_exact_remote_catalogue_scope", "_catalogue_edition_scope",
+    }
+    functions = [node for node in tree.body
+                 if isinstance(node, ast.FunctionDef)
+                 and node.name in required]
+    assert {node.name for node in functions} == required
     namespace = {}
     exec(compile(ast.fix_missing_locations(
-        ast.Module(body=[fn], type_ignores=[])), str(source), "exec"),
+        ast.Module(body=functions, type_ignores=[])), str(source), "exec"),
          namespace)
     populate = namespace["_populate_search"]
 
