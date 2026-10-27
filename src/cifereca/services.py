@@ -2945,6 +2945,12 @@ class LibraryService:
             emit("cancelled", "operation_cancelled")
             raise
         except AttentionRequired as exc:
+            # The typed terminal event remains a stable business outcome.
+            # Preserve the original observed exception in the raw journal;
+            # truncating it to a closed reason destroys provider evidence.
+            _TRACE_LOG.warning(
+                "TRACE explicit loan recovery attention required", exc_info=True,
+            )
             try:
                 code = exc.code
             except Exception:
@@ -2955,9 +2961,15 @@ class LibraryService:
             emit("refused", exc.code, phase="admission")
             raise
         except ProviderConfigurationError:
+            _TRACE_LOG.error(
+                "TRACE explicit loan recovery provider failure", exc_info=True,
+            )
             emit("failed", "provider_failure")
             raise
         except Exception:
+            _TRACE_LOG.error(
+                "TRACE explicit loan recovery unexpected failure", exc_info=True,
+            )
             emit("failed", "unclassified_error")
             raise
         else:
