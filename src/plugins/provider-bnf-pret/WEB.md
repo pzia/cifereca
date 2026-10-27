@@ -61,8 +61,9 @@ quand il est unique. Les dates et la pagination des prêts ne sont pas qualifié
 aucune date n'est inventée. Chaque `Loan` porte provider, credential, compte et
 identité exacts. Le lien de téléchargement n'est pas transmis au Core.
 
-L'inventaire est **toujours partiel** (`last_loan_errors` signale
-`inventory_not_exhaustive`). La synchronisation ajoute/actualise les prêts
+L'inventaire est **toujours partiel** : `loan_inventory_snapshot()` publie
+`status=partial`, branche `bnf_html` et raison typée `inventory_not_exhaustive`.
+Le canal mutable historique `last_loan_errors` a été retiré du plugin (#3197). La synchronisation ajoute/actualise les prêts
 observés, mais une page vide, tronquée, une session expirée ou un prêt absent
 ne prouve aucune fin de droit. Le Core actuel (#2975) conserve les anciens droits
 sans preuve négative exhaustive ; #2055 interdit les acquisitions BnF implicites.
