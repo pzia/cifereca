@@ -5,6 +5,7 @@ All accounts, rights, books and files are synthetic. No HTTP/ADEPT/acquisition.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -18,7 +19,7 @@ from tests.test_core_p0_1862_numilog_store_mirror import _row
 
 
 def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_position(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ):
     service, account, session, calls, broker, sid = _setup(tmp_path)
     try:
@@ -37,7 +38,8 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
             ),
         )
 
-        result = execute(broker, account.identity_id, "startup")
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            result = execute(broker, account.identity_id, "startup")
         assert result.ok is False
         assert result.facts["status"] == "blocked"
         assert result.facts["attempted"] == result.facts["downloaded"] == 0
@@ -61,6 +63,22 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
         for private in (account.credential_id, *[r.record_id for r in rows]):
             assert private not in json.dumps(detail)
             assert private not in caption
+        # The UI's bounded rank view remains unchanged. The raw journal must
+        # also identify the exact purchase observed in THIS authenticated run,
+        # so a later manifest reordering cannot change the forensic meaning.
+        item_events = [
+            record.getMessage() for record in caplog.records
+            if record.getMessage().startswith("TRACE numilog purchase decision")
+        ]
+        assert len(item_events) == 3
+        for position, (row, reason) in enumerate(zip(rows, reasons.values()), 1):
+            event = item_events[position - 1]
+            assert "provider_id=numilog" in event
+            assert f"source_id={sid}" in event
+            assert f"item_id={row.record_id}" in event
+            assert f"position={position}" in event
+            assert f"decision={reason}" in event
+            assert "run_ref=" in event and "task_ref=" in event
         assert calls == []
         assert service.storage.acquisitions(provider_id="numilog") == []
     finally:
