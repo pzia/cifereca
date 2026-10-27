@@ -69,7 +69,7 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
         else None
     )
     self.service.last_search = rows
-    self.search_objects = {f"{x.source_provider}:{x.id}": x for x in rows}
+    self.search_objects = dict(zip(_remote_result_row_keys(rows), rows))
     shown = self._render_search_results()
     self._sync_search_detail_after_results()
     if not announce:
@@ -118,6 +118,38 @@ def _exact_remote_catalogue_scope(item: SearchResult) -> tuple[str, ...] | None:
         item.source_provider, item.source_credential, item.record_id,
         item.docbase, item.source_collection,
     )
+
+
+def _remote_result_row_keys(rows: list[SearchResult]) -> list[str]:
+    """Give colliding supplier display IDs distinct, stable UI-only keys.
+
+    The provider's legacy `id` may omit credential/collection. A duplicate
+    key must not overwrite one exact edition in search_objects or selection.
+    This hashed key neither verifies rights nor changes upstream record IDs.
+    """
+    from collections import Counter
+    from hashlib import sha256
+
+    bases = [f"{item.source_provider}:{item.id}" for item in rows]
+    counts = Counter(bases)
+    keys: list[str] = []
+    used: set[str] = set()
+    for index, (base, item) in enumerate(zip(bases, rows)):
+        if counts[base] == 1 and base not in used:
+            key = base
+        else:
+            scope = _exact_remote_catalogue_scope(item)
+            if scope is not None:
+                key = f"{base}:scope:{sha256(repr(scope).encode('utf-8')).hexdigest()}"
+            else:
+                # Historical/unqualified notices remain visible but are not
+                # silently assigned another edition's verified coordinates.
+                key = f"{base}:unqualified:{index}"
+            if key in used:
+                key = f"{base}:duplicate:{index}"
+        keys.append(key)
+        used.add(key)
+    return keys
 
 
 def _render_search_results(self) -> int:
@@ -189,9 +221,16 @@ def _render_search_results(self) -> int:
         ui_rows.append(BookListItem(str(known["key"]), str(known.get("title") or "Sans titre"), str(known.get("author") or ""),
             local_match_explanation(known, state.text, field=state.field),
             self.service.provider_display_name(str(known.get("provider_id") or "local")), known.get("thumbnail_url")))
-    filtered = {row["key"] for row in state.filter([{**result_row(x), "key": f"{x.source_provider}:{x.id}"} for x in self._remote_search_results])}
-    for item in self._remote_search_results:
-        key = f"{item.source_provider}:{item.id}"
+    remote_rows = list(zip(
+        _remote_result_row_keys(self._remote_search_results),
+        self._remote_search_results,
+    ))
+    filtered = {
+        row["key"] for row in state.filter([
+            {**result_row(item), "key": key} for key, item in remote_rows
+        ])
+    }
+    for key, item in remote_rows:
         if key not in filtered: continue
         content_type = self.service.content_type_for(item)
         if item.medium == "physical":
@@ -261,7 +300,10 @@ def _render_search_results(self) -> int:
             action_callback=callback,
             action_icon_name="document-open-symbolic" if placement else ("document-save-symbolic" if direct else None),
         ))
-    objects = {**self._search_local_objects, **{f"{item.source_provider}:{item.id}": result_row(item) for item in self._remote_search_results}}
+    objects = {
+        **self._search_local_objects,
+        **{key: result_row(item) for key, item in remote_rows},
+    }
     self._attach_row_facets(ui_rows, objects, self.search_controls)
     self.search_page.show_rows(ui_rows)
     self._search_local_snapshot_dirty = False
