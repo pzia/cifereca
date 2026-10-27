@@ -93,3 +93,15 @@ réconciliation explicite. **Aucun fichier** n'est déplacé, détruit,
 téléchargé ou associé par SHA/titre. L'ownership des placements sera
 traité complètement avec #3185 lors de la migration vers la source
 canonique, pas par une affectation implicite Kobo.
+
+
+## Tranche P0 : couverture inverse des acquisitions canoniques
+
+L’audit lit désormais les deux directions dans la même transaction SQLite :
+
+- `backup_items → entitlement / acquisition / placement` : détection des divergences historiques conservée.
+- `acquisition_ledger → backup_items` : `canonical_scanned`, `canonical_without_projection` (reçu canonique sans copie v0.7), `canonical_projection_owner_conflict` (projection d’un autre propriétaire) et `canonical_projection_scope_unverified` (coordonnées incomplètes).
+
+Chaque direction a son propre plafond de **500 lignes par identité**. Un dépassement donne `budget_exceeded` et tous les compteurs à zéro. Un reçu canonique sans projection est un fait de migration, pas un droit supplémentaire à créer et pas une raison de recopier `backup_items`.
+
+Cette tranche est 100 % lecture SQLite : aucune écriture, suppression, copie, téléchargement, migration de schéma, mutation de prêt ni reclassement implicite. Le retrait effectif de la compatibilité v0.7, les consommateurs et la migration versionnée restent dans #3196.
