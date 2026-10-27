@@ -339,14 +339,15 @@ def kobo_backup_preview(
     # offline checkpoint preview is intentionally still usable disconnected.
     core_epoch = self._account_context_epoch
     provider_epoch = getattr(session, "_epoch", None)
-    account = (
-        session.accounts[0] if session is not None and len(session.accounts) == 1
-        else None
+    # Multiple borrowers are legitimate diagnostic inputs: the existing
+    # preview must classify their rights as attention_required rather than
+    # convert an ambiguous account into an authoritative owner. Pin every
+    # observed instance/value so mid-read replacement is still rejected.
+    accounts = tuple(session.accounts) if session is not None else ()
+    account_scopes = tuple(
+        (row.identity_id, row.provider_id, row.credential_id, row.unique_id)
+        for row in accounts
     )
-    owner_scope = (
-        account.identity_id, account.provider_id, account.credential_id,
-        account.unique_id,
-    ) if account is not None else None
 
     def fresh_source_current() -> bool:
         try:
@@ -356,14 +357,20 @@ def kobo_backup_preview(
                 and self._account_context_epoch == core_epoch
                 and self._sessions.get(self._session_key("kobo", credential_id)) is session
                 and getattr(session, "_epoch", None) == provider_epoch
-                and owner_scope is not None
-                and owner_scope[:3] == (identity_id, "kobo", credential_id)
-                and len(session.accounts) == 1
-                and session.accounts[0] is account
+                and len(session.accounts) == len(accounts)
+                and all(
+                    live is original
+                    for live, original in zip(session.accounts, accounts)
+                )
+                and tuple(
+                    (row.identity_id, row.provider_id,
+                     row.credential_id, row.unique_id)
+                    for row in session.accounts
+                ) == account_scopes
                 and (
-                    account.identity_id, account.provider_id,
-                    account.credential_id, account.unique_id,
-                ) == owner_scope
+                    len(accounts) != 1 or account_scopes[0][:3]
+                    == (identity_id, "kobo", credential_id)
+                )
                 and self.storage.identity_for_connection(
                     "kobo", credential_id,
                 ) == identity_id
