@@ -1058,6 +1058,30 @@ class UiLoadedSearchNoticeHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiKnownSearchNoticeHost(UiPageHost, Protocol):
+    """Optional identity/edition-scoped navigation to a known SQLite notice.
+
+    Recommandations passes only complete original supplier coordinates.
+    The Core requires a fresh v2 mirror proof and a connected exact session;
+    historical/ambiguous cache rows cannot be selected. A user click opens
+    one local Search row; it NEVER performs network I/O, confers a right or
+    uses any plugin-provided permission. An independent explicit Search click
+    may fetch live holdings through the existing normal action controller.
+    An absent source_collection is the exact empty string, not a wildcard.
+    """
+
+    def can_open_known_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool: ...
+
+    def open_known_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool: ...
+
+
+@runtime_checkable
 class UiBookNavigationHost(UiPageHost, Protocol):
     """Optional public navigation to a book in the active identity's Library.
 
