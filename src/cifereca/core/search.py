@@ -14,10 +14,10 @@ def _values(value: object) -> list[str]:
     if value is None:
         return []
     if isinstance(value, Mapping):
-        out: list[str] = []
-        for child in value.values():
-            out.extend(_values(child))
-        return out
+        # A nested provider object is not an attested bibliographic string.
+        # Its incidental values (including credentials/paths) must not become
+        # title, subject, series or search-relevance matches.
+        return []
     if isinstance(value, (list, tuple, set, frozenset)):
         out = []
         for child in value:
