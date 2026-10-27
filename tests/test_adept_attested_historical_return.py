@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 from tests.test_core_0984_adept_first_paris_reconcile import setup, stub_adept
 from tests.test_core_0984_adept_return_status_provenance import _acquisition
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
@@ -82,6 +84,7 @@ def test_incomplete_origin_evidence_cannot_bypass_revoked_grant(tmp_path, field,
 
 def test_explicit_historical_return_freshly_checks_origin_once_and_keeps_file(tmp_path):
     service, loan, paris = setup(tmp_path)
+    attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         _attest(service, 'adept-01')
         _reconfigure(service, 'revoke')
