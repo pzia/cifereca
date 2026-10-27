@@ -133,12 +133,16 @@ def test_variant_with_catalogue_dependency_is_not_destroyed(tmp_path):
     service, source, derived, original_id, broker, plan, placement, path, original = (
         _variant(tmp_path)
     )
+    # An independent notice with no placement still references this file.
+    # The generated derived catalogue row is its own removable projection,
+    # but this second row must never be silently erased or stranded.
     service.storage.catalog_entry_put({
-        "artifact_id": derived.artifact_id,
-        "placement_id": placement["placement_id"],
+        "artifact_id": source.artifact_id,
+        "placement_id": None,
         "identity_id": "id1", "provider_id": "local",
-        "item_id": "book-1", "title": "Book", "media_format": "epub",
-        "local_state": "local", "metadata": {"path": str(path)},
+        "item_id": "independent-book", "title": "Independent notice",
+        "media_format": "epub", "local_state": "remote_catalog",
+        "metadata": {"path": str(path)},
     })
     with pytest.raises(Conflict, match="Références de variante"):
         broker.run(plan, Control())
