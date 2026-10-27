@@ -101,3 +101,33 @@ métadonnées, aucune capacité à acquérir déduite d'une couverture observée
 Reste pour finir #2703 : service Core de lecture fédérée et CoreUI, preuves
 fournisseur des 7 familles, recettes E2E exactes. L'absence de ces dernières
 ne peut pas être masquée par cette projection technique.
+
+## Inventaire Core sans I/O pour l'IHM (#2703, tranche 3)
+
+`LibraryService.capability_matrices(identity_id=None)` publie un tuple de
+`CapabilityMatrix` trié, par **source activée et enregistrée** pour l'identité
+demandée. La valeur par défaut est l'identité courante. Une identité inconnue
+ne reçoit **aucune** entrée. Le Core réemploie son inventaire de catalogues
+`catalogue_source_capabilities` (catalogue public OU inventaire personnel),
+sans créer de pseudo-compte public, sans activer de plugin et sans déléguer
+de recherche au fournisseur. Ce premier point d'entrée CoreUI n'affiche
+pas les plugins techniques, sources `skeleton` ou désactivées.
+
+Par source, les opérations `catalog.search`,
+`personal_inventory.list` et `catalog.refresh` sont projetées **sur
+l'identité et le scope précis** `public/authenticated` tandis que les
+huit opérations historiques de `ProviderCapabilities` restent en
+`scope=unknown`, avec la seule preuve de **déclaration de code**.
+Une session connectée n'élève jamais la capacité vers `supported`.
+Chaque ligne `authorizes_mutation=False` : aucune autorisation de prêt,
+achat, téléchargement ou synchronisation de catalogue ne suit de cette API.
+
+**Restriction assumée :** le chemin par défaut ne lit pas
+`SynchronizationBroker.sources()` car sa projection legacy est susceptible
+de migrer des métadonnées persistées ; il ne fait pas non plus de
+`read_loan_inventory()`, qui serait une requête fournisseur. Les snapshots
+déjà acquis sont projetables séparément via
+`project_existing_capabilities(..., sync_source=..., loan_snapshot=...)`
+après sélection exacte de leur compte/credential. Le pont CoreUI pour ces
+preuves historiques reste explicitement à terminer, ainsi que les 7
+familles de capacités par source, sans élargir artificiellement les scopes.
