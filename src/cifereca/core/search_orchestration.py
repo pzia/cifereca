@@ -1335,6 +1335,57 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
     return None
 
 
+
+# Syracuse metadata is already projected by provider.paris from precisely
+# these observed Resource keys. Core carries it through SQLite without ever
+# interpreting blog taxonomies as server-side filter capabilities.
+_PARIS_RESOURCE_BIBLIOGRAPHY_FIELDS = {
+    "subjects": "Resource.Subj",
+    "tags": "Resource.Tags",
+    "paris_blog_categories": "Resource.BlogPostCategories",
+    "paris_blog_tags": "Resource.BlogPostTags",
+}
+
+
+def _safe_paris_bibliography_metadata(raw: dict[str, Any], scenario: str) -> dict[str, Any]:
+    """Retain only evidence-backed Paris resource fields for ONE edition.
+
+    Every evidence record must equal the closed five-key schema emitted by
+    provider.paris (#3426). This is not a generic persistence of provider
+    dictionaries or response-level FacetCollectionList.
+    """
+    evidence = raw.get("bibliography_evidence")
+    if scenario not in {"CATALOGUE", "EBOOKS"} or type(evidence) is not dict:
+        return {}
+    if len(evidence) > len(_PARIS_RESOURCE_BIBLIOGRAPHY_FIELDS):
+        return {}
+    projected: dict[str, Any] = {}
+    proofs: dict[str, dict[str, str]] = {}
+    for name, upstream in _PARIS_RESOURCE_BIBLIOGRAPHY_FIELDS.items():
+        values = raw.get(name)
+        if (type(values) is not list or not 1 <= len(values) <= 12
+                or any(type(text) is not str or "<" in text or ">" in text
+                       for text in values)):
+            continue
+        safe = _safe_public_search_text(name, values)
+        if type(safe) is not list or len(safe) != len(values):
+            continue
+        expected = {
+            "source": "paris.syracuse.search",
+            "source_field": upstream,
+            "scope": scenario,
+            "confidence": "upstream_field_present",
+            "freshness": "search_response",
+        }
+        if type(evidence.get(name)) is not dict or evidence[name] != expected:
+            continue
+        projected[name] = safe
+        proofs[name] = expected
+    if proofs:
+        projected["bibliography_evidence"] = proofs
+    return projected
+
+
 def mirrored_catalogue_scoped_id(
     identity_id: str, provider_id: str, record_id: str, credential_id: str,
     docbase: str, source_collection: str | None,
@@ -1428,6 +1479,15 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             safe = _safe_public_search_text(name, raw_meta.get(name))
             if safe is not None:
                 allowed_meta[name] = safe
+        # The Paris plugin has an observed, per-Resource taxonomy schema.
+        # Facets of the *response* itself are deliberately not persisted as
+        # properties of individual books, and unknown JSON is not whitelisted.
+        if row.source_provider == "paris" and "bibliography_evidence" in raw_meta:
+            for name in _PARIS_RESOURCE_BIBLIOGRAPHY_FIELDS:
+                allowed_meta.pop(name, None)
+            allowed_meta.update(_safe_paris_bibliography_metadata(
+                raw_meta, row.scenario,
+            ))
         # The generic youth-age contract is also edition-scoped and already
         # structured. Keep only its validated bounds/kind and harmless original
         # label; never persist a raw nested provider age object, provenance
