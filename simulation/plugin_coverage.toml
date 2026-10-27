@@ -7,8 +7,9 @@ version = 1
 [package.baen]
 contract_tests = ["simulation/tests/test_baen_http_service.py"]
 failure_tests = ["src/plugins/baen/tests/test_search_failures_p1.py"]
+gtk_scenarios = ["e2e/public_fault_search_probe.py"]
 data = []
-gap = "Baen : faux catalogue/fiches/EPUB HTTP, sans GUI E2E ni vrais comptes"
+gap = "Baen : faux catalogue/fiches/EPUB HTTP et recette GTK synthétique 429/503/partiel ; aucune preuve du serveur Baen réel, de ses règles q/page ou de comptes"
 
 [package.cifericaopds]
 contract_tests = ["src/plugins/cifericaopds/tests/test_cifericaopds.py"]
