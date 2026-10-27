@@ -903,7 +903,7 @@ class DetailPanel(Gtk.Box):
             else:
                 row = Adw.ActionRow()
                 row.set_title("Emprunt requis avant téléchargement")
-                row.set_subtitle("Cette source ne publie pas de primitive d’emprunt utilisable.")
+                row.set_subtitle("Emprunt indisponible pour l’identité et le compte actifs, ou non pris en charge par cette source.")
                 action.add(row)
                 self._append_content(action)
         elif item.source_provider == "kobo" and item.owned:
