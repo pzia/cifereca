@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 import re
+import logging
 import time
 
 from ..acquisition import Acquisition
 from ..acquisition_engine import stable_id
-from ..locking import InterProcessLock
+from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..providers import ProviderConfigurationError
 from ..plugin_api import Cancelled
@@ -25,9 +26,8 @@ _KIND = 'numilog_delivered_artifact_v1'
 _PENDING = 'index_pending'
 _ERROR = 'Numilog : fichier livré à rapprocher ; aucun nouveau téléchargement autorisé'
 
-# The only extra detail allowed to cross this Core→CoreUI boundary.
-# Codes classify the exact failed SQL gate; no source IDs, SHA, path, book
-# title, account or private provider responses may enter an exception.
+# CoreUI translates these closed rejection codes. The local journal retains
+# the observed failure, boundary, receipt and exception without transformation.
 _ADOPTION_REFUSALS = frozenset({
     "invalid_target", "receipt_missing", "receipt_scope_invalid",
     "receipt_invalid", "receipt_root_invalid", "path_not_canonical",
@@ -37,7 +37,9 @@ _ADOPTION_REFUSALS = frozenset({
     "competing_receipts", "adoption_unavailable",
     "selected_identity_changed", "target_changed", "account_changed",
     "receipt_conflict", "directory_migration_pending", "root_changed",
-    "file_changed",
+    "file_changed", "acquisition_busy", "lock_unavailable", "receipt_verification_failed",
+    "placement_validation_failed", "index_rejected", "indexing_failed",
+    "finalization_failed",
 })
 
 
@@ -50,6 +52,42 @@ class NumilogIndexResumeRejected(ProviderConfigurationError):
                             else "adoption_unavailable")
         super().__init__(_ERROR)
 
+
+
+_PHASE_FAILURES = {
+    "lock": "lock_unavailable",
+    "receipt": "receipt_verification_failed",
+    "placement": "placement_validation_failed",
+    "index": "indexing_failed",
+    "revalidate": "receipt_verification_failed",
+    "complete": "finalization_failed",
+}
+
+
+def _resume_failure(exc, phase, acquisition_id, indexed=None):
+    """Record this local failure once, correlated to the actual worker scope."""
+    rejection = (exc if isinstance(exc, NumilogIndexResumeRejected) else
+                 NumilogIndexResumeRejected(
+                     "acquisition_busy" if isinstance(exc, LockBusyError) else
+                     _PHASE_FAILURES[phase]))
+    try:
+        from ..diagnostics import _core_journal_record
+        from ..diagnostic_task_context import diagnostic_task_reference
+        fields = dict(provider_id="numilog", task_kind="index", phase=phase,
+                      code=rejection.reason_code, acquisition_id=acquisition_id)
+        reference = diagnostic_task_reference()
+        if reference is not None:
+            fields["task_ref"] = reference
+        if indexed is not None:
+            fields["index_result"] = indexed
+        message = "TRACE Numilog index resume " + repr(fields)
+        logging.getLogger("cifereca").warning(
+            "%s", message, exc_info=True,
+            extra=_core_journal_record("NUMILOG", "index_resume", "error", message, fields),
+        )
+    except Exception:
+        pass  # Optional diagnostics must not change recovery outcomes.
+    return rejection
 
 
 def _require(value):
@@ -187,13 +225,17 @@ def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, 
 
 def index_delivered(service, acquisition, *, title=None, selected=False, expected_receipt=None):
     """Index only the verified receipt; keep it pending on any failure/crash."""
+    phase, acquisition_id, indexed = "receipt", None, None
     try:
         acquisition_id = acquisition.metadata.get('numilog_checkpoint_id')
+        phase = "lock"
         with InterProcessLock(acquisition_lock_file()):
+            phase = "receipt"
             row, path = _checked_receipt(service, acquisition_id, expected=acquisition, selected=selected)
             if expected_receipt is not None:
-                _require(_resume_target(row) == expected_receipt)
-            _require(acquisition.path == path)
+                _check_resume(_resume_target(row) == expected_receipt, "target_changed")
+            _check_resume(acquisition.path == path, "target_changed")
+            phase = "placement"
             placement = service.storage.placement_for_path(path)
             if (placement is not None
                     and placement.get('identity_id') == row['identity_id']
@@ -213,37 +255,38 @@ def index_delivered(service, acquisition, *, title=None, selected=False, expecte
                 if adoption != "adopted":
                     raise NumilogIndexResumeRejected(adoption)
                 placement = service.storage.placement_for_path(path)
-            _require(placement is None or (placement.get('identity_id') == row['identity_id']
+            _check_resume(placement is None or (placement.get('identity_id') == row['identity_id']
                      and placement.get('provider_id') == 'numilog'
-                     and placement.get('source_item_id') == row['item_id']))
+                     and placement.get('source_item_id') == row['item_id']), "placement_conflict")
+            phase = "index"
             indexed = service.catalog_index_path(
                 path, title=title, item_id=row['item_id'],
                 identity_id=row['identity_id'], provider_id='numilog',
             )
-            _require(type(indexed) is dict and indexed.get('status') == 'indexed')
+            _check_resume(type(indexed) is dict and indexed.get('status') == 'indexed', "index_rejected")
+            phase = "revalidate"
             # Recheck source and bytes after the indexer before marking complete.
             refreshed, checked_path = _checked_receipt(service, acquisition_id, expected=acquisition, selected=selected)
-            _require(checked_path == path and refreshed['metadata'] == row['metadata'])
+            _check_resume(checked_path == path and refreshed['metadata'] == row['metadata'], "target_changed")
             artifact_id = indexed.get('artifact_id')
-            _require(type(artifact_id) is str and artifact_id == 'sha256:' + row['metadata']['sha256'])
-            _require(service.storage.numilog_checkpoint_complete(
+            _check_resume(type(artifact_id) is str and artifact_id == 'sha256:' + row['metadata']['sha256'], "artifact_mismatch")
+            phase = "complete"
+            _check_resume(service.storage.numilog_checkpoint_complete(
                 acquisition_id, identity_id=row['identity_id'], credential_id=row['credential_id'],
                 account_id=row['account_id'], item_id=row['item_id'], path=str(path),
                 sha256=row['metadata']['sha256'], size=row['metadata']['size'], artifact_id=artifact_id,
-            ))
+            ), "finalization_failed")
             return MaterializationResult(acquisition, indexed, artifact_id, row['identity_id'])
     except Cancelled:
         raise
-    except NumilogIndexResumeRejected:
-        raise
-    except Exception:
-        # Paths, provider payloads, private IDs and raw index failures stay out
-        # of UI errors. The durable pending receipt is deliberately retained.
-        raise ProviderConfigurationError(_ERROR) from None
+    except Exception as exc:
+        # The dialog receives a closed reason; the journal keeps the raw cause.
+        raise _resume_failure(exc, phase, acquisition_id, indexed) from None
 
 
 def resume(service, acquisition_id, *, expected_receipt=None):
     """Explicit offline recovery API; never an automatic acquisition retry."""
+    delegated = False
     try:
         row, path = _checked_receipt(service, acquisition_id, selected=True)
         acquisition = Acquisition(
@@ -252,13 +295,14 @@ def resume(service, acquisition_id, *, expected_receipt=None):
             local_path=path, artifact_path=path, target_dir=path.parent, mime_type=None, drm='unknown',
             metadata={'identity_id': row['identity_id'], 'numilog_checkpoint_id': acquisition_id},
         )
+        delegated = True
         return index_delivered(service, acquisition, selected=True, expected_receipt=expected_receipt)
     except Cancelled:
         raise
-    except NumilogIndexResumeRejected:
-        raise
-    except Exception:
-        raise ProviderConfigurationError(_ERROR) from None
+    except Exception as exc:
+        if delegated:
+            raise  # index_delivered already recorded this exact failure.
+        raise _resume_failure(exc, "receipt", acquisition_id) from None
 
 
 @dataclass(frozen=True, repr=False)

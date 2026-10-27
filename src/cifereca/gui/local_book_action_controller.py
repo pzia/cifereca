@@ -8,9 +8,8 @@ from __future__ import annotations
 from ..plugin_api import Cancelled, UserFacingError
 
 
-# These reasons are produced by Core *inside the atomic adoption transaction*
-# for a previously delivered Numilog ACSM. No exception string, receipt, URL,
-# path, SHA or provider metadata is ever presented to a user.
+# Core classifies receipt, adoption, index and finalization failures.
+# Dialogs translate the closed code; raw observations remain in the journal.
 _NUMILOG_INDEX_REFUSAL_LABELS = {
     "invalid_target": "Cible de reprise invalide.",
     "receipt_missing": "Reçu de livraison introuvable.",
@@ -33,6 +32,13 @@ _NUMILOG_INDEX_REFUSAL_LABELS = {
     "receipt_conflict": "Reçus concurrents ou hors périmètre pour cet achat.",
     "directory_migration_pending": "Migration du répertoire en cours ou non finalisée.",
     "root_changed": "Racine de bibliothèque différente de celle du reçu.",
+    "lock_unavailable": "Le verrou d’indexation est inaccessible ; consultez le journal.",
+    "acquisition_busy": "Une autre acquisition ou indexation détient le verrou.",
+    "receipt_verification_failed": "La vérification du reçu a échoué ; consultez le journal.",
+    "placement_validation_failed": "La validation du placement a échoué ; consultez le journal.",
+    "index_rejected": "Le catalogue a refusé le fichier livré ; consultez le journal.",
+    "indexing_failed": "L’indexation locale a échoué ; consultez le journal.",
+    "finalization_failed": "La finalisation du reçu a échoué ; consultez le journal.",
     "file_changed": "Fichier absent, déplacé ou empreinte différente du reçu.",
 }
 

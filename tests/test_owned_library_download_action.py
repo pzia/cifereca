@@ -123,6 +123,10 @@ def test_resume_worker_preserves_cancellation_without_success_callback():
     ("artifact_shared_elsewhere", "Même empreinte déjà utilisée"),
     ("catalogue_conflict", "Notice du catalogue contradictoire"),
     ("adoption_unavailable", "Validation du placement d’origine indisponible"),
+    ("acquisition_busy", "détient le verrou"),
+    ("index_rejected", "catalogue a refusé"),
+    ("indexing_failed", "indexation locale a échoué"),
+    ("finalization_failed", "finalisation du reçu a échoué"),
 ])
 def test_p0_numilog_resume_ui_shows_only_closed_sqlite_refusal(code, label):
     from cifereca.core.numilog_materialization_checkpoint import (
