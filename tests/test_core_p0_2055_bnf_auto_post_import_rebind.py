@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 import pytest
 
@@ -34,7 +35,7 @@ def test_bnf_auto_import_cannot_publish_stale_positive_claim(
                 # A→B→A consent changes do not leave the old run authorized.
                 broker.set_bnf_auto_download(sid, True)
         elif change == "provider_reconnected":
-            service._sessions[service._session_key("bnf-pret", account.credential_id)] = object()
+            service._sessions[service._session_key("bnf-pret", account.credential_id)] = NS(connected=False, close=lambda: None)
         else:
             service._account_context_epoch += 1
         return {"status": "complete", "acquisition_id": "synthetic-claim"}
