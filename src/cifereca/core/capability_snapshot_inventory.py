@@ -7,6 +7,7 @@ CoreUI-safe enabled source inventory and refuses ambiguous duplicates.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any
 
 from ..plugin_api.capability_matrix import CapabilityEvidence, CapabilityMatrix
@@ -44,6 +45,13 @@ def capability_matrices_with_precollected_evidence(
         if sync_sources or loan_snapshots:
             raise ValueError("capability_no_admitted_source")
         return ()
+    # A former provider observation must not turn a currently disconnected
+    # Core source into an available action. Connected and evidence status
+    # remain independent dimensions of the same matrix.
+    currently_connected = {
+        m.provider_id: m.exact("catalog.search", "unknown").connected is True
+        for m in base
+    }
 
     descriptors: dict[str, object] = {}
     for plugin in service.registry.all():
@@ -69,7 +77,11 @@ def capability_matrices_with_precollected_evidence(
             sync_source=source,
         )
         extras[source.provider_id].extend(
-            row for row in projected.observations
+            replace(
+                row,
+                connected=(row.connected is True and currently_connected[source.provider_id]),
+            )
+            for row in projected.observations
             if row.operation.startswith("sync.")
         )
 
@@ -86,7 +98,11 @@ def capability_matrices_with_precollected_evidence(
             loan_snapshot=snapshot,
         )
         extras[provider].extend(
-            row for row in projected.observations
+            replace(
+                row, enabled=True,
+                connected=currently_connected[provider],
+            )
+            for row in projected.observations
             if row.operation in ("loan.inventory", "loan.inventory.branch")
         )
 
