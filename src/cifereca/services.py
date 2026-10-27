@@ -851,8 +851,14 @@ class LibraryService:
         # Prefer the atomic, scoped v2 observation where published. The v1
         # list reader stays available for old installed plugin packages; it
         # is never consulted as a second read of an opt-in snapshot.
-        reader = getattr(session, "loan_inventory_snapshot", None)
-        if callable(reader):
+        # A provider can expose a property whose getter performs a remote
+        # request. Capability discovery must not execute that property or
+        # silently fall back to the v1 reader when the typed declaration is
+        # malformed; read_loan_inventory validates it without a second GET.
+        raw_reader = inspect.getattr_static(
+            session, "loan_inventory_snapshot", None,
+        )
+        if raw_reader is not None:
             from .plugin_api.loan_inventory import read_loan_inventory
             epoch = self._account_context_epoch
             snapshot = read_loan_inventory(session, account)
