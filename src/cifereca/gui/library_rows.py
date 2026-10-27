@@ -33,6 +33,47 @@ def _received_local_file_label(item: dict[str, Any]) -> str | None:
     return f"Fichier reçu de {origin} · aucun droit transmis"
 
 
+
+def _recipient_independent_kobo_right_label(item: dict[str, Any]) -> str | None:
+    """Label B's *independent* purchase, never adoption of A's received file.
+
+    Library's normalized possessions are positive entitlement projections.
+    An active, exact Kobo product right scoped to the receiving identity and
+    its own account/entitlement is a fact separate from A's local transfer.
+    The row does not contain a confirmed backup receipt: do not say linked.
+    """
+    if (_received_local_file_label(item) is None
+            or item.get("provider_id") != "kobo"):
+        return None
+    owner = item.get("identity_id")
+    product = item.get("item_id") or item.get("source_item_id")
+    if (type(owner) is not str or not owner
+            or type(product) is not str or not product):
+        return None
+    possessions = item.get("possessions")
+    if type(possessions) not in (list, tuple) or len(possessions) > 256:
+        return None
+    matches = []
+    for right in possessions:
+        if (type(right) is dict
+                and right.get("identity_id") == owner
+                and right.get("provider_id") == "kobo"
+                and right.get("item_id") == product
+                and right.get("kind") == "owned"
+                and right.get("state") == "active"
+                and not right.get("expires_at")
+                and type(right.get("account_id")) is str
+                and bool(right["account_id"])
+                and type(right.get("entitlement_id")) is str
+                and bool(right["entitlement_id"])):
+            matches.append(right)
+    # Conflicting accounts or multiple different purchases are an ambiguous
+    # row, not an excuse to silently choose the owner of the received bytes.
+    if len(matches) != 1:
+        return None
+    return f"Achat Kobo indépendant pour {owner}"
+
+
 def project_library_rows(
     filtered_entries: Iterable[dict[str, Any]], *,
     row_factory: Callable[..., Any],
@@ -60,6 +101,9 @@ def project_library_rows(
         received = _received_local_file_label(item)
         if received:
             meta_parts.append(received)
+            own_right = _recipient_independent_kobo_right_label(item)
+            if own_right:
+                meta_parts.append(own_right)
         match_reason = local_match_explanation(item, query, field=field)
         if match_reason:
             meta_parts.append(match_reason)
