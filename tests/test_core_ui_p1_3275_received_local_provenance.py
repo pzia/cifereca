@@ -76,3 +76,89 @@ def test_only_exact_recorded_interidentity_provenance_earns_label():
     for case in cases:
         assert "Fichier reçu" not in _render(case)
         assert "droit transmis" not in _render(case)
+
+
+
+def _b_attested_right(**overrides):
+    right = {
+        "identity_id": "bob", "provider_id": "kobo",
+        "item_id": "book-1", "kind": "owned", "state": "active",
+        "account_id": "B-own-account", "entitlement_id": "B-own-entitlement",
+        "expires_at": None,
+    }
+    right.update(overrides)
+    return right
+
+
+def test_received_file_and_recipient_independent_purchase_are_two_distinct_facts():
+    row = _received(
+        item_id="book-1", source_item_id="book-1",
+        possessions=[_b_attested_right()],
+    )
+    subtitle = _render(row)
+    assert "Fichier reçu de alice · aucun droit transmis" in subtitle
+    assert "Achat Kobo indépendant pour bob" in subtitle
+    assert "Lié" not in subtitle
+    assert "téléchargé" not in subtitle
+    assert "Achat Kobo indépendant pour alice" not in subtitle
+    assert "Achat Kobo indépendant" not in _render(_received(
+        item_id="book-1", possessions=[],
+    ))
+
+
+def test_kobo_recipient_right_requires_exact_source_account_entitlement_and_identity():
+    baseline = _received(item_id="book-1", possessions=[_b_attested_right()])
+    assert "Achat Kobo indépendant pour bob" in _render(baseline)
+    for altered in (
+        {"identity_id": "alice"},
+        {"provider_id": "numilog"},
+        {"item_id": "other-edition"},
+        {"kind": "loan"},
+        {"state": "archived"},
+        {"state": "revoked"},
+        {"account_id": None},
+        {"account_id": ""},
+        {"entitlement_id": None},
+        {"entitlement_id": ""},
+        {"expires_at": "2027-01-01"},
+    ):
+        row = _received(item_id="book-1", possessions=[_b_attested_right(**altered)])
+        subtitle = _render(row)
+        assert "Fichier reçu de alice" in subtitle
+        assert "Achat Kobo indépendant" not in subtitle, altered
+
+
+def test_two_recipient_accounts_are_ambiguous_not_automatically_selected():
+    row = _received(
+        item_id="book-1", possessions=[
+            _b_attested_right(),
+            _b_attested_right(account_id="B-second-account",
+                              entitlement_id="B-second-entitlement"),
+        ],
+    )
+    assert "Fichier reçu de alice" in _render(row)
+    assert "Achat Kobo indépendant" not in _render(row)
+
+
+def test_source_right_of_sender_never_becomes_recipient_purchase():
+    row = _received(
+        item_id="book-1", possessions=[_b_attested_right(
+            identity_id="alice", account_id="A-own-account",
+            entitlement_id="A-own-entitlement",
+        )],
+    )
+    subtitle = _render(row)
+    assert "Fichier reçu de alice" in subtitle
+    assert "Achat Kobo indépendant" not in subtitle
+
+
+def test_unrelated_row_does_not_claim_recipient_kobo_purchase():
+    for row in (
+        _received(item_id="book-1", local=False, possessions=[_b_attested_right()]),
+        _received(item_id="book-1", provider_id="numilog",
+                  possessions=[_b_attested_right()]),
+        _received(item_id="book-1", metadata={},
+                  possessions=[_b_attested_right()]),
+        _received(item_id=None, possessions=[_b_attested_right()]),
+    ):
+        assert "Achat Kobo indépendant" not in _render(row)
