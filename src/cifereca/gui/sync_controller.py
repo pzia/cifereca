@@ -73,8 +73,10 @@ def _build_sync_page(self):
     add_sync_action(heading, all_now)
     root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
-        label="Synchroniser met à jour les notices et droits en ligne, sans télécharger de livre. "
-        "Les outils et téléchargements se trouvent dans chaque compte.",
+        label="Synchroniser actualise les notices et droits en ligne. "
+        "Si un compte a explicitement autorisé les téléchargements automatiques "
+        "(par exemple les prêts BnF), cette action peut aussi récupérer des fichiers. "
+        "Ces autorisations se règlent séparément dans chaque compte.",
         xalign=0,
     )
     scope_note.set_wrap(True)
