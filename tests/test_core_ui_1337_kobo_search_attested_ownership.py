@@ -17,11 +17,21 @@ def _render_search_results(host):
         / "src/cifereca/gui/search_results.py"
     )
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    fn = next(
-        item for item in tree.body
-        if isinstance(item, ast.FunctionDef)
-        and item.name == "_render_search_results"
+    # The actual search adapter depends on pure exact-edition helpers from
+    # the same production module. Keep them in this AST-isolated headless view
+    # rather than reimplementing the result logic in a test stub.
+    function_names = (
+        "_catalogue_edition_scope",
+        "_exact_known_catalogue_scope",
+        "_exact_remote_catalogue_scope",
+        "_remote_result_row_keys",
+        "_render_search_results",
     )
+    functions = [
+        item for name in function_names for item in tree.body
+        if isinstance(item, ast.FunctionDef) and item.name == name
+    ]
+    assert len(functions) == len(function_names)
     tree = ast.fix_missing_locations(ast.Module(
         body=[
             ast.ImportFrom(
@@ -29,7 +39,7 @@ def _render_search_results(host):
                 names=[ast.alias(name="annotations")],
                 level=0,
             ),
-            fn,
+            *functions,
         ],
         type_ignores=[],
     ))
