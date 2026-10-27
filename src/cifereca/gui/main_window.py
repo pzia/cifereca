@@ -1797,7 +1797,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _known_search_result(self, row):
-        from .core.known_catalog_provenance import known_catalog_search_result
+        from ..core.known_catalog_provenance import known_catalog_search_result
         identity = getattr(self.service.current_identity, "identity_id", None)
         return known_catalog_search_result(row, identity_id=identity)
 
