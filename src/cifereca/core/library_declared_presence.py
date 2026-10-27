@@ -12,7 +12,7 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from .library_audit_roots import configured_identity_roots
 from .library_declared_links import (
-    DeclarationRejected, _SCOPE_FIELDS, _PROVIDERS, _account_current,
+    DeclarationRejected, _SCOPE_FIELDS, _account_current,
     _collisions, _context, _records, _require, _right_state, _text, _transaction,
 )
 from .library_fresh_file_check import revalidate_observed_file
@@ -44,8 +44,7 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
     scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                     account_id, item_id)))
     try:
-        _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
-                 and provider_id in _PROVIDERS, 'invalid_scope')
+        _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS), 'invalid_scope')
         _require(callable(source_current) and callable(cancelled), 'invalid_guard')
         _require(type(seconds) in (int, float) and 0 < seconds <= 8
                  and type(max_bytes) is int and 0 < max_bytes <= 64 * 1024 * 1024,

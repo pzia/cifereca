@@ -27,7 +27,8 @@ _PREFIX = 'core.library.user-declaration.v1.'
 _MAX_RECORDS = 4096
 _MAX_RECORD_BYTES = 32768
 _MAX_STORE_BYTES = 8 * 1024 * 1024
-_PROVIDERS = {'kobo', 'numilog', 'paris'}
+# Provider IDs are opaque coordinates. Authority comes from the exact live
+# account/connection/right and selected file, never from a supplier allowlist.
 _SCOPE_FIELDS = ('identity_id', 'provider_id', 'credential_id', 'account_id', 'item_id')
 
 
@@ -83,8 +84,7 @@ def _account_current(accounts, scope):
 
 
 def _scope(service, scope, *, require_live_account=True):
-    _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
-             and scope['provider_id'] in _PROVIDERS, 'invalid_scope')
+    _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS), 'invalid_scope')
     current = service.current_identity
     _require(current is not None and current.identity_id == scope['identity_id'],
              'identity_not_active')
@@ -215,7 +215,6 @@ def _records(db):
                  and record['origin'] == 'user_declaration'
                  and type(context) is dict and set(context) == set(_SCOPE_FIELDS)
                  and all(_text(context[field]) for field in _SCOPE_FIELDS)
-                 and context['provider_id'] in _PROVIDERS
                  and type(file) is dict and set(file) == {
                      'path', 'sha256', 'size', 'fingerprint'}
                  and type(file['path']) is str and 0 < len(file['path']) <= 4096
@@ -257,8 +256,7 @@ def has_active_declared_link(storage, *, identity_id, provider_id,
     """
     scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                     account_id, item_id)))
-    _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS)
-             and provider_id in _PROVIDERS, 'invalid_scope')
+    _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS), 'invalid_scope')
     try:
         with _transaction(storage, False) as db:
             return any(record['state'] == 'active' and record['scope'] == scope
