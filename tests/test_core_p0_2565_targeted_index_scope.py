@@ -66,13 +66,16 @@ def test_targeted_reindex_rejects_explicit_scope_conflicts_without_mutation(tmp_
     assert path.read_bytes() == b"%PDF-1.7\nSynthetic"
 
 
-def test_existing_provider_directory_conflict_is_not_rebound(tmp_path):
+def test_targeted_index_ignores_non_authoritative_provider_directory(tmp_path):
     catalog, storage, path, placement_id = _case(
         tmp_path, "other-provider", "book.pdf",
     )
     result = catalog.index_path(path)
-    assert result["reason"] == "placement_scope_conflict"
-    assert storage.placement_get(placement_id)["provider_id"] == "kobo"
+    assert result["status"] == "indexed"
+    row = storage.placement_get(placement_id)
+    assert row["provider_id"] == "kobo"
+    assert row["identity_id"] == "buyer-a"
+    assert row["source_item_id"] == "edition-a"
 
 
 def test_new_file_without_hints_remains_unowned(tmp_path):
