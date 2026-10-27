@@ -116,3 +116,76 @@ def test_repeating_known_row_without_identity_does_not_unbind_canonical_owner(
         assert state["receipts"][0]["identity_id"] == "alice"
     finally:
         storage.close()
+
+
+
+@pytest.mark.parametrize("canonical_status", ["complete", "attention_required", "retryable_error"])
+def test_legacy_replay_cannot_rewind_independently_advanced_canonical_status(
+    tmp_path, canonical_status,
+):
+    storage = Storage(tmp_path / "test.sqlite3")
+    try:
+        first = _row()
+        storage.backup_put(first)
+        # The Core acquisition may progress without writing the v0.7
+        # compatibility projection. That divergence is real migration data,
+        # not an invitation for a subsequent backup replay to overwrite it.
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET status=?,"
+                " error_code='canonical_observed_failure',"
+                " attention_code='canonical_needs_review'"
+                " WHERE acquisition_id=?",
+                (canonical_status, storage._acquisition_id_for(first)),
+            )
+        before = _state(storage)
+        with pytest.raises(ValueError, match="backup_canonical_status_diverged"):
+            storage.backup_put({**first, "title": "Stale inventory refresh"})
+        assert _state(storage) == before
+        # A second replay is idempotently refused, not a silent downgrade.
+        with pytest.raises(ValueError, match="backup_canonical_status_diverged"):
+            storage.backup_put(first)
+        assert _state(storage) == before
+    finally:
+        storage.close()
+
+
+def test_canonical_only_acquisition_cannot_be_taken_over_by_first_legacy_projection(
+    tmp_path,
+):
+    storage = Storage(tmp_path / "test.sqlite3")
+    try:
+        row = _row()
+        canonical_id = storage._acquisition_id_for(row)
+        storage.acquisition_put({
+            "acquisition_id": canonical_id,
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "card-a", "account_id": "reader",
+            "item_id": "book", "title": "Direct Core acquisition",
+            "status": "complete",
+        })
+        prior = storage.acquisitions(provider_id="kobo")
+        assert not storage.backup_list("kobo")
+        with pytest.raises(ValueError, match="backup_canonical_status_diverged"):
+            storage.backup_put({**row, "title": "Unverified v0.7 backfill"})
+        assert storage.acquisitions(provider_id="kobo") == prior
+        assert storage.backup_list("kobo") == []
+        assert storage.entitlements() == []
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("next_status", ["acquiring", "attention_required", "complete"])
+def test_normal_same_owner_backup_progress_still_updates_canonical_receipt(
+    tmp_path, next_status,
+):
+    storage = Storage(tmp_path / "test.sqlite3")
+    try:
+        row = _row()
+        storage.backup_put(row)
+        storage.backup_put({**row, "status": next_status})
+        assert storage.acquisitions(provider_id="kobo")[0]["status"] == next_status
+        assert storage.backup_list("kobo")[0]["status"] == next_status
+        assert len(storage.entitlements()) == 1
+    finally:
+        storage.close()
