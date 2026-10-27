@@ -6,6 +6,28 @@ from time import time
 from typing import Any
 
 
+# The only per-book values accepted by the diagnostics boundary. Item
+# positions refer exclusively to the order observed in that one private
+# manifest; they are NOT stable provider IDs or cross-run book references.
+_ITEM_LABELS = {
+    "already_local_declared": "lien déclaré et fichier vérifiés",
+    "declared_needs_review": "lien déclaré à revérifier",
+    "already_local_verified": "fichier acquis antérieurement vérifié",
+    "not_downloadable": "achat non téléchargeable",
+    "needs_reconciliation": "reçu ou placement à rapprocher",
+    "purchase_unproven": "droit d'achat non confirmé localement",
+    "source_not_ready": "connexion non prête",
+    "evidence_unavailable": "preuves locales indisponibles",
+    "source_changed": "compte ou source modifiés",
+    "invalid_source": "portée de source invalide",
+    "invalid_item_id": "édition non qualifiée",
+    "preflight_failed": "préflight non admissible",
+    "consent_revoked": "consentement révoqué",
+    "quota_reached": "quota de cette ouverture atteint",
+    "acquired": "fichier acquis",
+    "acquisition_failed": "acquisition non terminée",
+}
+
 _STATUS = {
     "never": "Aucun essai encore effectué",
     "running": "Sauvegarde en cours ou interrompue (non finalisée)",
@@ -112,6 +134,17 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
         caption += f". Phase : {detail['cause_phase']} ; cause : {detail['code']}"
         if "task_ref" in detail:
             caption += f" ; tâche : {detail['task_ref']}"
+    if detail and detail.get("item_decisions"):
+        # Enumerated positions are non-authorizing: never imply that they
+        # uniquely identify the same edition in a later manifest/GUI search.
+        observed = detail["item_decisions"]
+        caption += ". Achats examinés (rangs de cet inventaire uniquement) : "
+        caption += " ; ".join(
+            f"n°{row['position']} : {_ITEM_LABELS[row['decision']]}"
+            for row in observed
+        )
+        if detail.get("items_truncated") is True:
+            caption += " ; autres achats non détaillés"
     if mode == "on_start":
         current = int(time()) if now is None else now
         if type(current) is not int or current < 0:
