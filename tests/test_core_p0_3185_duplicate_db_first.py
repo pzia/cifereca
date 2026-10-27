@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from cifereca import artifact_runtime
-from cifereca.plugin_api import LibraryMutationRequest
+from cifereca.plugin_api import Conflict, LibraryMutationRequest
 from tests.test_core_p0_3185_duplicate_dependencies import _rig
 
 
@@ -147,7 +147,7 @@ def test_new_catalogue_dependency_during_hash_blocks_atomic_delete(tmp_path, mon
 
     monkeypatch.setattr(artifact_runtime, "sha256_file", attach_after_precheck)
     try:
-        with pytest.raises(ValueError, match="duplicate_retire_references_changed"):
+        with pytest.raises(Conflict, match="Le doublon n\u0027est plus vérifiable"):
             broker.run(plan)
         assert inserted
         assert candidate.read_bytes() == kept.read_bytes() == b"book-data"
@@ -177,7 +177,7 @@ def test_keeper_owner_changed_during_hash_blocks_atomic_delete(tmp_path, monkeyp
 
     monkeypatch.setattr(artifact_runtime, "sha256_file", rebind_keeper_after_precheck)
     try:
-        with pytest.raises(ValueError, match="duplicate_retire_scope_changed"):
+        with pytest.raises(Conflict, match="Le doublon n\u0027est plus vérifiable"):
             broker.run(plan)
         assert changed
         assert candidate.is_file() and kept.is_file()
