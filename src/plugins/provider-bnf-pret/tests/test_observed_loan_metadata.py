@@ -31,7 +31,7 @@ def test_explicit_author_and_numeric_loan_label_only_if_evidenced():
         assert row.thumbnail_url is None
         assert row.media_format is None
         assert row.ebook_url is None
-        assert session.last_loan_errors
+        assert 'last_loan_errors' not in vars(session)
     finally:
         session.close()
 
