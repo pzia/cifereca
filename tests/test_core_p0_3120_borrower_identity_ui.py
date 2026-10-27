@@ -27,7 +27,11 @@ def _methods():
                if isinstance(node, ast.FunctionDef)
                and node.name in {"_eligible_borrow_accounts", "borrow_search_item"}]
     assert len(methods) == 2
-    namespace = {"TaskPriority": NS(USER_ACTION="user")}
+    namespace = {
+        "__name__": "cifereca.gui.main_window",
+        "__package__": "cifereca.gui",
+        "TaskPriority": NS(USER_ACTION="user"),
+    }
     module = ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")],
                        level=0),
@@ -143,6 +147,7 @@ def test_queued_borrow_revalidates_scope_before_provider_post(change):
     ui, item, state, queued, _events = _ui(accounts=[alice])
     ui.borrow_search_item(item)
     work, _ok = _queued_work(queued)
+    original_session = state.session
     if change == "identity":
         ui.service.current_identity = NS(identity_id="bob")
     elif change == "aba_generation":
@@ -157,12 +162,9 @@ def test_queued_borrow_revalidates_scope_before_provider_post(change):
         ui._closed = True
     with pytest.raises(Cancelled, match="contexte"):
         work()
-    queued[0][0]  # no alternate worker is enqueued
     assert len(queued) == 1
-    # The captured original session never sends a borrow.
-    # For replaced_session, retrieve it from the queued closure via mock?
-    if change != "replaced_session":
-        state.session.borrow.assert_not_called()
+    # The captured original session never sends a borrow, even if replaced.
+    original_session.borrow.assert_not_called()
 
 
 def test_current_account_executes_once_and_stale_success_never_updates_new_ui():
