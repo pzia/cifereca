@@ -147,3 +147,49 @@ def test_bnf_auto_skips_other_manual_acquisitions_before_inspecting_files(
     }
     assert attempted == [True]
     assert inspections == []
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("state", "returned"),
+    ("medium", "physical"),
+    ("identity_id", "other-identity"),
+    ("source_provider", "paris"),
+    ("source_credential", "other-credential"),
+    ("source_account_id", "other-account"),
+])
+def test_auto_bnf_rechecks_loan_scope_after_signed_get_before_adept(
+    connected_core, monkeypatch, field, replacement,
+):
+    service, session, account, loan, _state, downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    assert broker.set_bnf_auto_download(sid, True)
+    original = session.download_digital
+    imports = []
+    monkeypatch.setattr(service, "import_acsm", lambda *a, **kw: imports.append((a, kw)))
+    def mutate_after_get(*args, **kwargs):
+        candidate = original(*args, **kwargs)
+        setattr(loan, field, replacement)
+        return candidate
+    monkeypatch.setattr(session, "download_digital", mutate_after_get)
+    outcome = materialize(service, account, loan)
+    assert outcome == {"status": "attention_required", "code": "bnf_loan_scope_unproven"}
+    assert len(downloaded) == 1
+    assert imports == []
+    assert service.storage.acquisitions(provider_id="manual") == []
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("state", "returned"), ("medium", "physical"),
+    ("source_provider", "other"), ("source_account_id", "foreign"),
+])
+def test_auto_bnf_rejects_mutated_loan_before_get(
+    connected_core, field, replacement,
+):
+    service, session, account, loan, _state, downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    assert broker.set_bnf_auto_download(broker._source_id(account), True)
+    setattr(loan, field, replacement)
+    result = materialize(service, account, loan)
+    assert result["status"] == "attention_required"
+    assert downloaded == []
