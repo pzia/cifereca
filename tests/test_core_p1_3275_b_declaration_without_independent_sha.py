@@ -106,6 +106,48 @@ def test_b_own_manifest_plus_received_a_file_needs_explicit_user_declaration(
             account_id="account-b", item_id="book-1",
         )
         assert not declarations.has_active_declared_link(service.storage, **scope)
+
+        # End-to-end CoreUI bridge: B must be able to pick its OWN right and
+        # the received A file as separate, exact, unconfirmed observations.
+        # A successful snapshot does not license an automatic Kobo backup.
+        from cifereca.core.library_audit import audit_library
+        from cifereca.core.library_local_inspection import LocalInspection
+        root_b = tmp_path / "EBooks" / "bob"
+        audit = audit_library(service.storage.path, {"bob": (root_b,)})
+        assert audit.redacted()["status"] == "complete", audit.redacted()["reasons"]
+        inspection = LocalInspection(
+            audit, lambda: True, "bob", roots=(root_b,), service=service,
+        )
+        try:
+            rights = inspection.page(
+                provider="kobo", state="rights_without_verified_file",
+            ).cases
+            files = inspection.unconfirmed_files(limit=10).cases
+            assert len(rights) == len(files) == 1
+            right, file = rights[0], files[0]
+            context = inspection.declaration_context(right.key, file.key)
+            assert context["identity"] == "bob"
+            assert context["provider"] == "kobo"
+            assert context["account"] == "account-b"
+            assert context["edition"] == "book-1"
+            assert context["path"] == str(received)
+            assert inspection.preview_manual_attachment(
+                right.key, file.key,
+            )["status"] in {"unavailable", "blocked"}
+            ui_plan = inspection.preview_declared_link(right.key, file.key)
+            assert ui_plan["status"] == "preview"
+            assert ui_plan["requires_explicit_confirmation"] is True
+            assert ui_plan["trust"] == "user_declaration"
+            assert "plan_token" not in ui_plan
+            assert "relation_id" not in ui_plan
+            assert not declarations.has_active_declared_link(service.storage, **scope)
+            inspection.revoke_manual_attachment_preview()
+            assert inspection.confirm_declared_link(
+                right.key, file.key, user_confirmed=True,
+            )["status"] == "unavailable"
+        finally:
+            inspection.close()
+
         preview = declarations.declare_local_link(
             service, observation=observed[0], **scope,
         )
