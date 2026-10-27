@@ -126,7 +126,7 @@ def describe_run(mode: str, data: Any, *, now: int | None = None,
         # The expanded diagnostic uses the full same validated observation.
         if status in {"complete", "partial", "failed", "blocked", "not_due"}:
             caption += (
-                f" : {data['downloaded']} fichier(s) téléchargé(s)"
+                f" : {data['downloaded']} téléchargé(s)"
                 f" · {data['failed']} échec(s)"
             )
             if has_declared and data["declared_needs_review"]:
