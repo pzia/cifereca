@@ -5,6 +5,8 @@ No provider ReturnDigitalLoan, actual Adobe mutation, or filesystem deletion.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 import json
 
 import pytest
@@ -84,6 +86,7 @@ def test_healthy_both_phases_still_confirm_return():
 
 def test_durable_contradiction_rechecks_paris_without_replaying_adobe(tmp_path):
     service, loan, paris = setup(tmp_path)
+    attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         calls = stub_adept(service)
         key = adept_return_key("paris", "alice-paris", "linked-123", loan.id)
