@@ -14,6 +14,7 @@ from .capability_matrix import (
     declared_provider_matrix,
 )
 from .capability_projection import project_existing_capabilities
+from .provider_rights_observation import (RIGHTS_OBSERVATION_CONTRACT, ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot)
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
 from .lending_borrower_eligibility import (
     BorrowerEligibilityStatus, BorrowerOperationEvidence,
@@ -99,6 +100,7 @@ __all__ = [
     "LendingActionOutcome",
     "ProviderSearchEvent", "ProviderSearchStream",
     "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities",
+    "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
