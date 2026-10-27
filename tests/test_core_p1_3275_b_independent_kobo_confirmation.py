@@ -115,8 +115,15 @@ def test_b_independent_kobo_receipt_can_explicitly_link_received_bytes_and_resyn
         assert b_acquisitions[0]["status"] == "complete"
         assert b_acquisitions[0]["identity_id"] == "bob"
         assert b_acquisitions[0]["account_id"] == "account-b"
-        assert [e for e in service.storage.entitlements()
-                if e["credential_id"] == "vault-b" and e["identity_id"] == "bob"] == before_b
+        # B's own manifest may refresh descriptive metadata (e.g. Author),
+        # without changing its entitlement identity, account or right state.
+        rights_after = [e for e in service.storage.entitlements()
+                        if e["credential_id"] == "vault-b" and e["identity_id"] == "bob"]
+        assert len(rights_after) == 1
+        for field in ("entitlement_id", "provider_id", "credential_id",
+                      "account_id", "identity_id", "item_id", "revision_id",
+                      "entitlement_type", "state", "loan_id", "expires_at"):
+            assert rights_after[0][field] == before_b[0][field]
         b_placements = [
             p for p in service.storage.placements()
             if p.get("identity_id") == "bob"
