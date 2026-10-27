@@ -196,6 +196,12 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
     def still_bound() -> bool:
         # This guards in-place session/account changes. Core adoption must
         # additionally verify that this session is STILL the registered one.
+        # A provider may set _closed while leaving connected=True stale.
+        # Static lookup refuses a hostile closure property without running
+        # its getter or performing an additional provider read.
+        closed = getattr_static(session, "_closed", None)
+        if closed is not None and closed is not False:
+            return False
         return (
             LoanInventoryScope.for_account(account) == scope
             and getattr(session, "connected", None) is True

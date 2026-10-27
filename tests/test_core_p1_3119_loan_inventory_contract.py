@@ -332,3 +332,61 @@ def test_typed_reader_ignores_hostile_getattribute_override():
     result = read_loan_inventory(source, a)
     assert result.status == "partial" and len(result.loans) == 1
     assert touched == []
+
+
+@pytest.mark.parametrize("kind", ["typed", "legacy"])
+def test_closed_session_with_stale_connected_flag_never_calls_inventory(kind):
+    a = account()
+    s, calls = session(
+        a, hook=(lambda arg: LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(arg),
+            loans=(loan(arg),), status="success",
+        )) if kind == "typed" else None,
+    )
+    s._closed = True
+    assert s.connected is True
+    result = read_loan_inventory(s, a)
+    assert result.status == "failed"
+    assert result.reason_code == "unavailable"
+    assert result.loans == () and calls == []
+
+
+@pytest.mark.parametrize("kind", ["typed", "legacy"])
+def test_inflight_close_invalidates_positive_snapshot_without_retry(kind):
+    a = account()
+    s, calls = session(a)
+    def closing(arg):
+        s._closed = True
+        if kind == "typed":
+            return LoanInventorySnapshot(
+                scope=LoanInventoryScope.for_account(arg),
+                loans=(loan(arg),), status="success",
+            )
+        return [loan(arg)]
+    if kind == "typed":
+        s.loan_inventory_snapshot = closing
+    else:
+        s.loans = closing
+    result = read_loan_inventory(s, a)
+    assert result.status == "failed"
+    assert result.reason_code == "scope_changed"
+    assert result.loans == ()
+
+
+def test_closed_session_property_never_executes_during_inventory_guard():
+    a = account()
+    visited = []
+    class Getter(NS):
+        @property
+        def _closed(self):
+            visited.append("network")
+            raise RuntimeError("PRIVATE_CLOSURE_PROPERTY")
+    s = Getter(
+        connected=True, provider_id=a.provider_id, credential_id=a.credential_id,
+        capabilities=NS(loans=True),
+        loans=lambda _: visited.append("GET") or [loan(a)],
+    )
+    result = read_loan_inventory(s, a)
+    assert result.status == "failed" and result.reason_code == "unavailable"
+    assert visited == []
+    assert "PRIVATE" not in repr(result)
