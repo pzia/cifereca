@@ -34,7 +34,7 @@ def test_bnf_auto_import_cannot_publish_stale_positive_claim(
                 # A→B→A consent changes do not leave the old run authorized.
                 broker.set_bnf_auto_download(sid, True)
         elif change == "provider_reconnected":
-            session._epoch = (getattr(session, "_epoch", None) or 0) + 1
+            service._sessions[service._session_key("bnf-pret", account.credential_id)] = object()
         else:
             service._account_context_epoch += 1
         return {"status": "complete", "acquisition_id": "synthetic-claim"}
