@@ -111,6 +111,45 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     ref = hashlib.sha256('\0'.join((account.identity_id, account.credential_id,
                                       account.unique_id, loan.id, loan.record_id)).encode()).hexdigest()
+    # Pin the exact Core account and provider session before either reading a
+    # prior local receipt or fetching a new signed token. Consent is a lease:
+    # a subsequent A→B→A rebind or provider reconnect cannot inherit it.
+    source_scope = (
+        account.identity_id, account.credential_id, account.unique_id,
+        loan.id, loan.record_id,
+    )
+    core_epoch = service._account_context_epoch
+    consent_revision = service.storage.metadata_get(policy_key(account) + '.revision')
+    session = service._sessions.get(
+        service._session_key('bnf-pret', account.credential_id),
+    )
+    provider_epoch = getattr(session, '_epoch', None)
+
+    def current() -> bool:
+        try:
+            return (
+                enabled(service, account)
+                and service.storage.metadata_get(
+                    policy_key(account) + '.revision'
+                ) == consent_revision
+                and service._account_context_epoch == core_epoch
+                and service._sessions.get(
+                    service._session_key('bnf-pret', account.credential_id),
+                ) is session
+                and getattr(session, '_epoch', None) == provider_epoch
+                and session.connected is True
+                and sum(row is account for row in session.accounts) == 1
+                and (
+                    account.identity_id, account.credential_id,
+                    account.unique_id, loan.id, loan.record_id,
+                ) == source_scope
+                and service._account_for_loan(loan) is account
+            )
+        except Exception:
+            return False
+
+    if not current():
+        return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     for row in service.storage.acquisitions(provider_id='manual', status='complete'):
         # Inspect only a record explicitly bound to this identity and loan.
         # All other manual acquisitions may contain unrelated personal files:
@@ -122,21 +161,11 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             continue
         path = Path(str(meta.get('path') or ''))
         usable = _receipt_local_file_verified(service, account, row, path)
+        if not current():
+            return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         return ({'status': 'unchanged'} if usable else
                 {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
     try:
-        session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
-        epoch = service._account_context_epoch
-        provider_epoch = getattr(session, '_epoch', None)
-
-        def current():
-            return (enabled(service, account) and service._account_context_epoch == epoch
-                    and service._sessions.get(service._session_key('bnf-pret', account.credential_id)) is session
-                    and getattr(session, '_epoch', None) == provider_epoch
-                    and session.connected is True
-                    and sum(row is account for row in session.accounts) == 1
-                    and service._account_for_loan(loan) is account)
-
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         if control is not None:
@@ -164,6 +193,11 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         result = service.import_acsm(candidate, identity_id=account.identity_id,
                                      provider_id='manual', placement_provider_id='bnf-pret',
                                      title=loan.title)
+        # ADEPT fulfillment can change the Core session, identity assignment
+        # or the explicit per-account policy while running. It may already
+        # have created a receipt: never claim the old borrower on that receipt.
+        if not current():
+            return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         if result.get('status') in {'complete', 'unchanged'}:
             existing = service.storage.acquisition_get(result['acquisition_id'])
             meta = (existing or {}).get('metadata') or {}
@@ -175,12 +209,19 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             produced = Path(str(result.get('path') or ''))
             # An ADEPT "complete" without a matching indexed artifact and
             # provider-owned placement is not a usable local book.
-            if not _receipt_local_file_verified(service, account, existing, produced):
+            usable = _receipt_local_file_verified(service, account, existing, produced)
+            if not current():
+                return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
+            if not usable:
                 return {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'}
             service.storage.acquisition_update_state(
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
+            if not current():
+                return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
             remember_import(service, result, display_scope)
-        return {'status': result.get('status', 'attention_required')}
+        return ({'status': result.get('status', 'attention_required')}
+                if current() else
+                {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'})
     except Cancelled:
         raise
     except Exception:
