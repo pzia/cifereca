@@ -84,8 +84,9 @@ def test_listloans_http_denial_is_typed_without_retry_or_secret(status, reason, 
         ]
         events = repr(diag.events)
         assert reason in events
-        assert PRIVATE not in events
-        assert PRIVATE not in caplog.text
+        # HTTP denial emits the observed status and MIME plus its closed
+        # exception reason; no unobserved HTML body is invented in the log.
+        assert f"'http_status': {status}" in events
     finally:
         session.close()
 
@@ -186,11 +187,11 @@ def test_listloans_error_type_cannot_carry_arbitrary_message():
 
 
 @pytest.mark.parametrize("failure", ["json_error_message", "json_error_list"])
-def test_listloans_supplier_error_text_never_reaches_diagnostics_or_logs(
+def test_listloans_supplier_error_is_preserved_with_structured_code(
     failure, caplog,
 ):
-    # A well-formed JSON error may still contain private provider-controlled
-    # content. Structured HTTP codes remain available; raw text does not.
+    # ListLoans error text actually emitted by _json remains available
+    # alongside typed error/status in the diagnostic journal.
     requests = []
 
     def handler(request):
@@ -208,11 +209,84 @@ def test_listloans_supplier_error_text_never_reaches_diagnostics_or_logs(
             session.loan_inventory_snapshot(account)
         assert len(requests) == 2
         assert all(request.url.path.endswith("/ListLoans") for request in requests)
-        assert PRIVATE not in repr(diagnostics.events)
-        assert PRIVATE not in caplog.text
+        assert PRIVATE in repr(diagnostics.events)
+        assert "loans DILICOM" in repr(diagnostics.events)
+        assert "loans SYRACUSE" in repr(diagnostics.events)
         assert session.last_loan_errors == [
             {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
             {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
         ]
     finally:
         session.close()
+
+
+
+def test_listloans_raw_error_is_searchable_and_exported_without_truncation(
+    tmp_path, caplog,
+):
+    """Real Core Diagnostics journal + HTTPX mock, no external provider."""
+    import json
+    import logging
+
+    from cifereca import logging_utils
+    from cifereca.core.diagnostic_journal import query_journal, export_raw_journal
+    from cifereca.diagnostics import Diagnostics as CoreDiagnostics
+
+    # Deliberately longer than the obsolete 240-char truncation.
+    raw = "Synthetic ListLoans cause: " + ("café-error-segment-" * 22)
+    mime = "application/json; charset=utf-8; profile=synthetic-loans"
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"success": False, "message": raw},
+            headers={"content-type": mime},
+        )
+
+    session, account, _fake = _fixture(handler)
+    log_path = tmp_path / "paris-diagnostics.log"
+    handler_file = logging_utils.PrivateRotatingFileHandler(
+        log_path, maxBytes=1_000_000, backupCount=1, encoding="utf-8",
+    )
+    handler_file.setFormatter(logging_utils.CanonicalEventFormatter(
+        "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
+    ))
+    logger = logging.getLogger("cifereca")
+    prior = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler_file)
+    session.client.diagnostics = CoreDiagnostics(level="trace")
+    try:
+        with caplog.at_level(logging.INFO):
+            with pytest.raises(ProviderConfigurationError):
+                session.loan_inventory_snapshot(account)
+        assert len(requests) == 2
+        assert all(req.url.path.endswith("/ListLoans") for req in requests)
+        assert mime in caplog.text
+        assert raw in caplog.text
+
+        found = query_journal(log_path, search="café-error-segment", limit=20)
+        assert found["total"] == 2
+        assert {event["operation"] for event in found["events"]} == {
+            "loans DILICOM", "loans SYRACUSE",
+        }
+        assert all(
+            event["detail"]["message"] == "loans " +
+            event["operation"].split(" ")[1] + ": " + raw
+            for event in found["events"]
+        )
+        assert all(event["status"] == "error" for event in found["events"])
+        exported = json.loads(export_raw_journal(log_path))
+        assert sum(raw in json.dumps(row, ensure_ascii=False)
+                   for row in exported["events"]) == 2
+        assert session.last_loan_errors == [
+            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
+            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
+        ]
+    finally:
+        session.close()
+        logger.removeHandler(handler_file)
+        logger.setLevel(prior)
+        handler_file.close()

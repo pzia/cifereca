@@ -270,17 +270,12 @@ class ParisClient:
             if category=="PNB" and operation=="borrow digital":
                 _TRACE_LOG.warning("TRACE paris pnb-loan failed error=%s duration_ms=%s",type(exc).__name__,int((time.perf_counter()-start)*1000))
             detail = {"error": type(exc).__name__}
-            # Auth/login, account summaries and catalogue errors may expose
-            # credentials, cookies, signed URLs or upstream body text. Only
-            # the closed exception class may appear in Diagnostics (#2882).
+            # Keep the historical policy of unrelated operations unchanged.
+            # ListLoans messages are actual provider facts and must not be
+            # suppressed by the privacy mask introduced by #3413 (#3423).
             private_operation = (
                 category == "AUTH"
                 or (category == "API" and operation.startswith("summary "))
-                # A supplier-controlled ListLoans JSON error.message can
-                # embed borrower IDs, signed links, or a private HTML body.
-                # Keep the structured error class and closed reason/status;
-                # never reflect arbitrary exception text into diagnostics.
-                or (category == "API" and operation.startswith("loans "))
                 or (category == "CATALOG" and (
                     operation.startswith("search ")
                     or operation.startswith("history cover search ")
@@ -299,7 +294,12 @@ class ParisClient:
                     detail["code"] = "paris_loans_transport_timeout"
                 elif isinstance(exc, httpx.RequestError):
                     detail["code"] = "paris_loans_transport_failed"
-            if not private_operation:
+            if category == "API" and operation.startswith("loans "):
+                # The exact observed ListLoans exception text belongs to the
+                # raw journal and broker, including text beyond 240 chars.
+                # It complements the structured reason and HTTP status.
+                detail["message"] = str(exc)
+            elif not private_operation:
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
             raise
@@ -415,12 +415,13 @@ class ParisClient:
         def work():
             r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/ListLoans", params=self._params(provider, uid), headers=self._api_headers())
             upstream = provider if provider in ("DILICOM", "SYRACUSE") else "unknown"
-            content_type = public_content_type(r.headers.get("content-type"))
-            # Only fixed route and upstream codes: never request URLs, query
-            # strings, account identifiers, cookies or upstream bodies.
+            content_type = r.headers.get("content-type")
+            # Log the exact observed Content-Type instead of silently
+            # dropping parameters; do not invent a response content type or
+            # issue another request. Never log a synthetic HTTP exchange.
             _TRACE_LOG.info(
                 "TRACE paris list-loans phase=response method=GET route=ListLoans upstream=%s http_status=%s content_type=%s",
-                upstream, public_http_status(r.status_code), content_type,
+                upstream, r.status_code, content_type,
             )
             # A followed 302/307 must not turn into a successful loan JSON.
             # Only the original ListLoans response is admissible as inventory.
@@ -430,7 +431,7 @@ class ParisClient:
             code = _list_loans_response_error(r)
             if code is not None:
                 raise ParisLoanListError(code, status=r.status_code)
-            if content_type == "text/html":
+            if public_content_type(content_type) == "text/html":
                 raise ParisLoanListError(
                     "paris_loans_redirect_unexpected" if r.history
                     else "paris_loans_html_unexpected",
