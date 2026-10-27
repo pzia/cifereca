@@ -5,6 +5,8 @@ All data are synthetic; no provider requests, EPUB writes or extra return POST.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 from dataclasses import replace
 import json
 
@@ -105,9 +107,10 @@ def test_complete_exact_borrower_rows_allow_absence_only_for_selected_loan(
 ):
     target = _loan()
     # Other titles of the SAME borrower do not make this loan still active.
-    # The official adapter does not always stamp identity_id on each row.
-    other = replace(_loan(loan_id="other-loan"), identity_id=None)
+    # Typed pagination coverage must carry the account's exact identity.
+    other = replace(_loan(loan_id="other-loan"), identity_id=target.identity_id)
     session = Session([other])
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
     try:
         result = svc.return_digital(target)
@@ -123,6 +126,7 @@ def test_complete_exact_borrower_rows_allow_absence_only_for_selected_loan(
 def test_paris_primary_account_sentinel_is_exact_borrower_not_missing(tmp_path):
     loan = _loan(uid="primary", loan_id="primary-loan")
     session = Session([replace(loan, id="other-primary-loan")])
+    attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
     try:
         result = svc.return_digital(loan)
