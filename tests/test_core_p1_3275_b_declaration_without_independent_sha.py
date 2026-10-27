@@ -210,6 +210,26 @@ def test_b_own_manifest_plus_received_a_file_needs_explicit_user_declaration(
             p for p in service.storage.placements()
             if p["identity_id"] == "bob"
         ]
+        # A repeated local scan legitimately refreshes observation clocks.
+        # Idempotence here means the exact owner, path, artifact, metadata and
+        # state stay unchanged, NOT that last_seen_at/updated_at freeze.
+        def stable_placement(row):
+            return {
+                key: value for key, value in row.items()
+                if key not in {"last_seen_at", "updated_at"}
+            }
+
+        expected_placements = [
+            stable_placement(row) for row in original_placements
+        ]
+        previous_clocks = [
+            (row["last_seen_at"], row["updated_at"])
+            for row in original_placements
+        ]
+        assert all(
+            type(seen) is int and type(updated) is int
+            for seen, updated in previous_clocks
+        )
         for _ in range(2):
             refreshed = service.sync_kobo_backup_account("vault-b")
             assert refreshed["attempted"] == refreshed["downloaded"] == 0
@@ -217,9 +237,22 @@ def test_b_own_manifest_plus_received_a_file_needs_explicit_user_declaration(
             back = service.storage.backup_get("kobo", "vault-b", "book-1")
             assert back is None or back["status"] != "complete"
             assert declarations.has_active_declared_link(service.storage, **scope)
-            assert [
+            current_placements = [
                 p for p in service.storage.placements() if p["identity_id"] == "bob"
-            ] == original_placements
+            ]
+            assert [stable_placement(p) for p in current_placements] == expected_placements
+            assert len(current_placements) == len(previous_clocks)
+            current_clocks = [
+                (row["last_seen_at"], row["updated_at"])
+                for row in current_placements
+            ]
+            assert all(
+                type(seen) is int and type(updated) is int
+                and seen >= former_seen and updated >= former_updated
+                for (seen, updated), (former_seen, former_updated)
+                in zip(current_clocks, previous_clocks)
+            )
+            previous_clocks = current_clocks
             assert source.read_bytes() == received.read_bytes() == source_bytes
             assert len([
                 row for row in service.storage.entitlements(provider_id="kobo")
