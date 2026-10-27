@@ -7,7 +7,7 @@ from pathlib import Path
 from ..artifact_inspection import inspect_artifact
 from ..models import Account, Loan
 from ..plugin_api import Cancelled
-from .bnf_explicit_acsm import _valid_loan_token
+from .bnf_explicit_acsm import _discard_invalid_candidate, _valid_loan_token
 
 
 def policy_key(account: Account) -> str:
@@ -165,6 +165,13 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         return ({'status': 'unchanged'} if usable else
                 {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
+    # A signed ACSM is a private short-lived candidate. If admission fails
+    # before ADEPT is invoked, it must not linger in acquisition-work.
+    # Once handed to import_acsm, leave lifetime and receipt ownership to
+    # that transaction (including failed/retryable fulfillments).
+    candidate = None
+    directory = None
+    handed_to_adept = False
     try:
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
@@ -190,6 +197,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         from .bnf_import_provenance import observed_loan, remember_import
         display_scope = observed_loan(loan)
+        handed_to_adept = True
         result = service.import_acsm(candidate, identity_id=account.identity_id,
                                      provider_id='manual', placement_provider_id='bnf-pret',
                                      title=loan.title)
@@ -226,3 +234,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
         raise
     except Exception:
         return {'status': 'attention_required', 'code': 'bnf_auto_acquisition_failed'}
+    finally:
+        # Delete solely our original staging .acsm, never a provider path,
+        # an outside symlink or a file already admitted to ADEPT.
+        if not handed_to_adept and directory is not None:
+            _discard_invalid_candidate(candidate, directory)
