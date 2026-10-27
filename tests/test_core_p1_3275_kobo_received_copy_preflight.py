@@ -9,12 +9,13 @@ from pathlib import Path
 
 from cifereca.core.kobo_backup import _indexed_kobo_catalog_paths
 from tests.test_core0925_open_destinations import _service
+from tests.test_kobo_backup_guard import _write_epub
 
 
 def _kobo_source(service, root: Path):
     src = root / "EBooks" / "alice" / "kobo" / "Book.epub"
     src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_bytes(b"synthetic Kobo A book")
+    _write_epub(src, b"synthetic Kobo A book")
     placement_id = service.storage.placement_put({
         "artifact_id": "sha256:synthetic-a",
         "path": str(src), "identity_id": "alice", "provider_id": "kobo",
