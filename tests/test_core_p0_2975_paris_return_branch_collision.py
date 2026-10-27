@@ -5,6 +5,8 @@ traffic, duplicate PNB POST, Adobe mutation, EPUB deletion or log secrets.
 """
 from __future__ import annotations
 
+from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+
 from dataclasses import replace
 import json
 
@@ -43,9 +45,10 @@ def test_pnb_same_id_in_syracuse_does_not_confirm_dilicom_return(tmp_path):
         current = service.verify_return_digital(loan)
         assert current["status"] == "still_active"
         assert len(session.posts) == 1
-        # Once the conflicting ID itself disappears from an independently
-        # complete source inventory, the existing absence rule still applies.
+        # A typed DILICOM pagination attestation is required before
+        # an unrelated row can prove the requested loan absent.
         session.inventory = [replace(loan, id="unrelated")]
+        attest_paris_dilicom_complete(session, credential_id="paris-a")
         confirmed = service.verify_return_digital(loan)
         assert confirmed["status"] == "provider_return_confirmed"
         assert confirmed["provider_inventory_verified"] is True
