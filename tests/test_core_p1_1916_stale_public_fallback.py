@@ -401,3 +401,71 @@ def test_decoding_failure_keeps_healthy_source_and_private_messages_out(tmp_path
         assert "SECRET_DECODING" not in repr((result, batches))
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", ["numilog", "provider-alpha"])
+def test_public_fallback_is_provider_neutral_but_never_returns_private_purchases(
+    tmp_path, provider,
+):
+    """One supplier may have public catalogue AND private purchases in SQLite."""
+    service = _service(tmp_path)
+    try:
+        _known(service, provider=provider, key="public", title="Aventure maritime")
+        _known(service, provider=provider, key="private", title="Aventure maritime",
+               collection="library")
+        _known(service, provider=provider, key="owned", title="Aventure maritime",
+               state="remote_owned")
+        _known(service, provider=provider, identity="bob", key="foreign",
+               title="Aventure maritime")
+        observed = known_public_fallback(
+            service.storage, provider_id=provider, identity_id="alice",
+            query="maritime", scope="digital", field="title",
+            content_types=("epub",),
+        )
+        assert [row.record_id for row in observed] == ["public-public"]
+        assert all(row.source_provider == provider for row in observed)
+        assert all(row.scenario == "KNOWN_CATALOG_STALE" and not row.owned
+                   and not row.downloadable and row.download_url is None
+                   and row.metadata["search_provenance"] == "known_catalog_stale"
+                   for row in observed)
+        assert "PRIVATE-CREDENTIAL" not in repr(observed)
+        assert "SIGNED_SECRET" not in repr(observed)
+    finally:
+        service.close()
+
+
+def test_numilog_public_outage_uses_only_known_public_rows_no_equivalent_retry(
+    tmp_path,
+):
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="numilog", key="catalogue",
+               title="Aventure maritime")
+        _known(service, provider="numilog", key="private",
+               title="Aventure maritime", collection="library")
+        session = _FakeSession("numilog")
+        requests = []
+
+        def broken(*_a, **_kwargs):
+            requests.append("catalogue")
+            raise httpx.ConnectTimeout("offline public catalogue")
+
+        session.search = broken
+        service._sessions = {"numilog": session}
+        batches = []
+        summary = service.search_progressive(
+            "Aventure maritime", force=True, on_batch=batches.append,
+        )
+        assert requests == ["catalogue"]
+        assert summary.providers_failed == 1
+        assert summary.result_count == 1
+        assert len(batches) == 1
+        assert batches[0].error_code == "SearchTemporarilyUnavailable"
+        assert batches[0].result_status == "known_catalog_stale"
+        assert [row.record_id for row in batches[0].results] == [
+            "public-catalogue",
+        ]
+        assert batches[0].results[0].owned is False
+        assert "PRIVATE-CREDENTIAL" not in repr(batches[0].results)
+    finally:
+        service.close()
