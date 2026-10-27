@@ -23,8 +23,8 @@ def active(core):
     return service, session, account, loan, downloaded
 
 
-def manual_epub(tmp_path, title, *, identity='hugues', filename='old.epub'):
-    path = tmp_path / 'EBooks' / identity / 'manual' / 'acsm-old' / filename
+def manual_epub(tmp_path, title, *, identity='hugues', directory='manual', filename='old.epub'):
+    path = tmp_path / 'EBooks' / identity / directory / 'acsm-old' / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     epub(path, title=title)
     return path
@@ -78,11 +78,12 @@ def test_invalid_epub_makes_scan_inconclusive_without_permission_to_download(tmp
     assert evidence.screen(identity_id='A', title='Book').status == 'needs_reconciliation'
 
 
+@pytest.mark.parametrize('directory', ['manual', 'acsm-import'])
 def test_unindexed_same_opf_title_blocks_second_get_and_adept(
-    connected_core, tmp_path, monkeypatch,
+    connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = active(connected_core)
-    path = manual_epub(tmp_path, loan.title)
+    path = manual_epub(tmp_path, loan.title, directory=directory)
     before_bytes = path.read_bytes()
     before_receipts = service.storage.acquisitions(provider_id='manual')
     before_rights = service.storage.entitlements()
@@ -99,11 +100,12 @@ def test_unindexed_same_opf_title_blocks_second_get_and_adept(
     assert service.storage.entitlements() == before_rights
 
 
+@pytest.mark.parametrize('directory', ['manual', 'acsm-import'])
 def test_other_identity_same_opf_title_does_not_block_get(
-    connected_core, tmp_path, monkeypatch,
+    connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = active(connected_core)
-    foreign = manual_epub(tmp_path, loan.title, identity='alex')
+    foreign = manual_epub(tmp_path, loan.title, identity='alex', directory=directory)
     invoked = []
     def no_network(*_a, **_kw):
         invoked.append(True)
@@ -132,14 +134,15 @@ def test_second_unrelated_loan_remains_eligible_without_false_reconciliation(
     assert first.is_file()
 
 
+@pytest.mark.parametrize('directory', ['manual', 'acsm-import'])
 def test_unindexed_symlinked_root_never_triggers_signed_get(
-    connected_core, tmp_path, monkeypatch,
+    connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = active(connected_core)
     outside = tmp_path / 'outside'
     outside.mkdir()
     epub(outside / 'book.epub', title=loan.title)
-    root = tmp_path / 'EBooks' / 'hugues' / 'manual'
+    root = tmp_path / 'EBooks' / 'hugues' / directory
     root.parent.mkdir(parents=True, exist_ok=True)
     root.symlink_to(outside, target_is_directory=True)
     invoked = []
