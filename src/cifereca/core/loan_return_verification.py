@@ -7,30 +7,8 @@ exception seams are injected from LibraryService at call time; public guards and
 branch-local datetime imports remain late imports.
 """
 from __future__ import annotations
-from inspect import getattr_static
 from typing import Any
 from ..models import Account, Loan
-
-
-def _paris_digital_inventory_complete(session: Any) -> bool:
-    """Only SYRACUSE errors are demonstrably unrelated to digital DILICOM.
-
-    Paris's official adapter always returns a list of error dictionaries
-    labelled DILICOM or SYRACUSE. Missing, malformed or unknown error entries
-    cannot attest a complete digital inventory. Inspect only exact types and
-    known codes; never stringify or invoke provider-controlled comparisons.
-    """
-    # Do not execute a provider-defined property/descriptor while
-    # deciding whether an absent loan is returned. Only a small, plain
-    # instance-memory list is accepted by this compatibility reader.
-    # Complete negative proof must eventually come from typed branch claims.
-    errors = getattr_static(session, "last_loan_errors", None)
-    return type(errors) in (list, tuple) and len(errors) <= 64 and all(
-        type(error) is dict
-        and type(error.get("upstream")) is str
-        and error["upstream"] == "SYRACUSE"
-        for error in errors
-    )
 
 
 def _paris_inventory_rows_well_formed(rows: Any) -> bool:
@@ -114,11 +92,11 @@ def _paris_loan_presence(rows: list[Loan], loan: Loan) -> bool | None:
 
 def _read_paris_return_presence(self: Any, account: Account, session: Any,
                                 loan: Loan) -> bool:
-    """Read one exact borrower, without promoting a partial typed inventory.
+    """Read one exact borrower; only typed branch coverage can prove absence.
 
-    Typed Paris inventories currently report unknown DILICOM pagination even
-    on HTTP success. The legacy mutable last_loan_errors channel must never
-    override the atomic envelope's explicit lack of negative proof.
+    A v1 list of positive loans may show that an exact loan remains present,
+    but neither an empty v1 list nor its mutable last_loan_errors side channel
+    is a complete DILICOM pagination attestation.
     """
     epoch = getattr(self, "_account_context_epoch", None)
     accounts = self.accounts
@@ -150,8 +128,7 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
             raise ValueError("return_inventory_unavailable")
         rows = list(snapshot.loans)
     else:
-        # Older providers keep their one-read behavior. The mutable
-        # error side channel is never consulted for typed producers.
+        # A legacy v1 result is read once for positive observations only.
         rows = session.loans(account)
     if not still_bound() or not _paris_inventory_exact_borrower(rows, account):
         raise ValueError("return_inventory_scope_changed")
@@ -165,7 +142,8 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
             # pagination for this *same* account and process context.
             if not snapshot.branch_claims_complete("dilicom", "digital"):
                 raise ValueError("return_inventory_not_exhaustive")
-        elif not _paris_digital_inventory_complete(session):
+        else:
+            # No atomic pagination proof exists in a v1 list or error channel.
             raise ValueError("return_inventory_legacy_incomplete")
     return presence
 
