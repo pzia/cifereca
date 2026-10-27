@@ -65,6 +65,14 @@ def quarantine_duration(hours: object = _UNSET) -> tuple[timedelta, int]:
     return age, hours
 
 
+def quarantine_eligibility(uploaded: datetime, minimum_age: timedelta) -> datetime:
+    """Represent the admission UTC instant or refuse an unrepresentable policy."""
+    try:
+        return uploaded + minimum_age
+    except OverflowError:
+        _rejected("dependency_quarantine_configuration_invalid")
+
+
 def quarantine_diagnostic(exc: QuarantineRejected) -> str:
     """User-facing diagnostic without changing the stable machine error code."""
     code = str(exc)
@@ -183,7 +191,7 @@ def check_pip_report(
         if now_utc - stamp < minimum_age:
             _rejected("dependency_too_recent", name=canonicalize_name(name),
                       version=str(Version(version)), quarantine_hours=selected_hours,
-                      eligible_at=stamp + minimum_age)
+                      eligible_at=quarantine_eligibility(stamp, minimum_age))
         # pip checks the wheel SHA itself when downloading this exact URL.
         pinned.append(url + "#sha256=" + sha)
     return tuple(pinned)
