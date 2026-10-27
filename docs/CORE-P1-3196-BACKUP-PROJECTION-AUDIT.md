@@ -107,18 +107,22 @@ Chaque direction a son propre plafond de **500 lignes par identité**. Un dépas
 Cette tranche est 100 % lecture SQLite : aucune écriture, suppression, copie, téléchargement, migration de schéma, mutation de prêt ni reclassement implicite. Le retrait effectif de la compatibilité v0.7, les consommateurs et la migration versionnée restent dans #3196.
 
 
-## Tranche P0 : gardien de l'état canonique au replay Kobo
+## Tranche P0 : préserver le statut `complete` des replays passifs
 
-Tant que `backup_put` écrit encore la projection 0.7, il compare sous la
-même transaction le **dernier état historique** et l'état d'acquisition
-canonique avant tout UPSERT. Une divergence déjà présente ou un reçu
-canonique préexistant **sans ligne historique** refuse l'écriture via
-`backup_canonical_status_diverged` : aucune projection, droit ni artefact
-n'est alors modifié. L'opérateur doit examiner cette divergence par l'audit,
-pas choisir arbitrairement le plus récent.
+La version initiale du garde refusait tout décalage entre la projection Kobo
+0.7 et `acquisition_ledger`. Les parcours réels Kobo montrent au contraire
+qu'un **téléchargement valide** fait progresser le reçu canonique avant
+l'écriture de la projection v0.7 ; une interdiction globale interrompait
+l'acquisition et la reprise.
 
-Une progression normale qui part d'états historiques et canoniques identiques
-(`pending → acquiring → complete`, etc.) demeure permise pour la compatibilité.
-Cette garde protège un cas de corruption mais **ne retire pas** l'écriture
-v0.7 ni les chemins de lecture ; la migration du propriétaire canonique et la
-substitution des consommateurs restent indispensables.
+Le miroir utilise désormais une condition SQL limitée : lorsque le reçu
+canonique est déjà `complete`, un UPSERT v0.7 en état **passif**
+`pending` ou `discovered` conserve le statut, l'artefact et les champs
+d'erreur/attention du reçu canonique. La projection historique peut rester
+en `pending` jusqu'à migration ; l'audit révèle cette divergence.
+
+En revanche, les transitions **actives** `acquiring`, `attention_required`,
+`retryable_error` et `complete` restent supportées pour la compatibilité
+des flux Kobo et du traitement ADEPT. Aucun refus générique du passage
+intermédiaire par un état divergent : la migration vers une source d'autorité
+unique demeure nécessaire et distincte.
