@@ -29,12 +29,18 @@ def _sync_loan_inventory_observation(self, account: Account, session: Any):
     migration loses positive loans; never mistake a v1 list for completeness.
     The two synchronization entrypoints share this one selection point.
     """
+    from ..plugin_api import Cancelled
     from ..plugin_api.loan_inventory import read_loan_inventory
     if session is not None and getattr_static(
         session, "loan_inventory_snapshot", None,
     ) is not None:
         snapshot = read_loan_inventory(session, account)
-        if snapshot.status in {"failed", "cancelled"}:
+        # A cancelled typed read is neither an empty successful inventory
+        # nor a provider failure. Preserve its cancellation through source
+        # Sync without a legacy retry or a rights/cache mutation.
+        if snapshot.status == "cancelled":
+            raise Cancelled("loan_inventory_cancelled")
+        if snapshot.status == "failed":
             raise ProviderConfigurationError("loan_inventory_read_unavailable")
         return snapshot, list(snapshot.loans)
     # No second read after a failed/malformed typed snapshot, even when the
@@ -303,11 +309,16 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "operation_busy"})
         raise ProviderConfigurationError("Synchronisation ou maintenance de la bibliothèque déjà en cours") from exc
     except Exception as exc:
-        observe("completed", "cancelled" if isinstance(exc, Cancelled) else "failed",
-                "source_sync_cancelled" if isinstance(exc, Cancelled) else "source_sync_failed")
-        # A provider can use a dynamically named exception whose class name
-        # contains a borrower, signed URL or local filesystem path.
-        self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "source_sync_failed"})
+        # Cancellation must be recorded as cancellation in BOTH the source
+        # event and the action history, never counted as a provider failure.
+        outcome = "cancelled" if isinstance(exc, Cancelled) else "failed"
+        code = "source_sync_cancelled" if outcome == "cancelled" else "source_sync_failed"
+        observe("completed", outcome, code)
+        self._record_action(
+            account.identity_id, "synchronization", outcome,
+            provider_id=account.provider_id,
+            facts={"deep": bool(deep), "error": code},
+        )
         raise
 
 
