@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 
 from ..artifact_inspection import inspect_artifact
 from ..models import Account, Loan
 from ..plugin_api import Cancelled
 from .bnf_explicit_acsm import _discard_invalid_candidate, _valid_loan_token
+
+
+_TRACE_LOG = logging.getLogger("cifereca")
 
 
 def policy_key(account: Account) -> str:
@@ -96,6 +100,12 @@ def _receipt_local_file_verified(service, account: Account, row: dict, path: Pat
             return False
         return True
     except (OSError, ValueError, TypeError, KeyError):
+        _TRACE_LOG.warning(
+            "TRACE bnf auto receipt file check failed provider_id=%s "
+            "identity_id=%s credential_id=%s",
+            account.provider_id, account.identity_id, account.credential_id,
+            exc_info=True,
+        )
         return False
 
 
@@ -192,7 +202,15 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             item_id=loan.record_id,
         )
         declared = has_active_declared_link(service.storage, **declared_scope)
+    except Cancelled:
+        raise
     except Exception:
+        _TRACE_LOG.warning(
+            "TRACE bnf auto local evidence failed stage=declared_lookup "
+            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+            loan.source_provider, account.credential_id,
+            account.unique_id, loan.id, exc_info=True,
+        )
         return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
@@ -203,7 +221,15 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 service, **declared_scope, source_current=current,
                 expected_loan_id=loan.id, _acquisition_lock_held=True,
             )
+        except Cancelled:
+            raise
         except Exception:
+            _TRACE_LOG.warning(
+                "TRACE bnf auto local evidence failed stage=declared_revalidation "
+                "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+                loan.source_provider, account.credential_id,
+                account.unique_id, loan.id, exc_info=True,
+            )
             return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
@@ -236,7 +262,15 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             identity_id=account.identity_id, title=loan.title,
             roots=roots, acquisitions=manual_acquisitions, catalogue=catalogue,
         )
+    except Cancelled:
+        raise
     except Exception:
+        _TRACE_LOG.warning(
+            "TRACE bnf auto local evidence failed stage=indexed_candidates "
+            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+            loan.source_provider, account.credential_id,
+            account.unique_id, loan.id, exc_info=True,
+        )
         return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
@@ -275,6 +309,12 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     except Cancelled:
         raise
     except Exception:
+        _TRACE_LOG.warning(
+            "TRACE bnf auto local evidence failed stage=physical_candidates "
+            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+            loan.source_provider, account.credential_id,
+            account.unique_id, loan.id, exc_info=True,
+        )
         return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
@@ -352,6 +392,12 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     except Cancelled:
         raise
     except Exception:
+        _TRACE_LOG.warning(
+            "TRACE bnf auto acquisition failed stage=delivery_or_import "
+            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+            loan.source_provider, account.credential_id,
+            account.unique_id, loan.id, exc_info=True,
+        )
         return {'status': 'attention_required', 'code': 'bnf_auto_acquisition_failed'}
     finally:
         # Delete solely our original staging .acsm, never a provider path,
