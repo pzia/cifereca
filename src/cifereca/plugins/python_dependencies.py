@@ -18,7 +18,7 @@ from packaging.version import Version, InvalidVersion
 from cifereca.plugin_api import SystemRequirement
 
 from .errors import PackageInstallError
-from .python_quarantine import QuarantineRejected, check_pip_report
+from .python_quarantine import QuarantineRejected, check_pip_report, quarantine_diagnostic
 from .manifest import PluginPackageManifest
 from .requirements import check_system_requirement
 
@@ -212,7 +212,7 @@ class PythonDependencyManager:
         try:
             admitted = verify_wheelhouse(trusted, core_version=__version__)
         except QuarantineRejected as exc:
-            raise PythonDependencyError(str(exc)) from None
+            raise PythonDependencyError(quarantine_diagnostic(exc)) from None
         except (OSError, ValueError, TypeError):
             raise PythonDependencyError("dependency_provenance_unavailable") from None
         if not admitted:
@@ -308,7 +308,7 @@ class PythonDependencyManager:
         # includes transitive dependencies. No venv writes are allowed before
         # *each exact proposed wheel* has a PyPI release-time + SHA proof.
         # Offline may use only an admitted wheelhouse from the installed
-        # Core release; untrusted plugin wheels never bypass the 168h gate.
+        # Core release; untrusted plugin wheels never bypass the configured age gate.
         if not self.allow_index:
             self._pip_install_offline(requested, wheel_dirs)
             return
@@ -345,7 +345,7 @@ class PythonDependencyManager:
                     # A missing proof, mismatch or yanked package must NEVER
                     # be treated as an excuse to select an arbitrary fallback.
                     if exc.args != ("dependency_too_recent",) or not exc.name or not exc.version:
-                        raise PythonDependencyError(str(exc)) from None
+                        raise PythonDependencyError(quarantine_diagnostic(exc)) from None
                     if exc.name in constraints:
                         from packaging.version import InvalidVersion, Version
                         try:
