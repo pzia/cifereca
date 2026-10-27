@@ -25,8 +25,8 @@ def _methods():
                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     methods = [node for node in owner.body
                if isinstance(node, ast.FunctionDef)
-               and node.name in {"_eligible_borrow_accounts", "borrow_search_item"}]
-    assert len(methods) == 2
+               and node.name in {"can_borrow_item", "_eligible_borrow_accounts", "borrow_search_item"}]
+    assert len(methods) == 3
     namespace = {
         "__name__": "cifereca.gui.main_window",
         "__package__": "cifereca.gui",
@@ -78,6 +78,7 @@ def _ui(*, accounts=None, identity="alice"):
     )
     methods = _methods()
     ui._eligible_borrow_accounts = MethodType(methods["_eligible_borrow_accounts"], ui)
+    ui.can_borrow_item = MethodType(methods["can_borrow_item"], ui)
     ui.borrow_search_item = MethodType(methods["borrow_search_item"], ui)
     item = NS(source_provider="paris", source_credential="A")
     return ui, item, state, queued, events
@@ -184,3 +185,51 @@ def test_current_account_executes_once_and_stale_success_never_updates_new_ui():
     ui._identity_context_generation += 1
     ok(result)
     assert events == prior
+
+
+@pytest.mark.parametrize("scenario,shown", [
+    ("exact_primary", True),
+    ("linked_primary", True),
+    ("foreign_only", False),
+    ("wrong_credential", False),
+    ("wrong_provider", False),
+    ("no_identity", False),
+    ("disconnected", False),
+    ("duplicate_primary", False),
+])
+def test_borrow_button_visibility_matches_exact_account_admission(scenario, shown):
+    """A provider-wide borrow flag never advertises another identity's account."""
+    primary = _account(uid="borrower-1")
+    accounts = [primary]
+    if scenario == "linked_primary":
+        accounts.append(_account(uid="borrower-2"))
+    elif scenario == "foreign_only":
+        accounts = [_account(identity="bob")]
+    elif scenario == "wrong_credential":
+        accounts = [_account(credential="other")]
+    elif scenario == "wrong_provider":
+        accounts = [_account(provider="other")]
+    elif scenario == "duplicate_primary":
+        accounts.append(_account(uid="borrower-1"))
+    ui, item, state, queued, _events = _ui(accounts=accounts)
+    if scenario == "no_identity":
+        ui.service.current_identity = None
+    elif scenario == "disconnected":
+        state.session.connected = False
+    assert ui.can_borrow_item(item) is shown
+    assert queued == []
+    state.session.borrow.assert_not_called()
+    ui.service.refresh_identity_loans.assert_not_called()
+
+
+def test_borrow_button_rechecks_session_rebinding_without_fallback():
+    ui, item, state, queued, _events = _ui()
+    assert ui.can_borrow_item(item) is True
+    previous = state.session
+    state.session = NS(**vars(previous))
+    state.session.credential_id = "B"
+    assert ui.can_borrow_item(item) is False
+    state.session = previous
+    assert ui.can_borrow_item(item) is True
+    assert queued == []
+    previous.borrow.assert_not_called()
