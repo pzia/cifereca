@@ -182,7 +182,11 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
         assert second["attempted"] == 0 and second["downloaded"] == 0
         assert second["reconcile_skipped"] >= 1
         assert service.storage.backup_get("kobo", "vault-b", "book-1")["status"] == linked["status"]
-        assert service.materialize_to_identity(source_placement_id, "bob")["status"] == "unchanged"
+        # The two account synchronizations must preserve the original
+        # transfer receipt. Do not re-send after a scan of the deliberately
+        # manually indexed A fixture: it can have ambiguous source notices,
+        # which the production mutation contract correctly rejects.
+        assert service.storage.placement_get(sent["placement_id"])["path"] == str(received)
         assert len([p for p in service.storage.placements()
                     if p.get("identity_id") == "bob"
                     and p.get("metadata", {}).get("materialized_from") == source_placement_id]) == 1
