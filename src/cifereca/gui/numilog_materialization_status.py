@@ -44,7 +44,8 @@ def _date(value: int) -> str:
     return datetime.fromtimestamp(value).astimezone().strftime("%d/%m %H:%M")
 
 
-def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
+def describe_run(mode: str, data: Any, *, now: int | None = None,
+                 compact: bool = False) -> str:
     """Display only exact allowlisted status/counters from the Core broker.
 
     Never format a raw provider response, error, title, credential or ID.
@@ -119,6 +120,18 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
     caption = _STATUS[status]
     if started is not None and not detail:
         caption += f" le {_date(started)}"
+    if compact:
+        # The account card must expose a readable outcome, not a long line
+        # containing task references, all item decisions and next-run detail.
+        # The expanded diagnostic uses the full same validated observation.
+        if status in {"complete", "partial", "failed", "blocked", "not_due"}:
+            caption += (
+                f" : {data['downloaded']} téléchargé(s)"
+                f" · {data['failed']} échec(s)"
+            )
+            if has_declared and data["declared_needs_review"]:
+                caption += f" · {data['declared_needs_review']} liaison(s) à revoir"
+        return caption + "."
     if status in {"complete", "partial", "failed", "blocked", "not_due"}:
         caption += (
             f" : {data['downloaded']} téléchargé(s), "
