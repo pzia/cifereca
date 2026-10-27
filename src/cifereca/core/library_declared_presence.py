@@ -31,6 +31,7 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
                              account_id, item_id, source_current,
                              cancelled=lambda: False, seconds=8,
                              max_bytes=64 * 1024 * 1024,
+                             expected_loan_id=None,
                              _acquisition_lock_held=False):
     """Verify one source-bound statement without granting acquisition authority.
 
@@ -46,6 +47,8 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
     try:
         _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS), 'invalid_scope')
         _require(callable(source_current) and callable(cancelled), 'invalid_guard')
+        _require(expected_loan_id is None or _text(expected_loan_id),
+                 'invalid_loan_scope')
         _require(type(seconds) in (int, float) and 0 < seconds <= 8
                  and type(max_bytes) is int and 0 < max_bytes <= 64 * 1024 * 1024,
                  'invalid_budget')
@@ -78,6 +81,14 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
                 _require(len(selected) == 1, 'declaration_changed')
                 record = selected[0]
                 context = _context(db, scope)
+                # A declared local file for an earlier loan of the same
+                # edition cannot satisfy a NEW loan transaction. When an
+                # exact loan is requested, verify it inside both consistent
+                # SQLite reads, before and after file revalidation.
+                if expected_loan_id is not None:
+                    _require(context['right']['entitlement_type'] == 'loan'
+                             and context['right']['loan_id'] == expected_loan_id,
+                             'loan_scope_changed')
                 _require(context['connection']['enabled'] == 1
                          and record['right_state'] == _right_state(context)
                          and context['right']['state'] == 'active', 'right_state_changed')
