@@ -108,8 +108,8 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
         availability_label=window._library_availability_label,
         backup_status_label=window._kobo_backup_status_label,
         format_date=fr_date,
-        query=library_search_state.text,
-        field=library_search_state.field,
+        query=getattr(library_search_state, "text", ""),
+        field=getattr(library_search_state, "field", "all"),
     )
     if phase is not None:
         phase("row_projection")  # includes filtering and BookListItem creation
