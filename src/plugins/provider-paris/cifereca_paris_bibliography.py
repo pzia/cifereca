@@ -88,3 +88,60 @@ def project_observed_resource_facets(
     if evidence:
         metadata["bibliography_evidence"] = evidence
     return metadata
+
+
+def project_search_response_facets(
+    response: Mapping[str, object], scenario: str, page: int
+) -> list[dict[str, object]]:
+    """Project *response-level* Syracuse facet descriptors, never book fields.
+
+    Observed upstream keys: d.FacetCollectionList entries carry FacetField,
+    FacetLabel, FacetList, IsSearchable and IsMultiselectable. The nested
+    FacetList item schema has NOT been qualified; do not guess its values,
+    their counts across pages, or a working server-side filter endpoint.
+
+    Each emitted descriptor records only the returned page and scenario.
+    """
+    if scenario not in {"CATALOGUE", "EBOOKS"} or type(page) is not int or page < 0:
+        return []
+    d = response.get("d")
+    if not isinstance(d, dict):
+        return []
+    raw_facets = d.get("FacetCollectionList")
+    if type(raw_facets) is not list or len(raw_facets) > 64:
+        return []
+    projected: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in raw_facets:
+        if type(raw) is not dict:
+            continue
+        field = _clean_text(raw.get("FacetField"))
+        label = _clean_text(raw.get("FacetLabel"))
+        choices = raw.get("FacetList")
+        # FacetList contents are not parsed until real item keys are attested.
+        if (field is None or label is None or type(choices) is not list
+                or len(choices) > 1024 or field.casefold() in seen):
+            continue
+        seen.add(field.casefold())
+        projected.append({
+            "scenario": scenario,
+            "page": page,
+            "field": field,
+            "label": label,
+            "upstream_is_searchable": (
+                raw.get("IsSearchable")
+                if type(raw.get("IsSearchable")) is bool else None
+            ),
+            "upstream_is_multiselectable": (
+                raw.get("IsMultiselectable")
+                if type(raw.get("IsMultiselectable")) is bool else None
+            ),
+            "observed_entry_count": len(choices),
+            "source": "SearchService.d.FacetCollectionList",
+            "scope": "response_page_only",
+            "filter_capability": "unverified",
+            "values_schema": "unverified",
+        })
+        if len(projected) >= 32:
+            break
+    return projected

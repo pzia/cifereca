@@ -587,6 +587,7 @@ class ParisProviderSession(ProviderSession):
         # An unsupported field/scope is a new failed attempt, not a reason
         # to keep a previous partial Syracuse branch warning visible.
         self.last_search_warnings = []
+        self.last_search_response_facets = []
         # Syracuse search is a general text query. Do not advertise an
         # author/ISBN/subject restriction that the upstream client ignores.
         if type(field) is not str or field.strip().casefold() != "all":
@@ -619,6 +620,9 @@ class ParisProviderSession(ProviderSession):
             return [_project_paris_acquisition_formats(item) for item in rows]
         finally:
             self.last_search_warnings = list(self.client.last_search_warnings)
+            self.last_search_response_facets = [
+                dict(facet) for facet in getattr(self.client, "last_search_response_facets", ())
+            ]
 
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
         return _paris_acquisition_offer_set(item)
@@ -663,6 +667,11 @@ class ParisProviderSession(ProviderSession):
         ]
         state["booking_errors"] = [
             dict(row) for row in getattr(self.client, "last_booking_errors", ()) if isinstance(row, dict)
+        ]
+        # Observed response-page descriptors only. Never an active server
+        # search filter or property attached to an individual book.
+        state["search_response_facets"] = [
+            dict(facet) for facet in getattr(self, "last_search_response_facets", ())
         ]
         return state
 

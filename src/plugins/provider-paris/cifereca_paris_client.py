@@ -21,6 +21,7 @@ from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
 from cifereca_paris_normalize import normalize_booking, normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
+from cifereca_paris_bibliography import project_search_response_facets
 
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
 class _ParisTrace(logging.LoggerAdapter):
@@ -145,6 +146,10 @@ class ParisClient:
         self.authenticated = False
         self.username: str | None = None
         self.last_search_warnings: list[str] = []
+        # SearchService facets belong to a single response page, never a
+        # SearchResult or a proved server filtering capability.
+        self.last_search_response_facets: list[dict[str, Any]] = []
+        self._last_scenario_facet_observation: tuple[str, int, list[dict[str, Any]]] | None = None
         self.last_pairing_errors: list[dict[str, str]] = []
         self.last_history_errors: list[dict[str, str]] = []
         self.last_booking_errors: list[dict[str, str]] = []
@@ -558,6 +563,8 @@ class ParisClient:
         }
 
     def _search_scenario(self, query: str, scenario: str, page: int, result_size: int) -> list[SearchResult]:
+        # Clear before every network attempt, including failed fallback paths.
+        self._last_scenario_facet_observation = None
         body = {"query": self._search_query(query, scenario, page, result_size), "sst": 4}
         r = self.client.post(
             f"{self.base_url}{SEARCH_PATH}",
@@ -572,6 +579,9 @@ class ParisClient:
         if r.status_code in {401, 403, 408, 429} or r.status_code >= 500:
             r.raise_for_status()
         data = self._json(r, f"search {scenario}")
+        self._last_scenario_facet_observation = (
+            scenario, page, project_search_response_facets(data, scenario, page)
+        )
         rows = ((data.get("d") or {}).get("Results") or [])
         return [x for x in (normalize_search_result(raw, scenario) for raw in rows if isinstance(raw, dict)) if x]
 
@@ -603,12 +613,14 @@ class ParisClient:
         scenarios = ["EBOOKS"] if scope == "digital" else ["CATALOGUE"] if scope == "physical" else ["CATALOGUE", "EBOOKS"]
         out: list[SearchResult] = []
         seen: set[str] = set()
-        self.last_search_warnings: list[str] = []
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
         failures: list[tuple[str, Exception]] = []
         successful_scenarios = 0
 
         for scenario in scenarios:
             rows: list[SearchResult] | None = None
+            self._last_scenario_facet_observation = None
             try:
                 rows = self._timed(
                     "CATALOG", f"search {scenario}",
@@ -622,6 +634,7 @@ class ParisClient:
                     level="detailed",
                 )
                 try:
+                    self._last_scenario_facet_observation = None
                     rows = self._timed(
                         "CATALOG", f"search {scenario} fallback",
                         lambda scenario=scenario: self._search_scenario(query, scenario, page, 20),
@@ -650,6 +663,12 @@ class ParisClient:
                 self.last_search_warnings.append(warning)
                 continue
 
+            # Facets are a descriptor of this successfully returned branch
+            # and *page*, not any particular book nor the whole catalogue.
+            capture = self._last_scenario_facet_observation
+            if (capture is not None and capture[0] == scenario
+                    and capture[1] == page):
+                self.last_search_response_facets.extend(capture[2])
             # An empty result from an available catalogue is still a
             # successful search, not evidence that every route failed.
             successful_scenarios += 1
