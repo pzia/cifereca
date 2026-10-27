@@ -231,3 +231,31 @@ def test_never_calls_external_source_or_mutates_reference_objects():
     # No provider object or extra service passed, no side effect possible.
     unused = Forbidden()
     assert unused is not None
+
+
+
+def test_sync_source_preserves_exact_empty_primary_borrower_without_wildcard():
+    projected = project_existing_capabilities(
+        _descriptor(), identity_id="alice",
+        sync_source=_sync(account="", caps=("entitlements",)),
+    )
+    assert projected.exact("sync.entitlements", "account",
+                           identity_id="alice", account_id="").status == "unverified"
+    assert projected.exact("sync.entitlements", "account",
+                           identity_id="alice", account_id="other") is None
+
+
+@pytest.mark.parametrize("status", ("failed", "cancelled"))
+def test_failed_loan_snapshot_must_not_produce_positive_branch_claim(status):
+    snap = _loan_snapshot(status=status)
+    result = project_existing_capabilities(
+        _descriptor(), identity_id="alice", loan_snapshot=snap,
+    )
+    branch = result.exact(
+        "loan.inventory.branch", "digital", field="pnblive",
+        identity_id="alice", account_id="card-a", credential_id="vault-a",
+    )
+    assert branch.status == "unverified"
+    assert branch.evidence_ref == ""
+    assert branch.reason == "branch_snapshot_" + status
+    assert not branch.authorizes_mutation
