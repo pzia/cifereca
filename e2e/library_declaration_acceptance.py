@@ -287,6 +287,16 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         assert rows('artifacts') == unchanged['artifacts']
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
         assert not declarations()
+        # CoreUI #3275: an attested placement is NOT a manually declared
+        # right/file correspondence. The native detail must not reuse the
+        # manual-consent success label for this independent path.
+        visible_labels = '\n'.join(
+            w.get_text() for w in walk(controller.dialog)
+            if isinstance(w, Gtk.Label) and w.get_mapped()
+        )
+        assert 'Correspondance enregistrée comme déclaration utilisateur' not in visible_labels
+        assert guided_step().startswith('Placement enregistré')
+        report['checks']['P1_3275_native_attested_not_mislabelled_manual'] = True
         report['checks']['P0_2842_native_attested_confirm_persists_placement'] = True
         until(lambda: button('Annuler le dernier placement…').get_visible()
               and button('Annuler le dernier placement…').get_sensitive(),
@@ -353,6 +363,20 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         assert {table: rows(table) for table in unchanged} == unchanged
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
         report['checks']['P0_2797_declaration_native_confirm_separate_trust'] = True
+        # The actual mapped GTK label, not only the SQLite declaration, must
+        # show the lower trust level and the absence of a supplier receipt.
+        def declared_label_visible():
+            return any(
+                isinstance(w, Gtk.Label) and w.get_mapped()
+                and 'Correspondance enregistrée comme déclaration utilisateur' in w.get_text()
+                and 'Aucun droit ou lien attesté créé' in w.get_text()
+                and 'Déclaration révocable' in w.get_text()
+                for w in walk(controller.dialog)
+            )
+        until(declared_label_visible, declared_label_checked)
+
+    def declared_label_checked():
+        report['checks']['P1_3275_native_declared_without_supplier_receipt'] = True
         until(lambda: button('Révoquer la déclaration…').get_visible(), revoke)
 
     def revoke():
