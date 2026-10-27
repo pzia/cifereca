@@ -1797,20 +1797,19 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _known_search_result(self, row):
-        meta = row.get("metadata") or {}
-        raw = meta.get("search_result")
-        if isinstance(raw, dict):
-            try: return SearchResult(**raw)
-            except TypeError: pass
-        provider = row.get("provider_id")
-        if provider == "local": return None
-        return SearchResult(str(row.get("key")), str(row.get("item_id") or ""), str(meta.get("docbase") or ""),
-            "digital", str(row.get("title") or ""), row.get("author"), None, row.get("media_format"),
-            meta.get("publisher"), None, None, row.get("thumbnail_url"), None, str(meta.get("scenario") or ""),
-            source_provider=str(provider), metadata=meta)
+        from .core.known_catalog_provenance import known_catalog_search_result
+        identity = getattr(self.service.current_identity, "identity_id", None)
+        return known_catalog_search_result(row, identity_id=identity)
 
     def _load_known_detail(self, item):
+        # A GTK callback can survive a book/account switch. Never schedule
+        # holdings for a different identity's previously selected cache row.
         from .search_host_port import SearchDetailPort
+        metadata = getattr(item, "metadata", None)
+        if (type(metadata) is dict and metadata.get("catalogue_scope_version") == 2
+                and metadata.get("known_catalog_identity_id") !=
+                getattr(self.service.current_identity, "identity_id", None)):
+            return
         return search_details._load_known_detail(SearchDetailPort(self), item)
 
     def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
