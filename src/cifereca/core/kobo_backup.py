@@ -992,11 +992,67 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
         ) from exc
 
 
+def _attested_received_kobo_copy(
+    row: dict[str, Any], path: Path, *,
+    identity_id: str, placements: dict[str, dict[str, Any]],
+) -> bool:
+    """A copied local file is not an *orphan Kobo acquisition* of recipient B.
+
+    Trust neither the catalogue label nor a filename alone: the recipient's
+    own persisted placement must corroborate the exact Core transfer markers.
+    This exception affects only the global unknown-books counter; a matching
+    supplier product still needs per-item reconciliation, never an implicit
+    Kobo entitlement/backup.
+    """
+    metadata = row.get("metadata")
+    if (row.get("provider_id") != "kobo" or type(metadata) is not dict
+            or type(identity_id) is not str or not identity_id
+            or not path.is_absolute() or path.is_symlink()
+            or path.resolve() != path):
+        return False
+    placement_id = row.get("placement_id")
+    placement = placements.get(placement_id) if type(placement_id) is str else None
+    if (type(placement) is not dict
+            or placement.get("state") != "present"
+            or placement.get("identity_id") != identity_id
+            or placement.get("provider_id") != "kobo"
+            or str(placement.get("source_item_id") or "") != str(row.get("item_id") or "")
+            or str(placement.get("artifact_id") or "") != str(row.get("artifact_id") or "")
+            or placement.get("path") != str(path)):
+        return False
+    placement_metadata = placement.get("metadata")
+    if type(placement_metadata) is not dict:
+        return False
+    origin = metadata.get("file_origin_identity_id")
+    from_placement = metadata.get("materialized_from")
+    if (type(origin) is not str or not origin or origin == identity_id
+            or type(from_placement) is not str or not from_placement):
+        return False
+    return all(
+        metadata.get(field) == placement_metadata.get(field) == value
+        for field, value in (
+            ("transfer_kind", "local_copy"),
+            ("file_origin_identity_id", origin),
+            ("materialized_from", from_placement),
+        )
+    )
+
+
 def kobo_unlinked_local_count(self, identity_id: str) -> int:
-    """Conservative guard, never infer a Kobo link from a filename/title."""
+    """Block true unlinked local books, not copies received from another ID.
+
+    Cross-identity copies are neither Kobo B rights nor backup receipts:
+    if B's manifest contains that product, _indexed_kobo_catalog_paths still
+    blocks *that item* for explicit reconciliation, not the entire batch.
+    """
     known = {str(Path(r["local_path"]).resolve()) for r in self.storage.backup_list("kobo")
              if r.get("identity_id") == identity_id and r.get("local_path")}
     default_id = self.identities[0].identity_id if self.identities else None
+    placements = {
+        str(row.get("placement_id") or ""): row
+        for row in self.storage.placements(state="present")
+        if row.get("identity_id") == identity_id
+    }
     paths = set()
     for row in self.storage.catalog_entries():
         owner = row.get("identity_id") or default_id
@@ -1005,6 +1061,10 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
                 and str(row.get("provider_id") or "local") in {"local", "kobo"} and raw):
             path = Path(raw)
             if path.is_file() and str(path.resolve()) not in known:
+                if _attested_received_kobo_copy(
+                    row, path, identity_id=identity_id, placements=placements,
+                ):
+                    continue
                 paths.add(str(path.resolve()))
     return len(paths)
 
