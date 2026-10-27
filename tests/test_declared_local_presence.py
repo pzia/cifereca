@@ -1,5 +1,7 @@
 """#3171: a declared pair can be locally present without an acquisition receipt."""
 import json
+import logging
+import sqlite3
 
 import pytest
 
@@ -102,3 +104,40 @@ def test_mutation_during_hash_is_revalidated_before_reporting_presence(rig, monk
     assert checked.status == 'needs_review'
     assert rows(service, 'acquisition_ledger') == rows(service, 'placements') == []
     assert book.is_file()
+
+
+@pytest.mark.parametrize('failure_kind', ['file', 'sqlite'])
+def test_declared_presence_raw_journal_keeps_original_failure_and_scope(
+    rig, monkeypatch, caplog, failure_kind,
+):
+    """No new network/DRM attempt; raw journal retains the caught cause."""
+    service, book, root, right, _ = rig
+    apply(rig)
+    monkeypatch.setattr(presence, 'acquisition_lock_file',
+                        lambda: root.parent / 'presence.lock')
+    raw_cause = RuntimeError('synthetic original disk/SQL cause for this book')
+    if failure_kind == 'file':
+        def broken(*_args, **_kwargs):
+            raise OSError('synthetic read failure') from raw_cause
+        monkeypatch.setattr(presence, 'revalidate_observed_file', broken)
+        expected = 'synthetic read failure'
+    else:
+        def broken(*_args, **_kwargs):
+            raise sqlite3.OperationalError('synthetic SQL failure') from raw_cause
+        monkeypatch.setattr(presence, '_records', broken)
+        expected = 'synthetic SQL failure'
+
+    earlier_bytes = book.read_bytes()
+    with caplog.at_level(logging.WARNING, logger='cifereca'):
+        outcome = check(rig)
+    assert outcome.status == 'needs_review' and outcome.reason == expected
+    assert book.read_bytes() == earlier_bytes
+    assert service.storage.acquisitions() == []
+    assert service.storage.placements() == []
+    assert expected in caplog.text
+    assert str(raw_cause) in caplog.text
+    assert 'The above exception was the direct cause' in caplog.text
+    assert 'TRACE declared presence check failed' in caplog.text
+    for field in ('identity_id', 'provider_id', 'credential_id',
+                  'account_id', 'item_id'):
+        assert f"{field}={right[field]}" in caplog.text
