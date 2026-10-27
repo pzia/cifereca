@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from ..core.search import local_match_explanation
+
 
 def project_library_rows(
     filtered_entries: Iterable[dict[str, Any]], *,
@@ -16,6 +18,8 @@ def project_library_rows(
     availability_label: Callable[[dict[str, Any]], str],
     backup_status_label: Callable[[str], str],
     format_date: Callable[[str], str],
+    query: str = "",
+    field: str = "all",
 ) -> tuple[list[Any], dict[str, dict[str, Any]]]:
     """Project the already-filtered snapshot, preserving keys and display order."""
     rows: list[Any] = []
@@ -31,6 +35,9 @@ def project_library_rows(
         key = str(item.get("key") or f"library:{len(objects)}")
         objects[key] = item
         meta_parts = [state] if state else []
+        match_reason = local_match_explanation(item, query, field=field)
+        if match_reason:
+            meta_parts.append(match_reason)
         # A store entitlement may have an expiry/refresh timestamp, but it
         # is never a library return deadline. Render "retour" only when
         # the row carries explicit loan provenance, not for owned rights.

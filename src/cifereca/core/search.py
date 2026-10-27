@@ -26,6 +26,31 @@ def _values(value: object) -> list[str]:
     return [str(value)]
 
 
+def _attested_author_names(value: object) -> list[str]:
+    """Only already-indexed author names, never arbitrary nested provider data.
+
+    Catalogues may project a list of authors without a single display author.
+    Objects, URLs and credential-like strings are not proof of authorship.
+    """
+    if type(value) is str:
+        candidates = (value,)
+    elif type(value) in (list, tuple) and len(value) <= 32:
+        candidates = value
+    else:
+        return []
+    names = []
+    for value in candidates:
+        if type(value) is not str or not 0 < len(value.strip()) <= 240:
+            continue
+        lowered = value.casefold()
+        if ("://" in lowered or any(marker in lowered for marker in
+                                  ("token=", "password=", "cookie=", "bearer " ))
+                or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            continue
+        names.append(value)
+    return names
+
+
 def _metadata(row: Mapping[str, Any]) -> dict[str, Any]:
     value = row.get("metadata")
     return dict(value) if isinstance(value, Mapping) else {}
@@ -62,7 +87,8 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
     if field == "title":
         return _values(row.get("title")) + _bundle_member_values(row, field)
     if field == "author":
-        return _values(row.get("author")) + _bundle_member_values(row, field)
+        return (_values(row.get("author")) + _attested_author_names(meta.get("authors"))
+                + _bundle_member_values(row, field))
     if field == "isbn":
         return _values(row.get("isbn")) + _values(row.get("item_id")) + _values(meta.get("isbn")) + _values(meta.get("isbns"))
     if field == "subject":
@@ -131,6 +157,8 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
         ("collection", 75, _values(meta.get("collection")) + _values(search.get("collection"))
          + _bundle_member_values(row, "collection")),
         ("author", 70, _values(row.get("author")) + _values(search.get("author"))
+         + _attested_author_names(meta.get("authors"))
+         + _attested_author_names(search.get("authors"))
          + _bundle_member_values(row, "author")),
         ("subject", 50, _values(meta.get("subjects")) + _values(meta.get("subject"))
          + _values(meta.get("themes")) + _values(meta.get("keywords"))
@@ -165,6 +193,37 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
         if name not in matched_fields:
             matched_fields.append(name)
     return total, tuple(matched_fields)
+
+
+_LOCAL_MATCH_LABELS = {
+    "title": "Titre",
+    "series": "Série",
+    "collection": "Collection",
+    "author": "Auteur",
+    "subject": "Sujet",
+    "award": "Prix littéraire",
+    "description": "Résumé",
+    "publisher": "Éditeur",
+    "identifier": "Identifiant",
+    "language": "Langue",
+}
+
+
+def local_match_explanation(row: Mapping[str, Any], query: str, *, field: str = "all") -> str:
+    """Explain attested local matches; never claim a remote catalogue hit.
+
+    Explicit field searches retain their strict semantics and cannot acquire
+    an all-fields reason. The score remains available via local_search_evidence.
+    """
+    if (type(query) is not str or not query.strip()
+            or str(field or "all").casefold() != "all"):
+        return ""
+    score, fields = local_search_evidence(row, query)
+    if not score or not fields:
+        return ""
+    return "Correspondance : " + " · ".join(
+        _LOCAL_MATCH_LABELS[name] for name in fields if name in _LOCAL_MATCH_LABELS
+    )
 
 
 def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
@@ -458,4 +517,4 @@ class KnownCatalogSearch:
         )
 
 
-__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "local_search_evidence", "available_formats", "project_acquisition_offer_formats", "support_kind"]
+__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "local_search_evidence", "local_match_explanation", "available_formats", "project_acquisition_offer_formats", "support_kind"]

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 from ..models import SearchResult
-from ..core.search import file_format
+from ..core.search import file_format, local_match_explanation
 from .book_widgets import BookListItem
 from .query_model import result_row
 
@@ -103,7 +103,7 @@ def _render_search_results(self) -> int:
             provider = str(item.get("provider_id") or "local")
             local_rows.append(BookListItem(
                 key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
-                " · ".join(x for x in [self._library_state_label(item)] if x),
+                " · ".join(x for x in [self._library_state_label(item), local_match_explanation(item, state.text, field=state.field)] if x),
                 self.service.provider_display_name(provider) if provider != "local" else "Local",
                 item.get("thumbnail_url"),
             ))
@@ -130,7 +130,8 @@ def _render_search_results(self) -> int:
         known_key = (known.get('provider_id'), known.get('source_credential') or (known.get('metadata') or {}).get('source_credential'), str(known.get('item_id') or ''))
         if known_key in remote_keys and not known.get('local'): continue
         ui_rows.append(BookListItem(str(known["key"]), str(known.get("title") or "Sans titre"), str(known.get("author") or ""),
-            "", self.service.provider_display_name(str(known.get("provider_id") or "local")), known.get("thumbnail_url")))
+            local_match_explanation(known, state.text, field=state.field),
+            self.service.provider_display_name(str(known.get("provider_id") or "local")), known.get("thumbnail_url")))
     filtered = {row["key"] for row in state.filter([{**result_row(x), "key": f"{x.source_provider}:{x.id}"} for x in self._remote_search_results])}
     for item in self._remote_search_results:
         key = f"{item.source_provider}:{item.id}"
