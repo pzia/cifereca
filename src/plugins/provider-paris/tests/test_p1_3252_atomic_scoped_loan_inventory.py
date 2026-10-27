@@ -7,7 +7,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
-from cifereca.plugin_api import Account, Loan
+import pytest
+
+from cifereca.plugin_api import Account, Loan, ProviderConfigurationError
 from cifereca_paris import ParisProviderSession
 
 
@@ -129,5 +131,66 @@ def test_same_account_snapshot_is_one_read_per_branch_without_claiming_absence()
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
         ]
         assert not any(branch.completeness == "complete" for branch in snap.branches)
+    finally:
+        session.close()
+
+
+def test_typed_branch_failure_survives_legacy_side_channel_cleared():
+    session, a, _ = fixture()
+    original = session.loans
+
+    def clear_v1_after_read(account):
+        rows = original(account)
+        session.last_loan_errors.clear()
+        return rows
+
+    session.loans = clear_v1_after_read
+    try:
+        snapshot = session.loan_inventory_snapshot(a)
+        assert session.last_loan_errors == []
+        assert snapshot.status == "partial"
+        assert snapshot.reason_code == "branch_unavailable"
+        assert {(branch.upstream, branch.completeness)
+                for branch in snapshot.branches} == {
+                    ("dilicom", "partial"), ("syracuse", "unknown"),
+                }
+        assert len(snapshot.loans) == 1
+        assert session.client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
+def test_typed_success_ignores_stale_legacy_failure_from_another_read():
+    session, _a, b = fixture()
+    original = session.loans
+
+    def inject_v1_error_after_read(account):
+        rows = original(account)
+        session.last_loan_errors = [{"upstream": "DILICOM", "code": "stale"}]
+        return rows
+
+    session.loans = inject_v1_error_after_read
+    try:
+        snapshot = session.loan_inventory_snapshot(b)
+        assert snapshot.status == "success"
+        assert snapshot.reason_code is None
+        assert len(snapshot.loans) == 2
+        assert all(branch.completeness == "unknown" for branch in snapshot.branches)
+        assert session.client.calls == [
+            ("DILICOM", "reader-B"), ("SYRACUSE", "reader-B"),
+        ]
+    finally:
+        session.close()
+
+
+def test_typed_reader_without_scoped_branch_evidence_fails_closed():
+    session, a, _ = fixture()
+    session.loans = lambda _account: []  # Bad v1 shim: no branch GET/evidence.
+    try:
+        with pytest.raises(ProviderConfigurationError, match="loan_inventory_evidence_missing"):
+            session.loan_inventory_snapshot(a)
+        assert session.client.calls == []
     finally:
         session.close()
