@@ -2,8 +2,6 @@
 
 Tests exercise real synthetic BnF HTTPX + Core, no live SSO or Adobe I/O.
 """
-from pathlib import Path
-
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
