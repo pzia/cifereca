@@ -65,7 +65,9 @@ def test_recent_materialization_to_other_identity_keeps_source():
             assert result["status"] == "complete"
             assert src.exists()
             assert Path(result["path"]).exists()
-            assert Path(result["path"]).parent == Path(td) / "EBooks" / "alex" / "kobo"
+            # A folder named kobo is not proof of a Kobo purchase. Copying an
+            # unattested local file to another identity uses the shared area.
+            assert Path(result["path"]).parent == Path(td) / "EBooks" / "alex" / "shared"
         finally:
             service.close()
 
