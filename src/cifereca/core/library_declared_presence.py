@@ -5,7 +5,6 @@ one already selected file under the acquisition lock; no global scan, network,
 file movement, rights write or currently selected GUI identity is involved.
 """
 from dataclasses import dataclass
-import sqlite3
 from contextlib import nullcontext
 
 from ..locking import InterProcessLock, LockBusyError
