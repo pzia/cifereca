@@ -120,3 +120,38 @@ def test_exact_historical_receipt_still_attests_provider_in_other_folder(tmp_pat
         assert len(store.acquisitions()) == 1
     finally:
         store.close()
+
+
+def test_targeted_index_cannot_inherit_foreign_legacy_receipt_by_path(tmp_path):
+    store, root = _environment(tmp_path)
+    path = _file(root, "other", "historical-from-other-identity.pdf")
+    try:
+        # Simulate a partially migrated 0.7 database: an old Kobo projection
+        # points at a file currently physically under another identity.
+        # The row is intentionally not mirrored to canonical placements.
+        with store._lock, store._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,identity_id,account_id,"
+                "local_path,title,status) VALUES(?,?,?,?,?,?,?,?)",
+                ("foreign-provider", "foreign-credential", "other-edition",
+                 "other-reader", "foreign-borrower", str(path),
+                 "Foreign historical receipt", "complete"),
+            )
+        assert LocalCatalog(store, root).index_path(path)["status"] == "indexed"
+        placement = store.placement_for_path(path)
+        assert placement is not None
+        assert placement["identity_id"] == "reader"
+        assert placement["provider_id"] is None
+        assert placement["source_item_id"] is None
+        linked = [
+            item for item in store.catalog_entries()
+            if item["placement_id"] == placement["placement_id"]
+        ]
+        assert len(linked) == 1
+        assert linked[0]["provider_id"] is None
+        assert linked[0]["item_id"] is None
+        assert len(store.backup_list()) == 1
+        assert store.entitlements() == []
+    finally:
+        store.close()
