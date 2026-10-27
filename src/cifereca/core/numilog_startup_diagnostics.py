@@ -26,6 +26,19 @@ CODES = frozenset({"started", "complete", "not_due", "consent_revoked", "admissi
     "acquisition_post_delivery_failed", "acquisition_artifact_invalid",
     "acquisition_receipt_failed"})
 STATUSES = frozenset({"running", "complete", "partial", "failed", "blocked", "not_due"})
+# Per-purchase *position within this one authenticated manifest* + closed outcome.
+# Neither a product ID nor a stable cross-run fingerprint ever leaves the Core.
+# Maximum eight listed decisions prevents private-library enumeration; further
+# purchases are represented only by the existing bounded totals.
+ITEM_DECISIONS = frozenset({
+    "already_local_declared", "declared_needs_review",
+    "already_local_verified", "not_downloadable",
+    "needs_reconciliation", "purchase_unproven", "source_not_ready",
+    "evidence_unavailable", "source_changed", "invalid_source",
+    "invalid_item_id", "preflight_failed", "consent_revoked",
+    "quota_reached", "acquired", "acquisition_failed",
+})
+
 COUNTS = ("attempted", "downloaded", "skipped", "failed")
 _KEY = "sync.source.numilog.materialization.diagnostic.v1."
 _CLOCK = "sync.source.numilog.materialization.last_start.v1."
@@ -39,7 +52,7 @@ def public_fields(detail):
     if type(detail) is not dict:
         return {}
     allowed = {"phase", "cause_phase", "code", "status", "task_kind", *COUNTS,
-               "task_ref", "run_ref"}
+               "task_ref", "run_ref", "item_decisions", "items_truncated"}
     if set(detail) - allowed:
         return {}
     for key, values in (("phase", PHASES), ("cause_phase", PHASES),
@@ -60,6 +73,28 @@ def public_fields(detail):
                 detail["attempted"] != 0 or detail["downloaded"] != 0
                 or detail["failed"] != 0
             )):
+        return {}
+    item_decisions = detail.get("item_decisions")
+    if item_decisions is not None:
+        if (type(item_decisions) is not list
+                or len(item_decisions) > 8
+                or any(
+                    type(row) is not dict or set(row) != {"position", "decision"}
+                    or type(row.get("position")) is not int
+                    or not 1 <= row["position"] <= 2048
+                    or type(row.get("decision")) is not str
+                    or row["decision"] not in ITEM_DECISIONS
+                    for row in item_decisions
+                )
+                or [row["position"] for row in item_decisions] != sorted(
+                    {row["position"] for row in item_decisions}
+                )):
+            return {}
+    if "items_truncated" in detail and (
+        type(detail["items_truncated"]) is not bool
+        or (detail["items_truncated"] is True and
+            (item_decisions is None or len(item_decisions) != 8))
+    ):
         return {}
     for key in ("task_ref", "run_ref"):
         if key in detail and (type(detail[key]) is not str or
@@ -152,6 +187,8 @@ class StartupTrace:
         self.service, self.source_id = service, source_id
         self.phase, self.cause = "admission", None
         self.counts = dict.fromkeys(COUNTS, 0)
+        self.item_decisions = []
+        self.items_truncated = False
         self.refs = {}
         self.clock = None
         self.claimed = False
@@ -164,10 +201,27 @@ class StartupTrace:
         except Exception:
             pass
 
+    def record_item(self, position, decision):
+        """Save only bounded, allowlisted positions from this ONE manifest."""
+        if (type(position) is not int or not 1 <= position <= 2048
+                or type(decision) is not str or decision not in ITEM_DECISIONS):
+            return
+        if len(self.item_decisions) == 8:
+            self.items_truncated = True
+        else:
+            # The structured journal serializes nested objects with sorted
+            # JSON keys, whereas its closed human-readable companion uses
+            # Python insertion order. Match both representations exactly.
+            self.item_decisions.append({"decision": decision, "position": position})
+
     def fields(self, phase, code, status):
         cause_phase = self.cause[0] if self.cause else phase
+        details = dict(
+            item_decisions=list(self.item_decisions),
+            items_truncated=self.items_truncated,
+        ) if self.item_decisions else {}
         return dict(phase=phase, cause_phase=cause_phase, code=code, status=status,
-                    task_kind="source-materialize", **self.counts, **self.refs)
+                    task_kind="source-materialize", **self.counts, **details, **self.refs)
 
     def emit(self, phase, code, status="running"):
         fields = public_fields(self.fields(phase, code, status))
