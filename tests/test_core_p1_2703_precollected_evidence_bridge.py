@@ -41,11 +41,14 @@ def test_federated_catalogue_sync_and_loans_remain_independent_scoped_claims():
                        identity_id="alice", account_id="card-a")
     assert sync.status == "unverified"
     assert sync.source_kind == "code"
+    assert sync.connected is False  # Core Paris source is disconnected
     loan = paris.exact("loan.inventory", "account",
                        identity_id="alice", account_id="card-a",
                        credential_id="vault-a")
     assert loan.status == "supported"
     assert loan.source_kind == "account_observation"
+    assert loan.connected is False  # Historical proof is not current connectivity
+    assert loan.enabled is True
     assert paris.exact("loan.inventory", "account", identity_id="alice",
                        account_id="card-a", credential_id="wrong") is None
     assert paris.exact("sync.entitlements", "account",
