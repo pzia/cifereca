@@ -72,7 +72,7 @@ LOCAL_GUI = {
     "maintenance_line_widgets.py": MAINT,
 }
 PROBES = {
-    "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366"),
+    "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
     "e2e/book_detail_probe.py": BOOK_DETAIL,
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
