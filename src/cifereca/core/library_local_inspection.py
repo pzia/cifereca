@@ -1079,6 +1079,30 @@ class LocalInspection:
             and type(row.get('provider_id')) is str
             and type(row.get('item_id')) is str
         )
+        # Only a no-follow FS observation of a regular file may be shown
+        # as a *candidate* replacement location. SQLite state='present' on
+        # its own does not prove that any file still exists. Match all three
+        # stored coordinates; never join across identities/providers/editions
+        # on a shared SHA, and never call this an attested entitlement link.
+        present_locations: dict[tuple[str, str, str], list[str]] = {}
+        present_counts: Counter = Counter()
+        for other_index, other in enumerate(placements):
+            if (other.get('identity_id') != identity_id
+                    or audit.stored_paths.states.get(other_index) != 'stored_path_present'):
+                continue
+            coords = (
+                other.get('artifact_id'), other.get('provider_id'),
+                other.get('source_item_id'),
+            )
+            other_path = other.get('path')
+            if (not all(type(value) is str and value for value in coords)
+                    or type(other_path) is not str or not other_path
+                    or len(other_path) > 4096):
+                continue
+            present_counts[coords] += 1
+            bounded = present_locations.setdefault(coords, [])
+            if len(bounded) < 5:
+                bounded.append(other_path)
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
                 continue
@@ -1119,10 +1143,31 @@ class LocalInspection:
                      if type(provider) is str and type(edition) is str and edition
                      else 0),
                 )
+                # Show at most five already-observed alternative paths for
+                # this exact recorded scope. This is diagnostic UI only; the
+                # old and new bytes, receipt, account and rights still require
+                # fresh revalidation and explicit user confirmation.
+                exact_scope = (artifact_id, provider, edition)
+                alternatives = [
+                    other_path for other_path in present_locations.get(exact_scope, ())
+                    if other_path != placement.get('path')
+                ][:5] if all(type(value) is str and value
+                            for value in exact_scope) else []
                 details += (
                     '\n\nPrévisualisation des références enregistrées (lecture seule) :\n'
                     + '\n'.join(
                         f'• {name} : {count}' for name, count in reference_counts
+                    )
+                    + (
+                        '\nEmplacements candidats déjà observés comme fichiers réguliers '
+                        '(même artefact, fournisseur et édition enregistrés ; '
+                        'aucune attestation de compte, licence ni octets) :\n'
+                        + '\n'.join('• ' + path for path in alternatives)
+                        + ('\n• Autres candidats non affichés (limite 5).'
+                           if present_counts[exact_scope] > 5 else '')
+                        if alternatives else
+                        '\nAucun autre chemin de même portée observé présent ; '
+                        'cela ne prouve pas que le livre est absent.'
                     )
                     + '\nLes métadonnées opérationnelles JSON, déclarations et '
                     'références hors du périmètre inspecté ne sont pas qualifiées '
