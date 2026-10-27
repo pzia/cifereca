@@ -1136,6 +1136,15 @@ class LibraryService:
         from .core.catalogue_source_inventory import catalogue_source_capabilities
         return catalogue_source_capabilities(self, identity_id=identity_id)
 
+    def capability_matrices(self, identity_id: str | None = None):
+        """Read-only per-source capability matrices for an exact known identity.
+
+        Code and connection state are not live provider proof or permission
+        to borrow, acquire, transfer or refresh a catalogue.
+        """
+        from .core.capability_inventory import capability_matrices_for_identity
+        return capability_matrices_for_identity(self, identity_id=identity_id)
+
     @staticmethod
     def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
         return search_orchestration._search_contract_warning(session, field, scope, facade_type=LibraryService)
