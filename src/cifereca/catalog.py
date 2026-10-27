@@ -172,10 +172,13 @@ class LocalCatalog:
                         identity_id = owner
             except Exception:
                 pass
-            # A folder name is not proof of a declared identity.
-            return identity_id, parts[1]
-        if len(parts) >= 2:
-            return None, parts[0]
+            # The registered directory can identify the local library, but
+            # its second component is ONLY a physical folder label. A path
+            # like <identity>/manual/, /other/, or even /numilog/ does not
+            # attest an acquisition provider. Only an explicit caller scope,
+            # exact historical receipt or existing placement can supply that.
+            return identity_id, None
+        # Likewise a top-level directory is not a supplier declaration.
         return None, None
 
     def _legacy_provenance(self, path: Path) -> dict[str, Any] | None:
