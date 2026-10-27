@@ -14,7 +14,8 @@ import pytest
 from cifereca.core import library_declared_links as declarations
 from cifereca.core.library_inventory import scan_identity_roots
 from cifereca.models import Account
-from tests.test_core_p1_3275_kobo_received_copy_preflight import _kobo_source
+from cifereca.library_files import sha256_file
+from tests.test_library_reconciliation import epub
 from tests.test_kobo_backup_guard import (
     KoboSession, _manifest_row, _service,
 )
@@ -29,7 +30,26 @@ def test_b_own_manifest_plus_received_a_file_needs_explicit_user_declaration(
         lambda: tmp_path / "user-declaration.lock",
     )
     try:
-        source, source_placement = _kobo_source(service, tmp_path)
+        # The cheap backup fixture uses a ZIP sufficient for transfer, but
+        # the *declaration writer* correctly requires a fully validated EPUB.
+        # Build exact source records from a structurally valid scanned book.
+        source = tmp_path / "EBooks" / "alice" / "kobo" / "Book.epub"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        epub(source, title="Synthetic Kobo Book")
+        artifact_id = "sha256:" + sha256_file(source)
+        source_placement = service.storage.placement_put({
+            "artifact_id": artifact_id, "path": str(source),
+            "identity_id": "alice", "provider_id": "kobo",
+            "source_item_id": "book-1", "state": "present", "metadata": {},
+        })
+        service.storage.catalog_entry_put({
+            "catalog_entry_id": "alice-kobo-book-1",
+            "artifact_id": artifact_id, "placement_id": source_placement,
+            "title": "Synthetic Kobo Book", "author": "Synthetic Author",
+            "identity_id": "alice", "provider_id": "kobo",
+            "item_id": "book-1", "local_state": "local", "media_format": "epub",
+            "metadata": {"path": str(source), "source_credential": "vault-1"},
+        })
         source_bytes = source.read_bytes()
         received = Path(
             service.materialize_to_identity(source_placement, "bob")["path"]
