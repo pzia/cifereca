@@ -10,13 +10,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+from inspect import getattr_static
 import json
 import uuid
 from typing import Any
 
 from ..models import Loan
+from ..providers.base import ProviderCapabilities, ProviderDescriptor, ProviderSession
 from ..plugin_api.loan_inventory import read_loan_inventory
-from .loan_action_scope import capture_loan_action_scope
+from .loan_action_scope import capture_loan_action_scope, _inert_session_state
 
 
 def _public(status: str, code: str, *, accepted: bool = False) -> dict[str, Any]:
@@ -87,6 +89,38 @@ def _same_positive_loan(candidate: Any, selected: Loan, account: Any) -> bool:
     return True
 
 
+def _renew_source_ready_inert(session: object, credential_id: str) -> bool:
+    """Inspect initialized source capabilities without a plugin getter.
+
+    This availability check only reads already-stored values. It never grants
+    borrower permissions or sends a RenewLoans request.
+    """
+    memory = _inert_session_state(session)
+    if memory is None:
+        return False
+    # A plugin-defined capabilities property might issue HTTP. The base
+    # ProviderSession property is safe but we avoid invoking even that one.
+    if getattr_static(type(session), "capabilities", None) is not (
+        ProviderSession.__dict__["capabilities"]
+    ):
+        return False
+    shadow = getattr_static(type(session), "descriptor", None)
+    if shadow is not None and getattr_static(type(shadow), "__get__", None) is not None:
+        return False
+    descriptor = memory.get("descriptor")
+    if (type(descriptor) is not ProviderDescriptor
+            or type(descriptor.capabilities) is not ProviderCapabilities):
+        return False
+    return bool(
+        memory.get("connected") is True
+        and memory.get("_closed") is not True
+        and memory.get("provider_id") == "paris"
+        and memory.get("credential_id") == credential_id
+        and descriptor.id == "paris"
+        and vars(descriptor.capabilities).get("renew_loan") is True
+    )
+
+
 def renew(self, loan: Loan) -> dict[str, Any]:
     """Called by the Core facade after strict manual consent and its lock."""
     key = _source_key(loan)
@@ -123,10 +157,9 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         # currently selected account or another credential as a fallback.
         account, session, _return_key = self._return_loan_identity(loan)
         if (account.identity_id != loan.identity_id
-                or session.connected is not True
-                or session.provider_id != "paris"
-                or session.credential_id != loan.source_credential
-                or getattr(session.capabilities, "renew_loan", None) is not True):
+                or not _renew_source_ready_inert(
+                    session, loan.source_credential,
+                )):
             return _public("blocked", "loan_scope_unverified")
         # Loan.state from older Paris models may be None even when CanRenew is
         # attested upstream. This normalized *scope copy* cannot authorize
