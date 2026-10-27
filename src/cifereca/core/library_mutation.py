@@ -117,8 +117,20 @@ def materialize_to_identity(self, placement_id: str, target_identity_id: str) ->
                 and meta.get("materialized_from") == placement_id):
             path = Path(str(row.get("path") or ""))
             if path.parent == dest_dir and path != src and verified_target(path):
-                owned_copy = (path, row)
-                break
+                exact_provenance = (
+                    meta.get("transfer_kind") == "local_copy"
+                    and meta.get("file_origin_identity_id") == owner
+                )
+                # Old A→B hardlinks can be repaired in place: the shared
+                # inode establishes their physical origin independently of
+                # incomplete legacy metadata. An unrelated independent B
+                # file must not be adopted solely from materialized_from.
+                legacy_hardlink = (
+                    not is_bundle and os.path.samefile(src, path)
+                )
+                if exact_provenance or legacy_hardlink:
+                    owned_copy = (path, row)
+                    break
 
     def copy_regular(dest: Path, *, replace: bool = False) -> None:
         # Publish an independent inode: never os.link(source, destination).
