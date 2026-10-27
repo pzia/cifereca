@@ -5,6 +5,7 @@ one already selected file under the acquisition lock; no global scan, network,
 file movement, rights write or currently selected GUI identity is involved.
 """
 from dataclasses import dataclass
+import logging
 import sqlite3
 from contextlib import nullcontext
 
@@ -17,6 +18,9 @@ from .library_declared_links import (
 )
 from .library_fresh_file_check import revalidate_observed_file
 from .library_inventory import FileObservation
+
+
+_TRACE_LOG = logging.getLogger("cifereca")
 
 
 @dataclass(frozen=True)
@@ -130,4 +134,14 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
     except LockBusyError:
         return DeclaredPresence('needs_review', 'acquisition_busy')
     except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+        # A closed reconciliation outcome does not replace the original
+        # SQLite/filesystem failure. Keep the full observed cause (including
+        # chained exceptions) in the canonical raw journal; do not inspect
+        # anything else, issue a GET, or change the action's admission.
+        _TRACE_LOG.warning(
+            "TRACE declared presence check failed identity_id=%s provider_id=%s "
+            "credential_id=%s account_id=%s item_id=%s expected_loan_id=%s",
+            identity_id, provider_id, credential_id, account_id, item_id,
+            expected_loan_id, exc_info=True,
+        )
         return DeclaredPresence('needs_review', str(error))
