@@ -117,3 +117,19 @@ def test_one_letter_subject_qualifier_is_not_a_substring_of_unrelated_tags():
     assert filter_loaded_results(
         [edition_a, edition_b], "Cartograph", field="subject",
     ) == [edition_b]
+
+
+
+def test_single_letter_subject_term_requires_a_word_not_a_prefix():
+    subject_x = _item("explicit-X", "alice", subjects=["Cycle X"])
+    unrelated = _item("unrelated", "alice", keywords=["Xylophone"])
+    assert filter_loaded_results(
+        [subject_x, unrelated], "cycle x", field="subject",
+    ) == [subject_x]
+    assert filter_loaded_results(
+        [subject_x, unrelated], "x", field="subject",
+    ) == [subject_x]
+    # Search with explicit Sujet remains constrained to its typed field.
+    assert filter_loaded_results(
+        [subject_x, unrelated], "x", field="title",
+    ) == []
