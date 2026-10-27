@@ -157,6 +157,7 @@ def test_existing_canonical_complete_stays_complete_during_first_old_projection(
         canonical_id = storage._acquisition_id_for(row)
         storage.acquisition_put({
             "acquisition_id": canonical_id,
+            "entitlement_id": storage._entitlement_id_for(row),
             "identity_id": "alice", "provider_id": "kobo",
             "credential_id": "card-a", "account_id": "reader",
             "item_id": "book", "title": "Direct Core acquisition",
