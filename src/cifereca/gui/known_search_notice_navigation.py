@@ -51,6 +51,19 @@ def _exact_known_row(window: Any, *, provider: str, credential: str,
             return None
         if service.storage.identity_for_connection(provider, credential) != identity_id:
             return None
+        # The connection may be explicitly disabled while a stale Python
+        # session remains registered. Only ONE enabled current binding can
+        # permit a live-availability action from the cached Search detail.
+        bindings = service.storage.provider_connections(identity_id=identity_id)
+        if (type(bindings) is not list or len(bindings) > 512
+                or sum(
+                    type(binding) is dict
+                    and binding.get("provider_id") == provider
+                    and binding.get("credential_id") == credential
+                    and binding.get("enabled") is True
+                    for binding in bindings
+                ) != 1):
+            return None
         entry = service.storage.catalog_entries_by_ids([scope_id]).get(scope_id)
     except Exception:
         return None
