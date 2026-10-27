@@ -131,3 +131,29 @@ déjà acquis sont projetables séparément via
 après sélection exacte de leur compte/credential. Le pont CoreUI pour ces
 preuves historiques reste explicitement à terminer, ainsi que les 7
 familles de capacités par source, sans élargir artificiellement les scopes.
+
+## Lecture Core des preuves déjà collectées (#2703, tranche 4)
+
+`LibraryService.capability_matrices_with_precollected_evidence(identity_id,
+sync_sources=(...), loan_snapshots=(...))` complète la projection déclarative
+existante, **uniquement** avec des snapshots déjà récupérés et sélectionnés
+par le consommateur dans leur portée exacte. L'appel ne lit jamais le broker
+Sync, le réseau ou un fournisseur, et n'effectue aucune migration SQLite.
+En l'absence de snapshots, le résultat est identique à
+`LibraryService.capability_matrices(identity_id)`.
+
+Les observations `sync.*` gardent le statut `unverified/code`, les
+snapshots de prêts complets produisent des états informatifs
+`supported/account_observation` **pour le compte + credential exact**.
+Deux credentials pour le même emprunteur sont distincts. Deux observations
+pour **la même clé complète** échouent explicitement avec
+`capability_duplicate_scope` : jamais de « dernier arrivé gagne ».
+Un provider désactivé ou non admis par l'inventaire Core n'est pas ajouté
+silencieusement ; les mélanges A/B et les types invalides sont refusés.
+
+**Responsabilité du caller :** valider avant passage des snapshots leur
+source, session/epoch/fraîcheur réelle et permissions de lecture. Même une
+observation complète datant du passé **ne donne aucune autorisation** :
+`authorizes_mutation=False` pour toutes les cases. Le point d'entrée
+n'exécute aucune acquisition ou synchronisation et ne prétend pas attester
+les sept familles, ni la recette CoreUI/GTK.
