@@ -1036,15 +1036,13 @@ class LibraryMaintenanceBrokerImpl:
             # An SQL failure leaves ALL files intact. A crash after the commit
             # may leave an unindexed, recoverable file, never a live placement
             # pointing to already-deleted bytes.
-            for placement_id, _path, _named in verified:
-                self.service.storage.placement_delete(placement_id)
-            self.service.storage.artifact_variant_delete(
-                str(variant.get("variant_id") or ""),
+            self.service.storage.artifact_variant_retire_atomic(
+                variant_id=str(variant.get("variant_id") or ""),
+                artifact_id=request.artifact_id,
+                source_artifact_id=source_id,
+                placement_id=verified[0][0] if verified else None,
+                placement_path=str(verified[0][1]) if verified else None,
             )
-            for purpose in ("read", "export", "transfer"):
-                key = f"artifact.variant.preferred.{source_id}.{purpose}"
-                if self.service.storage.metadata_get(key) == request.artifact_id:
-                    self.service.storage.metadata_set(key, "")
             cleanup_pending = False
             for placement_id, path, expected in verified:
                 try:
