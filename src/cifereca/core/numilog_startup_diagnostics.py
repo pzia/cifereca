@@ -201,11 +201,24 @@ class StartupTrace:
         except Exception:
             pass
 
-    def record_item(self, position, decision):
-        """Save only bounded, allowlisted positions from this ONE manifest."""
+    def record_item(self, position, decision, *, item_id=None):
+        """Emit exact raw purchase evidence; keep the bounded UI projection."""
         if (type(position) is not int or not 1 <= position <= 2048
                 or type(decision) is not str or decision not in ITEM_DECISIONS):
             return
+        # The caller passes only a uniquely validated ID from its authenticated
+        # account manifest. A position alone is not stable across two runs.
+        # Keep this observed identifier in the RAW journal, not in the
+        # compact per-run GTK aggregate; no additional provider request.
+        if (type(item_id) is str and 0 < len(item_id) <= 1024
+                and not any(ch in item_id for ch in "\0\r\n")):
+            _LOG.info(
+                "TRACE numilog purchase decision provider_id=numilog "
+                "source_id=%s item_id=%s position=%s decision=%s "
+                "run_ref=%s task_ref=%s",
+                self.source_id, item_id, position, decision,
+                self.refs.get("run_ref"), self.refs.get("task_ref"),
+            )
         if len(self.item_decisions) == 8:
             self.items_truncated = True
         else:
