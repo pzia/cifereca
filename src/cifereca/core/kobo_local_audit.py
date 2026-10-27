@@ -259,6 +259,16 @@ def kobo_local_reconciliation_audit(
         row for row in service.storage.backup_list("kobo")
         if row.get("credential_id") in valid_owner
     ]
+    # backup_items is a legacy compatibility projection. A credential may
+    # still name rows retained from a previous identity binding. Never
+    # attribute those paths, bytes or SHA matches to the current owner.
+    # Refuse BEFORE cataloguing or probing either identity's local files.
+    if any(
+        type(row.get("identity_id")) is not str
+        or row["identity_id"] != valid_owner[row["credential_id"]]
+        for row in records
+    ):
+        raise ValueError("ambiguous_kobo_audit_scope")
     # Other providers' indexed local files are not Kobo orphan candidates.
     # The only scan roots remain confined to the selected Kobo identities.
     all_catalog = service.storage.catalog_entries()
@@ -293,6 +303,15 @@ def kobo_local_reconciliation_audit(
             provider_id="kobo", state="active",
         ) if row.get("credential_id") in valid_owner
     ]
+    # Active rights are canonical but their credential alone still is not
+    # the recipient. A stale entitlement for another identity (or no owner)
+    # must not count toward this reader's verified local materialization.
+    if any(
+        type(row.get("identity_id")) is not str
+        or row["identity_id"] != valid_owner[row["credential_id"]]
+        for row in entitlements
+    ):
+        raise ValueError("ambiguous_kobo_audit_scope")
     scopes = []
     for index, row in enumerate(selected, start=1):
         identity = row["identity_id"]
