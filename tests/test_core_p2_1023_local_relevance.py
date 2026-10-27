@@ -151,3 +151,38 @@ def test_nested_unverified_author_objects_and_credential_like_values_are_not_ind
     assert not filter_loaded_results([row], "private")
     assert not filter_loaded_results([row], "secret")
     assert [r["item_id"] for r in filter_loaded_results([row], "published", field="author")] == ["a"]
+
+
+def test_bundle_paths_are_not_searchable_but_member_bibliography_still_is():
+    """Physical archive paths are not titles, subjects or search evidence."""
+    book = row("bundle-1", "Recueil", bundle_members=[
+        {
+            "title": "Les étoiles de Paris",
+            "author": "Camille Dupont",
+            "path": "/home/private-folder-marker/archive/volume.epub",
+            "metadata": {
+                "subjects": ["Astronomie"],
+                "series": "Carnets du ciel",
+                "collection": "Bibliothèque des sciences",
+            },
+        },
+        {
+            "title": "Les cartes anciennes",
+            "path": "manual/credential-marker-fragment.epub",
+        },
+    ])
+    for term in ("private-folder-marker", "credential-marker-fragment"):
+        assert filter_loaded_results([book], term) == []
+        assert local_search_evidence(book, term) == (0, ())
+        assert local_match_explanation(book, term) == ""
+        assert filter_loaded_results([book], term, field="title") == []
+    for field, term in (
+        ("title", "étoiles"),
+        ("author", "Camille"),
+        ("subject", "Astronomie"),
+        ("series", "Carnets"),
+        ("collection", "sciences"),
+    ):
+        assert filter_loaded_results([book], term, field=field) == [book]
+        assert filter_loaded_results([book], term, field="all") == [book]
+    assert local_match_explanation(book, "étoiles") == "Correspondance : Titre"
