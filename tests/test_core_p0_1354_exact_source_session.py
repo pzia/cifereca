@@ -7,7 +7,6 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.gui.main_window import MainWindow
 from cifereca.providers import ProviderConfigurationError
 from tests.test_sync_state_contract import _service
 
@@ -55,6 +54,10 @@ def test_missing_explicit_credential_cannot_fall_back_to_live_sibling(
 
 
 def test_search_borrow_action_refuses_stale_B_when_A_connected(tmp_path):
+    # Core PR CI does not install GI. Keep GUI contract checks on GTK-capable
+    # test hosts without preventing collection of all non-GUI Core tests.
+    pytest.importorskip("gi")
+    from cifereca.gui.main_window import MainWindow
     service = _service(tmp_path)
     try:
         a, _b = _sessions(service)
