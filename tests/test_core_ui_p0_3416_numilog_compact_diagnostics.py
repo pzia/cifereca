@@ -27,7 +27,7 @@ def test_compact_and_complete_views_share_exact_verified_result():
     compact = describe_run("on_start", data, now=NOW, compact=True)
     detailed = describe_run("on_start", data, now=NOW)
     assert "Dernier essai terminé" in compact
-    assert "1 fichier(s) téléchargé(s)" in compact
+    assert "1 téléchargé(s)" in compact
     assert "0 échec(s)" in compact
     assert "Phase :" not in compact and "tâche :" not in compact
     assert "Achats examinés" not in compact
@@ -47,7 +47,7 @@ def test_numilog_card_shows_short_state_and_collapsed_full_diagnostics():
     window._refresh_sync_page()
     row = get_row()
     assert "Dernier essai terminé" in row.subtitle
-    assert "1 fichier(s) téléchargé(s)" in row.subtitle
+    assert "1 téléchargé(s)" in row.subtitle
     assert "Phase :" not in row.subtitle
     assert "tâche :" not in row.subtitle
     group = window._sync_sources_box.children[0]
@@ -91,6 +91,6 @@ def test_inconsistent_auxiliary_does_not_reintroduce_false_diagnostic():
     status["diagnostic"]["attempted"] = 7
     concise = describe_run("on_start", status, now=NOW, compact=True)
     detailed = describe_run("on_start", status, now=NOW)
-    assert "1 fichier(s) téléchargé(s)" in concise
+    assert "1 téléchargé(s)" in concise
     assert "Phase :" not in detailed
     assert "tâche :" not in detailed
