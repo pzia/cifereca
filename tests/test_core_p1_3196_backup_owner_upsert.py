@@ -119,38 +119,36 @@ def test_repeating_known_row_without_identity_does_not_unbind_canonical_owner(
 
 
 
-@pytest.mark.parametrize("canonical_status", ["complete", "attention_required", "retryable_error"])
-def test_legacy_replay_cannot_rewind_independently_advanced_canonical_status(
-    tmp_path, canonical_status,
+
+def test_stale_passive_replay_keeps_independently_completed_canonical_receipt(
+    tmp_path,
 ):
     storage = Storage(tmp_path / "test.sqlite3")
     try:
         first = _row()
         storage.backup_put(first)
-        # The Core acquisition may progress without writing the v0.7
-        # compatibility projection. That divergence is real migration data,
-        # not an invitation for a subsequent backup replay to overwrite it.
         with storage._lock, storage._connect() as db:
             db.execute(
-                "UPDATE acquisition_ledger SET status=?,"
-                " error_code='canonical_observed_failure',"
-                " attention_code='canonical_needs_review'"
-                " WHERE acquisition_id=?",
-                (canonical_status, storage._acquisition_id_for(first)),
+                "UPDATE acquisition_ledger SET status='complete',"
+                " artifact_id=?, error_code='canonical_observed_failure' "
+                "WHERE acquisition_id=?",
+                ("sha256:" + "a" * 64, storage._acquisition_id_for(first)),
             )
-        before = _state(storage)
-        with pytest.raises(ValueError, match="backup_canonical_status_diverged"):
-            storage.backup_put({**first, "title": "Stale inventory refresh"})
-        assert _state(storage) == before
-        # A second replay is idempotently refused, not a silent downgrade.
-        with pytest.raises(ValueError, match="backup_canonical_status_diverged"):
-            storage.backup_put(first)
-        assert _state(storage) == before
+        for _ in range(2):
+            # A new passive provider inventory still advertises an old
+            # pending compatibility state; it is not an acquisition event.
+            storage.backup_put({**first, "title": "Replayed catalogue state"})
+            canonical = storage.acquisitions(provider_id="kobo")[0]
+            assert canonical["status"] == "complete"
+            assert canonical["artifact_id"] == "sha256:" + "a" * 64
+            assert canonical["error_code"] == "canonical_observed_failure"
+            assert storage.backup_list("kobo")[0]["status"] == "pending"
+        assert len(storage.entitlements()) == 1
     finally:
         storage.close()
 
 
-def test_canonical_only_acquisition_cannot_be_taken_over_by_first_legacy_projection(
+def test_existing_canonical_complete_stays_complete_during_first_old_projection(
     tmp_path,
 ):
     storage = Storage(tmp_path / "test.sqlite3")
@@ -164,13 +162,10 @@ def test_canonical_only_acquisition_cannot_be_taken_over_by_first_legacy_project
             "item_id": "book", "title": "Direct Core acquisition",
             "status": "complete",
         })
-        prior = storage.acquisitions(provider_id="kobo")
-        assert not storage.backup_list("kobo")
-        with pytest.raises(ValueError, match="backup_canonical_status_diverged"):
-            storage.backup_put({**row, "title": "Unverified v0.7 backfill"})
-        assert storage.acquisitions(provider_id="kobo") == prior
-        assert storage.backup_list("kobo") == []
-        assert storage.entitlements() == []
+        storage.backup_put(row)
+        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "complete"
+        assert storage.backup_list("kobo")[0]["status"] == "pending"
+        assert len(storage.entitlements()) == 1
     finally:
         storage.close()
 
@@ -187,5 +182,18 @@ def test_normal_same_owner_backup_progress_still_updates_canonical_receipt(
         assert storage.acquisitions(provider_id="kobo")[0]["status"] == next_status
         assert storage.backup_list("kobo")[0]["status"] == next_status
         assert len(storage.entitlements()) == 1
+    finally:
+        storage.close()
+
+
+def test_active_retry_after_completed_kobo_receipt_is_not_intercepted(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite3")
+    try:
+        row = {**_row(), "status": "complete"}
+        storage.backup_put(row)
+        storage.backup_put({**row, "status": "acquiring"})
+        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "acquiring"
+        storage.backup_put({**row, "status": "attention_required"})
+        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "attention_required"
     finally:
         storage.close()
