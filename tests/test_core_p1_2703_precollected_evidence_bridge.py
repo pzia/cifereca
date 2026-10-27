@@ -52,7 +52,9 @@ def test_federated_catalogue_sync_and_loans_remain_independent_scoped_claims():
                        identity_id="bob", account_id="card-a") is None
     assert all(row.authorizes_mutation is False
                for matrix in matrices for row in matrix.observations)
-    assert not any(call[0] == "accounts" for call in calls)
+    # The established catalogue inventory reads Core account bindings, but
+    # this bridge must never invoke sync, provider inventory or mutation.
+    assert all(call[0] in {"accounts", "enabled"} for call in calls)
     assert capability_matrices_with_precollected_evidence(
         service, identity_id="alice", sync_sources=(_sync(),),
         loan_snapshots=(_loan_snapshot(),),
