@@ -62,8 +62,19 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         if item.get("source") == "known_catalog":
             candidate = self._known_search_result(item)
             if candidate:
+                # A cached button may outlive a selection, new search or
+                # identity A→B→A. Check the captured Search generation BEFORE
+                # requesting holdings, not only when the response returns.
+                context = self._search_detail_request_context()
+                expected_key = row.key
                 show = Gtk.Button(label="Disponibilités / téléchargement")
-                show.connect("clicked", lambda _b: self._load_known_detail(candidate))
+                show.connect(
+                    "clicked",
+                    lambda _b, notice=candidate, key=expected_key, ctx=context: (
+                        self._load_known_detail(notice)
+                        if self._search_detail_context_current(key, ctx) else None
+                    ),
+                )
                 actions.append(show)
         extend = Gtk.Button(label="En ligne")
         extend.add_css_class("suggested-action")
