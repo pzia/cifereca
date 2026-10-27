@@ -106,7 +106,9 @@ def test_bnf_right_has_own_filter_and_existing_ui_confirmation_then_zero_get(
     for _ in range(2):
         response = broker.synchronize_source(broker._source_id(account))
         assert response.facts["files_declared_local"] == 1
-        assert response.changed == 0
+        # The broker still counts the regular loan inventory refresh as a
+        # change; a declaration must not add an acquisition to that total.
+        assert response.changed == response.facts["loans"]
     assert downloaded == []
     assert book.read_bytes() == original
     assert not service.storage.acquisitions()
