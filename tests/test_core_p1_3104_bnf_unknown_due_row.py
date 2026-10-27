@@ -16,6 +16,7 @@ from cifereca.models import Loan
 class Row:
     def __init__(self, key, title, subtitle, meta, badge, thumbnail, *, badge_style=None):
         self.key, self.title, self.meta, self.badge = key, title, meta, badge
+        self.subtitle, self.thumbnail_url = subtitle, thumbnail
         self.badge_style = badge_style
 
 
@@ -93,3 +94,47 @@ def test_pure_row_meta_only_mentions_return_when_date_was_parsed():
     assert loan_row_metadata(
         "2026-10-30", known, document_type="Livre numérique", provider="BNF"
     ).endswith(" · Livre numérique")
+
+
+
+def test_bnf_two_exact_loans_keep_distinct_authors_covers_and_unknown_due():
+    first = _loan("BnF carte 1")
+    first.author = "Autrice de la première carte"
+    first.thumbnail_url = "https://pret.bnf.fr/images/book-one.jpg"
+    second = _loan("BnF carte 2")
+    second.author = "Auteur de la seconde carte"
+    second.thumbnail_url = None
+    foreign = _loan("BnF carte étrangère", identity="bob")
+    foreign.author = "Autrice étrangère"
+    foreign.thumbnail_url = "https://pret.bnf.fr/images/foreign.jpg"
+    rows = _render_actual([first, second, foreign])
+    assert set(rows) == {"BnF carte 1", "BnF carte 2"}
+    assert rows["BnF carte 1"].subtitle == (
+        "Autrice de la première carte · Prêt numérique"
+    )
+    assert rows["BnF carte 1"].thumbnail_url == first.thumbnail_url
+    assert rows["BnF carte 2"].subtitle == (
+        "Auteur de la seconde carte · Prêt numérique"
+    )
+    assert rows["BnF carte 2"].thumbnail_url is None
+    for item in rows.values():
+        assert item.badge == "Échéance inconnue"
+        assert item.meta == "Livre numérique"
+        assert "Retour" not in item.meta
+        assert "Autrice étrangère" not in item.subtitle
+        assert "foreign.jpg" not in str(item.thumbnail_url)
+
+
+def test_author_byline_keeps_existing_library_and_unknown_author_fallback():
+    with_author = _loan("BnF avec bibliothèque")
+    with_author.author = "Autrice observée"
+    with_author.library = "Bibliothèque nationale"
+    missing_author = _loan("BnF sans auteur")
+    invalid_author = _loan("BnF auteur non qualifié")
+    invalid_author.author = {"name": "Ambiguous author object"}
+    rows = _render_actual([with_author, missing_author, invalid_author])
+    assert rows["BnF avec bibliothèque"].subtitle == (
+        "Autrice observée · Bibliothèque nationale"
+    )
+    assert rows["BnF sans auteur"].subtitle == "Prêt numérique"
+    assert rows["BnF auteur non qualifié"].subtitle == "Prêt numérique"
