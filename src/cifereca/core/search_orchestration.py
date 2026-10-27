@@ -479,7 +479,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if not request_current():
             return []
         provider_rows: list[SearchResult] = []
-        provider_seen: set[tuple[str, str, str]] = set()
+        provider_seen: set[tuple[str, str, str, str, str]] = set()
         effective_field, contract_warning = _effective_search_field(
             session, field, provider_scope, facade_type=facade_type,
         )
@@ -517,7 +517,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     session_rows = session.search(variant, provider_scope)
                 for raw_row in session_rows:
                     row = _provider_search_row(raw_row)
-                    key = (row.source_provider, row.docbase, row.record_id)
+                    key = _search_result_scope_key(row)
                     if key not in provider_seen:
                         provider_seen.add(key)
                         provider_rows.append(row)
@@ -595,9 +595,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         rows.extend(provider_rows)
 
     # Stable de-duplication across plugins; source provider remains visible.
-    unique: dict[tuple[str, str, str], SearchResult] = {}
+    unique: dict[tuple[str, str, str, str, str], SearchResult] = {}
     for row in rows:
-        unique[(row.source_provider, row.docbase, row.record_id)] = row
+        unique[_search_result_scope_key(row)] = row
     rows = list(unique.values())
     preference_scores = {id(row): self._search_preference_score(row) for row in rows}
     if len(variants) > 1 or any(preference_scores.values()):
@@ -721,6 +721,20 @@ def _search_batch_status(
     return "cached" if cached else "live"
 
 
+def _search_result_scope_key(row: SearchResult) -> tuple[str, str, str, str, str]:
+    """Deduplicate one *exact* supplier notice, never another account/edition.
+
+    The same coordinates are authoritative in the SQLite mirror-v2: a
+    supplier may reuse record IDs across credentials, docbases or collections.
+    An absent collection is the same canonical empty component as mirror-v2.
+    This key is for search result de-duplication only; it grants no rights.
+    """
+    return (
+        row.source_provider, row.source_credential, row.record_id,
+        row.docbase, row.source_collection or "",
+    )
+
+
 def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str='all', content_types: tuple[str, ...]=(), facade_type) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -729,7 +743,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
     """
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     provider_rows: list[SearchResult] = []
-    provider_seen: set[tuple[str, str, str]] = set()
+    provider_seen: set[tuple[str, str, str, str, str]] = set()
     warnings: list[str] = []
     effective_field, contract_warning = _effective_search_field(
         session, field, provider_scope, facade_type=facade_type,
@@ -763,7 +777,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
                 session_rows = session.search(variant, provider_scope)
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
-                key = (row.source_provider, row.docbase, row.record_id)
+                key = _search_result_scope_key(row)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
             concrete = getattr(session, "client", None)
@@ -1175,8 +1189,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     if request_cancelled():
         cancelled = True
 
-    unique: dict[tuple[str, str, str], SearchResult] = {}
-    for row in aggregate: unique[(row.source_provider, row.docbase, row.record_id)] = row
+    unique: dict[tuple[str, str, str, str, str], SearchResult] = {}
+    for row in aggregate: unique[_search_result_scope_key(row)] = row
     rows = list(unique.values())
     variants = self._search_query_variants(query)
     preference_scores = {id(row): self._search_preference_score(row) for row in rows}
