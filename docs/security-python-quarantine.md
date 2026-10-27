@@ -1,9 +1,28 @@
 # #2770 — Quarantaine Python : une règle, pip comme résolveur
 
-**Règle** : un nouveau wheel tiers doit avoir été publié sur PyPI depuis au
-moins **168 heures UTC**. L'âge s'applique au **fichier exact**, même lorsqu'une
+**Règle P1 #3472** : un nouveau wheel tiers doit avoir été publié sur PyPI depuis au
+moins **72 heures UTC par défaut**, ou depuis la durée configurée. L'âge s'applique au **fichier exact**, même lorsqu'une
 ancienne version reçoit un nouveau wheel. Ne jamais utiliser le mtime ni la
 date de publication de la seule version.
+
+Configuration persistée : `security.python_dependency_quarantine_hours` dans le
+fichier de configuration Cifereca, entier strictement positif en **heures**.
+La valeur par défaut est `72` pour les configurations neuves et anciennes.
+Par exemple `"security": {"python_dependency_quarantine_hours": 168}` exige
+168 heures. `24` exige 24 heures. Zéro, booléens, chaînes, réels, négatifs
+et valeurs non représentables sont refusés avant toute admission avec
+`dependency_quarantine_configuration_invalid` ; aucune valeur invalide
+ne désactive le contrôle. Une modification de configuration est prise en compte
+lors de la prochaine vérification. L'âge est calculé depuis la publication UTC
+du **wheel exact** : cache, mtime et ancienneté de la version ne font pas foi.
+
+**Une politique vaut pour tous les points d'entrée** : préflight pip, attestation
+producteur, vérification hors réseau du bundle, installation de dépendances
+plugins et updater. Une wheelhouse attestée sous 24 h ne devient pas admissible
+si le consommateur exige 168 h : celui-ci revérifie les horodatages attestés
+selon sa politique. En CI/release, le défaut est 72 h sans paramètre utilisateur
+particulier ; une configuration de build différente doit être déclarée explicitement
+et ne garantit pas l'installation sous la politique plus stricte d'un consommateur.
 
 ## Implémentation Core (première tranche)
 
@@ -23,7 +42,7 @@ L'installation gérée des dépendances de plugins suit trois étapes :
    les wheels validées. **Aucune mutation du venv lors du préflight refusé** ;
    les distributions déjà présentes restent installées.
 
-Messages fermés : `dependency_too_recent`,
+Messages fermés : `dependency_too_recent`, `dependency_quarantine_configuration_invalid`,
 `dependency_provenance_unavailable`, `dependency_not_eligible`.
 La commande existante de réparation conserve sa demande de confirmation.
 
@@ -55,7 +74,7 @@ Lorsqu'un répertoire `offline-wheels/` est présent, **avant même la
 création du nouveau venv**, l'updater exige `wheelhouse-provenance.json`.
 Pour chaque wheel de ce répertoire, il vérifie l'inventaire exhaustif,
 l'identité nom/version tirée du nom de fichier, le SHA-256 des octets,
-l'origine PyPI déclarée et l'âge UTC **>= 168 h**. Un fichier ajouté,
+l'origine PyPI déclarée et l'âge UTC **>= au seuil effectif**. Un fichier ajouté,
 modifié ou dépourvu de manifeste provoque `dependency_provenance_unavailable`
 ou `dependency_not_eligible`, sans pip ni création de venv. La wheel Core
 `cifereca` construite localement pour la version attendue est exemptée
@@ -110,7 +129,7 @@ publication** et contenir toutes les roues du graphe de dépendances plugins
 **pas** une signature.
 
 Avant le premier appel pip : vérification locale de l'inventaire complet,
-des SHA-256 et des dates de publication (168 h révolues). La résolution
+des SHA-256 et des dates de publication (72 h par défaut, ou seuil configuré révolu). La résolution
 standard pip est ensuite exécutée avec `--isolated --no-index --find-links`
 vers cette **seule** wheelhouse approuvée. Chaque candidat sélectionné doit
 être un fichier exact de cet inventaire ; l'installation utilise son URI
