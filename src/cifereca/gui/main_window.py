@@ -2030,8 +2030,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def can_borrow_item(self, item: SearchResult) -> bool:
         try:
-            session = self.service._session_for_source(item.source_provider, item.source_credential)
-            return bool(session.connected and session.capabilities.borrow)
+            # The button must reflect the same exact borrower-account scope
+            # enforced by the click handler, not just a provider capability.
+            # This remains only action availability; quota, subscription and
+            # per-book permission still require separate provider evidence.
+            _session, accounts = self._eligible_borrow_accounts(item)
+            return bool(accounts)
         except Exception:
             return False
 
