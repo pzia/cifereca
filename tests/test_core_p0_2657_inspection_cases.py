@@ -24,7 +24,7 @@ def six_numilog(tmp_path):
     files = []
     for number in range(6):
         book = root / f'code-{number}.epub'
-        epub(book, title=f'Titre caché {number}', identifier=f'ISBN-TEST-{number}')
+        epub(book, title=f'Titre caché volume-{number}', identifier=f'ISBN-TEST-{number}')
         files.append(book)
     with sqlite3.connect(database) as db:
         for number, book in enumerate(files):
@@ -114,7 +114,9 @@ def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
     assert all('Titre caché' in case.label for case in files.cases)
     assert all('code-' in case.label for case in files.cases)
     # Search is local, accent-insensitive, and combines with state/provider.
-    assert session.page(query='titre cache 4', provider='unattributed').total == 1
+    # Paths are searchable too: a bare digit can match every file when
+    # pytest's parent directory contains it. Select an OPF-only term.
+    assert session.page(query='titre cache volume-4', provider='unattributed').total == 1
     assert session.page(query='autrice exemple 4',
                         state='rights_without_verified_file').total == 1
     assert session.page(query='code-5', provider='numilog').total == 0
