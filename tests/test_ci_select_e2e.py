@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 32)
+        self.assertEqual(len(mod.ALL), 33)
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertIn("maintenance-tools-1728", mod.ALL)
