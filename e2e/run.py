@@ -111,6 +111,11 @@ SCENARIOS = {
         "description": "P0 #1358: vérification de la confirmation et refus des suppressions GTK 1600.",
         "runner": "gtk-maintenance", "width": 1600,
     },
+    "maintenance-tools-1728": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #2842 : parcours guidé et confirmations natives à 1728×895, sans réseau.",
+        "runner": "gtk-maintenance", "width": 1728, "height": 895,
+    },
     "recommendations-detail-1366": {
         "plugin": "ui.page.recommendations",
         "fixture": "search-filters",
