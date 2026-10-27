@@ -1147,6 +1147,12 @@ class SynchronizationBrokerImpl:
             review_count = result.get("files_reconciliation_required")
             if type(review_count) is int and 0 <= review_count <= 1_000_000:
                 facts["files_reconciliation_required"] = review_count
+            # A freshly revalidated user-declared local file is neither an
+            # acquired file nor a changed entitlement. Show the observation
+            # without adding it to SyncResult.changed or inventing a receipt.
+            declared_count = result.get("files_declared_local")
+            if type(declared_count) is int and 0 <= declared_count <= 1_000_000:
+                facts["files_declared_local"] = declared_count
             raw_status = result.get("status")
             outcome = raw_status.lower() if type(raw_status) is str else ""
             invalid_status = raw_status not in (None, "") and outcome not in _SYNC_PUBLIC_STATUSES
