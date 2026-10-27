@@ -3,6 +3,7 @@ import ast
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from inspect import getattr_static
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -421,6 +422,16 @@ class SynchronizationBrokerImpl:
             and bool(getattr(getattr(session, "capabilities", None), "backup", False))
         ):
             declared_sync_caps.append("local_materialization")
+        # The opt-in BnF loan→ACSM→ADEPT path is distinct from the generic
+        # Kobo materialization broker. Advertise only that this pathway exists,
+        # never that consent, the ADEPT runtime or a successful delivery does.
+        # Static inspection cannot invoke a provider getter or network call.
+        if (
+            provider_id == "bnf-pret" and "loans" in source_caps
+            and session is not None
+            and callable(getattr_static(session, "download_digital", None))
+        ):
+            declared_sync_caps.append("loan_auto_materialization")
         # Core owns real startup/periodic inventory dispatch for these stores.
         # Availability is not consent: policies still default to manual and
         # the scheduler revalidates exact source/account/session before I/O.
