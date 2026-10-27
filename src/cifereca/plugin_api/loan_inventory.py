@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
+from inspect import getattr_static
 from typing import Literal
 
 from cifereca.models import Account, Loan
@@ -207,9 +208,19 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
         return LoanInventorySnapshot(
             scope=scope, loans=(), status="failed", reason_code="unavailable",
         )
-    reader = getattr(session, "loan_inventory_snapshot", None)
     try:
-        if callable(reader):
+        # Class/instance properties can perform I/O even when we only check
+        # whether a typed reader exists. Inspect the raw attribute instead of
+        # invoking an untrusted descriptor during capability discovery.
+        raw_reader = getattr_static(session, "loan_inventory_snapshot", None)
+        if raw_reader is not None and not callable(raw_reader):
+            raise ValueError("invalid_loan_inventory_reader")
+        if raw_reader is not None:
+            # Bypass a provider's __getattribute__ override. Ordinary bound
+            # methods and synthetic instance functions remain supported.
+            reader = object.__getattribute__(session, "loan_inventory_snapshot")
+            if not callable(reader):
+                raise ValueError("invalid_loan_inventory_reader")
             result = reader(account)
             if not still_bound():
                 return LoanInventorySnapshot(

@@ -66,3 +66,30 @@ def test_pending_legacy_return_requires_subsequent_typed_proof(tmp_path):
         assert session.checks == ["linked-b"] * 3
     finally:
         service.close()
+
+
+def test_paris_return_static_reader_check_rejects_hostile_property_without_post(tmp_path):
+    from tests.test_core_0982_loan_return_reconciliation import Session
+
+    visited = []
+    class Hostile(Session):
+        @property
+        def loan_inventory_snapshot(self):
+            visited.append("getter")
+            raise AssertionError("a snapshot property may issue an unwanted GET")
+
+    loan = _loan()
+    session = Hostile([loan])
+    service = _library(tmp_path, session=session)
+    try:
+        result = service.return_digital(loan)
+        assert result["status"] == "verification_unavailable"
+        assert result["provider_inventory_verified"] is False
+        assert session.posts == [(loan.id, "linked-b")]
+        assert session.checks == []
+        assert visited == []
+        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
+        assert len(session.posts) == 1
+        assert visited == []
+    finally:
+        service.close()

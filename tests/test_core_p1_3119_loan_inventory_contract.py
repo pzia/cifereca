@@ -286,3 +286,49 @@ def test_arbitrary_provider_exception_still_failed_not_cancelled():
     result = read_loan_inventory(s, a)
     assert result.status == "failed" and result.reason_code == "read_failed"
     assert calls == [("typed", a)]
+
+
+def test_dynamic_snapshot_property_is_never_run_as_capability_detection():
+    a = account()
+    attempted = []
+    class HostileSession(NS):
+        @property
+        def loan_inventory_snapshot(self):
+            attempted.append("getter")
+            raise RuntimeError("PRIVATE_SIGNED_URL")
+
+    s = HostileSession(
+        connected=True, provider_id=a.provider_id,
+        credential_id=a.credential_id, capabilities=NS(loans=True),
+        loans=lambda _: attempted.append("legacy") or [loan(a)],
+    )
+    result = read_loan_inventory(s, a)
+    assert result.status == "failed" and result.reason_code == "read_failed"
+    assert result.loans == () and attempted == []
+    assert "PRIVATE" not in repr(result)
+
+
+def test_typed_reader_ignores_hostile_getattribute_override():
+    a = account()
+    touched = []
+    class Proxy(NS):
+        def __getattribute__(self, name):
+            if name == "loan_inventory_snapshot":
+                touched.append("dynamic")
+                raise AssertionError("do not dynamically detect inventory readers")
+            return super().__getattribute__(name)
+
+    source = Proxy(
+        connected=True, provider_id=a.provider_id,
+        credential_id=a.credential_id, capabilities=NS(loans=True),
+        loans=lambda _: (_ for _ in ()).throw(
+            AssertionError("typed reader must not fall back to legacy")
+        ),
+    )
+    source.loan_inventory_snapshot = lambda _: LoanInventorySnapshot(
+        scope=LoanInventoryScope.for_account(a), loans=(loan(a),),
+        status="partial", reason_code="inventory_not_exhaustive",
+    )
+    result = read_loan_inventory(source, a)
+    assert result.status == "partial" and len(result.loans) == 1
+    assert touched == []

@@ -7,6 +7,8 @@ exception seams are injected from LibraryService at call time; public guards and
 branch-local datetime imports remain late imports.
 """
 from __future__ import annotations
+
+from inspect import getattr_static
 from typing import Any
 from ..models import Account, Loan
 
@@ -120,7 +122,13 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
 
     if not still_bound():
         raise ValueError("return_inventory_source_changed")
-    typed = callable(getattr(session, "loan_inventory_snapshot", None))
+    # A property getter is not an inventory capability and must never run
+    # during return verification. Malformed declarations fail closed rather
+    # than silently taking the legacy v1 route.
+    raw_reader = getattr_static(session, "loan_inventory_snapshot", None)
+    if raw_reader is not None and not callable(raw_reader):
+        raise ValueError("return_inventory_reader_invalid")
+    typed = raw_reader is not None
     if typed:
         from ..plugin_api.loan_inventory import read_loan_inventory
         snapshot = read_loan_inventory(session, account)
