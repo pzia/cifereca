@@ -6,6 +6,7 @@ mutation, authentication, HTTP or other network operation.
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace as NS
 
 from cifereca.plugin_api import AttentionRequired
 from tests.test_core_0982_loan_return_reconciliation import (
@@ -52,5 +53,16 @@ def test_plain_legacy_session_remains_available_to_existing_borrower_preflight(t
         assert account.credential_id == "paris-a"
         assert type(key) is str and key
         assert session.posts == [] and session.checks == []
+    finally:
+        service.close()
+
+
+def test_simple_namespace_session_keeps_legacy_preflight_compatibility(tmp_path):
+    service = _library(tmp_path, session=NS(connected=True))
+    try:
+        account, session, key = service._return_loan_identity(_loan())
+        assert account.unique_id == "linked-b"
+        assert session is service._sessions["paris::paris-a"]
+        assert type(key) is str and key
     finally:
         service.close()
