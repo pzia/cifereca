@@ -154,7 +154,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         if account.provider_id == 'bnf-pret':
             from .bnf_auto_materialization import enabled, materialize
             if enabled(self, account):
-                outcomes = [materialize(self, account, loan, control=control) for loan in loans]
+                # One private bounded inventory per source batch, not one
+                # whole-directory scan for every active loan.
+                physical_scan_cache = {}
+                outcomes = [
+                    materialize(self, account, loan, control=control,
+                                physical_scan_cache=physical_scan_cache)
+                    for loan in loans
+                ]
                 result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
                 result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
                 # A file needing an explicit local reconciliation is not
@@ -787,6 +794,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     except Exception:
                         logger.warning("TRACE typed loan cache failed code=loan_cache_unavailable")
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
+            physical_scan_cache = {}
             for loan in loans:
                 # Re-resolve the currently registered provider session: an
                 # earlier inventory GET may have run before disconnect/swap.
@@ -802,7 +810,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                                     and a.credential_id == loan.source_credential
                                     and a.unique_id == loan.source_account_id), None)
                     if account is not None and enabled(self, account):
-                        outcome = materialize(self, account, loan)
+                        outcome = materialize(
+                            self, account, loan, physical_scan_cache=physical_scan_cache,
+                        )
                         if outcome['status'] == 'complete':
                             new_acquisitions += 1
                         elif outcome['status'] == 'attention_required':
