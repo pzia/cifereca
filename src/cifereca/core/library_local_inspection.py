@@ -437,6 +437,9 @@ class LocalInspection:
         # Lower-trust title+author leads are isolated from exact identifiers.
         # Neither type may authorize a placement or an acquisition.
         self._descriptive_file_keys = {}
+        # Weaker, separately labelled title-only leads when an author is
+        # missing; never use them as ownership/loan/edition evidence.
+        self._title_only_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
         self._kobo_right_proofs = {}
@@ -682,8 +685,12 @@ class LocalInspection:
                 # This FileObservation is a private, scanned capability; a
                 # later preview still performs its own fresh nofollow SHA.
                 self._manual_file_observations[f'file:{index}'] = observation
-        from .library_descriptive_hints import index_file_descriptions
+        from .library_descriptive_hints import index_file_descriptions, index_file_titles
         descriptive_index = index_file_descriptions(
+            audit.inventory.files, audit.reconciliation.files,
+            identity_id=identity_id,
+        )
+        title_only_index = index_file_titles(
             audit.inventory.files, audit.reconciliation.files,
             identity_id=identity_id,
         )
@@ -915,6 +922,22 @@ class LocalInspection:
                 if f'file:{fi}' in self._cases
             )
             self._descriptive_file_keys[f'right:{index}'] = descriptive_keys
+            # No title-only suggestions when a stronger ISBN or title+author
+            # lead exists. If both sides attest an author, a title-only match
+            # would conceal a known contradiction: never propose it.
+            title_only_keys = ()
+            if not file_keys and not descriptive_keys:
+                from .library_descriptive_hints import title_only_file_indices
+                title_only_indices = title_only_file_indices(
+                    title_only_index, title=title, authors=authors,
+                    media_format=right.get('display_media_format'),
+                    exclude=tuple(candidate_indices) + tuple(descriptive_indices),
+                )
+                title_only_keys = tuple(
+                    f'file:{fi}' for fi in title_only_indices
+                    if f'file:{fi}' in self._cases
+                )
+            self._title_only_file_keys[f'right:{index}'] = title_only_keys
             suggestions = [
                 'Fichiers à comparer (même identifiant bibliographique explicite '
                 'qu’une notice de cette édition ; candidat non probant, sans '
@@ -952,6 +975,21 @@ class LocalInspection:
                     suggestions.append(
                         'Titres/auteurs partagés par plusieurs fichiers : '
                         'aucune attribution individuelle possible.'
+                    )
+            if title_only_keys:
+                suggestions.append(
+                    'Pistes au TITRE SEUL (auteur non renseigné sur au moins '
+                    'un côté ; risque d’homonymie et d’éditions différentes, '
+                    'aucune preuve de droit, fournisseur ou prêt) :'
+                )
+                suggestions.extend(
+                    '• ' + self._cases[key].label for key in title_only_keys
+                )
+                if len(title_only_keys) > 1:
+                    suggestions.append(
+                        'Plusieurs fichiers portent ce titre : seule une '
+                        'comparaison volontaire et des preuves exactes '
+                        'peuvent distinguer les éditions.'
                     )
             case_heading = (
                 'Prêt Paris non actif (lecture seule)'
@@ -1205,6 +1243,7 @@ class LocalInspection:
         self._from_audit_cache = False
         self._candidate_file_keys.clear()
         self._descriptive_file_keys.clear()
+        self._title_only_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
         self._kobo_right_proofs.clear()
@@ -2107,6 +2146,30 @@ class LocalInspection:
                 + self._cases[key].details
             ),
         ) for key in self._descriptive_file_keys.get(right_key, ())
+            if key in self._cases)
+
+    def title_only_files(self, right_key):
+        """Private title-only review leads, never a loan or placement proof.
+
+        Only consulted when the exact and title+author lists are empty. The
+        underlying user-declaration writer still revalidates exact scope,
+        current file bytes and explicit confirmation independently.
+        """
+        if not self.valid() or type(right_key) is not str:
+            return ()
+        if right_key not in self._cases or not right_key.startswith('right:'):
+            return ()
+        return tuple(replace(
+            self._cases[key],
+            details=(
+                'Piste au TITRE SEUL : auteur manquant dans le droit ou '
+                'le fichier OPF. Des livres/éditions différents peuvent '
+                'porter le même titre. Aucun droit, compte, prêt, provenance '
+                'ADEPT ni placement n’est attesté par cette suggestion. '
+                'Comparaison et confirmation explicites indispensables.\n\n'
+                + self._cases[key].details
+            ),
+        ) for key in self._title_only_file_keys.get(right_key, ())
             if key in self._cases)
 
     def detail(self, key):

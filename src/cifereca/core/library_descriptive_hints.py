@@ -102,3 +102,65 @@ def descriptive_file_indices(
             if i not in excluded and (allowed is None or fmt == allowed):
                 found.add(i)
     return tuple(sorted(found)[:max_results])
+
+
+def index_file_titles(
+    files, file_states, *, identity_id: str,
+    max_files: int = 10_000, max_per_title: int = 50,
+):
+    """Bounded title-only *review* leads when an author is missing.
+
+    Do not weaken title+author hypotheses. This separate index contains
+    unlinked files of the same scanned identity with a positive file hash and
+    valid structure; it never supplies licence, edition or account evidence.
+    """
+    result = defaultdict(list)
+    if (type(identity_id) is not str
+            or type(max_files) is not int or not 1 <= max_files <= 10_000
+            or type(max_per_title) is not int or not 1 <= max_per_title <= 50):
+        return {}
+    for i, file in enumerate(files[:max_files]):
+        states = file_states.get(i, set())
+        if (file.identity_id != identity_id
+                or type(file.sha256) is not str or len(file.sha256) != 64
+                or file.validation != "ok"
+                or file.media_format not in ("epub", "pdf")
+                or "local_file_without_attested_right" not in states
+                or "confirmed_link" in states
+                or type(file.metadata) is not dict):
+            continue
+        title = _fold(file.metadata.get("title"))
+        if not title:
+            continue
+        hits = result[title]
+        if len(hits) < max_per_title:
+            hits.append((i, file.media_format, _authors(file.metadata.get("authors"))))
+    return dict(result)
+
+
+def title_only_file_indices(
+    index, *, title, authors, media_format=None, exclude=(),
+    max_results: int = 20,
+):
+    """Low-confidence leads only if at least one author set is unknown.
+
+    If both sides have known authors, title agreement alone is NOT enough:
+    descriptive_file_indices remains the distinct higher-confidence path.
+    This selection is read-only and can never authorize a right or a download.
+    """
+    if type(max_results) is not int or not 1 <= max_results <= 20:
+        return ()
+    key = _fold(title)
+    if not key:
+        return ()
+    right_authors = _authors(authors)
+    allowed = None if media_format not in ("epub", "pdf") else media_format
+    excluded = set(exclude)
+    found = []
+    for i, fmt, file_authors in index.get(key, ()):
+        if (i not in excluded and (allowed is None or fmt == allowed)
+                and (not right_authors or not file_authors)):
+            found.append(i)
+            if len(found) >= max_results:
+                break
+    return tuple(found)
