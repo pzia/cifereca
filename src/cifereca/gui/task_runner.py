@@ -106,7 +106,7 @@ class TaskRunner:
             # timing samples impossible to attribute (#1741).
             "history", "bookings", "search-known", "detail-cache",
             "adept-inventory", "adept-return", "loan-acquisition", "borrow",
-            "obtain", "provider-connect", "sync-audit", "source-consent",
+            "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
         } else "other"
         # An explicit user request must always run, including callers that

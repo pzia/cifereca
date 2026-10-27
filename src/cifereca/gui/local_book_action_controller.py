@@ -8,6 +8,41 @@ from __future__ import annotations
 from ..plugin_api import Cancelled, UserFacingError
 
 
+# Core classifies receipt, adoption, index and finalization failures.
+# Dialogs translate the closed code; raw observations remain in the journal.
+_NUMILOG_INDEX_REFUSAL_LABELS = {
+    "invalid_target": "Cible de reprise invalide.",
+    "receipt_missing": "Reçu de livraison introuvable.",
+    "receipt_scope_invalid": "Propriétaire ou droit du reçu incohérent.",
+    "receipt_invalid": "Métadonnées du reçu incohérentes.",
+    "receipt_root_invalid": "Racine de livraison non conforme.",
+    "path_not_canonical": "Emplacement initial ACSM non conforme.",
+    "manual_receipt_missing": "Reçu d’import ACSM d’origine introuvable.",
+    "manual_receipt_mismatch": "Reçu d’import ACSM incompatible avec la livraison.",
+    "artifact_mismatch": "Empreinte ou taille de l’artefact incohérente.",
+    "placement_missing": "Placement local d’origine introuvable ou ambigu.",
+    "placement_conflict": "Placement local incompatible avec l’identité ou la source.",
+    "catalogue_conflict": "Notice du catalogue contradictoire ou ambiguë.",
+    "artifact_shared_elsewhere": "Même empreinte déjà utilisée par un placement du même profil ou de propriétaire inconnu.",
+    "competing_receipts": "Plusieurs reçus concurrents pour cet achat.",
+    "adoption_unavailable": "Validation du placement d’origine indisponible.",
+    "selected_identity_changed": "L’identité sélectionnée n’est plus celle du reçu.",
+    "target_changed": "La demande de reprise ne correspond plus au reçu.",
+    "account_changed": "Le rattachement du compte Numilog a changé.",
+    "receipt_conflict": "Reçus concurrents ou hors périmètre pour cet achat.",
+    "directory_migration_pending": "Migration du répertoire en cours ou non finalisée.",
+    "root_changed": "Racine de bibliothèque différente de celle du reçu.",
+    "lock_unavailable": "Le verrou d’indexation est inaccessible ; consultez le journal.",
+    "acquisition_busy": "Une autre acquisition ou indexation détient le verrou.",
+    "receipt_verification_failed": "La vérification du reçu a échoué ; consultez le journal.",
+    "placement_validation_failed": "La validation du placement a échoué ; consultez le journal.",
+    "index_rejected": "Le catalogue a refusé le fichier livré ; consultez le journal.",
+    "indexing_failed": "L’indexation locale a échoué ; consultez le journal.",
+    "finalization_failed": "La finalisation du reçu a échoué ; consultez le journal.",
+    "file_changed": "Fichier absent, déplacé ou empreinte différente du reçu.",
+}
+
+
 def _add_owned_download(window, detail, item, TaskPriority):
     resolve = getattr(window.service, 'owned_library_download_target', None)
     if not callable(resolve):
@@ -48,7 +83,13 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 return window.service.obtain_owned_library_item(target)
             except Cancelled:
                 raise
-            except Exception:
+            except Exception as exc:
+                if resume:
+                    from ..core.numilog_materialization_checkpoint import (
+                        NumilogIndexResumeRejected,
+                    )
+                    if isinstance(exc, NumilogIndexResumeRejected):
+                        raise  # Only the closed reason code, never the error text.
                 raise RuntimeError(failure) from None
         def done(result):
             if current() and getattr(result, 'path', None) is not None:
@@ -59,7 +100,17 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 invalidate_search_snapshot(window)
         def failed(_exc):
             if current():
-                window.show_error(failure, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
+                message = failure
+                if resume:
+                    from ..core.numilog_materialization_checkpoint import (
+                        NumilogIndexResumeRejected,
+                    )
+                    if isinstance(_exc, NumilogIndexResumeRejected):
+                        reason = _exc.reason_code
+                        message += " " + _NUMILOG_INDEX_REFUSAL_LABELS.get(
+                            reason, "Vérification du placement à reprendre.",
+                        )
+                window.show_error(message, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
         window.runner.submit('Reprise d’indexation Numilog…' if resume else f'Téléchargement du livre {label} possédé…',
                              work, done, failed, control=_button, priority=TaskPriority.USER_ACTION,
                              kind='index' if resume else 'obtain')
