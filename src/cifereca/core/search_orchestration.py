@@ -1332,16 +1332,16 @@ def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, b
     )
     qualified = (
         all(type(value) is str and 0 < len(value) <= 512
-            and "\\x00" not in value for value in parts[:5])
+            and "\x00" not in value for value in parts[:5])
         and type(parts[5]) is str and len(parts[5]) <= 512
-        and "\\x00" not in parts[5]
+        and "\x00" not in parts[5]
         and (row.source_collection is None or type(row.source_collection) is str)
     )
     if not qualified:
-        legacy = f"mirror\\0{identity_id}\\0{row.source_provider}\\0{row.record_id}"
+        legacy = f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}"
         return hashlib.sha256(legacy.encode()).hexdigest(), False
     scope = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(("mirror-v2\\0" + scope).encode()).hexdigest(), True
+    return hashlib.sha256(("mirror-v2\0" + scope).encode()).hexdigest(), True
 
 
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
