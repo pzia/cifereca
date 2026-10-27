@@ -127,3 +127,62 @@ def test_empty_connection_list_remains_a_valid_empty_audit(
         assert report["downloads_authorized"] is False
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("stored_identity", [None, "", "PRIVATE_OTHER_PROFILE"])
+def test_backup_legacy_row_owner_mismatch_blocks_audit_before_catalog_or_files(
+    tmp_path, monkeypatch, stored_identity,
+):
+    """The connection owner never substitutes for a legacy row's own owner."""
+    service, _ = _service(tmp_path, [])
+    try:
+        connection = _kobo_row(service)
+        credential = connection["credential_id"]
+        monkeypatch.setattr(
+            service.storage, "backup_list",
+            lambda provider: [{
+                "provider_id": "kobo", "credential_id": credential,
+                "identity_id": stored_identity, "item_id": "private-book",
+                "local_path": str(tmp_path / "OTHER_PROFILE" / "book.epub"),
+            }] if provider == "kobo" else [],
+        )
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("foreign legacy row cannot trigger catalogue, rights or file reads")
+
+        for name in ("catalog_entries", "entitlements"):
+            monkeypatch.setattr(service.storage, name, forbidden)
+        monkeypatch.setattr(service, "identity_by_id", forbidden)
+        with pytest.raises(ValueError, match="^ambiguous_kobo_audit_scope$"):
+            kobo_local_reconciliation_audit(service, credential_id=credential)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("right_identity", [None, "", "PRIVATE_OTHER_PROFILE"])
+def test_canonical_right_owner_mismatch_never_enters_kobo_file_audit(
+    tmp_path, monkeypatch, right_identity,
+):
+    service, _ = _service(tmp_path, [])
+    try:
+        connection = _kobo_row(service)
+        credential = connection["credential_id"]
+        monkeypatch.setattr(service.storage, "backup_list", lambda *_: [])
+        monkeypatch.setattr(service.storage, "catalog_entries", lambda: [])
+        monkeypatch.setattr(
+            service.storage, "entitlements",
+            lambda **kwargs: [{
+                "provider_id": "kobo", "credential_id": credential,
+                "identity_id": right_identity, "item_id": "private-book",
+                "state": "active",
+            }],
+        )
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("foreign right cannot inspect a Kobo identity's files")
+
+        monkeypatch.setattr(service, "identity_by_id", forbidden)
+        with pytest.raises(ValueError, match="^ambiguous_kobo_audit_scope$"):
+            kobo_local_reconciliation_audit(service, credential_id=credential)
+    finally:
+        service.close()
