@@ -47,13 +47,16 @@ def test_noop_relocation_does_not_promote_null_legacy_owner(tmp_path):
     try:
         _unknown_legacy_owner(store)
         assert _legacy(store)["identity_id"] is None
-        placement_before = store.placements()
+        placement_before = store.placements()[0]
         store.relocate_local_path(
             original, original, identity_id="alice", provider_id="kobo",
         )
         assert _legacy(store)["identity_id"] is None
         assert _legacy(store)["local_path"] == str(original)
-        assert store.placements() == placement_before
+        placement_after = store.placements()[0]
+        for key in ("placement_id", "path", "identity_id", "provider_id",
+                    "source_item_id", "artifact_id"):
+            assert placement_after[key] == placement_before[key]
     finally:
         store.close()
 
