@@ -9,6 +9,10 @@ from .context import PluginContext
 from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
+from .capability_matrix import (
+    CAPABILITY_MATRIX_CONTRACT, CapabilityEvidence, CapabilityMatrix,
+    declared_provider_matrix,
+)
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
 from .lending_borrower_eligibility import (
     BorrowerEligibilityStatus, BorrowerOperationEvidence,
@@ -93,6 +97,7 @@ __all__ = [
     "LendingActionAdmission", "assess_lending_action", "LendingActionStatus",
     "LendingActionOutcome",
     "ProviderSearchEvent", "ProviderSearchStream",
+    "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
