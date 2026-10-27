@@ -578,20 +578,21 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
             or keep.get("state") != "present"):
         return False
     provider, edition = row["provider_id"], row.get("source_item_id")
-    if provider in {"kobo", "numilog", "paris"}:
-        if not isinstance(edition, str) or not edition:
-            return False
-        # The local placement has no borrower coordinate: even historical
-        # rights on another credential must not be silently coalesced.
-        owners = {
-            (right.get("credential_id"), right.get("account_id"))
-            for right in storage.entitlements(provider_id=provider)
-            if right.get("identity_id") == row["identity_id"]
-            and right.get("item_id") == edition
-        }
-        if len(owners) > 1:
-            return False
-    return True
+    # The placement omits credential/borrower. The entitlement ownership
+    # constraint applies to EVERY provider, not a hardcoded set of sellers.
+    # An unscoped placement cannot be removed if this identity has rights
+    # whose item it cannot be compared with.
+    rights = [
+        right for right in storage.entitlements(provider_id=provider)
+        if right.get("identity_id") == row["identity_id"]
+    ]
+    if not isinstance(edition, str) or not edition:
+        return not rights
+    owners = {
+        (right.get("credential_id"), right.get("account_id"))
+        for right in rights if right.get("item_id") == edition
+    }
+    return len(owners) <= 1
 
 
 def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
