@@ -93,3 +93,59 @@ def test_paris_return_static_reader_check_rejects_hostile_property_without_post(
         assert visited == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_explicitly_closed_session_never_reads_return_inventory(tmp_path, typed):
+    from cifereca.core.loan_return_guard import return_key
+
+    loan = _loan()
+    session = Session([])
+    if typed:
+        attest_paris_dilicom_complete(session, credential_id="paris-a")
+    service = _library(tmp_path, session=session)
+    key = return_key("paris", "paris-a", "linked-b", loan.id)
+    try:
+        assert service.storage.loan_return_claim(key, "closed-op")[0]
+        service.storage.loan_return_transition(
+            key, "closed-op", status="still_active",
+            verification="still_present",
+        )
+        session._closed = True
+        # Simulate a stale flag; a read-only check must still fail closed.
+        assert session.connected is True
+        outcome = service.verify_return_digital(loan)
+        assert outcome["status"] == "verification_unavailable"
+        assert outcome["provider_inventory_verified"] is False
+        assert session.checks == [] and session.posts == []
+    finally:
+        service.close()
+
+
+def test_closed_marker_property_is_not_evaluated_when_verifying_return(tmp_path):
+    from cifereca.core.loan_return_guard import return_key
+
+    events = []
+
+    class HostileClosure(Session):
+        @property
+        def _closed(self):
+            events.append("getter")
+            raise AssertionError("closure getter may run arbitrary provider I/O")
+
+    loan = _loan()
+    session = HostileClosure([loan])
+    service = _library(tmp_path, session=session)
+    key = return_key("paris", "paris-a", "linked-b", loan.id)
+    try:
+        assert service.storage.loan_return_claim(key, "hostile-closed-op")[0]
+        service.storage.loan_return_transition(
+            key, "hostile-closed-op", status="still_active",
+            verification="still_present",
+        )
+        outcome = service.verify_return_digital(loan)
+        assert outcome["status"] == "verification_unavailable"
+        assert outcome["provider_inventory_verified"] is False
+        assert events == [] and session.checks == [] and session.posts == []
+    finally:
+        service.close()
