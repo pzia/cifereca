@@ -35,6 +35,9 @@ _ADOPTION_REFUSALS = frozenset({
     "artifact_mismatch", "placement_missing", "placement_conflict",
     "catalogue_conflict", "artifact_shared_elsewhere",
     "competing_receipts", "adoption_unavailable",
+    "selected_identity_changed", "target_changed", "account_changed",
+    "receipt_conflict", "directory_migration_pending", "root_changed",
+    "file_changed",
 })
 
 
@@ -52,6 +55,12 @@ class NumilogIndexResumeRejected(ProviderConfigurationError):
 def _require(value):
     if not value:
         raise ProviderConfigurationError(_ERROR)
+
+
+def _check_resume(value, code):
+    """Refuse one known local verification gate without a private payload."""
+    if not value:
+        raise NumilogIndexResumeRejected(code)
 
 
 def _record(service, item, target_dir, identity_id, account_id, fingerprint):
@@ -129,50 +138,50 @@ def record(service, item, path, target_dir, identity_id, account_id, *, validate
 
 
 def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, verify_file=True):
-    _require(type(acquisition_id) is str and re.fullmatch(r'numilog-materialization:[0-9a-f]{32}', acquisition_id))
+    _check_resume(type(acquisition_id) is str and re.fullmatch(r'numilog-materialization:[0-9a-f]{32}', acquisition_id), "invalid_target")
     row = service.storage.acquisition_get(acquisition_id)
-    _require(type(row) is dict and row.get('provider_id') == 'numilog')
+    _check_resume(type(row) is dict and row.get('provider_id') == 'numilog', "receipt_missing")
     identity_id, credential, account, item = (row.get(k) for k in
         ('identity_id', 'credential_id', 'account_id', 'item_id'))
-    _require(all(type(v) is str and v for v in (identity_id, credential, account, item)))
-    _require(_scoped_record_id(item, credential) is not None)
-    _require(acquisition_id == stable_id('numilog-materialization', identity_id, credential, account, item))
+    _check_resume(all(type(v) is str and v for v in (identity_id, credential, account, item)), "receipt_scope_invalid")
+    _check_resume(_scoped_record_id(item, credential) is not None, "receipt_scope_invalid")
+    _check_resume(acquisition_id == stable_id('numilog-materialization', identity_id, credential, account, item), "receipt_scope_invalid")
     if selected:
-        _require(getattr(service.current_identity, 'identity_id', None) == identity_id)
+        _check_resume(getattr(service.current_identity, 'identity_id', None) == identity_id, "selected_identity_changed")
     if expected is not None:
-        _require(expected.provider_id == 'numilog' and expected.credential_id == credential
+        _check_resume(expected.provider_id == 'numilog' and expected.credential_id == credential
                  and expected.item_id == item and expected.account_id == account
-                 and expected.metadata.get('identity_id') == identity_id)
+                 and expected.metadata.get('identity_id') == identity_id, "target_changed")
     accounts = [a for a in service.accounts if a.provider_id == 'numilog' and a.credential_id == credential]
-    _require((selected and not accounts) or (len(accounts) == 1
-             and accounts[0].identity_id == identity_id and accounts[0].unique_id == account))
-    _require(service.storage.identity_for_connection('numilog', credential) == identity_id)
+    _check_resume((selected and not accounts) or (len(accounts) == 1
+             and accounts[0].identity_id == identity_id and accounts[0].unique_id == account), "account_changed")
+    _check_resume(service.storage.identity_for_connection('numilog', credential) == identity_id, "account_changed")
     evidence = service.storage.numilog_purchase_preflight_evidence(
         identity_id=identity_id, credential_id=credential, account_id=account, item_id=item,
     )
     ledgers = evidence.get('acquisitions')
-    _require(type(ledgers) is list and len(ledgers) == 1
+    _check_resume(type(ledgers) is list and len(ledgers) == 1
              and ledgers[0].get('acquisition_id') == acquisition_id
              and ledgers[0].get('identity_id') == identity_id
-             and ledgers[0].get('account_id') == account)
+             and ledgers[0].get('account_id') == account, "receipt_conflict")
 
-    _require(not service.storage.metadata_get('identity-directory-migration-v1'))
+    _check_resume(not service.storage.metadata_get('identity-directory-migration-v1'), "directory_migration_pending")
     roots = _identity_root(service, identity_id)
-    _require(roots is not None and len(roots) == 1)
+    _check_resume(roots is not None and len(roots) == 1, "root_changed")
     root = roots[0] / 'numilog'
     metadata = row.get('metadata')
-    _require(type(metadata) is dict and metadata.get('kind') == _KIND
+    _check_resume(type(metadata) is dict and metadata.get('kind') == _KIND
              and metadata.get('phase') in {_PENDING, 'indexed'}
              and metadata.get('root') == str(root)
-             and row.get('status') in {'acquiring', 'retryable_error', 'attention_required', 'complete'})
-    _require(type(metadata.get('path')) is str and bool(metadata['path'])
+             and row.get('status') in {'acquiring', 'retryable_error', 'attention_required', 'complete'}, "receipt_invalid")
+    _check_resume(type(metadata.get('path')) is str and bool(metadata['path'])
              and type(metadata.get('sha256')) is str
              and re.fullmatch(r'[0-9a-f]{64}', metadata['sha256'])
-             and type(metadata.get('size')) is int and metadata['size'] > 0)
+             and type(metadata.get('size')) is int and metadata['size'] > 0, "receipt_invalid")
     if verify_file:
         fingerprint = _read_hash_within(metadata['path'], (root,))
-        _require(fingerprint is not None and fingerprint ==
-                 (metadata['sha256'], metadata['size'], metadata['path']))
+        _check_resume(fingerprint is not None and fingerprint ==
+                 (metadata['sha256'], metadata['size'], metadata['path']), "file_changed")
     return row, Path(metadata['path'])
 
 
