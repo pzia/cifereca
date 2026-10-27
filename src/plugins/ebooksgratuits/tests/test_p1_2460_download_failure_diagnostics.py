@@ -5,6 +5,8 @@ All evidence is synthetic. No live OPDS, personal data or acquisitions.
 from __future__ import annotations
 
 from copy import deepcopy
+import logging
+import traceback
 
 import pytest
 
@@ -139,6 +141,59 @@ def test_successful_epub_broker_handoff_is_not_affected_by_failure_mapping(tmp_p
         location, evidence = s.download_direct(deepcopy(row), tmp_path)
         assert location.read_bytes() == b"SYNTHETIC EPUB broker handoff"
         assert evidence == DOWNLOAD
+        assert len(transport.calls) == 1
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("error,expected_code", [
+    (TemporaryUnavailable("transport.http: service_unavailable ; observed HTTP 503"),
+     "download_service_unavailable"),
+    (UnsupportedOperation("transport.http: content-type refusé (text/html)"),
+     "download_invalid_content"),
+    (Conflict("transport.http: /observed/local/path.epub"),
+     "download_destination_conflict"),
+    (RuntimeError("observed synthetic socket error with real URL and 502"),
+     "download_unavailable"),
+])
+def test_raw_core_plugin_journal_keeps_original_download_failure(
+    tmp_path, caplog, error, expected_code,
+):
+    s, transport, row = session(error)
+    try:
+        with caplog.at_level(logging.ERROR, logger="cifereca.plugins.ebooksgratuits"):
+            with pytest.raises(ProviderError) as raised:
+                s.download_direct(row, tmp_path)
+        # The established UI/business code stays closed and non-authorizing.
+        assert str(raised.value) == "Ebooks libres et gratuits : " + expected_code
+        assert raised.value.__cause__ is None
+        assert len(transport.calls) == 1
+        observed = [
+            record for record in caplog.records
+            if record.name == "cifereca.plugins.ebooksgratuits"
+            and "EPUB fetch failed" in record.getMessage()
+        ]
+        assert len(observed) == 1
+        event = observed[0]
+        assert event.levelno == logging.ERROR
+        assert "provider=ebooksgratuits" in event.getMessage()
+        assert "record_id=" + row.record_id in event.getMessage()
+        assert DOWNLOAD in event.getMessage()
+        assert event.exc_info is not None and event.exc_info[1] is error
+        trace = "".join(traceback.format_exception(*event.exc_info))
+        assert str(error) in trace
+        assert not list(tmp_path.rglob("*.epub"))
+    finally:
+        s.close()
+
+
+def test_successful_epub_does_not_emit_failed_download_trace(tmp_path, caplog):
+    s, transport, row = session(None)
+    try:
+        with caplog.at_level(logging.ERROR, logger="cifereca.plugins.ebooksgratuits"):
+            s.download_direct(row, tmp_path)
+        assert not any("EPUB fetch failed" in record.getMessage()
+                       for record in caplog.records)
         assert len(transport.calls) == 1
     finally:
         s.close()
