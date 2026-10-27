@@ -11,6 +11,7 @@ from cifereca.acquisition import Acquisition
 from cifereca.plugin_api import AttentionRequired
 from cifereca.locking import LockBusyError
 from cifereca.task_queue import TaskPriority
+from cifereca.gui.loan_view import loan_due_detail_value
 
 class Core0919(unittest.TestCase):
  def setUp(self):
@@ -128,7 +129,7 @@ class Core0919(unittest.TestCase):
  def test_loan_detail_displays_adept_id_and_wires_return_button(self):
   button=Mock();window=NS(service=NS(provider_display_name=lambda _provider:'Paris',can_download_loan=lambda loan:False,adept_return_status_for_loan=lambda loan:{'status':'ready','return_available':True,'acquisition_id':'binding-id','adept_loan_id':'adept-exact','profile_name':'hb'}),action_button=Mock(return_value=button),return_adept_from_detail=Mock(),config=NS(get=lambda key,default=None:default))
   detail=NS(_decorate=Mock(),_clear_actions=Mock(),window=window,content=Mock(),_cancel_meta_request=Mock(),_cover_and_title=Mock(),_group=Mock(),_actions=Mock(),show_presentation=Mock())
-  self.extract('show_loan',{'clear_box':Mock(),'fr_date':lambda value:value,'Gtk':NS(),'add_css':Mock(),'book_detail_presentation':lambda **kwargs:kwargs,'file_format':lambda value:str(value or '').lower(),'detail_language':lambda _raw:'','compact_availability_label':lambda value:value})(detail,self.loan)
+  self.extract('show_loan',{'clear_box':Mock(),'fr_date':lambda value:value,'loan_due_detail_value':loan_due_detail_value,'Gtk':NS(),'add_css':Mock(),'book_detail_presentation':lambda **kwargs:kwargs,'file_format':lambda value:str(value or '').lower(),'detail_language':lambda _raw:'','compact_availability_label':lambda value:value})(detail,self.loan)
   self.assertEqual(detail._group.call_args.args[0],'Restitution ADEPT')
   self.assertIn(('Identifiant ADEPT','adept-exact'),detail._group.call_args.args[1])
   button.connect.call_args.args[1](button);window.return_adept_from_detail.assert_called_once_with('binding-id',button)

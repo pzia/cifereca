@@ -106,3 +106,19 @@ def loan_due_presentation(
         return LoanDuePresentation("Retour demain", "loan-imminent", (2, 1))
     style = "loan-imminent" if delta <= 3 else "loan-normal"
     return LoanDuePresentation(f"Retour dans {delta} jours", style, (3, delta))
+
+
+
+def loan_due_detail_value(due_at: str | None, *, is_late: bool = False) -> str:
+    """Show a real parsed return date or an explicit unknown/late state.
+
+    Details and list rows must agree. An invalid supplier date or missing
+    field is never echoed as a return date or silently turned into today's
+    date. The provider's independent is_late flag may still say late without
+    disclosing a due date.
+    """
+    due = loan_due_presentation(due_at, is_late=is_late)
+    if due.label in ("Échéance inconnue", "En retard"):
+        return due.label
+    from .detail_model import fr_date
+    return fr_date(due_at)
