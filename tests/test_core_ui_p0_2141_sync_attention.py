@@ -132,3 +132,62 @@ def test_malformed_phase_collection_cannot_suppress_closed_source_failure():
     assert sync_source_attention(source) == (
         "error", "Synchronisation : échec — action nécessaire",
     )
+
+
+@pytest.mark.parametrize("provider", ["bnf-pret", "paris"])
+def test_p0_partial_loan_inventory_uses_warning_not_fatal(provider):
+    # The broker's own compatibility marker accompanies a legitimate
+    # source_sync_partial when HTML/legacy loans are not exhaustive.
+    source = _source(
+        provider_id=provider, status="partial",
+        error="Synchronisation partielle", sync_capable=True,
+        phase_states=(NS(phase="discover_rights", status="partial"),),
+    )
+    assert sync_source_attention(source) == (
+        "warning", "Notices et droits : résultat partiel",
+    )
+
+
+@pytest.mark.parametrize("foreign_error", [
+    "PRIVATE_URL/?token=secret", "authentication_failed",
+    "synchronisation partielle", "Synchronisation partielle\nSECRET",
+])
+def test_p0_unknown_provider_error_still_overrides_partial_warning(foreign_error):
+    source = _source(
+        provider_id="bnf-pret", status="partial", error=foreign_error,
+        phase_states=(NS(phase="discover_rights", status="partial"),),
+    )
+    assert sync_source_attention(source) == (
+        "error", "Synchronisation : échec — action nécessaire",
+    )
+    assert "SECRET" not in sync_source_attention(source)[1]
+
+
+def test_p0_fatal_phase_is_not_downgraded_by_core_partial_compatibility_marker():
+    source = _source(
+        provider_id="bnf-pret", status="partial",
+        error="Synchronisation partielle",
+        phase_states=(
+            NS(phase="materialize", status="failed"),
+            NS(phase="discover_rights", status="partial"),
+        ),
+    )
+    assert sync_source_attention(source) == (
+        "error", "Téléchargement local : échec — action nécessaire",
+    )
+
+
+def test_p0_bnf_partial_source_card_displays_warning_not_fatal_icon():
+    source = _source(
+        provider_id="bnf-pret", source_id="bnf-partial",
+        label="BnF Prêt", status="partial", sync_capable=True,
+        error="Synchronisation partielle", phase_states=(
+            NS(phase="discover_rights", status="partial"),
+        ),
+    )
+    window, _, _, _, _ = _fixture(sources=[source])
+    group = window._sync_sources_box.children[0]
+    row = group.children[0]
+    assert row.subtitle.startswith("Notices et droits : résultat partiel\n")
+    assert len(row.prefixes) == 1
+    assert row.prefixes[0].icon_name == "dialog-warning-symbolic"
