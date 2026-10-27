@@ -11,6 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from inspect import getattr_static
+import logging
 from typing import Literal
 
 from cifereca.models import Account, Loan
@@ -19,6 +20,7 @@ from .errors import Cancelled
 InventoryStatus = Literal["success", "partial", "failed", "cancelled"]
 InventoryCompleteness = Literal["complete", "partial", "unknown"]
 INVENTORY_CONTRACT = "cifereca.loan.inventory/1"
+_TRACE_LOG = logging.getLogger("cifereca")
 _MAX_LOANS = 10_000
 _MAX_BRANCHES = 32
 _REASON_CODES = frozenset({
@@ -214,6 +216,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
         return LoanInventorySnapshot(
             scope=scope, loans=(), status="failed", reason_code="unavailable",
         )
+    reader_kind = "unselected"
     try:
         # Class/instance properties can perform I/O even when we only check
         # whether a typed reader exists. Inspect the raw attribute instead of
@@ -222,6 +225,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
         if raw_reader is not None and not callable(raw_reader):
             raise ValueError("invalid_loan_inventory_reader")
         if raw_reader is not None:
+            reader_kind = "typed"
             # Bypass a provider's __getattribute__ override. Ordinary bound
             # methods and synthetic instance functions remain supported.
             reader = object.__getattribute__(session, "loan_inventory_snapshot")
@@ -241,6 +245,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
                 branches=result.branches, observed_at=result.observed_at,
                 reason_code=result.reason_code,
             )
+        reader_kind = "legacy"
         rows = session.loans(account)
         if not still_bound():
             return LoanInventorySnapshot(
@@ -255,6 +260,16 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
             scope=scope, loans=(), status="cancelled", reason_code="cancelled",
         )
     except Exception:
+        # The closed inventory status is not a substitute for the actual
+        # observed provider/contract failure in the canonical raw journal.
+        # Preserve the original traceback without another reader call, HTTP
+        # request or mutation. A cancellation is handled separately above.
+        _TRACE_LOG.warning(
+            "TRACE loan inventory read failed provider_id=%s identity_id=%s "
+            "credential_id=%s account_id=%s reader_kind=%s",
+            scope.provider_id, scope.identity_id, scope.credential_id,
+            scope.account_id, reader_kind, exc_info=True,
+        )
         return LoanInventorySnapshot(
             scope=scope, loans=(), status="failed", reason_code="read_failed",
         )
