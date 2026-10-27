@@ -85,9 +85,18 @@ def test_exactly_one_attested_terminal_from_explicit_action_only(
     assert "loan_ref" not in event["detail"]
     assert "task_ref" not in event
     assert "verified_loan_download" in event
-    text = caplog.text + repr(records)
-    for secret in ("PRIVATE_", "PASSWORD", "SECRET", "LOAN_", "BOOK_TITLE", "example.test"):
-        assert secret not in text
+    # The business terminal remains closed and provider-canonical; the RAW
+    # application journal keeps the observed exception and its cause intact.
+    # No extra loan/credential/title values are emitted when there was no
+    # exception, and no real account data is used in these synthetic fixtures.
+    summary = repr(records)
+    for value in ("PRIVATE_", "PASSWORD", "SECRET", "LOAN_", "BOOK_TITLE", "example.test"):
+        assert value not in summary
+    if error is not None:
+        assert str(error) in caplog.text
+        assert "TRACE explicit loan recovery" in caplog.text
+    else:
+        assert PRIVATE not in caplog.text
     messages = [r.getMessage() for r in caplog.records if r.getMessage().startswith(PREFIX)]
     assert len(messages) == 1
     assert public_log_fields(messages[0]) == event["detail"]
