@@ -1134,10 +1134,27 @@ class Storage:
             "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
             "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
             "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(acquisition_id) DO UPDATE SET status=excluded.status,strategy=COALESCE(excluded.strategy,acquisition_ledger.strategy),"
-            "executor=COALESCE(excluded.executor,acquisition_ledger.executor),artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),"
-            "attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),"
-            "error_message=excluded.error_message,attention_code=excluded.attention_code,"
+            "ON CONFLICT(acquisition_id) DO UPDATE SET "
+            # Passive old discovery/preflight must never downgrade a completed
+            # canonical acquisition. Active attempts (acquiring/errors) remain
+            # possible so an intentional new delivery is not blocked.
+            "status=CASE WHEN acquisition_ledger.status='complete' "
+            "AND excluded.status IN ('pending','discovered') "
+            "THEN acquisition_ledger.status ELSE excluded.status END,"
+            "strategy=COALESCE(excluded.strategy,acquisition_ledger.strategy),"
+            "executor=COALESCE(excluded.executor,acquisition_ledger.executor),"
+            "artifact_id=CASE WHEN acquisition_ledger.status='complete' "
+            "AND excluded.status IN ('pending','discovered') "
+            "THEN acquisition_ledger.artifact_id "
+            "ELSE COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id) END,"
+            "attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),"
+            "last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),"
+            "error_message=CASE WHEN acquisition_ledger.status='complete' "
+            "AND excluded.status IN ('pending','discovered') "
+            "THEN acquisition_ledger.error_message ELSE excluded.error_message END,"
+            "attention_code=CASE WHEN acquisition_ledger.status='complete' "
+            "AND excluded.status IN ('pending','discovered') "
+            "THEN acquisition_ledger.attention_code ELSE excluded.attention_code END,"
             "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at "
             "WHERE acquisition_ledger.entitlement_id IS excluded.entitlement_id "
             "AND acquisition_ledger.provider_id=excluded.provider_id "
@@ -1320,32 +1337,12 @@ class Storage:
         except (TypeError, ValueError):
             attempt_count_value = 0
         with self._lock, self._connect() as db:
-            # #3196: an independently advanced canonical acquisition must
-            # never be overwritten by a replay of its historical Kobo row.
-            # Compare the LAST committed projection state, not the incoming
-            # state: the incoming value is not an attestation of the ledger.
-            # Both reads and the subsequent mirror share this SQLite writer
-            # lock/transaction. Genuine compatible pending -> complete
-            # transitions still propagate through the existing mirror.
-            previous = db.execute(
-                "SELECT status FROM backup_items WHERE provider_id=? "
-                "AND credential_id=? AND item_id=?",
-                (str(item.get("provider_id") or ""),
-                 str(item.get("credential_id") or ""),
-                 str(item.get("item_id") or "")),
-            ).fetchone()
-            canonical = db.execute(
-                "SELECT status FROM acquisition_ledger WHERE acquisition_id=?",
-                (self._acquisition_id_for(item),),
-            ).fetchone()
-            if canonical is not None and (
-                previous is None
-                or self._generic_status(previous[0]) != canonical[0]
-            ):
-                # Fail closed BEFORE writing the legacy projection, entitlement
-                # or artifact. Explicit reconciliation must establish why
-                # canonical and v0.7 histories disagree; neither wins by age.
-                raise ValueError("backup_canonical_status_diverged")
+            # The v0.7 writer is still in service until #3196 migrates its
+            # consumers. In particular an active Kobo delivery legitimately
+            # advances the canonical receipt before refreshing backup_items.
+            # Do not reject that transition merely because the two states
+            # temporarily differ: protect only passive replay downgrades in
+            # the canonical UPSERT below, leaving both writers operational.
             # A legacy projection PK omits identity/account. Refuse an
             # explicit conflicting owner atomically: neither the 0.7 row nor
             # the canonical right/receipt may change on an ambiguous rebind.
