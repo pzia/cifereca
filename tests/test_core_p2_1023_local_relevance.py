@@ -186,3 +186,42 @@ def test_bundle_paths_are_not_searchable_but_member_bibliography_still_is():
         assert filter_loaded_results([book], term, field=field) == [book]
         assert filter_loaded_results([book], term, field="all") == [book]
     assert local_match_explanation(book, "étoiles") == "Correspondance : Titre"
+
+
+def test_opaque_bibliographic_objects_do_not_create_false_search_hits():
+    """Provider payload objects are not catalog subject/series/ISBN attestations."""
+    opaque = row(
+        "object-1", "Un roman",
+        subjects={"internal_note": "marker-secret-subject"},
+        series={"source_credential": "marker-secret-series"},
+        collection={"path": "/home/marker-secret-collection/book.epub"},
+        isbn={"signed_url": "marker-secret-isbn"},
+    )
+    for field, marker in (
+        ("all", "marker-secret-subject"),
+        ("subject", "marker-secret-subject"),
+        ("series", "marker-secret-series"),
+        ("collection", "marker-secret-collection"),
+        ("isbn", "marker-secret-isbn"),
+    ):
+        assert filter_loaded_results([opaque], marker, field=field) == []
+        assert local_match_explanation(opaque, marker) == ""
+    assert filter_loaded_results([opaque], "roman") == [opaque]
+
+    # Real text/list fields remain searchable; a mixed list cannot force an
+    # object to be converted to repr or recursively indexed.
+    verified = row(
+        "typed-1", "Anthologie",
+        subjects=["Astronomie", {"raw": "marker-secret-nested"}],
+        series=["Carnets du ciel"], collection="Bibliothèque de Paris",
+        isbn=["9780000000001"],
+    )
+    for field, term in (
+        ("subject", "Astronomie"),
+        ("series", "Carnets"),
+        ("collection", "Paris"),
+        ("isbn", "9780000000001"),
+    ):
+        assert filter_loaded_results([verified], term, field=field) == [verified]
+        assert filter_loaded_results([verified], term, field="all") == [verified]
+    assert filter_loaded_results([verified], "marker-secret-nested") == []
