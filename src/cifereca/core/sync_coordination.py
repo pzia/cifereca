@@ -92,26 +92,17 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             account.credential_id, account.unique_id,
             self._account_context_epoch,
         )
-        # Adopt the optional atomic inventory envelope only where the plugin
-        # explicitly implements it. Legacy providers retain the established
-        # loans()/cache behavior, without a second network read.
-        # A provider property/getattr may issue HTTP even during a mere
-        # typed-vs-legacy capability check. Treat any statically declared
-        # reader as opt-in; read_loan_inventory rejects unsafe descriptors
-        # without falling back to a second legacy network GET.
-        typed_inventory = (
-            getattr_static(session, "loan_inventory_snapshot", None) is not None
-        )
-        snapshot = None
+        # One reader for both typed providers and v1 compatibility. The
+        # adapter marks legacy lists partial/legacy_unverified and never
+        # treats an empty list or last_loan_errors as negative evidence.
+        # The reader inspects descriptors statically and performs at most
+        # one provider inventory I/O, with no fallback after a typed failure.
+        from ..plugin_api.loan_inventory import read_loan_inventory
         with measure("loan_refresh_ms"):
-            if typed_inventory:
-                from ..plugin_api.loan_inventory import read_loan_inventory
-                snapshot = read_loan_inventory(session, account)
-                if snapshot.status in {"failed", "cancelled"}:
-                    raise ProviderConfigurationError("loan_inventory_read_unavailable")
-                loans = list(snapshot.loans)
-            else:
-                loans = self._loans_for_account(account, force=True)
+            snapshot = read_loan_inventory(session, account)
+            if snapshot.status in {"failed", "cancelled"}:
+                raise ProviderConfigurationError("loan_inventory_read_unavailable")
+            loans = list(snapshot.loans)
         if not _opening_loans_scoped(account, source_scope[0], loans):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
         matching = [
@@ -186,7 +177,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # deliberately not an authority for this explicit sync result.
         # Typed producers may attest a successful observation, but only
         # explicit branch coverage can authorize a negative rights transition.
-        if snapshot is None or snapshot.status == "partial":
+        if snapshot.status == "partial":
             result["status"] = "partial"
     if session.capabilities.personal_library:
         # A provider can implement a one-shot iterable: both the entitlement
@@ -651,29 +642,21 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     session = self._sessions.get(
                         self._session_key(account.provider_id, account.credential_id),
                     )
-                    snapshot = None
                     typed_scope = (
                         account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id,
                         self._account_context_epoch,
                     )
-                    # Never invoke a provider getter while selecting the
-                    # typed path. A malformed declared reader must fail
-                    # closed instead of being demoted to legacy loans().
-                    if session is not None and (
-                        getattr_static(session, "loan_inventory_snapshot", None)
-                        is not None
-                    ):
-                        # Exactly one provider read, with the provider's atomic
-                        # status and branch evidence. Never infer a missing
-                        # loan/return from the envelope or a successful GET.
-                        from ..plugin_api.loan_inventory import read_loan_inventory
-                        snapshot = read_loan_inventory(session, account)
-                        if snapshot.status in {"failed", "cancelled"}:
-                            raise ProviderConfigurationError("loan_inventory_read_unavailable")
-                        account_loans = list(snapshot.loans)
-                    else:
-                        account_loans = self._loans_for_account(account, force=True)
+                    # The same single typed/legacy reader is authoritative
+                    # for this explicit source. v1 returns partial, never
+                    # proof of negative branch coverage.
+                    from ..plugin_api.loan_inventory import read_loan_inventory
+                    if session is None:
+                        raise ProviderConfigurationError("loan_inventory_read_unavailable")
+                    snapshot = read_loan_inventory(session, account)
+                    if snapshot.status in {"failed", "cancelled"}:
+                        raise ProviderConfigurationError("loan_inventory_read_unavailable")
+                    account_loans = list(snapshot.loans)
                     logger.info(
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
@@ -692,12 +675,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # Do not consult it. Personal-library-only providers are
                     # unaffected: they have no loan inventory to classify.
                     legacy_unverified = (
-                        snapshot is None and session is not None
-                        and getattr(getattr(session, "capabilities", None),
-                                    "loans", None) is True
+                        snapshot.status == "partial"
+                        and snapshot.reason_code == "legacy_unverified"
                     )
                     inventory_partial = (
-                        snapshot is not None and snapshot.status == "partial"
+                        snapshot.status == "partial"
                     ) or legacy_unverified
                     if inventory_partial:
                         # Unknown v1 coverage is not a *provider error*: do
