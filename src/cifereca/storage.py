@@ -2747,8 +2747,31 @@ class Storage:
                     self._json_dump(row.get("metadata")), now, now, row.get("identity_id"),
                 ),
             )
-            if not insert_only and cursor.rowcount != 1:
-                raise ValueError("acquisition_source_scope_conflict")
+            if cursor.rowcount != 1:
+                if not insert_only:
+                    raise ValueError("acquisition_source_scope_conflict")
+                # DO NOTHING means *some* receipt already owns this ID.
+                # Before returning its ID to discovery (whose next action may
+                # update its state), prove it belongs to the exact source,
+                # borrower, library identity and entitlement. A legacy NULL
+                # is unknown rather than permission to silently claim it.
+                # The preceding INSERT holds the SQLite write transaction,
+                # so no other worker can swap the row between these checks.
+                existing = db.execute(
+                    "SELECT 1 FROM acquisition_ledger WHERE acquisition_id=? "
+                    "AND provider_id=? AND credential_id=? "
+                    "AND account_id IS ? AND item_id=? "
+                    "AND identity_id IS ? AND entitlement_id IS ?",
+                    (
+                        acquisition_id,
+                        str(row.get("provider_id") or ""),
+                        str(row.get("credential_id") or ""),
+                        row.get("account_id"), str(row.get("item_id") or ""),
+                        row.get("identity_id"), row.get("entitlement_id"),
+                    ),
+                ).fetchone()
+                if existing is None:
+                    raise ValueError("acquisition_source_scope_conflict")
         return acquisition_id
 
     def acquisition_get(self, acquisition_id: str) -> dict[str, Any] | None:
