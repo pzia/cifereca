@@ -2961,6 +2961,15 @@ class LibraryService:
             emit("attention_required", code)
             raise
         except _LoanDownloadAdmissionRefused as exc:
+            # Only the explicit rejected command is observed here, not a
+            # provider GET. Keep the actual loan scope in the raw journal;
+            # the typed business terminal remains a closed, single event.
+            _TRACE_LOG.warning(
+                "TRACE explicit loan recovery admission refused provider=%s loan_id=%s code=%s",
+                getattr(loan, "source_provider", None),
+                getattr(loan, "id", None), exc.code,
+                exc_info=True,
+            )
             emit("refused", exc.code, phase="admission")
             raise
         except ProviderConfigurationError:
