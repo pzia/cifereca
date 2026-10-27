@@ -340,7 +340,11 @@ def assess_borrower_operation_eligibility(
         return outcome("unsupported", "operation_unsupported")
     if capability.availability == "unavailable":
         return outcome("unavailable", "session_unavailable")
-    if capability.availability != "supported":
+    if (capability.availability != "supported"
+            or capability.manifest_declared is not True
+            or capability.descriptor_declared is not True
+            or capability.method_implemented is not True
+            or capability.session_ready is not True):
         return outcome("unverified", "capability_unverified")
     if (type(account) is not Account
             or not requested_branch or len(requested_branch) > 64
@@ -360,9 +364,11 @@ def assess_borrower_operation_eligibility(
             or not account.identity_id or not account.provider_id
             or not account.credential_id or observed != scopes):
         return outcome("unverified", "borrower_scope_unverified")
-    if (evidence.subscription not in {
-            "valid", "renewal_pending", "expired", "unknown"
-        } or evidence.permission not in {"allowed", "denied", "unknown"}
+    if (type(evidence.subscription) is not str
+            or evidence.subscription not in {
+                "valid", "renewal_pending", "expired", "unknown"
+            } or type(evidence.permission) is not str
+            or evidence.permission not in {"allowed", "denied", "unknown"}
             or (evidence.remaining_loans is not None and (
                 type(evidence.remaining_loans) is not int
                 or not 0 <= evidence.remaining_loans <= 10000
