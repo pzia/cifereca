@@ -271,3 +271,68 @@ def test_unscoped_placement_with_provider_right_is_not_deletable(tmp_path):
         assert service.storage.placement_get(request.placement_id) is not None
     finally:
         service.storage.close()
+
+
+def _insert_unattributed_legacy_right(service, *, provider, item="book-1"):
+    service.storage.entitlement_put({
+        "provider_id": provider,
+        "credential_id": "orphan-credential",
+        "account_id": "reader",
+        "identity_id": None,
+        "item_id": item,
+        "entitlement_type": "owned", "state": "active",
+        "metadata": {},
+    })
+
+
+def test_legacy_null_identity_right_blocks_unknown_provider_preview(tmp_path):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    try:
+        provider = "synthetic-legacy-provider"
+        _assign_fictitious_provider(service, request, provider)
+        _insert_unattributed_legacy_right(service, provider=provider)
+        with pytest.raises(Conflict):
+            broker.plan(request)
+        assert candidate.is_file() and kept.is_file()
+        assert service.storage.placement_get(request.placement_id) is not None
+    finally:
+        service.storage.close()
+
+
+def test_legacy_null_identity_right_inserted_during_hash_blocks_commit(tmp_path, monkeypatch):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    try:
+        provider = "synthetic-legacy-provider"
+        _assign_fictitious_provider(service, request, provider)
+        plan = broker.plan(request)
+        original_hash = artifact_runtime.sha256_file
+        inserted = False
+
+        def introduce_legacy_right(path):
+            nonlocal inserted
+            if path == candidate and not inserted:
+                inserted = True
+                _insert_unattributed_legacy_right(service, provider=provider)
+            return original_hash(path)
+
+        monkeypatch.setattr(artifact_runtime, "sha256_file", introduce_legacy_right)
+        with pytest.raises(Conflict, match="Le doublon n'est plus vérifiable"):
+            broker.run(plan)
+        assert inserted
+        assert candidate.is_file() and kept.is_file()
+        assert service.storage.placement_get(request.placement_id) is not None
+    finally:
+        service.storage.close()
+
+
+def test_legacy_null_identity_other_edition_does_not_block(tmp_path):
+    service, broker, request, candidate, kept, _artifact = _rig(tmp_path)
+    try:
+        provider = "synthetic-legacy-provider"
+        _assign_fictitious_provider(service, request, provider)
+        _insert_unattributed_legacy_right(service, provider=provider, item="unrelated-edition")
+        result = broker.run(broker.plan(request))
+        assert result.ok and result.changed == 1
+        assert not candidate.exists() and kept.is_file()
+    finally:
+        service.storage.close()

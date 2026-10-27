@@ -585,12 +585,18 @@ def _duplicate_placement_scope_safe(storage: Any, row: dict | None, keep: dict |
     rights = [
         right for right in storage.entitlements(provider_id=provider)
         if right.get("identity_id") == row["identity_id"]
+        or right.get("identity_id") is None
     ]
     if not isinstance(edition, str) or not edition:
         return not rights
+    matching = [right for right in rights if right.get("item_id") == edition]
+    # A legacy NULL identity is not proof that the right belongs to this
+    # placement. Never silently discard this ambiguous ownership evidence.
+    if any(right.get("identity_id") is None for right in matching):
+        return False
     owners = {
         (right.get("credential_id"), right.get("account_id"))
-        for right in rights if right.get("item_id") == edition
+        for right in matching
     }
     return len(owners) <= 1
 

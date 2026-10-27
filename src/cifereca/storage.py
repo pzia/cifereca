@@ -3808,11 +3808,19 @@ class Storage:
             if not source_item_id:
                 if db.execute(
                     "SELECT 1 FROM entitlements WHERE provider_id=? "
-                    "AND identity_id=? LIMIT 1",
+                    "AND (identity_id=? OR identity_id IS NULL) LIMIT 1",
                     (provider_id, identity_id),
                 ).fetchone():
                     raise ValueError("duplicate_retire_unscoped_owner")
             else:
+                # Older rights can have an unset identity. Their owner is
+                # unknown, not a reason to silently coalesce two placements.
+                if db.execute(
+                    "SELECT 1 FROM entitlements WHERE provider_id=? "
+                    "AND item_id=? AND identity_id IS NULL LIMIT 1",
+                    (provider_id, source_item_id),
+                ).fetchone():
+                    raise ValueError("duplicate_retire_unscoped_owner")
                 owners = set(db.execute(
                     "SELECT credential_id,account_id FROM entitlements "
                     "WHERE provider_id=? AND identity_id=? AND item_id=?",
