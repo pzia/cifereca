@@ -14,7 +14,9 @@ from cifereca.core import bnf_auto_materialization as auto
 from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 
 
-@pytest.mark.parametrize("change", ["consent_revoked", "provider_reconnected", "core_rebound"])
+@pytest.mark.parametrize("change", [
+    "consent_revoked", "consent_reissued", "provider_reconnected", "core_rebound",
+])
 def test_bnf_auto_import_cannot_publish_stale_positive_claim(
     connected_core, monkeypatch, change,
 ):
@@ -26,8 +28,11 @@ def test_bnf_auto_import_cannot_publish_stale_positive_claim(
 
     def import_during_rebind(candidate, **kwargs):
         calls.append((candidate, kwargs))
-        if change == "consent_revoked":
+        if change in {"consent_revoked", "consent_reissued"}:
             broker.set_bnf_auto_download(sid, False)
+            if change == "consent_reissued":
+                # A→B→A consent changes do not leave the old run authorized.
+                broker.set_bnf_auto_download(sid, True)
         elif change == "provider_reconnected":
             session._epoch = getattr(session, "_epoch", 0) + 1
         else:
@@ -92,3 +97,24 @@ def test_bnf_verified_existing_receipt_not_marked_unchanged_after_consent_revoke
         assert not downloaded
     finally:
         service.close()
+
+
+def test_opt_in_revision_changes_even_if_final_boolean_returns_to_true(
+    connected_core,
+):
+    service, session, account, loan, _state, downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    key = auto.policy_key(account)
+    assert broker.set_bnf_auto_download(sid, True)
+    first = service.storage.metadata_get(key + ".revision")
+    assert type(first) is str and len(first) == 32
+    assert broker.set_bnf_auto_download(sid, False) is False
+    second = service.storage.metadata_get(key + ".revision")
+    assert second != first
+    assert broker.set_bnf_auto_download(sid, True)
+    third = service.storage.metadata_get(key + ".revision")
+    assert third not in {first, second}
+    assert auto.enabled(service, account)
+    assert downloaded == []
+    service.close()
