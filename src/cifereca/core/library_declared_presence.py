@@ -9,6 +9,7 @@ import sqlite3
 from contextlib import nullcontext
 
 from ..locking import InterProcessLock, LockBusyError
+from ..plugin_api.errors import Cancelled
 from ..paths import acquisition_lock_file
 from .library_audit_roots import configured_identity_roots
 from .library_declared_links import (
@@ -17,6 +18,14 @@ from .library_declared_links import (
 )
 from .library_fresh_file_check import revalidate_observed_file
 from .library_inventory import FileObservation
+
+
+# Only codes originating in the bounded Core file inspector are admissible.
+# Plugin callbacks and OS/SQLite exception messages can contain private paths.
+_FRESH_FAILURES = frozenset({
+    'invalid_scope', 'unverified_observation', 'byte_budget',
+    'cancelled', 'file_changed', 'time_budget', 'path_unavailable',
+})
 
 
 @dataclass(frozen=True)
@@ -109,7 +118,11 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
             )
             _require(valid() and source_current() is True, 'source_scope_changed')
             if not fresh.verified:
-                return DeclaredPresence('needs_review', fresh.reason)
+                return DeclaredPresence(
+                    'needs_review', fresh.reason if (
+                        type(fresh.reason) is str and fresh.reason in _FRESH_FAILURES
+                    ) else 'file_revalidation_failed',
+                )
             current_record, current_context, _ = read_pair()
             _require(record == current_record and context == current_context,
                      'declaration_changed')
@@ -119,5 +132,10 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
         return DeclaredPresence('needs_review', str(error))
     except LockBusyError:
         return DeclaredPresence('needs_review', 'acquisition_busy')
-    except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError) as error:
-        return DeclaredPresence('needs_review', str(error))
+    except Cancelled:
+        # Cancellation remains a task control signal, not a completed check.
+        raise
+    except Exception:
+        # Keep private SQL, filesystem and provider guard messages out of UI,
+        # synchronization summaries and diagnostic events.
+        return DeclaredPresence('needs_review', 'presence_check_unavailable')
