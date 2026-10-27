@@ -18,6 +18,21 @@ def test_independently_attested_kobo_receipt_projects_confirmed_link_after_reope
     case, inspection, right, file = selected
     original_bytes = case.target.read_bytes()
 
+    # The historical compatibility backup fixture has no provenance-bearing
+    # supplier metadata. Make the positive provider attestation explicit:
+    # a confirmed *purchase* requires a Kobo-manifest proof, not merely a
+    # legacy backup_items row with matching bytes/title.
+    rights = case.storage.entitlements(provider_id="kobo")
+    assert len(rights) == 1
+    own_right = rights[0]
+    case.storage.entitlement_put({
+        **own_right,
+        "metadata": {
+            **(own_right.get("metadata") or {}),
+            "source": "kobo.personal_manifest",
+        },
+    })
+
     # The previous session has only a candidate, not a confirmed link.
     assert not any(
         row.key.startswith("file:")
