@@ -16,6 +16,30 @@ from .epub_metadata import SCHEMA as EPUB_METADATA_SCHEMA, inspect_epub, cached_
 from .plugin_api import BUNDLE_MANIFEST_NAME, BundleError, load_bundle_manifest
 
 
+# Locally received copies are physical possessions, never evidence that the
+# recipient has purchased the source account's book (#3275). A scan only
+# refreshes filesystem facts and must not erase the already stored origin.
+def _preserved_received_copy(metadata: object, owner: object) -> dict[str, str]:
+    if type(metadata) is not dict or type(owner) is not str or not owner:
+        return {}
+    source = metadata.get("materialized_from")
+    origin = metadata.get("file_origin_identity_id")
+    kind = metadata.get("transfer_kind")
+    if type(source) is not str or not 0 < len(source) <= 512:
+        return {}
+    if (origin is not None and (type(origin) is not str or not origin
+                                or len(origin) > 512 or origin == owner)):
+        return {}
+    if kind not in (None, "local_copy"):
+        return {}
+    kept = {"materialized_from": source}
+    if type(origin) is str:
+        kept["file_origin_identity_id"] = origin
+    if kind == "local_copy":
+        kept["transfer_kind"] = kind
+    return kept
+
+
 SUPPORTED_EXTENSIONS = {
     ".epub": "epub",
     ".pdf": "pdf",
@@ -165,6 +189,7 @@ class LocalCatalog:
         item_id: str | None = None,
         identity_id: str | None = None,
         provider_id: str | None = None,
+        preserved_catalogue_ids: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         root = root.expanduser().resolve()
         path_text = str(root)
@@ -229,7 +254,10 @@ class LocalCatalog:
             "placement_id": placement_id, "artifact_id": artifact.artifact_id, "path": path_text,
             "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": item_id,
             "state": "present", "last_seen_at": now,
-            "metadata": {"relative_path": relative, "artifact_kind": "bundle", **stat_meta},
+            "metadata": {
+                **_preserved_received_copy((existing or {}).get("metadata"), identity_hint),
+                "relative_path": relative, "artifact_kind": "bundle", **stat_meta,
+            },
         })
         member_rows = [member.as_dict() for member in manifest.members]
         metadata = {
@@ -241,7 +269,9 @@ class LocalCatalog:
         # autonomous manifest and remains reconstructable after a database loss.
         metadata.update({k: v for k, v in dict(manifest.metadata).items() if k not in metadata})
         self.storage.catalog_entry_put({
-            "catalog_entry_id": stable_id("catalog", placement_id), "artifact_id": artifact.artifact_id,
+            "catalog_entry_id": (preserved_catalogue_ids or {}).get(placement_id)
+                                or stable_id("catalog", placement_id),
+            "artifact_id": artifact.artifact_id,
             "placement_id": placement_id, "title": str(title or manifest.title or root.name),
             "author": manifest.author or None, "media_format": manifest.media_format,
             "identity_id": identity_hint, "provider_id": provider_hint, "item_id": item_id,
@@ -427,7 +457,10 @@ class LocalCatalog:
             "placement_id": placement_id, "artifact_id": artifact_id, "path": path_text,
             "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": source_item_id,
             "state": "present", "last_seen_at": now,
-            "metadata": {"relative_path": relative, "artifact_kind": "file", **stat_meta},
+            "metadata": {
+                **_preserved_received_copy((existing or {}).get("metadata"), identity_hint),
+                "relative_path": relative, "artifact_kind": "file", **stat_meta,
+            },
         })
         self.storage.catalog_entry_put({
             "catalog_entry_id": catalog_entry_id, "artifact_id": artifact_id,
@@ -509,6 +542,21 @@ class LocalCatalog:
         root_identity = (initial_root.st_dev, initial_root.st_ino)
         started_at = int(time.time())
         previous_catalog = {row["catalog_entry_id"]: row for row in self.storage.catalog_entries()}
+        # A sent copy already has a catalogue row. Its original entry ID may
+        # differ from the scan-generated ID; do not create a second book for B.
+        received_catalogue_ids: dict[str, str] = {}
+        ambiguous_transfers: set[str] = set()
+        for entry in previous_catalog.values():
+            pid = entry.get("placement_id")
+            if (type(pid) is not str or not pid
+                    or not _preserved_received_copy(
+                        (entry.get("metadata") or {}), entry.get("identity_id"))):
+                continue
+            old = received_catalogue_ids.setdefault(pid, entry["catalog_entry_id"])
+            if old != entry["catalog_entry_id"]:
+                ambiguous_transfers.add(pid)
+        for pid in ambiguous_transfers:
+            received_catalogue_ids.pop(pid, None)
         # Only placements already eligible for a negative observation when
         # this inventory started can become 'missing'. Another acquisition
         # may insert a placement or restore an archived one after our rglob
@@ -545,7 +593,9 @@ class LocalCatalog:
         for bundle_root in bundle_roots:
             scanned += 1
             seen_paths.add(str(bundle_root))
-            result = self._index_bundle(bundle_root)
+            result = self._index_bundle(
+                bundle_root, preserved_catalogue_ids=received_catalogue_ids,
+            )
             if result.get("status") == "indexed":
                 cataloged += 1
                 artifacts_new += int(bool(result.get("artifact_new")))
@@ -759,12 +809,14 @@ class LocalCatalog:
                         "file_device": int(stat.st_dev),
                         "file_ctime_ns": int(stat.st_ctime_ns),
                         "artifact_kind": "file",
+                        **_preserved_received_copy(previous_meta, identity_hint),
                     },
                 }
             )
             self.storage.catalog_entry_put(
                 {
-                    "catalog_entry_id": stable_id("catalog", placement_id),
+                    "catalog_entry_id": received_catalogue_ids.get(placement_id)
+                                        or stable_id("catalog", placement_id),
                     "artifact_id": artifact_id,
                     "placement_id": placement_id,
                     "title": str((legacy or {}).get("title") or path.stem),
