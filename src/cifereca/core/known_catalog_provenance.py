@@ -68,5 +68,6 @@ def known_catalog_search_result(
         source_collection=collection or None, owned=None,
         downloadable=None, download_url=None, metadata={
             "catalogue_scope_version": 2,
+            "known_catalog_identity_id": identity_id,
         },
     )
