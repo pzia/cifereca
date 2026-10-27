@@ -3759,6 +3759,69 @@ class Storage:
                 return row
         return None
 
+    def placement_retire_duplicate_atomic(
+        self, *, placement_id: str, keep_placement_id: str,
+        candidate_path: str, kept_path: str, artifact_id: str,
+        identity_id: str, provider_id: str, source_item_id: str | None,
+    ) -> None:
+        """Remove one unreferenced duplicate placement in a single SQLite commit.
+
+        The caller hashes both files before entering this method and performs
+        the optional physical unlink only AFTER commit. All SQLite scope and
+        dependency checks must be repeated under BEGIN IMMEDIATE: otherwise a
+        newly attached catalogue/receipt may be cascaded away between the
+        broker's precheck and placement deletion.
+        """
+        if (not all(type(v) is str and v for v in (
+                    placement_id, keep_placement_id, candidate_path, kept_path,
+                    artifact_id, identity_id, provider_id,
+                ))
+                or placement_id == keep_placement_id
+                or candidate_path == kept_path
+                or source_item_id is not None and type(source_item_id) is not str):
+            raise ValueError("duplicate_retire_scope_invalid")
+        from .core.duplicate_maintenance_guard import (
+            candidate_has_active_dependencies_in_db,
+        )
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            coordinates = (
+                "SELECT path,artifact_id,identity_id,provider_id,"
+                "source_item_id,state FROM placements WHERE placement_id=?"
+            )
+            row = db.execute(coordinates, (placement_id,)).fetchone()
+            kept = db.execute(coordinates, (keep_placement_id,)).fetchone()
+            expected = (
+                candidate_path, artifact_id, identity_id, provider_id,
+                source_item_id, "present",
+            )
+            expected_keep = (
+                kept_path, artifact_id, identity_id, provider_id,
+                source_item_id, "present",
+            )
+            if row != expected or kept != expected_keep:
+                raise ValueError("duplicate_retire_scope_changed")
+            if provider_id in {"kobo", "numilog", "paris"}:
+                if not source_item_id:
+                    raise ValueError("duplicate_retire_scope_changed")
+                owners = set(db.execute(
+                    "SELECT credential_id,account_id FROM entitlements "
+                    "WHERE provider_id=? AND identity_id=? AND item_id=?",
+                    (provider_id, identity_id, source_item_id),
+                ))
+                if len(owners) > 1:
+                    raise ValueError("duplicate_retire_ambiguous_owner")
+            if candidate_has_active_dependencies_in_db(
+                db, placement_id=placement_id, path=candidate_path,
+            ):
+                raise ValueError("duplicate_retire_references_changed")
+            if db.execute(
+                "DELETE FROM placements WHERE placement_id=? AND path=? "
+                "AND artifact_id=?",
+                (placement_id, candidate_path, artifact_id),
+            ).rowcount != 1:
+                raise ValueError("duplicate_retire_scope_changed")
+
     def placement_delete(self, placement_id: str) -> None:
         with self._lock, self._connect() as db:
             db.execute("SAVEPOINT placement_delete")
