@@ -27,6 +27,13 @@ _NUMILOG_INDEX_REFUSAL_LABELS = {
     "artifact_shared_elsewhere": "Même empreinte déjà utilisée par un autre placement.",
     "competing_receipts": "Plusieurs reçus concurrents pour cet achat.",
     "adoption_unavailable": "Validation du placement d’origine indisponible.",
+    "selected_identity_changed": "L’identité sélectionnée n’est plus celle du reçu.",
+    "target_changed": "La demande de reprise ne correspond plus au reçu.",
+    "account_changed": "Le rattachement du compte Numilog a changé.",
+    "receipt_conflict": "Reçus concurrents ou hors périmètre pour cet achat.",
+    "directory_migration_pending": "Migration du répertoire en cours ou non finalisée.",
+    "root_changed": "Racine de bibliothèque différente de celle du reçu.",
+    "file_changed": "Fichier absent, déplacé ou empreinte différente du reçu.",
 }
 
 
