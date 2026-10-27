@@ -86,7 +86,6 @@ def project_existing_capabilities(
                 or type(sync_source.source_id) is not str
                 or not sync_source.source_id
                 or type(sync_source.account_id) is not str
-                or not sync_source.account_id
                 or type(sync_source.sync_capabilities) is not tuple
                 or any(type(x) is not str for x in sync_source.sync_capabilities)):
             raise ValueError("capability_sync_scope_mismatch")
@@ -140,12 +139,16 @@ def project_existing_capabilities(
                 scope=branch.medium, field=branch.upstream,
                 identity_id=scope.identity_id, account_id=scope.account_id,
                 credential_id=scope.credential_id,
-                status="supported" if attested else "partial",
+                status=("supported" if attested else "partial"
+                        if loan_snapshot.status in ("success", "partial")
+                        else "unverified"),
                 implementation_state="implemented",
                 source_kind="account_observation",
                 evidence_ref=("loan-inventory:" + loan_snapshot.observed_at
                               if attested else ""),
                 reason=("provider_claim_complete" if attested else
+                        "branch_snapshot_" + loan_snapshot.status
+                        if loan_snapshot.status in ("failed", "cancelled") else
                         "branch_" + branch.completeness + "_not_attested"),
             ))
 
