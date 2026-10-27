@@ -104,3 +104,52 @@ def test_refusal_codes_are_an_exact_allowlist(raw, expected):
     refusal = NumilogIndexResumeRejected(raw)
     assert refusal.reason_code == expected
     assert "private" not in str(refusal).lower()
+
+
+@pytest.mark.parametrize(("change", "code"), [
+    ("bytes", "file_changed"),
+    ("missing", "file_changed"),
+    ("selected_other_identity", "selected_identity_changed"),
+    ("account_rebound", "account_changed"),
+    ("ledger_duplicated", "receipt_conflict"),
+    ("directory_changed", "root_changed"),
+    ("migration_pending", "directory_migration_pending"),
+])
+def test_resume_pre_adoption_refusal_names_exact_safe_gate(
+    case, tmp_path, monkeypatch, change, code,
+):
+    from types import SimpleNamespace as NS
+
+    acquired = case.service.acquire_direct_item(case.item)
+    receipt = acquired.metadata["numilog_checkpoint_id"]
+    storage = case.service.storage
+    if change == "bytes":
+        acquired.path.write_bytes(b"synthetic different bytes")
+    elif change == "missing":
+        acquired.path.unlink()
+    elif change == "selected_other_identity":
+        case.service.current_identity = NS(identity_id="foreign")
+    elif change == "account_rebound":
+        storage.provider_connection_put({
+            "provider_id": "numilog",
+            "credential_id": case.account.credential_id,
+            "identity_id": "foreign",
+        })
+    elif change == "ledger_duplicated":
+        row = storage.acquisition_get(receipt)
+        storage.acquisition_put({**row, "acquisition_id": "duplicated-receipt"})
+    elif change == "directory_changed":
+        case.service.config.set("library.directory", str(tmp_path / "new-root"))
+    else:
+        storage.metadata_set("identity-directory-migration-v1", "pending")
+    monkeypatch.setattr(
+        case.service, "catalog_index_path",
+        lambda *_args, **kwargs: pytest.fail("unverified receipt reached index"),
+    )
+    with pytest.raises(NumilogIndexResumeRejected) as raised:
+        case.service.resume_numilog_materialization(receipt)
+    assert raised.value.reason_code == code
+    assert receipt not in str(raised.value)
+    assert case.item.record_id not in str(raised.value)
+    assert storage.acquisition_get(receipt)["status"] == "attention_required"
+    assert case.calls == [case.item.record_id]
