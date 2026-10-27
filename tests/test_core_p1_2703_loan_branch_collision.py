@@ -1,4 +1,9 @@
-"""#2703: conflicting branch observations must not produce a positive claim."""
+"""#2703: fail closed before capability projection on ambiguous loan branches.
+
+The loan inventory v1 source contract rejects repeated medium/upstream keys.
+Projection only consumes valid snapshots; it cannot silently pick one among
+contradictory observations or amplify duplicate provider claims.
+"""
 import pytest
 
 from cifereca.plugin_api import (
@@ -9,29 +14,47 @@ from tests.test_core_p1_2703_existing_capability_projection import (
 )
 
 
-def test_duplicate_branch_with_conflicting_coverage_is_not_attested():
+@pytest.mark.parametrize("second", (
+    LoanBranchCoverage("pnblive", "digital", "partial", False),
+    LoanBranchCoverage("pnblive", "digital", "complete", True),
+))
+def test_duplicate_branch_is_rejected_at_source_contract(second):
     branches = (
         LoanBranchCoverage("pnblive", "digital", "complete", True),
-        LoanBranchCoverage("pnblive", "digital", "partial", False),
+        second,
     )
-    snapshot = _loan_snapshot(branches=branches)
-    # A single exact upstream/medium key cannot simultaneously be complete
-    # and partial. The projection must fail closed rather than taking the
-    # first observation or accidentally claiming full coverage.
-    with pytest.raises(ValueError, match="capability_loan_branch_conflict"):
-        project_existing_capabilities(
-            _descriptor(), identity_id="alice", loan_snapshot=snapshot,
-        )
+    with pytest.raises(ValueError, match="^ambiguous_loan_inventory_branches$"):
+        _loan_snapshot(branches=branches)
 
 
-def test_duplicate_identical_branch_is_not_double_counted():
-    branch = LoanBranchCoverage("pnblive", "digital", "complete", True)
-    snapshot = _loan_snapshot(branches=(branch, branch))
+def test_distinct_branches_keep_exact_scopes_and_partial_parent():
+    branches = (
+        LoanBranchCoverage("pnblive", "digital", "complete", True),
+        LoanBranchCoverage("pnblive", "physical", "partial", False),
+    )
     projected = project_existing_capabilities(
-        _descriptor(), identity_id="alice", loan_snapshot=snapshot,
+        _descriptor(), identity_id="alice",
+        loan_snapshot=_loan_snapshot(branches=branches),
     )
-    rows = [r for r in projected.observations
-            if r.operation == "loan.inventory.branch"]
-    assert len(rows) == 1
-    assert rows[0].status == "supported"
-    assert rows[0].authorizes_mutation is False
+    parent = projected.exact(
+        "loan.inventory", "account", identity_id="alice",
+        account_id="card-a", credential_id="vault-a",
+    )
+    assert parent.status == "partial"
+    assert parent.evidence_ref == ""
+    digital = projected.exact(
+        "loan.inventory.branch", "digital", field="pnblive",
+        identity_id="alice", account_id="card-a", credential_id="vault-a",
+    )
+    physical = projected.exact(
+        "loan.inventory.branch", "physical", field="pnblive",
+        identity_id="alice", account_id="card-a", credential_id="vault-a",
+    )
+    assert digital.status == "supported"
+    assert physical.status == "partial"
+    assert physical.evidence_ref == ""
+    assert projected.exact(
+        "loan.inventory.branch", "digital", field="pnblive",
+        identity_id="bob", account_id="card-a", credential_id="vault-a",
+    ) is None
+    assert all(row.authorizes_mutation is False for row in projected.observations)
