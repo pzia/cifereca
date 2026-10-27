@@ -2907,8 +2907,9 @@ class LibraryService:
     def reacquire_digital_loan(self, loan: Loan) -> dict[str, Any]:
         """One terminal, closed diagnostic for each *explicit* user recovery.
 
-        This wrapper never turns a failed action into success, retries it,
-        creates an acquisition, or logs arbitrary provider messages. The
+        This wrapper never turns a failed action into success, retries it
+        or creates an acquisition. The closed terminal is stable while raw
+        observed exceptions remain available in the Core journal. The
         existing guarded Core orchestration remains the single executor.
         """
         from .core.diagnostic_loan_download import CODES
@@ -2945,6 +2946,12 @@ class LibraryService:
             emit("cancelled", "operation_cancelled")
             raise
         except AttentionRequired as exc:
+            # The typed terminal event remains a stable business outcome.
+            # Preserve the original observed exception in the raw journal;
+            # truncating it to a closed reason destroys provider evidence.
+            _TRACE_LOG.warning(
+                "TRACE explicit loan recovery attention required", exc_info=True,
+            )
             try:
                 code = exc.code
             except Exception:
@@ -2955,9 +2962,15 @@ class LibraryService:
             emit("refused", exc.code, phase="admission")
             raise
         except ProviderConfigurationError:
+            _TRACE_LOG.error(
+                "TRACE explicit loan recovery provider failure", exc_info=True,
+            )
             emit("failed", "provider_failure")
             raise
         except Exception:
+            _TRACE_LOG.error(
+                "TRACE explicit loan recovery unexpected failure", exc_info=True,
+            )
             emit("failed", "unclassified_error")
             raise
         else:

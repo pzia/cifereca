@@ -85,9 +85,18 @@ def test_exactly_one_attested_terminal_from_explicit_action_only(
     assert "loan_ref" not in event["detail"]
     assert "task_ref" not in event
     assert "verified_loan_download" in event
-    text = caplog.text + repr(records)
-    for secret in ("PRIVATE_", "PASSWORD", "SECRET", "LOAN_", "BOOK_TITLE", "example.test"):
-        assert secret not in text
+    # The business terminal remains closed and provider-canonical; the RAW
+    # application journal keeps the observed exception and its cause intact.
+    # No extra loan/credential/title values are emitted when there was no
+    # exception, and no real account data is used in these synthetic fixtures.
+    summary = repr(records)
+    for value in ("PRIVATE_", "PASSWORD", "SECRET", "LOAN_", "BOOK_TITLE", "example.test"):
+        assert value not in summary
+    if error is not None:
+        assert str(error) in caplog.text
+        assert "TRACE explicit loan recovery" in caplog.text
+    else:
+        assert PRIVATE not in caplog.text
     messages = [r.getMessage() for r in caplog.records if r.getMessage().startswith(PREFIX)]
     assert len(messages) == 1
     assert public_log_fields(messages[0]) == event["detail"]
@@ -161,6 +170,24 @@ def test_parser_rejects_fake_log_codes_noncanonical_json_and_private_payload():
         "EVENT loan download " + str(allowed),
     ):
         assert public_log_fields(line) == {}
+
+
+def test_raw_journal_keeps_original_chained_transport_cause(caplog):
+    # The business event is still a closed provider_failure, but the raw
+    # journal must not substitute it for the actual observed HTTP error.
+    source = OSError("SYNTHETIC transport: HTTP 403 at /loans/exact?format=acsm")
+    failure = ProviderConfigurationError("SYNTHETIC source action failed")
+    failure.__cause__ = source
+    service, _ = _service(error=failure)
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        with pytest.raises(ProviderConfigurationError):
+            service.reacquire_digital_loan(_loan())
+    assert str(failure) in caplog.text
+    assert str(source) in caplog.text
+    assert "The above exception was the direct cause" in caplog.text
+    record, = service.diagnostics.snapshot()
+    assert record["detail"]["code"] == "provider_failure"
+    assert record["detail"]["provider_id"] == "paris"
 
 
 def test_failed_diagnostics_cannot_transform_a_real_success_or_error():
