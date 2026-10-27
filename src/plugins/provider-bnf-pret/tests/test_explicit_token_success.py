@@ -26,7 +26,7 @@ def test_exact_observed_loan_stages_private_acsm(tmp_path):
         assert list(path.parent.glob("*.part")) == []
         assert not session.capabilities.borrow
         assert not session.capabilities.digital_download
-        assert session.last_loan_errors
+        assert 'last_loan_errors' not in vars(session)
     finally:
         session.close()
 
