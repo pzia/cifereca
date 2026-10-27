@@ -80,7 +80,6 @@ class BnfProviderSession(ProviderSession):
         self._lock = threading.RLock()
         self._epoch = uuid4().hex
         self._closed = False
-        self.last_loan_errors = [{'code': 'inventory_not_exhaustive'}]
         self.last_search_warnings = []
         # Only loans positively observed during this credential session are
         # eligible for an explicit, fresh-read token retrieval.
@@ -128,7 +127,6 @@ class BnfProviderSession(ProviderSession):
 
     def loans(self, account):
         with self._lock:
-            self.last_loan_errors = [{'code': 'inventory_not_exhaustive'}]
             if (not self.connected or self._closed or len(self._accounts) != 1
                     or account is not self._accounts[0]):
                 raise ProviderConfigurationError('account_scope_mismatch')
