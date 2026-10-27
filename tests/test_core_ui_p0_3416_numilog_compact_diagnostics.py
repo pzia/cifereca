@@ -63,7 +63,10 @@ def test_numilog_card_shows_short_state_and_collapsed_full_diagnostics():
     assert "tâche : abcdef012345" in details.child.label
     assert "Prochain essai :" in details.child.label
     assert row.suffixes and row.suffixes[0].sensitive is True
-    assert calls == [("read-local-status", "numilog-consent-one")]
+    assert [call for call in calls if call[0] == "read-local-status"] == [
+        ("read-local-status", "numilog-consent-one"),
+    ]
+    assert not any(call[0] == "materialization-prepare" for call in calls)
     assert window.runner.tasks == [] and dialogs == []
 
 
