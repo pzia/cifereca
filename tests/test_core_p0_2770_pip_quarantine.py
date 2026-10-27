@@ -46,15 +46,15 @@ def _check(item, registry, now=NOW):
     )
 
 
-def test_167h_59min_fails_and_exactly_168h_passes():
+def test_71h_59min_fails_and_exactly_72h_passes():
     item, release = _item()
     release["urls"][0]["upload_time_iso_8601"] = (
-        NOW - timedelta(hours=167, minutes=59)
+        NOW - timedelta(hours=71, minutes=59, seconds=59)
     ).isoformat().replace("+00:00", "Z")
     with pytest.raises(QuarantineRejected, match="^dependency_too_recent$"):
         _check(item, release)
     release["urls"][0]["upload_time_iso_8601"] = (
-        NOW - timedelta(hours=168)
+        NOW - timedelta(hours=72)
     ).isoformat().replace("+00:00", "Z")
     assert _check(item, release) == (
         item["download_info"]["url"] + "#sha256=" + SHA,

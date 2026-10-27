@@ -36,16 +36,16 @@ def _pypi(name: str, version: str, file, age: timedelta):
     }
 
 
-def test_eligible_offline_wheelhouse_accepts_exact_168h_without_network(tmp_path):
+def test_eligible_offline_wheelhouse_accepts_exact_72h_without_network(tmp_path):
     wheel = _wheel(tmp_path)
-    record = _pypi("example-pkg", "1.0", wheel, timedelta(hours=168))
+    record = _pypi("example-pkg", "1.0", wheel, timedelta(hours=72))
     attest_wheelhouse(tmp_path, now=NOW, read_release=lambda *_: record)
     assert verify_wheelhouse(tmp_path, now=NOW) == (wheel,)
 
 
-def test_167h59_refused_at_producer(tmp_path):
+def test_71h59_refused_at_producer(tmp_path):
     wheel = _wheel(tmp_path)
-    record = _pypi("example-pkg", "1.0", wheel, timedelta(hours=167, minutes=59))
+    record = _pypi("example-pkg", "1.0", wheel, timedelta(hours=71, minutes=59, seconds=59))
     with pytest.raises(QuarantineRejected, match="dependency_too_recent"):
         attest_wheelhouse(tmp_path, now=NOW, read_release=lambda *_: record)
     assert not (tmp_path / MANIFEST).exists()
@@ -68,7 +68,7 @@ def test_offline_wheelhouse_is_closed_to_modified_or_unattested_files(tmp_path, 
         if alteration == "sha":
             data["wheels"][0]["sha256"] = "0" * 64
         else:
-            data["wheels"][0]["uploaded_at"] = (NOW - timedelta(days=1)).isoformat()
+            data["wheels"][0]["uploaded_at"] = (NOW - timedelta(hours=1)).isoformat()
         manifest.write_text(json.dumps(data))
     with pytest.raises(QuarantineRejected):
         verify_wheelhouse(tmp_path, now=NOW)

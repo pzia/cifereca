@@ -100,7 +100,7 @@ def test_create_venv_prefers_offline_core_wheelhouse(tmp_path, monkeypatch):
 
 
 def test_create_venv_refuses_missing_wheelhouse_before_any_mutation(tmp_path, monkeypatch):
-    """No managed source install may bypass the 168h third-party wheel gate."""
+    """No managed source install may bypass the configured third-party wheel age gate."""
     release = _mini_project(tmp_path / "release")
 
     def unexpected_run(*args, **kwargs):
@@ -588,7 +588,7 @@ def test_status_and_cli_expose_transactional_plugin_restoration(tmp_path, monkey
 
 
 def test_github_wheelhouse_preparation_runs_before_managed_install(tmp_path, monkeypatch):
-    """A Git checkout without wheels remains installable via 168h admission."""
+    """A Git checkout without wheels remains installable via configured-age admission."""
     events = []
     def checkout(repository, ref, dest):
         _mini_project(dest)

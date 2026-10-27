@@ -43,6 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "holdings_seconds": 300,
     },
     "diagnostics": {"enabled": True, "level": "normal"},
+    "security": {"python_dependency_quarantine_hours": 72},
     "ui": {"width": 1320, "height": 840},
     "experimental_actions": False,
     # LLM is never started and no book data can leave the device by default.

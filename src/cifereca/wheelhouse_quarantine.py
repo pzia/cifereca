@@ -18,17 +18,20 @@ from packaging.version import InvalidVersion, Version
 
 from .plugins.python_quarantine import (
     QuarantineRejected, _https_pypi_release, check_pip_report,
+    quarantine_duration, quarantine_eligibility, _UNSET,
 )
 
 MANIFEST = "wheelhouse-provenance.json"
-AGE = timedelta(hours=168)
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_WHEELS = 512
 MAX_MANIFEST_BYTES = 1024 * 1024
 
 
-def _reject(code: str = "dependency_provenance_unavailable") -> None:
-    raise QuarantineRejected(code)
+def _reject(code: str = "dependency_provenance_unavailable", *,
+            quarantine_hours: int | None = None,
+            eligible_at: datetime | None = None) -> None:
+    raise QuarantineRejected(code, quarantine_hours=quarantine_hours,
+                             eligible_at=eligible_at)
 
 
 def _utc(now: datetime | None) -> datetime:
@@ -77,7 +80,8 @@ def _digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _timestamp(raw: object, now: datetime) -> datetime:
+def _timestamp(raw: object, now: datetime, *,
+               minimum_age: timedelta, quarantine_hours: int) -> datetime:
     if not isinstance(raw, str) or len(raw) > 40:
         _reject()
     try:
@@ -86,14 +90,16 @@ def _timestamp(raw: object, now: datetime) -> datetime:
         _reject()
     if stamp.tzinfo is None or stamp.utcoffset() != timedelta(0) or stamp > now:
         _reject()
-    if now - stamp < AGE:
-        _reject("dependency_too_recent")
+    if now - stamp < minimum_age:
+        _reject("dependency_too_recent", quarantine_hours=quarantine_hours,
+                eligible_at=quarantine_eligibility(stamp, minimum_age))
     return stamp
 
 
 def attest_wheelhouse(
     directory: Path, *, core_version: str | None = None,
     now: datetime | None = None, read_release=_https_pypi_release,
+    quarantine_hours: object = _UNSET,
 ) -> Path:
     """Producer-side proof: independently check PyPI for each exact third-party wheel.
 
@@ -101,6 +107,7 @@ def attest_wheelhouse(
     archive. This verifies files already present; upstream fetch MUST separately
     enforce pre-download admission before creating those files.
     """
+    _minimum_age, selected_hours = quarantine_duration(quarantine_hours)
     current = _utc(now)
     directory = Path(directory)
     wheels = _wheels(directory)
@@ -129,7 +136,8 @@ def attest_wheelhouse(
         }]}
         # Reuse the online admission contract (HTTPS origin, official PyPI
         # filename/SHA, non-yanked, exact wheel age).
-        check_pip_report(plan, now=current, read_release=lambda _n, _v: registry)
+        check_pip_report(plan, now=current, read_release=lambda _n, _v: registry,
+                         quarantine_hours=selected_hours)
         records.append({
             "filename": filename, "name": name, "version": version,
             "sha256": digest, "origin": "pypi", "url": url,
@@ -157,13 +165,14 @@ def attest_wheelhouse(
 
 def verify_wheelhouse(
     directory: Path, *, core_version: str | None = None,
-    now: datetime | None = None,
+    now: datetime | None = None, quarantine_hours: object = _UNSET,
 ) -> tuple[Path, ...]:
     """Consumer preflight for a manifest carried by a TRUSTED release artifact.
 
     No network; compare complete directory inventory, canonical name/version,
     SHA-256, UTC artifact age and local Core exception. Fail closed otherwise.
     """
+    minimum_age, selected_hours = quarantine_duration(quarantine_hours)
     current = _utc(now)
     directory = Path(directory)
     wheels = _wheels(directory)
@@ -209,7 +218,8 @@ def verify_wheelhouse(
             if (url.scheme != "https" or url.netloc != "files.pythonhosted.org"
                     or url.query or url.fragment or url.path.rsplit("/", 1)[-1] != filename):
                 _reject()
-            _timestamp(record.get("uploaded_at"), current)
+            _timestamp(record.get("uploaded_at"), current,
+                       minimum_age=minimum_age, quarantine_hours=selected_hours)
         else:
             _reject()
     if local_core > 1:

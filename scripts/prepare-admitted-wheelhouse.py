@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare an attested wheelhouse for the real full-updater integration gate.
 
-Only exact SHA-pinned PyPI wheels that passed the 168h check are downloaded.
+Only exact SHA-pinned PyPI wheels that passed the configured age check are downloaded.
 The locally built Cifereca wheel is excluded from the age limit; all runtime
 dependencies are included and checked. No managed venv is created by this tool.
 """
@@ -20,7 +20,7 @@ from packaging.version import InvalidVersion, Version
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from cifereca.plugins.python_quarantine import QuarantineRejected, check_pip_report
+from cifereca.plugins.python_quarantine import QuarantineRejected, check_pip_report, quarantine_diagnostic
 from cifereca.wheelhouse_quarantine import attest_wheelhouse, verify_wheelhouse
 
 
@@ -60,9 +60,10 @@ def _approved_runtime_wheels(requirements: list[str]) -> tuple[str, ...]:
                 return check_pip_report(plan, now=datetime.now(timezone.utc))
             except QuarantineRejected as exc:
                 if str(exc) != "dependency_too_recent" or not exc.name or not exc.version:
-                    print(f"wheelhouse_preflight_failed:attest:{str(exc)}", file=sys.stderr)
+                    print(f"wheelhouse_preflight_failed:attest:{quarantine_diagnostic(exc)}", file=sys.stderr)
                     raise
-                print(f"wheelhouse_quarantined:{exc.name}=={exc.version}", file=sys.stderr)
+                print(f"wheelhouse_quarantined:{exc.name}=={exc.version}:"
+                      f"{quarantine_diagnostic(exc)}", file=sys.stderr)
                 # Each retry must strictly reduce at least one allowed version.
                 try:
                     if exc.name in constraints and Version(exc.version) >= Version(constraints[exc.name]):
@@ -111,6 +112,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (QuarantineRejected, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
-        reason = str(exc) if isinstance(exc, QuarantineRejected) else "dependency_provenance_unavailable"
+        reason = quarantine_diagnostic(exc) if isinstance(exc, QuarantineRejected) else "dependency_provenance_unavailable"
         print(reason, file=sys.stderr)
         raise SystemExit(2) from None
