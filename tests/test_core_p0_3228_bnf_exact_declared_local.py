@@ -57,9 +57,9 @@ def test_user_declared_exact_bnf_loan_is_idempotently_local_without_a_second_get
     for _ in range(2):
         result = broker.synchronize_source(sid)
         assert result.facts["files_declared_local"] == 1
-        assert result.facts["files_materialized"] == 0
-        assert result.facts["files_unchanged"] == 0
         assert result.facts["files_reconciliation_required"] == 0
+        assert "files_materialized" not in result.facts
+        assert "files_unchanged" not in result.facts
     assert downloaded == []
     assert service.storage.acquisitions() == receipts_before == []
     assert service.storage.placements() == placements_before == []
