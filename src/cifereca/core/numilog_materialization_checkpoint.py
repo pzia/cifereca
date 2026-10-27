@@ -25,6 +25,29 @@ _KIND = 'numilog_delivered_artifact_v1'
 _PENDING = 'index_pending'
 _ERROR = 'Numilog : fichier livré à rapprocher ; aucun nouveau téléchargement autorisé'
 
+# The only extra detail allowed to cross this Core→CoreUI boundary.
+# Codes classify the exact failed SQL gate; no source IDs, SHA, path, book
+# title, account or private provider responses may enter an exception.
+_ADOPTION_REFUSALS = frozenset({
+    "invalid_target", "receipt_missing", "receipt_scope_invalid",
+    "receipt_invalid", "receipt_root_invalid", "path_not_canonical",
+    "manual_receipt_missing", "manual_receipt_mismatch",
+    "artifact_mismatch", "placement_missing", "placement_conflict",
+    "catalogue_conflict", "artifact_shared_elsewhere",
+    "competing_receipts", "adoption_unavailable",
+})
+
+
+class NumilogIndexResumeRejected(ProviderConfigurationError):
+    """One closed, diagnostic-only rejection; never authorizes a retry."""
+
+    def __init__(self, reason_code: str):
+        self.reason_code = (reason_code if type(reason_code) is str
+                            and reason_code in _ADOPTION_REFUSALS
+                            else "adoption_unavailable")
+        super().__init__(_ERROR)
+
+
 
 def _require(value):
     if not value:
@@ -171,9 +194,15 @@ def index_delivered(service, acquisition, *, title=None, selected=False, expecte
                 # Upgrade only if the verified owned receipt AND the original
                 # same-owner manual-acsm ledger and local artifact all agree.
                 # Never infer provenance from the folder name or a title.
-                _require(service.storage.numilog_checkpoint_adopt_acsm_placement(
-                    acquisition_id, expected_path=str(path),
-                ))
+                # The storage transaction independently checks the exact
+                # manual ACSM ledger, account, byte hash, placement, catalog
+                # and global artifact collisions. A refusal carries only the
+                # fixed failed-gate code; NEVER skip the atomic adoption.
+                adoption = service.storage.numilog_checkpoint_adopt_acsm_placement(
+                    acquisition_id, expected_path=str(path), diagnose=True,
+                )
+                if adoption != "adopted":
+                    raise NumilogIndexResumeRejected(adoption)
                 placement = service.storage.placement_for_path(path)
             _require(placement is None or (placement.get('identity_id') == row['identity_id']
                      and placement.get('provider_id') == 'numilog'
@@ -196,6 +225,8 @@ def index_delivered(service, acquisition, *, title=None, selected=False, expecte
             return MaterializationResult(acquisition, indexed, artifact_id, row['identity_id'])
     except Cancelled:
         raise
+    except NumilogIndexResumeRejected:
+        raise
     except Exception:
         # Paths, provider payloads, private IDs and raw index failures stay out
         # of UI errors. The durable pending receipt is deliberately retained.
@@ -214,6 +245,8 @@ def resume(service, acquisition_id, *, expected_receipt=None):
         )
         return index_delivered(service, acquisition, selected=True, expected_receipt=expected_receipt)
     except Cancelled:
+        raise
+    except NumilogIndexResumeRejected:
         raise
     except Exception:
         raise ProviderConfigurationError(_ERROR) from None
