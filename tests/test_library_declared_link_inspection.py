@@ -34,7 +34,11 @@ def confirm(selected, **options):
 
 
 def test_declaration_choice_is_explicit_distinct_and_token_never_leaves_core(selected):
-    session, right, file, service, _ = selected
+    session, right, file, service, rig = selected
+    context = session.declaration_context(right, file)
+    assert context['provider'] == rig[4]['provider_id']
+    assert context['account'] == rig[4]['account_id']
+    assert context['edition'] == rig[4]['item_id']
     # Strict attested path continues to refuse these historical purchases
     # without receipts/backups; no automatic substitution of trust modes.
     assert session.preview_manual_attachment(right, file)['status'] == 'unavailable'

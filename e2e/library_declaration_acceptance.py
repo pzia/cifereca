@@ -16,6 +16,11 @@ from cifereca.storage import Storage
 
 
 def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, checkpoint, done):
+    # Exercise the same real consent flow with opaque providers on two
+    # existing sizes; larger scenarios retain the Numilog regression case.
+    provider_id = {920: 'test.vendor-a', 1024: 'test.vendor-b'}.get(
+        report.get('width'), 'numilog',
+    )
     report['checks']['native_declaration_started'] = True
     checkpoint('maint_declaration_start')
     tmp = tempfile.TemporaryDirectory()
@@ -41,17 +46,17 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
                             'label': 'Synthetic declaration', 'preferences': {}}])
     cfg.set('providers.accounts', [])
     service = LibraryService(cfg, Storage(root / 'local.sqlite'), Diagnostics())
-    account = Account(display_name='Synthetic Numilog', unique_id='synthetic-account',
-                      provider_id='numilog', credential_id='synthetic-credential',
-                      provider_label='Numilog', identity_id='default')
+    account = Account(display_name='Synthetic declaration source', unique_id='synthetic-account',
+                      provider_id=provider_id, credential_id='synthetic-credential',
+                      provider_label='Synthetic source', identity_id='default')
     service.accounts = [account]
     service.storage.provider_connection_put({
-        'identity_id': 'default', 'provider_id': 'numilog',
+        'identity_id': 'default', 'provider_id': provider_id,
         'credential_id': account.credential_id, 'label': 'Synthetic',
     })
     service.storage.entitlement_put({
         'entitlement_id': 'synthetic-right', 'identity_id': 'default',
-        'provider_id': 'numilog', 'credential_id': account.credential_id,
+        'provider_id': provider_id, 'credential_id': account.credential_id,
         'account_id': account.unique_id, 'item_id': 'synthetic-item',
         'state': 'active', 'entitlement_type': 'owned',
     })
@@ -202,6 +207,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         dialog = message()
         assert str(book) in dialog.get_body()
         assert 'synthetic-account' in dialog.get_body()
+        assert provider_id in dialog.get_body()
         assert not declarations()
         report['checks']['P0_2797_declaration_native_preview_no_write'] = True
         click(button('Annuler', dialog), lambda: until(lambda: message() is None, cancelled))
@@ -220,6 +226,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         checkpoint('maint_declaration_committed')
         assert declarations()[0]['origin'] == 'user_declaration'
         assert declarations()[0]['state'] == 'active'
+        assert declarations()[0]['scope']['provider_id'] == provider_id
         assert {table: rows(table) for table in unchanged} == unchanged
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
         report['checks']['P0_2797_declaration_native_confirm_separate_trust'] = True
@@ -241,6 +248,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
         assert declarations()[0]['revoked_at'] is not None
         report['checks']['P0_2797_declaration_native_revoke_keeps_history'] = True
+        if provider_id in ('test.vendor-a', 'test.vendor-b'):
+            report['checks']['P0_3171_native_opaque_provider_consent'] = True
         controller.clear()
         host.destroy()
         service.close()
