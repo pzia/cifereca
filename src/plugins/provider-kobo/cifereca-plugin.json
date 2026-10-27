@@ -59,6 +59,7 @@
       "system_requires": [],
       "requires_brokers": [
         "runtime.capabilities",
+        "identities",
         "httpx"
       ],
       "requires_contracts": [
