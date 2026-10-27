@@ -147,9 +147,9 @@ def project_existing_capabilities(
                 evidence_ref=("loan-inventory:" + loan_snapshot.observed_at
                               if attested else ""),
                 reason=("provider_claim_complete" if attested else
-                        "branch_snapshot_" + loan_snapshot.status
-                        if loan_snapshot.status in ("failed", "cancelled") else
-                        "branch_" + branch.completeness + "_not_attested"),
+                        ("branch_snapshot_" + loan_snapshot.status
+                         if loan_snapshot.status in ("failed", "cancelled") else
+                         "branch_" + branch.completeness + "_not_attested")),
             ))
 
     return CapabilityMatrix(provider, tuple(rows))
