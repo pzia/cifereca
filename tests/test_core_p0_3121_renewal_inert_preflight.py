@@ -9,7 +9,7 @@ from dataclasses import replace
 
 import pytest
 
-from cifereca.core.provider_loan_renewal import _renew_source_ready_inert
+from cifereca.core.provider_loan_renewal import _renew_source_ready_inert, _source_key
 from tests.test_core_p1_3121_paris_renewal_one_post import setup
 
 
@@ -53,10 +53,7 @@ def test_property_getter_never_runs_during_renewal_preflight(
         assert result["code"] == "loan_scope_unverified"
         assert touched == []
         assert session.reads == session.posts == []
-        assert service.storage.loan_renewal_state(
-            __import__("cifereca.core.provider_loan_renewal",
-                       fromlist=["_source_key"])._source_key(selected)
-        ) is None
+        assert service.storage.loan_renewal_state(_source_key(selected)) is None
     finally:
         monkeypatch.undo()
         service.close()
