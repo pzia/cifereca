@@ -113,7 +113,7 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 window.show_error(message, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
         window.runner.submit('Reprise d’indexation Numilog…' if resume else f'Téléchargement du livre {label} possédé…',
                              work, done, failed, control=_button, priority=TaskPriority.USER_ACTION,
-                             kind='index' if resume else 'obtain')
+                             kind='index' if resume else 'obtain', origin='user')
     button.connect('clicked', clicked)
     detail.add_actions([button])
 

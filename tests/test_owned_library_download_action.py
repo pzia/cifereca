@@ -74,6 +74,7 @@ def test_numilog_action_is_passive_until_explicit_click_and_keeps_exact_target()
     result = args[1]()
     args[2](result)
     assert calls == [target] and kwargs['kind'] == 'obtain'
+    assert kwargs['origin'] == 'user'
     assert 'Numilog' in args[0]
 
 
@@ -94,6 +95,7 @@ def test_resume_action_only_explicit_click_indexes_without_claiming_download():
     args, kwargs = submissions[0]
     args[2](args[1]())
     assert calls == [target] and kwargs['kind'] == 'index'
+    assert kwargs['origin'] == 'user'
 
 
 @pytest.mark.parametrize('mutation', ['identity', 'generation', 'hidden', 'detached', 'closed'])
