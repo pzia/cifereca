@@ -172,8 +172,8 @@ def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, 
     metadata = row.get('metadata')
     _check_resume(type(metadata) is dict and metadata.get('kind') == _KIND
              and metadata.get('phase') in {_PENDING, 'indexed'}
-             and metadata.get('root') == str(root)
              and row.get('status') in {'acquiring', 'retryable_error', 'attention_required', 'complete'}, "receipt_invalid")
+    _check_resume(metadata.get('root') == str(root), "root_changed")
     _check_resume(type(metadata.get('path')) is str and bool(metadata['path'])
              and type(metadata.get('sha256')) is str
              and re.fullmatch(r'[0-9a-f]{64}', metadata['sha256'])
