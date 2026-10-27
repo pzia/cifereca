@@ -122,3 +122,32 @@ def test_local_match_explanation_never_attributes_private_metadata_or_remote_pro
     assert local_match_explanation(record, "private_token") == ""
     assert local_match_explanation(record, '"prix du quai"') == "Correspondance : Résumé"
     assert local_match_explanation(record, '"prix quai"') == ""
+
+
+def test_attested_plural_authors_are_searchable_even_without_display_author():
+    rows = [
+        {"item_id": "a", "provider_id": "kobo", "title": "Roman",
+         "author": None, "metadata": {"authors": ["Alice Martin", "Bob Leroux"]}},
+        {"item_id": "b", "provider_id": "kobo", "title": "Roman",
+         "author": None, "metadata": {"authors": ["Anne Moreau"]}},
+    ]
+    assert [r["item_id"] for r in filter_loaded_results(rows, "alice", field="author")] == ["a"]
+    assert [r["item_id"] for r in filter_loaded_results(rows, "alice", field="all")] == ["a"]
+    assert local_match_explanation(rows[0], "alice") == "Correspondance : Auteur"
+    assert local_search_evidence(rows[0], "alice") == (70, ("author",))
+
+
+def test_nested_unverified_author_objects_and_credential_like_values_are_not_indexed():
+    row = {
+        "item_id": "a", "provider_id": "kobo", "title": "Roman",
+        "metadata": {"authors": [
+            {"name": "Value containing private_key"},
+            "https://example.invalid/?token=private",
+            "Bearer secret",
+            "Valid Published Author",
+        ]},
+    }
+    assert not filter_loaded_results([row], "private_key")
+    assert not filter_loaded_results([row], "private")
+    assert not filter_loaded_results([row], "secret")
+    assert [r["item_id"] for r in filter_loaded_results([row], "published", field="author")] == ["a"]
