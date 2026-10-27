@@ -117,6 +117,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
     source_scope = (
         account.identity_id, account.credential_id, account.unique_id,
         loan.id, loan.record_id,
+        loan.source_provider, loan.source_credential, loan.source_account_id,
+        loan.identity_id, loan.medium, loan.state,
     )
     core_epoch = service._account_context_epoch
     consent_revision = service.storage.metadata_get(policy_key(account) + '.revision')
@@ -142,7 +144,16 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
                 and (
                     account.identity_id, account.credential_id,
                     account.unique_id, loan.id, loan.record_id,
+                    loan.source_provider, loan.source_credential,
+                    loan.source_account_id, loan.identity_id, loan.medium,
+                    loan.state,
                 ) == source_scope
+                and loan.source_provider == 'bnf-pret'
+                and loan.source_credential == account.credential_id
+                and loan.source_account_id == account.unique_id
+                and loan.identity_id == account.identity_id
+                and loan.medium == 'digital'
+                and loan.state == 'active'
                 and service._account_for_loan(loan) is account
             )
         except Exception:
