@@ -59,6 +59,18 @@ class LoanDuePresentation:
     sort_key: tuple[int, int]
 
 
+def loan_row_metadata(
+    due_at: str | None, due: LoanDuePresentation,
+    *, document_type: str | None, provider: str,
+) -> str:
+    """Keep unknown/invalid due dates in the badge, never as 'Retour —'."""
+    document = str(document_type or provider)
+    if due.label in {"Échéance inconnue", "En retard"}:
+        return document
+    from .detail_model import fr_date
+    return f"Retour {fr_date(due_at)} · {document}"
+
+
 def loan_due_presentation(
     due_at: str | None,
     *,
