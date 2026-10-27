@@ -105,3 +105,20 @@ L’audit lit désormais les deux directions dans la même transaction SQLite :
 Chaque direction a son propre plafond de **500 lignes par identité**. Un dépassement donne `budget_exceeded` et tous les compteurs à zéro. Un reçu canonique sans projection est un fait de migration, pas un droit supplémentaire à créer et pas une raison de recopier `backup_items`.
 
 Cette tranche est 100 % lecture SQLite : aucune écriture, suppression, copie, téléchargement, migration de schéma, mutation de prêt ni reclassement implicite. Le retrait effectif de la compatibilité v0.7, les consommateurs et la migration versionnée restent dans #3196.
+
+
+## Tranche P0 : gardien de l'état canonique au replay Kobo
+
+Tant que `backup_put` écrit encore la projection 0.7, il compare sous la
+même transaction le **dernier état historique** et l'état d'acquisition
+canonique avant tout UPSERT. Une divergence déjà présente ou un reçu
+canonique préexistant **sans ligne historique** refuse l'écriture via
+`backup_canonical_status_diverged` : aucune projection, droit ni artefact
+n'est alors modifié. L'opérateur doit examiner cette divergence par l'audit,
+pas choisir arbitrairement le plus récent.
+
+Une progression normale qui part d'états historiques et canoniques identiques
+(`pending → acquiring → complete`, etc.) demeure permise pour la compatibilité.
+Cette garde protège un cas de corruption mais **ne retire pas** l'écriture
+v0.7 ni les chemins de lecture ; la migration du propriétaire canonique et la
+substitution des consommateurs restent indispensables.
