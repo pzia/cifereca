@@ -246,6 +246,14 @@ SCENARIOS = {
         "width": 1366,
         "provider": "kobo",
     },
+    "baen-fault-search-1366": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #2332 : vrai BaenSession + loopback 429/503/200 partiel ; aucun téléchargement.",
+        "runner": "gtk-public-fault",
+        "width": 1366,
+        "provider": "baen",
+    },
 }
 
 

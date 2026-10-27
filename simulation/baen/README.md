@@ -40,9 +40,23 @@ Exécuter les tests de contrat :
 python3 -m unittest discover -s simulation/tests -p 'test_baen_http_service.py' -v
 ```
 
-Cet ensemble valide catalogue, fiches, délégation de téléchargement et
-erreurs de contrat, **pas** un parcours applicatif GTK ni le vrai service
-de transport HTTP. Le scénario `q=timeout` injecte un `httpx.ReadTimeout`
+Les tests de contrat valident catalogue, fiches, délégation de téléchargement
+et erreurs sans vrai service HTTP externe. La recette native GTK/XTEST dédiée
+est **`baen-fault-search-1366`** :
+
+```sh
+python3 e2e/run.py --scenario baen-fault-search-1366 --out /tmp/baen-gtk-2332
+```
+
+Elle démarre un vrai `BaenSession` avec `httpx.MockTransport` qui relaie
+**uniquement** la route HTTPS Baen fixée vers le simulateur loopback, puis
+utilise le vrai bouton de recherche GTK. Assertions : 429 puis 503 = source
+indisponible/aucun livre, récupération HTTP 200 = **résultats partiels** et
+un livre local fictif, aucune recherche privée, aucune acquisition ni requête
+de livraison, EPUB seed inchangé. Les captures et `screen.json` sont produites
+par le runner. Le chemin dans `plugin_coverage.toml` est un inventaire
+statique : seule une exécution CI **SUCCESS sur le HEAD exact** atteste la
+recette, et cette simulation ne qualifie pas les vrais `q/page` de Baen. Le scénario `q=timeout` injecte un `httpx.ReadTimeout`
 **dans le MockTransport du test**, sans sommeil, socket distante ni nouvelle
 route serveur : il vérifie la classification Core, l'absence de retry et la
 récupération après échec. Ce test ne mesure aucune latence réseau réelle.

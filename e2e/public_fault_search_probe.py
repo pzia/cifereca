@@ -27,7 +27,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 for directory in (ROOT, ROOT / "src/plugins/ebooksgratuits",
-                  ROOT / "src/plugins/provider-kobo",
+                  ROOT / "src/plugins/provider-kobo", ROOT / "src/plugins/baen",
                   ROOT / "environnements/openai-chat-debian"):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
@@ -47,6 +47,7 @@ from cifereca_ebooksgratuits import EbooksSession
 from cifereca_kobo import KoboSession, DESCRIPTOR as KOBO_DESCRIPTOR
 from cifereca_kobo_vault import KoboVaultClient
 from cifereca_kobo_catalog import KoboCatalogService
+from cifereca_baen import BaenSession
 from simulation.tests.test_fake_services_contract import load_module, RunningServer
 from x11_input import X11Input
 
@@ -54,7 +55,7 @@ from x11_input import X11Input
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--provider", choices=("ebooksgratuits", "kobo"),
+    parser.add_argument("--provider", choices=("ebooksgratuits", "kobo", "baen"),
                         default="ebooksgratuits")
     args = parser.parse_args()
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
@@ -63,7 +64,8 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     is_kobo = args.provider == "kobo"
-    work = TemporaryDirectory(prefix="ux771-offline-")
+    is_baen = args.provider == "baen"
+    work = TemporaryDirectory(prefix="ux2332-offline-" if is_baen else "ux771-offline-")
     if is_kobo:
         fake = load_module("ux771_kobo_http", "kobo/pseudo_kobo_services.py")
         cache = fake.DatasetCache(Path(work.name) / "catalog", 30, 6, 20261020, True)
@@ -73,6 +75,12 @@ def main() -> int:
         )
         catalog = RunningServer(fake.Handler, fake_app)
         query = str(cache.search_catalog("", "all", 0, 1)[1][0]["title"])
+    elif is_baen:
+        fake = load_module("ux2332_baen_http", "baen/pseudo_baen_service.py")
+        fake_app = fake.BaenFakeApp(Path(work.name) / "catalog")
+        catalog = RunningServer(fake.Handler, fake_app)
+        query = "Firefly"
+        original_epub_digest = hashlib.sha256(fake_app.epub_path.read_bytes()).hexdigest()
     else:
         fake = load_module("ux771_ebooks_http", "ebooksgratuits/pseudo_ebooksgratuits_service.py")
         cache = fake.DatasetCache(Path(work.name) / "catalog", 8, 20261020, True)
@@ -87,6 +95,7 @@ def main() -> int:
     catalog.__enter__()
     fault = ["429"]
     http_statuses = []
+    requested_paths = []
     worker_count = [0]
     ui = [None]
     device = [None]
@@ -94,11 +103,14 @@ def main() -> int:
     last_click = [0]
     screenshots = []
     report = {
-        "scenario": "kobo-fault-search-1366" if is_kobo else "public-fault-search-1366",
+        "scenario": ("baen-fault-search-1366" if is_baen else
+                     "kobo-fault-search-1366" if is_kobo else "public-fault-search-1366"),
         "status": "RUNNING",
         "scope": (
             "real GTK Search + real Kobo catalogue adapter + local HTTP and isolated Core batch bridge"
             if is_kobo else
+            "real GTK Search + real Baen adapter + local synthetic HTTP and isolated Core batch bridge"
+            if is_baen else
             "real GTK Search + real EbooksGratuits adapter + local synthetic HTTP and isolated Core batch bridge"
         ),
         "checks": {},
@@ -117,17 +129,26 @@ def main() -> int:
         valid_kobo_paths = {
             "/api/v2/status", "/api/v2/account", "/api/v2/catalog/search",
         }
-        if request.url.host != "127.0.0.1" or request.url.port != catalog.server.server_port:
+        if is_baen:
+            if (request.url.scheme != "https" or request.url.host != "www.baen.com"
+                    or request.method != "GET"
+                    or path != "/allbooks/category/index/id/2012"):
+                raise AssertionError("Unexpected Baen outbound route")
+            probe_request = True
+        elif (request.url.host != "127.0.0.1"
+              or request.url.port != catalog.server.server_port):
             raise AssertionError("Unexpected outbound host")
         if is_kobo:
             if path not in valid_kobo_paths or request.method != "GET":
                 raise AssertionError("Kobo catalogue must not fetch private data")
             probe_request = path == "/api/v2/catalog/search"
-        else:
+        elif not is_baen:
             if path != "/ebooks.php" or request.method not in {"GET", "POST"}:
                 raise AssertionError("Unexpected outbound request")
             probe_request = True
         target = (
+            request.url.copy_set_param("q", "rate-limit" if fault[0] == "429" else "down")
+            if is_baen and fault[0] else
             request.url.copy_set_param("ux_fault", fault[0])
             if fault[0] and probe_request else request.url
         )
@@ -136,8 +157,16 @@ def main() -> int:
             dict(request.headers) if is_kobo else
             {"Content-Type": "application/x-www-form-urlencoded"} if post else {}
         )
+        if is_baen:
+            # The official HTTPS host is NEVER rewritten by production.
+            # Only this injected test transport maps its fixed Baen route to
+            # the loopback fixture. No credentials or external Baen traffic.
+            local = catalog.base + target.raw_path.decode("ascii")
+            requested_paths.append(path)
+        else:
+            local = str(target)
         outbound = Request(
-            str(target), data=request.content if post else None,
+            local, data=request.content if post else None,
             headers=headers, method=request.method,
         )
         try:
@@ -164,6 +193,16 @@ def main() -> int:
             session.client, credential_id=session.credential_id,
             provider_id=session.provider_id,
         )
+    elif is_baen:
+        session = BaenSession(
+            credential_id="baen-public-fixture", label="Baen offline",
+            credentials={}, options={}, config={}, diagnostics=Diagnostics(),
+            transport=None,
+        )
+        session.client.close()
+        session.client = httpx.Client(
+            transport=httpx.MockTransport(forward), trust_env=False,
+        )
     else:
         session = EbooksSession(
             credential_id="public", label="", credentials={},
@@ -184,14 +223,16 @@ def main() -> int:
         # Only this E2E bridge replaces Core federation/installed plugin
         # discovery, and uses Core's published batch/result_status schema.
         assert force and text == query
-        assert field == ("all" if is_kobo else "title")
+        assert field == ("all" if (is_kobo or is_baen) else "title")
         assert not provider_ids and not content_types
         worker_count[0] += 1
         try:
             books = tuple(session.search(
                 text, scope="catalog", field="all",
-            ) if is_kobo else session.search(text, field="title"))
-            status = "live"
+            ) if is_kobo else session.search(text, scope="all", field="all")
+            if is_baen else session.search(text, field="title"))
+            status = ("partial" if is_baen and session.last_search_warnings
+                      else "live")
             warnings = ()
         except Exception:
             books = ()
@@ -200,8 +241,8 @@ def main() -> int:
         core.library.last_search = list(books)
         if on_batch is not None:
             on_batch(CatalogSearchBatch(
-                provider_id=("kobo" if is_kobo else "ebooksgratuits"),
-                provider_label=("Kobo" if is_kobo else "Ebooks gratuits"),
+                provider_id=("baen" if is_baen else "kobo" if is_kobo else "ebooksgratuits"),
+                provider_label=("Baen" if is_baen else "Kobo" if is_kobo else "Ebooks gratuits"),
                 results=books, result_status=status,
             ))
         return CatalogSearchSummary(
@@ -249,7 +290,13 @@ def main() -> int:
         return ui[0].search_page.count_label.get_label()
 
     def no_implicit_download():
-        assert not list(cache.epub_dir.glob("*.epub")), "Passive acquisition occurred"
+        if is_baen:
+            assert requested_paths and all(
+                path == "/allbooks/category/index/id/2012" for path in requested_paths
+            ), "Baen never fetches a product/download on passive search"
+            assert hashlib.sha256(fake_app.epub_path.read_bytes()).hexdigest() == original_epub_digest
+        else:
+            assert not list(cache.epub_dir.glob("*.epub")), "Passive acquisition occurred"
         if is_kobo:
             assert not list(cache.acsm_dir.glob("*.acsm")), "Passive ACSM occurred"
         report["checks"]["no_implicit_download"] = True
@@ -262,6 +309,7 @@ def main() -> int:
         assert "ebooksgratuits" not in caption + tooltip
         assert "kobo" not in (caption + tooltip).casefold()
         assert "kvt_e2e_only" not in caption + tooltip
+        assert "baen" not in (caption + tooltip).casefold()
         report["checks"]["public_status_only"] = True
 
     def wait_until(predicate, callback, *, deadline=None):
@@ -285,13 +333,16 @@ def main() -> int:
             lambda: worker_count[0] >= last_click[0]
                 and ui[0].search_global_button.get_sensitive()
                 and ("indisponible" in count_label()
-                     if fault[0] else "en ligne" in count_label()),
+                     if fault[0] else
+                     "résultats partiels" in count_label() if is_baen
+                     else "en ligne" in count_label()),
             lambda: verify(stage),
         )
 
     def verify(stage):
         caption = count_label()
-        expected = "indisponible" if fault[0] else "en ligne"
+        expected = ("indisponible" if fault[0] else
+                    "résultats partiels" if is_baen else "en ligne")
         assert expected in caption, "Missing closed public source status"
         assert all(code in (200, 429, 503) for code in http_statuses)
         public_status_only()
@@ -302,6 +353,9 @@ def main() -> int:
         else:
             assert ui[0].search_page.store.get_n_items() >= 1
             assert http_statuses[-1] == 200
+            if is_baen:
+                assert session.last_search_warnings
+                assert ui[0].search_page.store.get_item(0).title == "The Firefly Atlas"
         report["checks"][stage] = True
         report["snapshots"].append({
             "stage": stage, "result_count": ui[0].search_page.store.get_n_items(),
@@ -325,7 +379,7 @@ def main() -> int:
     def begin():
         ui[0].navigate("search")
         ui[0].search_controls.set_state(
-            QueryState(text=query, field=("all" if is_kobo else "title"),
+            QueryState(text=query, field=("all" if (is_kobo or is_baen) else "title"),
                        scope="all"), notify=False,
         )
         # The actual GTK button is clicked only after the stack has settled.
@@ -334,6 +388,7 @@ def main() -> int:
     class Application(Adw.Application):
         def __init__(self):
             super().__init__(application_id=(
+                "org.cifereca.UX2332BaenFault" if is_baen else
                 "org.cifereca.UX771KoboFault" if is_kobo
                 else "org.cifereca.UX771PublicFault"
             ))

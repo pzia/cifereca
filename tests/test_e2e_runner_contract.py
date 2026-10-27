@@ -25,7 +25,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728",
-        "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366",
+        "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
     ]
 
 
@@ -604,7 +604,7 @@ def test_771_real_gtk_public_fault_search_is_registered_and_selected():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     assert module.select(["e2e/public_fault_search_probe.py"]) == (
-        "public-fault-search-1366", "kobo-fault-search-1366",
+        "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
     )
 
 
@@ -632,5 +632,40 @@ def test_771_kobo_real_catalogue_http_faults_surface_in_native_gtk():
     assert spec and spec.loader
     spec.loader.exec_module(mod)
     assert mod.select(["e2e/public_fault_search_probe.py"]) == (
-        "public-fault-search-1366", "kobo-fault-search-1366",
+        "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
+    )
+
+
+def test_2332_baen_native_gtk_offline_partial_and_failures_are_routed():
+    runner = _module()
+    scenario = runner.SCENARIOS["baen-fault-search-1366"]
+    assert scenario["plugin"] == "core"
+    assert scenario["fixture"] == "search-filters"
+    assert scenario["runner"] == "gtk-public-fault"
+    assert scenario["provider"] == "baen"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/public_fault_search_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for marker in (
+        "BaenSession(", "fake.BaenFakeApp(", "www.baen.com",
+        "httpx.MockTransport(forward)", "rate-limit", '"down"',
+        '"résultats partiels"', "original_epub_digest",
+        "device[0].click_widget(ui[0].search_global_button)",
+    ):
+        assert marker in source, marker
+    matrix = (ROOT / "simulation/plugin_coverage.toml").read_text(
+        encoding="utf-8"
+    )
+    section = matrix.split("[package.baen]", 1)[1].split(
+        "[package.cifericaopds]", 1
+    )[0]
+    assert 'gtk_scenarios = ["e2e/public_fault_search_probe.py"]' in section
+    from importlib.util import module_from_spec, spec_from_file_location
+    spec = spec_from_file_location("selection_2332", ROOT / "scripts/ci-select-e2e.py")
+    assert spec and spec.loader
+    selector = module_from_spec(spec)
+    spec.loader.exec_module(selector)
+    assert "baen-fault-search-1366" in selector.select(
+        ["e2e/public_fault_search_probe.py"]
     )

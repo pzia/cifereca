@@ -23,7 +23,7 @@ SYNC_PRODUCERS = frozenset((
 BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
-        "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366")
+        "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366")
 DIAG = ("diagnostics-1366", "diagnostics-raw-export-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
@@ -72,7 +72,7 @@ LOCAL_GUI = {
     "maintenance_line_widgets.py": MAINT,
 }
 PROBES = {
-    "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366"),
+    "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
     "e2e/book_detail_probe.py": BOOK_DETAIL,
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
