@@ -157,3 +157,24 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
         else:
             caption += ". Prochain essai : à la prochaine ouverture"
     return caption + "."
+
+
+def compact_run_caption(caption: str) -> str:
+    """Readable source-card header; full diagnostics stay in a disclosure.
+
+    Accept only the already validated allowlisted `describe_run` output,
+    never a raw plugin exception or arbitrary book identifiers.
+    """
+    if type(caption) is not str or len(caption) > 2000:
+        return "Dernier bilan indisponible."
+    if not caption:
+        return ""
+    # Preserve terminal status + aggregate download/error counters. Individual
+    # manifest positions, task references and internal phase codes belong in
+    # the detailed, selectable GTK label, not the source-card subtitle.
+    brief = caption
+    for marker in (" ; ", ". Phase :", ". Achats examinés", ". Prochain essai"):
+        brief = brief.split(marker, 1)[0]
+    if len(brief) > 180:
+        brief = brief[:177].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+    return brief
