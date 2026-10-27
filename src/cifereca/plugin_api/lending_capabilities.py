@@ -125,6 +125,9 @@ def assess_lending_operation(
         if session_data is None:
             session_data = {}
         connected = session_data.get("connected") is True
+        # A provider may close a session while a stale connected flag remains.
+        # The explicit in-memory closed marker revokes read-only readiness.
+        closed = session_data.get("_closed") is True
         provider = session_data.get("provider_id")
         credential = session_data.get("credential_id")
         current_accounts = session_data.get("_accounts")
@@ -167,7 +170,7 @@ def assess_lending_operation(
                 )
             ) == 1
         )
-        ready = bool(plugin_ready and connected and exact_session and account_ready)
+        ready = bool(plugin_ready and connected and not closed and exact_session and account_ready)
     except Exception:
         return LendingOperationFact(key, "unknown", "invalid_declaration",
                                     declared, False, False, False, action)
