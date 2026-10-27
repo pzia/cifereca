@@ -350,6 +350,39 @@ def _record_source_retry_after(
         entries[key] = (session, identity, until)
 
 
+def _inert_search_source_state(session: object) -> tuple[object, object, object] | None:
+    """Current scalar route for one source, without running provider getters.
+
+    The source lease is only a revocation guard; it never grants search
+    capability or access to another account.
+    """
+    try:
+        state = object.__getattribute__(session, "__dict__")
+    except (AttributeError, TypeError):
+        return None
+    if type(state) is not dict:
+        return None
+    # Established lightweight/catalogue sessions may declare *inert class
+    # scalars* rather than setting instance fields in __init__. Static lookup
+    # preserves those providers without executing an arbitrary property or
+    # __getattribute__ callback (potential network I/O).
+    def scalar(name: str, default: object = None) -> object:
+        if name in state:
+            return state[name]
+        return inspect.getattr_static(session, name, default)
+
+    provider = scalar("provider_id")
+    # Catalogue-only virtual providers may have no credential at all.
+    # Preserve their historical public search eligibility.
+    credential = scalar("credential_id", "")
+    if credential is None:
+        credential = ""
+    connected = scalar("connected")
+    if type(provider) is not str or not provider or type(credential) is not str:
+        return None
+    return (provider, credential, connected)
+
+
 def search(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', field: str='all', content_types: tuple[str, ...] | list[str] | None=None, include_redundant_merged: bool=False, logger, facade_type) -> list[SearchResult]:
     # Capture before session discovery, which may run across an identity
     # transition. A query must not discover sources as A then run them as B.
@@ -358,11 +391,30 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         search_generation = self._search_generation
         identity = self.current_identity
 
+    # The broker can replace/reconnect a provider without changing identity
+    # or creating another search. Its in-flight old results are then revoked.
+    source_leases: tuple[tuple[object, tuple[object, object, object] | None], ...] = ()
+
+    def sources_current() -> bool:
+        if not source_leases:
+            return True
+        try:
+            registered = tuple(self._sessions.values())
+        except RuntimeError:
+            return False
+        for session, expected in source_leases:
+            if (expected is None or expected[2] is not True
+                    or not any(candidate is session for candidate in registered)
+                    or _inert_search_source_state(session) != expected):
+                return False
+        return True
+
     def request_current() -> bool:
         with self._search_generation_lock:
             return (
                 self._search_generation == search_generation
                 and self.current_identity is identity
+                and sources_current()
             )
 
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
@@ -386,6 +438,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         searchable, field=field, scope=provider_scope,
         include_redundant_merged=include_redundant_merged,
     )
+    source_leases = tuple(
+        (session, _inert_search_source_state(session))
+        for session in searchable
+    )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
     pref_key = ""
     if identity is not None:
@@ -406,7 +462,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             rows = [_provider_search_row(SearchResult(**x)) for x in cached]
             with self._search_generation_lock:
                 if (self._search_generation != search_generation
-                        or self.current_identity is not identity):
+                        or self.current_identity is not identity
+                        or not sources_current()):
                     return []
                 self.last_search = rows
                 # Never leak a warning from a previous, unrelated search.
@@ -573,7 +630,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
     with self._search_generation_lock:
         if (self._search_generation != search_generation
-                or self.current_identity is not identity):
+                or self.current_identity is not identity
+                or not sources_current()):
             return []
         self.last_search = rows
         self.last_search_warnings = warnings
@@ -831,6 +889,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         include_redundant_merged=include_redundant_merged,
     )
     searchable.sort(key=lambda row: row.provider_id)
+    source_leases = tuple(
+        (session, _inert_search_source_state(session))
+        for session in searchable
+    )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
     pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
     types = tuple(sorted(content_types or ()))
@@ -843,10 +905,22 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
-        return (
-            search_generation == self._search_generation
-            and self.current_identity is identity
-        )
+        if (search_generation != self._search_generation
+                or self.current_identity is not identity):
+            return False
+        # A provider can be reconnected without a profile transition. Its
+        # old in-flight worker is then no longer authorized to publish a
+        # batch, a stream event, a mirror or an unscoped cache result.
+        try:
+            registered = tuple(self._sessions.values())
+        except RuntimeError:
+            return False
+        for session, expected in source_leases:
+            if (expected is None or expected[2] is not True
+                    or not any(item is session for item in registered)
+                    or _inert_search_source_state(session) != expected):
+                return False
+        return True
 
     def request_cancelled() -> bool:
         with self._search_generation_lock:
