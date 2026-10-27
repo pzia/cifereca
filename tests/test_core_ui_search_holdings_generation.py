@@ -144,6 +144,27 @@ def test_current_holdings_error_is_reported_once():
     assert host.events == ["error-render", "actions", "cached", "toast"]
 
 
+def test_cached_notice_callback_checks_identity_before_holdings_io():
+    # Execute the actual extracted SearchDetail owner, without importing gi.
+    host = _host()
+    generation = host._search_detail_request_generation
+    foreign = NS(id="known-item", metadata={
+        "catalogue_scope_version": 2,
+        "known_catalog_identity_id": "bob",
+    })
+    host._load_known_detail(foreign)
+    assert host._search_detail_request_generation == generation
+    assert host.runner.tasks == []
+
+    current = NS(id="known-item", metadata={
+        "catalogue_scope_version": 2,
+        "known_catalog_identity_id": "alice",
+    })
+    host._load_known_detail(current)
+    assert host._search_detail_request_generation == generation + 1
+    assert len(host.runner.tasks) == 1
+
+
 def test_explicit_known_book_lookup_supersedes_previous_holdings():
     host = _host()
     before = host._search_detail_request_context()
