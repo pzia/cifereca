@@ -157,6 +157,13 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                 outcomes = [materialize(self, account, loan, control=control) for loan in loans]
                 result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
                 result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
+                # A file needing an explicit local reconciliation is not
+                # newly materialized or already linked. Emit only an aggregate
+                # counter; no title, path, loan ID or licence in sync facts.
+                result['files_reconciliation_required'] = sum(
+                    row.get('code') == 'bnf_local_candidate_reconciliation_required'
+                    for row in outcomes
+                )
                 if any(row['status'] not in {'complete', 'unchanged', 'skipped'} for row in outcomes):
                     result['status'] = 'partial'
         # A v1 loans() list never proves full branch coverage, even when

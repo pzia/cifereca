@@ -1141,6 +1141,12 @@ class SynchronizationBrokerImpl:
                 if type(result.get(name)) is int and 0 <= result[name] <= 1_000_000
             }
             changed = sum(facts.values())
+            # Review-required books are NOT modifications and must not
+            # inflate SyncResult.changed. Expose only a bounded aggregate,
+            # never candidate paths, titles, loan IDs or personal metadata.
+            review_count = result.get("files_reconciliation_required")
+            if type(review_count) is int and 0 <= review_count <= 1_000_000:
+                facts["files_reconciliation_required"] = review_count
             raw_status = result.get("status")
             outcome = raw_status.lower() if type(raw_status) is str else ""
             invalid_status = raw_status not in (None, "") and outcome not in _SYNC_PUBLIC_STATUSES

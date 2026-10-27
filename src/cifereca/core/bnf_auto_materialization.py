@@ -161,7 +161,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
 
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-    for row in service.storage.acquisitions(provider_id='manual', status='complete'):
+    manual_acquisitions = service.storage.acquisitions(provider_id='manual', status='complete')
+    for row in manual_acquisitions:
         # Inspect only a record explicitly bound to this identity and loan.
         # All other manual acquisitions may contain unrelated personal files:
         # do not stat, open or parse them on each BnF synchronization.
@@ -176,6 +177,36 @@ def materialize(service, account: Account, loan: Loan, *, control=None) -> dict:
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         return ({'status': 'unchanged'} if usable else
                 {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'})
+
+    # An older manual ACSM/EPUB or indexed manual placement may already
+    # represent this title. Titles are *hints*, not proof of the same edition
+    # or licence: stop before a new signed GET and request a deliberate
+    # reconciliation instead of silently producing a second file. The
+    # provider-agnostic screen never opens, attaches or moves any EPUB.
+    try:
+        from .library_audit_roots import configured_identity_roots
+        from .local_candidate_screen import screen_local_candidates
+        roots = tuple(
+            root / 'manual' for root in
+            configured_identity_roots(service.config, account.identity_id)[account.identity_id]
+        )
+        catalogue = service.storage.catalog_entries(
+            state='local', identity_id=account.identity_id, limit=8193,
+        )
+        local = screen_local_candidates(
+            identity_id=account.identity_id, title=loan.title,
+            roots=roots, acquisitions=manual_acquisitions, catalogue=catalogue,
+        )
+    except Exception:
+        return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
+    if not current():
+        return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
+    if local.status == 'needs_reconciliation':
+        return {'status': 'attention_required', 'code': (
+            'bnf_local_candidate_reconciliation_required'
+            if local.reason == 'local_candidate_found'
+            else 'bnf_local_evidence_unavailable'
+        )}
     # A signed ACSM is a private short-lived candidate. If admission fails
     # before ADEPT is invoked, it must not linger in acquisition-work.
     # Once handed to import_acsm, leave lifetime and receipt ownership to
