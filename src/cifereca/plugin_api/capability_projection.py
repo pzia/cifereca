@@ -129,16 +129,7 @@ def project_existing_capabilities(
             reason=("provider_claim_complete" if complete else
                     "snapshot_" + loan_snapshot.status + "_coverage_not_attested"),
         ))
-        # Multiple pages may repeat the same branch, but conflicting
-        # observations cannot safely establish a single coverage state.
-        unique_branches = {}
         for branch in loan_snapshot.branches:
-            key = (branch.medium, branch.upstream)
-            prior = unique_branches.get(key)
-            if prior is not None and prior != branch:
-                raise ValueError("capability_loan_branch_conflict")
-            unique_branches[key] = branch
-        for branch in unique_branches.values():
             attested = (loan_snapshot.status == "success"
                         and loan_snapshot.observed_at is not None
                         and branch.completeness == "complete"
