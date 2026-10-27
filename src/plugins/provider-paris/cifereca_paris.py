@@ -3,6 +3,7 @@ from cifereca_paris_formats import explicit_formats
 
 import logging
 import httpx
+from contextvars import ContextVar
 from dataclasses import replace
 from threading import RLock
 import re
@@ -146,10 +147,13 @@ class ParisProviderSession(ProviderSession):
         timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.diagnostics = diagnostics
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
-        # Paris still publishes branch failures through the v1 mutable
-        # last_loan_errors facade. Keep one borrower read and its typed
-        # projection atomic so concurrent readers cannot exchange evidence.
+        # Keep the v1 error facade for existing consumers; typed snapshots
+        # capture immutable branch evidence from their own read instead.
+        # The lock also prevents account reconnect/close during that read.
         self._loan_inventory_lock = RLock()
+        self._loan_branch_failures: ContextVar[frozenset[str] | None] = ContextVar(
+            "paris_loan_branch_failures", default=None,
+        )
         self.last_loan_errors: list[dict[str, str]] = []
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
@@ -465,6 +469,9 @@ class ParisProviderSession(ProviderSession):
                     )
                 except Exception:
                     pass
+        # Do not let a later mutation of the legacy error facade change the
+        # branch coverage of this particular typed read.
+        self._loan_branch_failures.set(frozenset(error["upstream"] for error in errors))
         self.last_loan_errors = errors
         if errors and not rows and len(errors) == 2:
             raise ProviderConfigurationError(
@@ -526,12 +533,23 @@ class ParisProviderSession(ProviderSession):
 
         if not still_bound():
             raise ProviderConfigurationError("account_scope_mismatch")
-        rows = self.loans(account)
+        # A typed snapshot never interprets last_loan_errors: that v1 public
+        # side channel can be overwritten by legacy consumers or wrappers.
+        token = self._loan_branch_failures.set(None)
+        try:
+            rows = self.loans(account)
+            failed = self._loan_branch_failures.get()
+        finally:
+            self._loan_branch_failures.reset(token)
         # One upstream response can race with an explicit disconnect,
         # a changed credential or linked-reader removal. Never publish that
         # batch under the former account's typed inventory envelope.
         if not still_bound():
             raise ProviderConfigurationError("account_scope_mismatch")
+        if failed is None:
+            # A substituted reader that supplies rows without branch evidence
+            # cannot claim typed success, even if the v1 facade appears empty.
+            raise ProviderConfigurationError("loan_inventory_evidence_missing")
         # Historical Paris Loan producers do not always carry the local
         # Core identity. The authenticated account argument is the only
         # authorized scope for this read. Never overwrite a contradictory
@@ -541,11 +559,6 @@ class ParisProviderSession(ProviderSession):
             if row.identity_id is None else row
             for row in rows
         )
-        failed = {
-            row.get("upstream") for row in self.last_loan_errors
-            if isinstance(row, dict)
-            and row.get("upstream") in {"DILICOM", "SYRACUSE"}
-        }
         branches = tuple(
             LoanBranchCoverage(
                 upstream=upstream.casefold(), medium=medium,
