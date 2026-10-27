@@ -947,22 +947,117 @@ class LibraryMaintenanceBrokerImpl:
             self.service.storage.metadata_set(f"artifact.variant.preferred.{source_id}.{purpose}", request.artifact_id)
             return LibraryMutationResult(True,1,plan.summary,facts={"source_artifact_id":source_id,"artifact_id":request.artifact_id,"purpose":purpose})
         if request.operation == "delete_variant":
-            rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
-            if not rows: return LibraryMutationResult(True,0,"Variante déjà absente")
-            if (len(rows) != 1
-                    or not _variant_deletion_scope_safe(self.service.storage, rows[0])):
+            rows = self.service.storage.artifact_variants(
+                artifact_id=request.artifact_id,
+            )
+            if not rows:
+                return LibraryMutationResult(True, 0, "Variante déjà absente")
+            if (len(rows) != 1 or not _variant_deletion_scope_safe(
+                    self.service.storage, rows[0])):
                 raise _VariantScopeConflict("Variante et source non indépendantes")
-            variant=rows[0]; source_id=str(variant.get("source_artifact_id") or "")
-            for placement in [p for p in self.service.storage.placements() if str(p.get("artifact_id") or "") == request.artifact_id]:
-                path=Path(str(placement.get("path") or ""))
-                if path.exists() and path.is_file(): path.unlink()
-                self.service.storage.placement_delete(str(placement.get("placement_id") or ""))
-            self.service.storage.artifact_variant_delete(str(variant.get("variant_id") or ""))
-            for purpose in ("read","export","transfer"):
-                key=f"artifact.variant.preferred.{source_id}.{purpose}"
-                if self.service.storage.metadata_get(key)==request.artifact_id: self.service.storage.metadata_set(key,"")
+            variant = rows[0]
+            source_id = str(variant.get("source_artifact_id") or "")
+            placements = [
+                placement for placement in self.service.storage.placements()
+                if str(placement.get("artifact_id") or "") == request.artifact_id
+            ]
+            evidence = self.service.storage.artifact_get(str(request.artifact_id or ""))
+            digest = evidence.get("sha256") if type(evidence) is dict else None
+            size = evidence.get("size") if type(evidence) is dict else None
+            if placements and (
+                type(digest) is not str or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+                or str(request.artifact_id) != "sha256:" + digest
+                or type(size) is not int or size < 0
+                or not hasattr(os, "O_NOFOLLOW")
+            ):
+                raise _VariantScopeConflict("Empreinte de la variante non attestée")
+            from .core.duplicate_maintenance_guard import (
+                candidate_has_active_dependencies,
+            )
+            # A plan is not an authorization to unlink whatever bytes happen
+            # to occupy a historical path. Validate ALL placements before
+            # touching SQLite; no-follow fd binds the hash to a real inode.
+            fingerprint = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            verified = []
+            seen_paths = set()
+            for placement in placements:
+                placement_id = str(placement.get("placement_id") or "")
+                path = Path(str(placement.get("path") or ""))
+                if (not placement_id or not path.is_absolute()
+                        or ".." in path.parts or path in seen_paths
+                        or path.resolve() != path
+                        or candidate_has_active_dependencies(
+                            self.service.storage,
+                            placement_id=placement_id, path=str(path),
+                        )):
+                    raise _VariantScopeConflict("Références de variante non vérifiables")
+                seen_paths.add(path)
+                try:
+                    fd = os.open(
+                        path, os.O_RDONLY | os.O_NOFOLLOW |
+                        getattr(os, "O_CLOEXEC", 0) |
+                        getattr(os, "O_NONBLOCK", 0),
+                    )
+                    try:
+                        before = os.fstat(fd)
+                        if not stat.S_ISREG(before.st_mode) or before.st_size != size:
+                            raise _VariantScopeConflict("Octets de variante non vérifiés")
+                        sha = hashlib.sha256()
+                        while chunk := os.read(fd, 1024 * 1024):
+                            sha.update(chunk)
+                        after = os.fstat(fd)
+                        named = os.stat(path, follow_symlinks=False)
+                        if (sha.hexdigest() != digest
+                                or any(
+                                    getattr(before, key) != getattr(after, key)
+                                    or getattr(before, key) != getattr(named, key)
+                                    for key in fingerprint
+                                )):
+                            raise _VariantScopeConflict("Octets de variante non vérifiés")
+                    finally:
+                        os.close(fd)
+                except (OSError, RuntimeError):
+                    raise _VariantScopeConflict("Fichier variante non vérifiable") from None
+                verified.append((placement_id, path, named))
+            # Commit the SQLite reference changes before any physical unlink.
+            # An SQL failure leaves ALL files intact. A crash after the commit
+            # may leave an unindexed, recoverable file, never a live placement
+            # pointing to already-deleted bytes.
+            for placement_id, _path, _named in verified:
+                self.service.storage.placement_delete(placement_id)
+            self.service.storage.artifact_variant_delete(
+                str(variant.get("variant_id") or ""),
+            )
+            for purpose in ("read", "export", "transfer"):
+                key = f"artifact.variant.preferred.{source_id}.{purpose}"
+                if self.service.storage.metadata_get(key) == request.artifact_id:
+                    self.service.storage.metadata_set(key, "")
+            cleanup_pending = False
+            for placement_id, path, expected in verified:
+                try:
+                    if (candidate_has_active_dependencies(
+                            self.service.storage,
+                            placement_id=placement_id, path=str(path),
+                        ) or self.service.storage.placement_for_path(path) is not None):
+                        cleanup_pending = True
+                        continue
+                    current = os.stat(path, follow_symlinks=False)
+                    if (not stat.S_ISREG(current.st_mode)
+                            or any(getattr(current, key) != getattr(expected, key)
+                                   for key in fingerprint)):
+                        cleanup_pending = True
+                        continue
+                    path.unlink()
+                except OSError:
+                    cleanup_pending = True
             self.service.storage.artifact_delete_if_unreferenced(request.artifact_id)
-            return LibraryMutationResult(True,1,plan.summary,facts={"artifact_id":request.artifact_id})
+            return LibraryMutationResult(
+                True, 1, plan.summary,
+                warnings=(("Fichier variante conservé : nettoyage local à vérifier.",)
+                          if cleanup_pending else ()),
+                facts={"artifact_id": request.artifact_id},
+            )
         raise UnsupportedOperation(f"Opération de maintenance non supportée: {request.operation}")
 
 
