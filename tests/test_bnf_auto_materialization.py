@@ -56,7 +56,7 @@ def test_targeted_sync_dispatches_only_after_opt_in(connected_core, monkeypatch)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
     calls = []
-    def fake_materialize(_service, _account, row, *, control=None):
+    def fake_materialize(_service, _account, row, *, control=None, physical_scan_cache=None):
         calls.append(row.id)
         return {'status': 'complete'}
     monkeypatch.setattr(bnf_auto_materialization, 'materialize', fake_materialize)
@@ -74,7 +74,7 @@ def test_opening_sync_dispatches_opted_in_bnf_loan(connected_core, monkeypatch):
     broker = SynchronizationBrokerImpl(service)
     calls = []
     monkeypatch.setattr(bnf_auto_materialization, 'materialize',
-                        lambda _service, _account, row: calls.append(row.id) or {'status': 'complete'})
+                        lambda _service, _account, row, **_kwargs: calls.append(row.id) or {'status': 'complete'})
     assert broker.set_bnf_auto_download(broker._source_id(account), True)
     service.current_identity = NS(identity_id='another-visible-identity')
     service.opening_sync()
