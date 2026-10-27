@@ -2907,8 +2907,9 @@ class LibraryService:
     def reacquire_digital_loan(self, loan: Loan) -> dict[str, Any]:
         """One terminal, closed diagnostic for each *explicit* user recovery.
 
-        This wrapper never turns a failed action into success, retries it,
-        creates an acquisition, or logs arbitrary provider messages. The
+        This wrapper never turns a failed action into success, retries it
+        or creates an acquisition. The closed terminal is stable while raw
+        observed exceptions remain available in the Core journal. The
         existing guarded Core orchestration remains the single executor.
         """
         from .core.diagnostic_loan_download import CODES
