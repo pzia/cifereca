@@ -4,6 +4,8 @@ Every EPUB/PDF file, profile and account is synthetic and offline.
 """
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from cifereca.catalog import LocalCatalog
@@ -62,7 +64,12 @@ def test_rescan_does_not_reassign_existing_owner_or_provider(
     assert placement["identity_id"] == owner
     assert placement["provider_id"] == provider
     assert placement["source_item_id"] == "historical-edition"
-    assert placement["artifact_id"] == "sha256:historic-artifact"
+    # An actually re-observed file rehashes its content. A rejected
+    # cross-identity scan must instead keep the historical artifact intact.
+    assert placement["artifact_id"] == (
+        "sha256:historic-artifact" if invalid
+        else "sha256:" + hashlib.sha256(file.read_bytes()).hexdigest()
+    )
     assert placement["state"] == ("invalid" if invalid else "present")
     if invalid:
         assert placement["metadata"]["source"] == "historic"
