@@ -71,7 +71,7 @@ def test_cancel_propagates_and_never_generates_inventory_status(
         with pytest.raises(Cancelled, match="task cancelled"):
             getattr(obj, entrypoint)(account)
         assert obj.client.calls == [(name, account.unique_id) for name in expected_calls]
-        assert obj.last_loan_errors == []
+        assert "last_loan_errors" not in vars(obj)
         assert not any(
             kwargs.get("detail", {}).get("code") == "paris_loans_upstream_failed"
             for _args, kwargs in sink.events
