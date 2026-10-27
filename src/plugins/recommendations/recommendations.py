@@ -1754,7 +1754,10 @@ class UxRecommendationsView:
             # that resolves rights and actions for a normal Search selection.
             can_open = getattr(self.host, "can_open_loaded_search_notice", None)
             open_loaded = getattr(self.host, "open_loaded_search_notice", None)
-            if callable(can_open) and callable(open_loaded):
+            can_cached = getattr(self.host, "can_open_known_search_notice", None)
+            open_cached = getattr(self.host, "open_known_search_notice", None)
+            if ((callable(can_open) and callable(open_loaded))
+                    or (callable(can_cached) and callable(open_cached))):
                 for index, variant in enumerate(visible_exact, page_start + 1):
                     coordinates = {
                         "provider": variant.source_provider,
@@ -1764,14 +1767,27 @@ class UxRecommendationsView:
                         "source_collection": variant.source_collection,
                         "identity_id": identity_at_selection,
                     }
-                    try:
-                        available = can_open(**coordinates) is True
-                    except Exception:
-                        available = False
-                    if not available:
+                    # Prefer the exact already-loaded Search row. Only if
+                    # absent, Core may identify ONE cache-qualified v2 notice;
+                    # the recommendation contributes coordinates, not rights.
+                    destination = None
+                    for probe, opener, mode in (
+                        (can_open, open_loaded, "loaded"),
+                        (can_cached, open_cached, "known"),
+                    ):
+                        if not (callable(probe) and callable(opener)):
+                            continue
+                        try:
+                            if probe(**coordinates) is True:
+                                destination = (opener, mode)
+                                break
+                        except Exception:
+                            continue
+                    if destination is None:
                         continue
+                    dispatch, mode = destination
 
-                    def open_exact(coordinates=coordinates):
+                    def open_exact(coordinates=coordinates, dispatch=dispatch):
                         if (
                             getattr(self, "_disposed", False)
                             or self._generation != generation_at_selection
@@ -1782,14 +1798,16 @@ class UxRecommendationsView:
                         ):
                             return False
                         try:
-                            return open_loaded(**coordinates) is True
+                            return dispatch(**coordinates) is True
                         except Exception:
                             return False
 
                     actions.append(UiBookDetailAction(
-                        f"recommendation.loaded-notice.{index}",
-                        f"Voir les actions de la notice {index} dans Recherche"
-                        f" · {self._display_source(variant.source_provider)}",
+                        f"recommendation.{mode}-notice.{index}",
+                        (f"Voir les actions de la notice {index} dans Recherche"
+                         if mode == "loaded" else
+                         f"Consulter la notice {index} dans Recherche")
+                        + f" · {self._display_source(variant.source_provider)}",
                         "document-open-symbolic", callback=open_exact,
                     ))
             # Pure-local pagination of exact source choices. A callback from
