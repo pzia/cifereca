@@ -104,8 +104,8 @@ def _enable(core):
     return service, session, account, loan, downloaded
 
 
-def _manual_receipt(service, tmp_path, title, identity="default"):
-    root = tmp_path / "EBooks" / ("hugues" if identity == "default" else "alex") / "manual"
+def _manual_receipt(service, tmp_path, title, identity="default", directory="manual"):
+    root = tmp_path / "EBooks" / ("hugues" if identity == "default" else "alex") / directory
     path = root / "acsm-old" / "Previously Imported.epub"
     path.parent.mkdir(parents=True, exist_ok=True)
     epub(path, title=title)
@@ -119,11 +119,12 @@ def _manual_receipt(service, tmp_path, title, identity="default"):
     return path
 
 
+@pytest.mark.parametrize("directory", ["manual", "acsm-import"])
 def test_bnf_existing_manual_epub_blocks_get_and_second_sync(
-    connected_core, tmp_path, monkeypatch,
+    connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = _enable(connected_core)
-    manual = _manual_receipt(service, tmp_path, loan.title)
+    manual = _manual_receipt(service, tmp_path, loan.title, directory=directory)
     original = manual.read_bytes()
     errors = []
     monkeypatch.setattr(session, "download_digital", lambda *_a, **_kw: errors.append("called"))
@@ -140,11 +141,14 @@ def test_bnf_existing_manual_epub_blocks_get_and_second_sync(
     assert len(service.storage.acquisitions(provider_id="manual")) == 1
 
 
+@pytest.mark.parametrize("directory", ["manual", "acsm-import"])
 def test_manual_same_title_in_another_identity_does_not_block_bnf_get(
-    connected_core, tmp_path, monkeypatch,
+    connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = _enable(connected_core)
-    foreign = _manual_receipt(service, tmp_path, loan.title, identity="alex")
+    foreign = _manual_receipt(
+        service, tmp_path, loan.title, identity="alex", directory=directory,
+    )
     attempted = []
     def stop_before_get(*_args, **_kwargs):
         attempted.append(True)
@@ -174,11 +178,12 @@ def test_unrelated_second_loan_still_reaches_provider_after_manual_screen(
     assert first.is_file()
 
 
+@pytest.mark.parametrize("directory", ["manual", "acsm-import"])
 def test_old_manual_catalogue_entry_blocks_even_without_manual_receipt(
-    connected_core, tmp_path, monkeypatch,
+    connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = _enable(connected_core)
-    manual = tmp_path / "EBooks" / "hugues" / "manual" / "historical.epub"
+    manual = tmp_path / "EBooks" / "hugues" / directory / "historical.epub"
     manual.parent.mkdir(parents=True, exist_ok=True)
     epub(manual, title=loan.title)
     service.storage.catalog_entry_put({
