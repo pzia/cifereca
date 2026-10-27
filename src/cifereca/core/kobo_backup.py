@@ -334,6 +334,53 @@ def kobo_backup_preview(
             "Compte Kobo non connecté : impossible de rafraîchir les droits"
         )
 
+    # A fresh remote manifest must remain attached to this *same* Core
+    # account/session throughout the subsequent local projection. The
+    # offline checkpoint preview is intentionally still usable disconnected.
+    core_epoch = self._account_context_epoch
+    provider_epoch = getattr(session, "_epoch", None)
+    # Multiple borrowers are legitimate diagnostic inputs: the existing
+    # preview must classify their rights as attention_required rather than
+    # convert an ambiguous account into an authoritative owner. Pin every
+    # observed instance/value so mid-read replacement is still rejected.
+    accounts = tuple(session.accounts) if session is not None else ()
+    account_scopes = tuple(
+        (row.identity_id, row.provider_id, row.credential_id, row.unique_id)
+        for row in accounts
+    )
+
+    def fresh_source_current() -> bool:
+        try:
+            return bool(
+                session is not None
+                and session.connected is True
+                and self._account_context_epoch == core_epoch
+                and self._sessions.get(self._session_key("kobo", credential_id)) is session
+                and getattr(session, "_epoch", None) == provider_epoch
+                and len(session.accounts) == len(accounts)
+                and all(
+                    live is original
+                    for live, original in zip(session.accounts, accounts)
+                )
+                and tuple(
+                    (row.identity_id, row.provider_id,
+                     row.credential_id, row.unique_id)
+                    for row in session.accounts
+                ) == account_scopes
+                and (
+                    len(accounts) != 1 or account_scopes[0][:3]
+                    == (identity_id, "kobo", credential_id)
+                )
+                and self.storage.identity_for_connection(
+                    "kobo", credential_id,
+                ) == identity_id
+            )
+        except Exception:
+            return False
+
+    if refresh_manifest and not fresh_source_current():
+        raise ProviderConfigurationError("Source Kobo modifiée pendant l’aperçu")
+
     stored = self.storage.backup_list("kobo", credential_id)
     previous = {str(row.get("item_id") or ""): row for row in stored}
     if _manifest_evidence is not None:
@@ -381,6 +428,8 @@ def kobo_backup_preview(
     presence_seconds_remaining = 8.0
 
     for raw in manifest:
+        if refresh_manifest and not fresh_source_current():
+            raise ProviderConfigurationError("Source Kobo modifiée pendant l’aperçu")
         if not isinstance(raw, dict):
             counts["invalid_manifest_items"] += 1
             continue
@@ -558,6 +607,11 @@ def kobo_backup_preview(
             ).hexdigest()[:20]
             examples.append({"item_ref": item_digest, "reason": reason})
 
+    # Do not publish stale positive local presence after a concurrent
+    # account rebind, reconnect or consent/session transition during SHA
+    # verification or declaration checking.
+    if refresh_manifest and not fresh_source_current():
+        raise ProviderConfigurationError("Source Kobo modifiée pendant l’aperçu")
     # Explicitly discourage treating the output as an executable download
     # plan. A complete fresh manifest is still only a rights snapshot.
     return {
