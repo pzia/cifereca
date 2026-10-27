@@ -1,6 +1,7 @@
 from __future__ import annotations
 from cifereca.plugin_api import description_text, description_element
 from cifereca_paris_formats import projection
+from cifereca_paris_bibliography import project_observed_resource_facets
 import html
 import re
 import uuid
@@ -117,6 +118,9 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
     docbase = str(resource["RscBase"])
     record_id = str(resource["RscId"])
     digital, content_type, media_format, metadata = projection(resource, raw, scenario, docbase)
+    # Resource-level fields observed in Syracuse JSON: no additional GET or
+    # implied server-side filtering, ownership, edition or reader-age claim.
+    metadata.update(project_observed_resource_facets(resource, scenario))
     return SearchResult(
         id=f"{docbase}:{record_id}",
         record_id=record_id,
