@@ -58,3 +58,46 @@ Pour émettre un vrai couple supporté, fournir séparément une
 
 **Contrat non activé automatiquement sur les providers existants** :
 la fonction de projection est en lecture seule, explicite et sans I/O.
+
+## Projection des contrats existants (#2703, tranche 2)
+
+`project_existing_capabilities(descriptor, identity_id=..., catalogue=...,
+loan_snapshot=..., sync_source=...)` compose **en mémoire seulement** les
+trois contrats déjà livrés. Le Core doit d'abord sélectionner les snapshots
+dans leur **scope identité/compte exact**, et la méthode ne fait elle-même
+aucun GET, scan, acquisition, appel fournisseur ni modification SQLite.
+
+- `CatalogueSourceCapability` (#2385) ne porte **aucune identité** dans son
+  schéma v1 : le **caller** doit le sélectionner dans
+  `catalogue_source_capabilities(identity_id)` de la bonne identité.
+  `catalog_search_available=True` signifie ici « service connecté selon
+  l'inventaire Core », **pas** « recherche live attestée » :
+  `status=unverified`, jamais `supported`. La capacité distincte
+  `catalog.refresh` reste `unsupported` : recherche ≠ snapshot.
+- `SyncSourceRef.sync_capabilities` produit des observations de **code**
+  `sync.remote_inventory`, `sync.entitlements`,
+  `sync.local_materialization`, `sync.scheduled_refresh`, toutes
+  `unverified`, même si le dernier `phase_state` indique `success`.
+  Le `enabled=False` et `connected=False` restent visibles. Les noms
+  inconnus ne sont pas promus en opérations.
+- `LoanInventorySnapshot` (#3122) projette seulement son compte/credential
+  exact et ses branches réellement déclarées. `supported` signifie ici
+  **observation de réponse fournisseur** `status=success` avec
+  `observed_at` et branche(s) `completeness=complete +
+  pagination_complete=True` ; cette déclaration ne prouve **aucun** droit
+  de mutation/expiration et ne prétend pas couvrir une autre branche.
+  Toute preuve de couverture absente, partielle, périmée ou échouée reste
+  `partial/unverified`.
+
+Le tuple d'identité d'une observation contient maintenant **le credential
+en plus du compte**, pour éviter qu'un même emprunteur sous deux connexions
+distinctes soit confondu. Le champ est optionnel pour les anciennes
+constructions v1, et doit être fourni lors de toute preuve liée à un compte.
+
+**Ce projecteur n'est pas une fusion d'inventaires** : aucune jointure des
+listes `fields` et `scopes`, aucun entitlement construit depuis les
+métadonnées, aucune capacité à acquérir déduite d'une couverture observée.
+
+Reste pour finir #2703 : service Core de lecture fédérée et CoreUI, preuves
+fournisseur des 7 familles, recettes E2E exactes. L'absence de ces dernières
+ne peut pas être masquée par cette projection technique.
