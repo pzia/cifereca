@@ -363,7 +363,11 @@ def _inert_search_source_state(session: object) -> tuple[object, object, object]
     if type(state) is not dict:
         return None
     provider = state.get("provider_id")
-    credential = state.get("credential_id")
+    # Catalogue-only virtual providers may have no credential at all.
+    # Preserve their historical public search eligibility.
+    credential = state.get("credential_id", "")
+    if credential is None:
+        credential = ""
     connected = state.get("connected")
     if type(provider) is not str or not provider or type(credential) is not str:
         return None
