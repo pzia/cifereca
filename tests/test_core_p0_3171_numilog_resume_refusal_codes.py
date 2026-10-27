@@ -199,7 +199,7 @@ def test_resume_failure_is_correlated_and_keeps_delivered_bytes_pending(
         with pytest.raises(NumilogIndexResumeRejected) as raised:
             case.service.resume_numilog_materialization(receipt_id)
     assert raised.value.reason_code == code
-    events = [r for r in caplog.records if r.getMessage().startswith("TRACE Numilog index resume")]
+    events = [r for r in caplog.records if r.getMessage().startswith("Numilog index resume")]
     assert len(events) == 1
     fields = events[0]._cifereca_journal_payload["detail"]
     assert fields["phase"] == phase and fields["code"] == code
@@ -235,7 +235,7 @@ def test_resume_cancellation_is_not_a_failure(case, monkeypatch, caplog):
     monkeypatch.setattr(case.service, "catalog_index_path", cancelled)
     with pytest.raises(Cancelled):
         case.service.resume_numilog_materialization(receipt_id)
-    assert not any(r.getMessage().startswith("TRACE Numilog index resume") for r in caplog.records)
+    assert not any(r.getMessage().startswith("Numilog index resume") for r in caplog.records)
     assert case.service.storage.acquisition_get(receipt_id)["status"] == "attention_required"
     assert case.calls == [case.item.record_id]
 

@@ -80,7 +80,7 @@ def _resume_failure(exc, phase, acquisition_id, indexed=None):
             fields["task_ref"] = reference
         if indexed is not None:
             fields["index_result"] = indexed
-        message = "TRACE Numilog index resume " + repr(fields)
+        message = "Numilog index resume " + repr(fields)
         logging.getLogger("cifereca").warning(
             "%s", message, exc_info=True,
             extra=_core_journal_record("NUMILOG", "index_resume", "error", message, fields),
