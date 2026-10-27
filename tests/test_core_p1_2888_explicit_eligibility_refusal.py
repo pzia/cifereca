@@ -85,7 +85,16 @@ def test_one_exact_refusal_from_existing_eligibility_at_admission(code, tmp_path
     assert event["detail"]["code"] == code
     assert event["detail"]["phase"] == "admission"
     assert event["provider_id"] == "paris"
-    assert "private-loan-id" not in path.read_text(encoding="utf-8")
+    # An explicitly refused action is observed even without a provider GET.
+    # The closed business event remains canonical; the raw journal preserves
+    # the original loan identifier and the attested admission reason.
+    raw = path.read_text(encoding="utf-8")
+    assert "TRACE explicit loan recovery admission refused provider=paris" in raw
+    assert "loan_id=private-loan-id" in raw
+    assert f"code={code}" in raw
+    matched = query_journal(path, search="private-loan-id")
+    assert any("loan_id=private-loan-id" in event["message"]
+               for event in matched["events"])
 
 
 def test_unknown_broken_eligibility_code_stays_closed_without_crashing():
