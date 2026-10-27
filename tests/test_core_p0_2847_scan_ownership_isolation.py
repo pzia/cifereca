@@ -41,13 +41,13 @@ def _case(tmp_path, *, owner="identity-a", provider="paris"):
     return store, library, placement_id, file
 
 
-@pytest.mark.parametrize(("owner", "provider"), [
-    ("identity-a", "paris"),
-    ("identity-b", "numilog"),
-    ("legacy-folder-alias", "paris"),
+@pytest.mark.parametrize(("owner", "provider", "invalid"), [
+    ("identity-a", "paris", True),
+    ("identity-b", "numilog", False),
+    ("legacy-folder-alias", "paris", True),
 ])
 def test_rescan_does_not_reassign_existing_owner_or_provider(
-    tmp_path, owner, provider,
+    tmp_path, owner, provider, invalid,
 ):
     store, library, placement_id, file = _case(
         tmp_path, owner=owner, provider=provider,
@@ -55,22 +55,23 @@ def test_rescan_does_not_reassign_existing_owner_or_provider(
 
     result = LocalCatalog(store, library).scan()
 
-    assert result.invalid == 1
-    assert result.cataloged == 0
+    assert result.invalid == int(invalid)
+    assert result.cataloged == int(not invalid)
     assert file.read_bytes() == b"%PDF-1.7\nSynthetic only\n"
     placement = store.placement_get(placement_id)
     assert placement["identity_id"] == owner
     assert placement["provider_id"] == provider
     assert placement["source_item_id"] == "historical-edition"
     assert placement["artifact_id"] == "sha256:historic-artifact"
-    assert placement["state"] == "invalid"
-    assert placement["metadata"]["source"] == "historic"
-    assert placement["metadata"]["invalid_reason"] == "placement_scope_conflict"
+    assert placement["state"] == ("invalid" if invalid else "present")
+    if invalid:
+        assert placement["metadata"]["source"] == "historic"
+        assert placement["metadata"]["invalid_reason"] == "placement_scope_conflict"
     catalogue = store.catalog_entry_get("historical-catalogue")
     assert catalogue["identity_id"] == owner
     assert catalogue["provider_id"] == provider
     assert catalogue["item_id"] == "historical-edition"
-    assert catalogue["local_state"] == "invalid"
+    assert catalogue["local_state"] == ("invalid" if invalid else "local")
     assert catalogue["metadata"]["path"] == str(file)
     assert store.acquisitions() == []
 
@@ -101,5 +102,6 @@ def test_rescan_can_assign_unowned_file_without_reassigning_existing_owner(tmp_p
     assert result.cataloged == 1 and result.invalid == 0
     placement = store.placement_get(placement_id)
     assert placement["identity_id"] == "identity-b"
-    assert placement["provider_id"] == "paris"
+    # A folder name is not evidence for any supplier of this local file.
+    assert placement["provider_id"] is None
     assert placement["state"] == "present"
