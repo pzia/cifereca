@@ -222,15 +222,15 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             if type(physical_scan_cache) is dict else None
         )
         if physical is None:
-            if control is not None:
-                control.check_cancelled()
+            # Preserve the existing cancellation checkpoints around the
+            # signed GET and before ADEPT. The scan itself has a hard deadline;
+            # extra polling here would shift a post-GET cancellation into the
+            # pre-GET phase and invalidate the cleanup contract.
             physical = observe_physical_local_titles(
                 identity_id=account.identity_id, roots=roots,
             )
             if type(physical_scan_cache) is dict:
                 physical_scan_cache[cache_key] = physical
-        if control is not None:
-            control.check_cancelled()
         physical_result = physical.screen(
             identity_id=account.identity_id, title=loan.title,
         )
