@@ -219,11 +219,11 @@ def _create_venv(release: Path, python: str) -> Path:
     if wheelhouse.is_dir():
         version = _metadata(release)[1]
         from .wheelhouse_quarantine import verify_wheelhouse
-        from .plugins.python_quarantine import QuarantineRejected
+        from .plugins.python_quarantine import QuarantineRejected, quarantine_diagnostic
         try:
             verified = verify_wheelhouse(wheelhouse, core_version=version)
         except QuarantineRejected as exc:
-            raise UpdateError(str(exc)) from None
+            raise UpdateError(quarantine_diagnostic(exc)) from None
         core_wheels = sorted(wheelhouse.glob(f"cifereca-{version}-*.whl"))
         if not core_wheels or any(wheel not in verified for wheel in core_wheels):
             raise UpdateError("dependency_not_eligible")
@@ -1179,15 +1179,15 @@ def _prepare_github_wheelhouse(source: Path, python: str) -> None:
         # Child output is untrusted: it can contain private URLs or tokens.
         raise UpdateError("dependency_not_eligible")
     # A producer-side JSON is not a signature; this verifier is a local
-    # integrity and 168h proof check. Trust in the checkout comes from the
+    # integrity and configured age proof check. Trust in the checkout comes from the
     # already-selected GitHub commit, not from the JSON alone.
     from .wheelhouse_quarantine import verify_wheelhouse
-    from .plugins.python_quarantine import QuarantineRejected
+    from .plugins.python_quarantine import QuarantineRejected, quarantine_diagnostic
     try:
         version = _metadata(source)[1]
         verify_wheelhouse(wheelhouse, core_version=version)
     except (QuarantineRejected, OSError, ValueError) as exc:
-        reason = str(exc) if isinstance(exc, QuarantineRejected) else "dependency_provenance_unavailable"
+        reason = quarantine_diagnostic(exc) if isinstance(exc, QuarantineRejected) else "dependency_provenance_unavailable"
         raise UpdateError(reason) from None
 
 
