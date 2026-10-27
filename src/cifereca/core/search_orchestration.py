@@ -33,18 +33,27 @@ def _log_observed_stream_failure(provider_id: str, phase: str, error: Exception)
     """
     logger = logging.getLogger("cifereca")
     try:
+        # Python's traceback formatter silently replaces an exception whose
+        # __str__ raises with '<exception str() failed>'. Always record the
+        # ORIGINAL args separately, even when traceback formatting succeeds.
+        # Rendering those args eagerly also prevents a hostile __repr__ from
+        # failing later inside a logging handler.
+        try:
+            observed_args = repr(error.args)
+        except Exception:
+            observed_args = "<unrenderable>"
         logger.warning(
-            "TRACE provider search stream failure provider_id=%s stage=%s",
-            provider_id, phase,
+            "TRACE provider search stream failure provider_id=%s stage=%s "
+            "exception_type=%s exception_args=%s",
+            provider_id, phase, type(error).__name__, observed_args,
             exc_info=(type(error), error, error.__traceback__),
         )
     except Exception:
-        import traceback
+        # Diagnostics must never turn a provider failure into a second crash.
         logger.warning(
             "TRACE provider search stream failure provider_id=%s stage=%s "
-            "exception_type=%s exception_args=%r traceback=%s",
-            provider_id, phase, type(error).__name__, error.args,
-            "".join(traceback.format_tb(error.__traceback__)),
+            "exception_type=%s journal_fallback=true",
+            provider_id, phase, type(error).__name__,
         )
 
 
