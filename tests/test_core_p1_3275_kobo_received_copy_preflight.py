@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cifereca.core.kobo_backup import _indexed_kobo_catalog_paths
+from cifereca.library_files import sha256_file
 from tests.test_core0925_open_destinations import _service
 from tests.test_kobo_backup_guard import _write_epub
 
@@ -16,14 +17,15 @@ def _kobo_source(service, root: Path):
     src = root / "EBooks" / "alice" / "kobo" / "Book.epub"
     src.parent.mkdir(parents=True, exist_ok=True)
     _write_epub(src, b"synthetic Kobo A book")
+    artifact_id = "sha256:" + sha256_file(src)
     placement_id = service.storage.placement_put({
-        "artifact_id": "sha256:synthetic-a",
+        "artifact_id": artifact_id,
         "path": str(src), "identity_id": "alice", "provider_id": "kobo",
         "source_item_id": "book-1", "state": "present", "metadata": {},
     })
     service.storage.catalog_entry_put({
         "catalog_entry_id": "alice-kobo-book-1",
-        "artifact_id": "sha256:synthetic-a", "placement_id": placement_id,
+        "artifact_id": artifact_id, "placement_id": placement_id,
         "title": "Book", "author": "Author", "identity_id": "alice",
         "provider_id": "kobo", "item_id": "book-1", "local_state": "local",
         "media_format": "epub",
