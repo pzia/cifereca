@@ -897,7 +897,15 @@ class LibraryMaintenanceBrokerImpl:
             # SQLite transaction leaves both verified physical paths intact;
             # a crash afterwards leaves an extra, recoverable duplicate, not
             # a 'present' SQLite row pointing at an already deleted book.
-            self.service.storage.placement_delete(request.placement_id)
+            self.service.storage.placement_retire_duplicate_atomic(
+                placement_id=str(row["placement_id"]),
+                keep_placement_id=str(keep["placement_id"]),
+                candidate_path=str(path), kept_path=str(kept_path),
+                artifact_id=str(row["artifact_id"]),
+                identity_id=str(row["identity_id"]),
+                provider_id=str(row["provider_id"]),
+                source_item_id=row.get("source_item_id"),
+            )
             # The old file is now an optional cleanup target. Never unlink a
             # name that was replaced or rebound while SQLite committed, and
             # never destroy the remaining copy after its inode changed.
