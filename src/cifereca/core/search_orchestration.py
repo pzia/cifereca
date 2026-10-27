@@ -10,6 +10,7 @@ import time
 import hashlib
 import json
 import inspect
+import logging
 import re
 from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import asdict, replace
@@ -536,6 +537,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
             except Exception as exc:
                 from ..search_failures import search_failure_code
+                logger.warning(
+                    "TRACE provider search failure provider=%s query_variant=%s attempt=%s",
+                    session.provider_id, variant, attempt + 1, exc_info=True,
+                )
                 code = search_failure_code(exc)
                 if code == "SearchTemporarilyUnavailable":
                     _record_source_retry_after(self, session, identity, credential, exc)
@@ -795,6 +800,13 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
         except Exception as exc:
             from ..search_failures import search_failure_code
+            # The public batch remains a closed verdict, but the local raw
+            # journal must preserve the observed provider failure verbatim.
+            # No additional request or provider data capture is performed.
+            logging.getLogger("cifereca").warning(
+                "TRACE provider search failure provider=%s query_variant=%s attempt=%s",
+                session.provider_id, variant, attempt + 1, exc_info=True,
+            )
             # Provider exceptions can include signed URLs, account IDs and
             # personal search terms. Neither the result batch nor diagnostics
             # may carry their raw message.
@@ -1109,6 +1121,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     provider_rows, provider_warnings, error_code, error_message = future.result()
                 except Exception as exc:
                     from ..search_failures import search_failure_code
+                    logger.warning(
+                        "TRACE provider search worker failure provider=%s",
+                        session.provider_id, exc_info=True,
+                    )
                     # A failed future can bypass the worker's normal sanitized
                     # error boundary. Preserve only a fixed reason code.
                     error_code = search_failure_code(exc) or "ProviderSearchFailed"
