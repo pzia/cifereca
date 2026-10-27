@@ -157,3 +157,37 @@ observation complète datant du passé **ne donne aucune autorisation** :
 `authorizes_mutation=False` pour toutes les cases. Le point d'entrée
 n'exécute aucune acquisition ou synchronisation et ne prétend pas attester
 les sept familles, ni la recette CoreUI/GTK.
+
+
+## Observation des droits déjà collectée (#2703, tranche 5)
+
+`LibraryService.capability_matrices_with_precollected_evidence(...,
+rights_snapshots=(...))` accepte maintenant, de façon additive, les
+`ProviderRightsSnapshot` du contrat public `cifereca.rights.observation/1`
+(#3252, adaptateurs Kobo et Numilog déjà livrés). Le consommateur fournit
+seulement des snapshots **déjà collectés** et contrôlés ; cet appel ne
+lit **ni** le plugin, **ni** les tokens, **ni** un fichier, ni SQLite, et
+n'effectue aucune action.
+
+Chaque snapshot reconnu donne une ligne `personal_inventory.rights`,
+`scope=account`, `field=branch` dans la matrice de sa source **activée
+et admise** pour l'identité choisie. La clé conserve les coordonnées
+`identity_id / provider_id / credential_id / account_id / branch` ;
+la connexion courante provient de Core et n'est pas déduite du snapshot.
+Une autre identité ou une source désactivée est refusée, les doublons
+à portée exacte échouent, deux comptes/credentials/branches restent
+distincts. La référence de preuve exposée est un **identifiant de contrat
+fixe**, jamais le `snapshot_ref` arbitraire d'un fournisseur.
+
+L'état maximal de cette ligne reste **`partial`**, **même** si le
+fournisseur déclare `coverage=complete` : il décrit un **inventaire de
+droits observé**, pas une adjudication de possession, de copie locale, de
+livraison, de révocation, ni une capacité d'acquérir. `failed/cancelled`
+reste `unverified`. Aucune observation par édition n'est transformée
+en permission d'action, `authorizes_mutation=False` partout. Les
+branchements des snapshots restent optionnels et n'affectent pas les
+consommateurs CoreUI existants.
+
+**Restent #2703 :** présentation/recette CoreUI des sept familles et
+attestations fournisseur réellement qualifiées. L'inventaire statique
+et ce bridge n'en prétendent pas la couverture.
