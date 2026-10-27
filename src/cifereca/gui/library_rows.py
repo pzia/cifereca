@@ -11,6 +11,28 @@ from typing import Any
 from ..core.search import local_match_explanation
 
 
+def _received_local_file_label(item: dict[str, Any]) -> str | None:
+    """Show file origin without interpreting a copy as a recipient entitlement.
+
+    Transfer provenance is a recorded local fact, not proof of an upstream
+    purchase in B's account. A separate owned entitlement, if any, remains an
+    independent library fact.
+    """
+    if item.get("local") is not True:
+        return None
+    meta = item.get("metadata")
+    if type(meta) is not dict or meta.get("transfer_kind") != "local_copy":
+        return None
+    origin = meta.get("file_origin_identity_id")
+    owner = item.get("identity_id")
+    source_placement = meta.get("materialized_from")
+    if (type(origin) is not str or not 0 < len(origin) <= 128
+            or type(owner) is not str or not owner or origin == owner
+            or type(source_placement) is not str or not source_placement):
+        return None
+    return f"Fichier reçu de {origin} · aucun droit transmis"
+
+
 def project_library_rows(
     filtered_entries: Iterable[dict[str, Any]], *,
     row_factory: Callable[..., Any],
@@ -35,6 +57,9 @@ def project_library_rows(
         key = str(item.get("key") or f"library:{len(objects)}")
         objects[key] = item
         meta_parts = [state] if state else []
+        received = _received_local_file_label(item)
+        if received:
+            meta_parts.append(received)
         match_reason = local_match_explanation(item, query, field=field)
         if match_reason:
             meta_parts.append(match_reason)
