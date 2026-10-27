@@ -274,6 +274,8 @@ class BnfProviderSession(ProviderSession):
                 if not scope_current():
                     raise ReaderHTTPError('loan_not_observed')
                 token = self.client.loan_token(loan_id, signed_url)
+                if self._closed or epoch != self._epoch:
+                    raise ReaderHTTPError('session_closed')
                 if not scope_current():
                     raise ReaderHTTPError('loan_not_observed')
                 validate_loan_token(token)
