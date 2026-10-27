@@ -76,8 +76,8 @@ def _bundle_member_values(row: Mapping[str, Any], field: str = "all") -> list[st
             values.extend(_values(member_meta.get("series")))
         if field in {"all", "collection"}:
             values.extend(_values(member_meta.get("collection")))
-        if field == "all":
-            values.extend(_values(member.get("path")))
+        # A bundle member's filesystem path is placement metadata, not a
+        # bibliographic field: never make private directory names searchable.
     return values
 
 
