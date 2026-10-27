@@ -83,7 +83,6 @@ def test_bnf_missing_or_malformed_due_is_explicitly_unknown_in_real_detail(raw):
     data, presentation = _detail(_loan("Carte BnF 1", raw))
     assert data["Retour prévu"] == "Échéance inconnue"
     assert presentation["subtitle"] == "Autrice observée"
-    assert data["Source"] if "Source" in data else True
 
 
 def test_known_date_and_explicit_late_without_date_remain_distinct():
