@@ -243,3 +243,31 @@ def test_reverse_audit_refuses_over_budget_canonical_scope_without_partial_total
         assert db.backup_list("kobo") == []
     finally:
         db.close()
+
+
+def test_reverse_audit_accepts_exact_empty_primary_borrower_but_not_null(tmp_path):
+    """Empty primary borrower is a valid exact identity; NULL is unverified."""
+    db = Storage(tmp_path / "books.sqlite3")
+    try:
+        _put(db, identity="alice", item="primary-empty")
+        _put(db, identity="alice", item="primary-unknown")
+        with db._lock, db._connect() as conn:
+            conn.execute(
+                "UPDATE acquisition_ledger SET account_id='' "
+                "WHERE item_id='primary-empty'"
+            )
+            conn.execute(
+                "UPDATE backup_items SET account_id='' "
+                "WHERE item_id='primary-empty'"
+            )
+            conn.execute(
+                "UPDATE backup_items SET account_id=NULL "
+                "WHERE item_id='primary-unknown'"
+            )
+        result = audit_backup_projection(db, identity_id="alice")
+        assert result["status"] == "complete"
+        assert result["canonical_scanned"] == 2
+        assert result["canonical_projection_owner_conflict"] == 0
+        assert result["canonical_projection_scope_unverified"] == 1
+    finally:
+        db.close()
