@@ -64,10 +64,10 @@ class HTTPProviderTests(unittest.TestCase):
         self.assertEqual((row.source_provider,row.source_credential,row.source_account_id,row.identity_id),('bnf-pret','credential-a','credential-a','profile-a'))
         self.assertIsNone(row.due_at)
         self.assertIsNone(row.ebook_url)
-        self.assertTrue(s.last_loan_errors)
+        self.assertNotIn('last_loan_errors', vars(s))
         state['activity'] = '<section class="active-loans"></section>'
         self.assertEqual(s.loans(a), [])
-        self.assertTrue(s.last_loan_errors)
+        self.assertNotIn('last_loan_errors', vars(s))
         self.assertFalse(any('/loans/' in p or '/v1' in p for _,_,p in calls))
         s.close()
         with self.assertRaises(ProviderConfigurationError): s.loans(a)
