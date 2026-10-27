@@ -12,7 +12,7 @@ import pytest
 from cifereca.core import sync_coordination
 from cifereca.models import Loan
 from cifereca.plugin_api import (
-    LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
+    Cancelled, LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
 )
 from cifereca.providers import ProviderConfigurationError
 from cifereca.services import _loan_cache_key
@@ -143,12 +143,43 @@ def test_typed_source_never_persists_unverified_or_stale_batch(
                     raise RuntimeError("synthetic cancellation")
             control = NS(check_cancelled=check)
 
-        with pytest.raises((ProviderConfigurationError, RuntimeError)):
+        expected = (Cancelled if fault == "provider_cancelled"
+                    else (ProviderConfigurationError, RuntimeError))
+        with pytest.raises(expected):
             service.synchronize_account_source(primary, control=control)
         assert calls == ["get"]
         assert not service.storage.entitlements(provider_id="paris")
         assert not service.storage.acquisitions()
         assert not service.storage.placements()
+        assert service.storage.cache_get("account", _loan_cache_key(primary)) is None
+    finally:
+        service.close()
+
+
+def test_cancelled_typed_source_is_not_recorded_as_failed(tmp_path, monkeypatch):
+    service, primary, _, _, _, session = _fixture(tmp_path, monkeypatch)
+    action_events = []
+    try:
+        monkeypatch.setattr(
+            service, "_record_action",
+            lambda identity, action, outcome, **kwargs:
+                action_events.append((identity, action, outcome, kwargs)),
+        )
+        session.loan_inventory_snapshot = lambda account: LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account),
+            loans=(), status="cancelled", reason_code="cancelled",
+        )
+        session.loans = lambda _: pytest.fail("cancelled typed read must not retry v1")
+        with pytest.raises(Cancelled, match="loan_inventory_cancelled"):
+            service.synchronize_account_source(primary)
+        assert action_events == [(
+            primary.identity_id, "synchronization", "cancelled",
+            {
+                "provider_id": primary.provider_id,
+                "facts": {"deep": False, "error": "source_sync_cancelled"},
+            },
+        )]
+        assert service.storage.entitlements(provider_id="paris") == []
         assert service.storage.cache_get("account", _loan_cache_key(primary)) is None
     finally:
         service.close()
