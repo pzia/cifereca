@@ -2037,12 +2037,24 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _eligible_borrow_accounts(self, item: SearchResult):
         session = self.service._session_for_source(item.source_provider, item.source_credential)
-        if not session.capabilities.borrow:
+        identity_id = getattr(self.service.current_identity, "identity_id", None)
+        # Source capability is not borrower eligibility. Never offer a primary
+        # account of another identity when the current identity has none.
+        if (not session.capabilities.borrow or not session.connected
+                or not identity_id
+                or session.provider_id != item.source_provider
+                or session.credential_id != item.source_credential):
             return session, []
-        identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
-        accounts = [account for account in session.accounts if account.is_primary and (not identity_id or account.identity_id == identity_id)]
-        if not accounts:
-            accounts = [account for account in session.accounts if account.is_primary]
+        accounts = [
+            account for account in session.accounts
+            if (account.is_primary and account.identity_id == identity_id
+                and account.provider_id == item.source_provider
+                and account.credential_id == item.source_credential)
+        ]
+        # Multiple registrations for one borrower are ambiguous, not a
+        # reason to silently pick the first account for a mutating action.
+        if len({account.unique_id for account in accounts}) != len(accounts):
+            return session, []
         return session, accounts
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
@@ -2066,17 +2078,51 @@ class MainWindow(Adw.ApplicationWindow):
                     index = int(response.split("-", 1)[1])
                     self.borrow_search_item(item, control, account=accounts[index])
             dialog.connect("response", selected); dialog.present(); return
+        # A dialog may have been opened under identity A and clicked after
+        # switching to B (or after disconnect/reconnect). Re-check the exact
+        # registered account instead of trusting the captured callback.
+        if account is not None and not any(candidate is account for candidate in accounts):
+            self.show_error("Le compte sélectionné n'est plus disponible pour cette identité.", "Emprunt impossible")
+            return
         account = account or accounts[0]
+        identity_id = account.identity_id
+        generation = self._identity_context_generation
+        account_scope = (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+
+        def current() -> bool:
+            if (getattr(self, "_closed", False)
+                    or self._identity_context_generation != generation
+                    or getattr(self.service.current_identity, "identity_id", None) != identity_id
+                    or not session.connected
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != account_scope):
+                return False
+            try:
+                return self.service._session_for_source(
+                    item.source_provider, item.source_credential,
+                ) is session
+            except Exception:
+                return False
 
         def work():
+            # The task runner may start after the user changes identity,
+            # credential or provider session; do not send a stale borrow POST.
+            if not current():
+                from ..plugin_api import Cancelled
+                raise Cancelled("Le contexte de l'emprunt a changé.")
             loan = session.borrow(item, account)
-            loan.identity_id = loan.identity_id or account.identity_id
+            loan.identity_id = loan.identity_id or identity_id
             if loan.source_account_id is None:
                 loan.source_account_id = account.unique_id or "primary"
-            loans = self.service.refresh_identity_loans(force=True, identity_id=account.identity_id)
+            loans = self.service.refresh_identity_loans(force=True, identity_id=identity_id)
             return loan, loans
 
         def ok(value) -> None:
+            if not current():
+                return
             loan, _loans = value
             self._activity_result(f"Emprunt confirmé : {loan.title}")
             self.refresh_library(False)
