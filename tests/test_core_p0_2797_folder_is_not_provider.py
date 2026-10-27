@@ -133,10 +133,10 @@ def test_targeted_index_cannot_inherit_foreign_legacy_receipt_by_path(tmp_path):
             db.execute(
                 "INSERT INTO backup_items("
                 "provider_id,credential_id,item_id,identity_id,account_id,"
-                "local_path,title,status) VALUES(?,?,?,?,?,?,?,?)",
+                "local_path,title,status,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 ("foreign-provider", "foreign-credential", "other-edition",
                  "other-reader", "foreign-borrower", str(path),
-                 "Foreign historical receipt", "complete"),
+                 "Foreign historical receipt", "complete", 1_730_000_000),
             )
         assert LocalCatalog(store, root).index_path(path)["status"] == "indexed"
         placement = store.placement_for_path(path)
