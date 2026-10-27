@@ -341,7 +341,15 @@ def sync_source_phase_summary(source: object) -> str:
             continue
         raw_status = getattr(row, "status", None)
         status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
-        if (phase == "materialize" and type(raw_status) is str
+        # A declared *separate* loan materialization path is not evidence of
+        # success in the generic Kobo-only materialization phase. Show where
+        # the user can control it, without hardcoding the supplier into UI.
+        sync_caps = getattr(source, "sync_capabilities", ())
+        if (phase == "materialize" and raw_status == "not_supported"
+                and type(sync_caps) is tuple and len(sync_caps) <= 32
+                and "loan_auto_materialization" in sync_caps):
+            status = 'Voir « Télécharger automatiquement les prêts » (opération distincte)'
+        elif (phase == "materialize" and type(raw_status) is str
                 and raw_status == "not_supported"
                 and _public_sync_provider_slug(source) == "numilog"):
             # The generic materialization broker only supports Kobo. Numilog
