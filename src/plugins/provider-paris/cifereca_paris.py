@@ -146,11 +146,10 @@ class ParisProviderSession(ProviderSession):
         timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.diagnostics = diagnostics
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
-        # Paris still publishes branch failures through the v1 mutable
-        # last_loan_errors facade. Keep one borrower read and its typed
-        # projection atomic so concurrent readers cannot exchange evidence.
+        # Both the v1 list and typed snapshots share a single scoped read;
+        # branch evidence is returned together with its loans, never written
+        # to mutable session state where another borrower could replace it.
         self._loan_inventory_lock = RLock()
-        self.last_loan_errors: list[dict[str, str]] = []
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
@@ -424,10 +423,15 @@ class ParisProviderSession(ProviderSession):
             loan.thumbnail_url = str(metadata["thumbnail_url"])
 
     def loans(self, account: Account) -> list[Loan]:
+        # Legacy readers still receive exactly their positive loans. A list
+        # has no branch-completeness authority, including when it is empty.
         with self._loan_inventory_lock:
-            return self._read_loans_for_account(account)
+            rows, _errors = self._read_loans_for_account(account)
+            return rows
 
-    def _read_loans_for_account(self, account: Account) -> list[Loan]:
+    def _read_loans_for_account(
+        self, account: Account,
+    ) -> tuple[list[Loan], tuple[dict[str, str], ...]]:
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -465,7 +469,6 @@ class ParisProviderSession(ProviderSession):
                     )
                 except Exception:
                     pass
-        self.last_loan_errors = errors
         if errors and not rows and len(errors) == 2:
             raise ProviderConfigurationError(
                 "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
@@ -477,14 +480,15 @@ class ParisProviderSession(ProviderSession):
         # for the primary account, which must not be confused with "unknown".
         for loan in rows:
             loan.source_account_id = account.unique_id or "primary"
-        return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+        sorted_rows = sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+        return sorted_rows, tuple(errors)
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
         with self._loan_inventory_lock:
             return self._snapshot_for_account(account)
 
     def _snapshot_for_account(self, account: Account) -> LoanInventorySnapshot:
-        """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
+        """One scoped branch read with atomic DILICOM/SYRACUSE evidence.
 
         Neither legacy Paris upstream currently attests pagination/exhaustive
         absence. Consequently even an all-successful read claims UNKNOWN
@@ -526,7 +530,10 @@ class ParisProviderSession(ProviderSession):
 
         if not still_bound():
             raise ProviderConfigurationError("account_scope_mismatch")
-        rows = self.loans(account)
+        # The same lock protects the two branch GETs and the typed envelope.
+        # The local errors tuple cannot be overwritten by another account's
+        # legacy loans() read between these two operations.
+        rows, errors = self._read_loans_for_account(account)
         # One upstream response can race with an explicit disconnect,
         # a changed credential or linked-reader removal. Never publish that
         # batch under the former account's typed inventory envelope.
@@ -542,7 +549,7 @@ class ParisProviderSession(ProviderSession):
             for row in rows
         )
         failed = {
-            row.get("upstream") for row in self.last_loan_errors
+            row.get("upstream") for row in errors
             if isinstance(row, dict)
             and row.get("upstream") in {"DILICOM", "SYRACUSE"}
         }
