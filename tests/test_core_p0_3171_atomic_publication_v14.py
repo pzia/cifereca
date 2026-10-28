@@ -50,13 +50,18 @@ def store(tmp_path):
         storage.close()
 
 
-def register(store, profile, provider, credential):
+def register(store, profile, provider, credential, account="buyer-A"):
     store.identity_put({
         "identity_id": profile, "directory_name": profile, "label": profile,
     })
-    store.provider_connection_put({
+    connection_id = store.provider_connection_put({
         "identity_id": profile, "provider_id": provider,
         "credential_id": credential, "label": "Synthetic account",
+    })
+    store.provider_account_put({
+        "identity_id": profile, "provider_id": provider,
+        "credential_id": credential, "connection_id": connection_id,
+        "account_id": account, "label": "Synthetic borrower",
     })
 
 
@@ -107,7 +112,7 @@ def test_two_providers_identical_bytes_distinct_profile_and_right(store, tmp_pat
     a, sa = new_source("A", provider="seller-A", credential="cred-A", account="buyer-A")
     b, sb = new_source("B", provider="seller-B", credential="cred-B", account="buyer-B")
     register(store, "A", "seller-A", "cred-A")
-    register(store, "B", "seller-B", "cred-B")
+    register(store, "B", "seller-B", "cred-B", account="buyer-B")
     root = tmp_path / "EBooks"
     pa, pb = target(tmp_path, "A"), target(tmp_path, "B")
     ra = publish(store, root, pa, a, sa)
@@ -169,14 +174,8 @@ def test_same_account_id_two_credentials_cannot_cross_published_profiles(store, 
 
 def test_stale_connection_or_recorded_account_fails_closed(store, tmp_path):
     key, snap = new_source()
-    register(store, "A", "seller", "card-A")
+    register(store, "A", "seller", "card-A", account="another-buyer")
     path = target(tmp_path, "A")
-    store.provider_account_put({
-        "connection_id": store.provider_connections(identity_id="A")[0]["connection_id"],
-        "identity_id": "A", "provider_id": "seller",
-        "credential_id": "card-A", "account_id": "another-buyer",
-        "label": "Another buyer",
-    })
     with pytest.raises(ValueError, match="canonical_account_not_registered"):
         publish(store, tmp_path / "EBooks", path, key, snap)
     assert rows(store) == (0, 0, 0, 0)
@@ -244,7 +243,7 @@ def test_same_right_id_on_two_branches_is_independent(store, tmp_path):
 def test_empty_primary_upstream_account_is_exact_not_null(store, tmp_path):
     key, snapshot = new_source(provider="paris", account="", credential="card-primary",
                                branch="dilicom", kind="loan", right="loan-1")
-    register(store, "A", "paris", "card-primary")
+    register(store, "A", "paris", "card-primary", account="")
     path = target(tmp_path, "A")
     assert publish(store, tmp_path / "EBooks", path, key, snapshot).changed
     with store._lock, store._connect() as db:
