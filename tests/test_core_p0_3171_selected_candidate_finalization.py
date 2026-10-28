@@ -177,7 +177,7 @@ def test_candidate_bridge_rechecks_session_borrower_before_direct_get(rig):
         replace(service.account, unique_id="different-borrower"),
     ]
     service.session.rights_selected_delivery_candidate = (
-        lambda *_a, **_kw: pytest.fail("foreign borrower cannot GET"),
+        lambda *_a, **_kw: pytest.fail("foreign borrower cannot GET")
     )
     offered = replace(
         service.snapshot.rights[0],
