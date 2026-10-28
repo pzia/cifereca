@@ -26,7 +26,7 @@ def _service(tmp_path: Path) -> LibraryService:
 
 def test_sync_run_roundtrip_preserves_latest_identity_state(tmp_path: Path):
     storage = Storage(tmp_path / "db.sqlite3")
-    assert storage.schema_version() == 13
+    assert storage.schema_version() == 14
     run_id = storage.sync_run_put({"identity_id": "alice", "scope": "opening", "status": "running", "started_at": 10})
     storage.sync_run_put({
         "sync_run_id": run_id,
