@@ -41,7 +41,7 @@ comme `evidence_ref` ; utiliser une référence opaque locale à l'observation.
 
 - **Kobo et Numilog : livrés** (#3508/#3505). Les méthodes optionnelles rights_observation_snapshot(account) produisent des lignes issues des bibliothèques authentifiées, scopes et comptes exacts, couverture partial ; elles n'exécutent pas de sauvegarde.
 - **Paris et BnF-Prêt : livrés** (#3525/#3524) pour leurs observations/portées de prêts, sans autorisation de mutation. Le contrat LoanInventorySnapshot reste distinct et sa couverture par branche ne se déduit pas d'une liste vide.
-- **Core #3171 : non livré de bout en bout.** PR #3528 ajoute un lecteur explicitement scopé et PR #3523 un plan de présence **en mémoire** ; aucune des deux ne publie l'Artifact/Placement/OriginLink canonique en SQLite ni ne remplace encore les parcours des fournisseurs.
+- **Core #3171 : non livré de bout en bout.** PR #3528 a **fusionné** son lecteur explicitement scopé et PR #3523 reste **ouverte** avec un plan de présence en mémoire. Aucun de ces lots ne publie encore l'Artifact/Placement/OriginLink canonique en SQLite ni ne remplace les parcours des fournisseurs.
 - **Reste #3252** : compléter uniquement preuves/branches/offres propres aux adaptateurs, sans déporter la décision transactionnelle dans un plugin. Idempotence et mêmes droits sur plusieurs branches doivent être vérifiés avec comptes distincts et sans inférence par Notice.
 
 Une offre annoncée et un snapshot complet d'une seule branche ne valent ni droit d'une autre branche, ni livre téléchargé, ni absence fournisseur globale. La synchronisation automatique unique A→B est décrite dans ARCHITECTURE.md ; la réconciliation manuelle #2797 est un rattrapage exceptionnel.
