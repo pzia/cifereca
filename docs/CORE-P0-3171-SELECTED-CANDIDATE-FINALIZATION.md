@@ -18,7 +18,10 @@ l'exécuteur canonique. Les sessions sans cette API restent en lecture seule.
 - Espace de staging **nouveau et privé** sous le répertoire du profil
   enregistré. Un chemin étranger, symlink, copie préexistante, candidat vide ou
   résultat non typé est refusé ; l'URL privée n'est ni utilisée comme
-  signature ni sauvegardée dans SQLite.
+  signature ni sauvegardée dans SQLite. La projection catalogue ordinaire
+  exclut les fichiers du staging **avant** la transaction canonique et ne les
+  indexe qu'après un Placement présent et un OriginLink provider attesté.
+  Ainsi un GET achevé mais non publié ne crée pas de livre visible.
 - EPUB/PDF : inspecter les octets finaux, valider le format, refuser la
   protection manifeste, contrôler inode/mtime/ctime, puis SHA-256 final.
 - ACSM : ce fichier n'est jamais publié comme Artifact. Le runtime ADEPT
