@@ -615,11 +615,19 @@ class ParisProviderSession(ProviderSession):
                     refs = broker.accounts()
                     if type(refs) not in (tuple, list):
                         return None
+                    # Core's public AccountRef gives the primary borrower
+                    # with empty upstream ID a credential-qualified synthetic
+                    # account_id. Preserve the original empty borrower in the
+                    # rights scope; only the lookup key is synthetic.
+                    core_account_id = (
+                        scope_key[0] if scope_key[0] else
+                        f"{self.provider_id}:{self.credential_id}:primary"
+                    )
                     owners = [
                         ref.identity_id if type(ref.identity_id) is str else ""
                         for ref in refs
                         if (getattr(ref, "provider_id", None) == self.provider_id
-                            and getattr(ref, "account_id", None) == scope_key[0])
+                            and getattr(ref, "account_id", None) == core_account_id)
                     ]
                     return (id(broker), tuple(sorted(owners)))
                 except Exception:
