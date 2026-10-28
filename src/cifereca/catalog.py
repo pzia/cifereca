@@ -81,7 +81,7 @@ class LocalCatalog:
 
     0.8.0 deliberately discovers facts from disk instead of deleting or moving
     user files. Identity/provider path components are interpreted when present;
-    legacy flat layouts stay cataloged with hints inferred from the 0.7 ledger.
+    legacy flat layouts stay cataloged without inferring origin from a 0.7 backup.
     """
 
     def __init__(self, storage: Any, root: Path) -> None:
@@ -477,8 +477,8 @@ class LocalCatalog:
         })
         self.storage.catalog_entry_put({
             "catalog_entry_id": catalog_entry_id, "artifact_id": artifact_id,
-            "placement_id": placement_id, "title": str(title or (legacy or {}).get("title") or ((previous_entry or {}).get("title") if (previous_entry or {}).get("artifact_id")==artifact_id else None) or path.stem),
-            "author": (legacy or {}).get("author") or ((previous_entry or {}).get("author") if (previous_entry or {}).get("artifact_id")==artifact_id else None), "media_format": media_format,
+            "placement_id": placement_id, "title": str(title or ((previous_entry or {}).get("title") if (previous_entry or {}).get("artifact_id")==artifact_id else None) or path.stem),
+            "author": ((previous_entry or {}).get("author") if (previous_entry or {}).get("artifact_id")==artifact_id else None), "media_format": media_format,
             "identity_id": identity_hint, "provider_id": provider_hint, "item_id": source_item_id,
             "local_state": "local", "metadata": {**(dict((previous_entry or {}).get("metadata") or {}) if (previous_entry or {}).get("artifact_id")==artifact_id else {}), "path": path_text, "artifact_kind": "file"},
         })
