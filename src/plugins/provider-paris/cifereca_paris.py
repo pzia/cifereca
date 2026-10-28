@@ -142,6 +142,36 @@ def _project_paris_acquisition_formats(item: SearchResult) -> SearchResult:
     return item
 
 
+def _core_account_owners(refs, *, provider_id: str, account_id: str,
+                         credential_id: str) -> tuple[str, ...] | None:
+    """Match public Core AccountRef v2 by exact credential, not upstream ID.
+
+    Two credentials may share a DILICOM borrower ID. A version-1 ref has no
+    credential proof and stays visible as an ambiguous candidate; never
+    silently drop it when v2 refs coexist for that upstream account.
+    """
+    if type(refs) not in (tuple, list):
+        return None
+    owners = []
+    for ref in refs:
+        if (getattr(ref, "provider_id", None) != provider_id
+                or getattr(ref, "account_id", None) != account_id):
+            continue
+        version = getattr(ref, "scope_version", 1)
+        if type(version) is not int or version not in (1, 2):
+            return None
+        if version == 2:
+            credential = getattr(ref, "credential_id", None)
+            if type(credential) is not str or not credential:
+                return None
+            if credential != credential_id:
+                continue
+        owners.append(
+            ref.identity_id if type(getattr(ref, "identity_id", None)) is str else ""
+        )
+    return tuple(sorted(owners))
+
+
 class ParisProviderSession(ProviderSession):
     def __init__(self, *, config: Any, diagnostics: Any,
                  identity_broker=None, **kwargs: Any) -> None:
@@ -671,13 +701,11 @@ class ParisProviderSession(ProviderSession):
                         scope_key[0] if scope_key[0] else
                         f"{self.provider_id}:{self.credential_id}:primary"
                     )
-                    owners = [
-                        ref.identity_id if type(ref.identity_id) is str else ""
-                        for ref in refs
-                        if (getattr(ref, "provider_id", None) == self.provider_id
-                            and getattr(ref, "account_id", None) == core_account_id)
-                    ]
-                    return (id(broker), tuple(sorted(owners)))
+                    owners = _core_account_owners(
+                        refs, provider_id=self.provider_id,
+                        account_id=core_account_id, credential_id=self.credential_id,
+                    )
+                    return (id(broker), owners) if owners is not None else None
                 except Exception:
                     return None
 
@@ -923,12 +951,11 @@ class ParisProviderSession(ProviderSession):
                         return None
                     key = (scope[0] if scope[0] else
                            f"{self.provider_id}:{self.credential_id}:primary")
-                    matches = [
-                        ref.identity_id if type(ref.identity_id) is str else ""
-                        for ref in refs if getattr(ref, "provider_id", None) == self.provider_id
-                        and getattr(ref, "account_id", None) == key
-                    ]
-                    return (id(broker), tuple(sorted(matches)))
+                    owners = _core_account_owners(
+                        refs, provider_id=self.provider_id,
+                        account_id=key, credential_id=self.credential_id,
+                    )
+                    return (id(broker), owners) if owners is not None else None
                 except Exception:
                     return None
 
