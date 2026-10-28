@@ -96,3 +96,26 @@ def test_bnf_signed_reader_parser_never_promotes_foreign_or_missing_loan():
     assert reader_acs4_offer_pairs(
         html, (("loan-B", "edition-B"),),
     ) == frozenset()
+
+
+def test_bnf_explicit_token_path_rejects_foreign_offer_before_private_get(tmp_path):
+    from cifereca.plugin_api import ProviderCapabilityError, ProviderConfigurationError
+
+    html = activity(("edition-A", "loan-A")) + signed_action("loan-A")
+    session, account, client = fixture(html)
+    try:
+        offered = session.rights_observation_snapshot(account).rights[0]
+        (loan,) = session.loans(account)
+        seen = list(client.calls)
+        with pytest.raises(ProviderCapabilityError, match="explicit_only"):
+            session.download_digital(
+                loan, account, tmp_path, expected_offer_id=offered.delivery_offer_id,
+            )
+        with pytest.raises(ProviderConfigurationError, match="loan_not_observed"):
+            session.download_digital(
+                loan, account, tmp_path, explicit_user_action=True,
+                expected_offer_id="bnf.reader_acs4:" + "0" * 64,
+            )
+        assert client.calls == seen  # no further private activity/token GET
+    finally:
+        session.close()
