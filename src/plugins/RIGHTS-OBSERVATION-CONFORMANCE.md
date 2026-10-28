@@ -5,6 +5,12 @@ Référence du 28 octobre 2026 : `cifereca.rights.observation/1`, API publique
 effectivement produits par les adaptateurs installables**, pas le mécanisme
 de Sync, ni une certification de compte fournisseur réel.
 
+**Handoff offres de livraison #3252 → Core #3171 :**
+[matrice des offres réelles, GET, preuves et limites](RIGHTS-DELIVERY-OFFERS-3252.md).
+Les observations ordinaires Numilog/Kobo/Paris ne sont pas des autorisations
+de téléchargement ; Numilog dispose d'un préflight ciblé optionnel #3586 et
+la qualification de l'action signée BnF est traitée dans #3585.
+
 **Autorité séparée :** A = achat/prêt affirmé par le fournisseur dans un scope
 identité/provider/credential/compte/branche/édition/droit ; B = octets
 d'artefact vérifiés, SHA final et Placement dans un profil ; C = Notice
