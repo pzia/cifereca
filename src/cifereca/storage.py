@@ -1669,7 +1669,7 @@ class Storage:
         for raw_item in seen_item_ids:
             if (type(raw_item) is not str or not raw_item.strip()
                     or len(raw_item) > 1024
-                    or any(c in raw_item for c in "\\x00\\r\\n")):
+                    or any(c in raw_item for c in "\x00\r\n")):
                 raise ValueError("invalid_authoritative_manifest_item_ids")
             seen.add(raw_item.strip())
         now = int(time.time())
