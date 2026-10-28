@@ -318,7 +318,8 @@ class NumilogSession(ProviderSession):
             self.credentials.clear()
             self._session_event('session_closed')
 
-    def _rows(self, *, include_delivery=False, delivery_record_id=None, enrichment_record_id=None):
+    def _rows(self, *, include_delivery=False, delivery_record_id=None,
+              enrichment_record_id=None, rights_observation=False):
         # A signed library URL is only ever decoded for a single selected
         # account-scoped book at an explicit action; never during inventory,
         # search, or a broad scan of all owned purchases.
@@ -332,6 +333,10 @@ class NumilogSession(ProviderSession):
             or not enrichment_record_id.startswith('numilog:'+self.scope+':')
         ):
             raise ProviderError('Numilog : enrichissement ciblé du compte requis')
+        if type(rights_observation) is not bool or (
+            rights_observation and (include_delivery or enrichment_record_id is not None)
+        ):
+            raise ProviderError('Numilog : inventaire de preuves incompatible')
         if not self.connected:
             self._session_event('not_connected')
             raise ProviderError('Numilog : connecter le compte avant cette opération')
@@ -340,6 +345,7 @@ class NumilogSession(ProviderSession):
             rows = []
             seen_pages = set()
             seen_items = set()
+            ambiguous_rights = set()
             for page_index in range(100):
                 if url in seen_pages:
                     raise ProviderError('Numilog : boucle de pagination de bibliothèque')
@@ -389,10 +395,21 @@ class NumilogSession(ProviderSession):
                             raise ProviderError(
                                 'Numilog : édition dupliquée entre pages ; enrichissement arrêté'
                             )
+                        if rights_observation:
+                            # Duplicated owned-card coordinates across pages
+                            # cannot attest one unambiguous purchase right.
+                            # Retain the valid sibling editions but remove
+                            # *all* occurrences of this ambiguous edition.
+                            ambiguous_rights.add(key)
                         continue
                     seen_items.add(key)
                     rows.append(row)
                 if not next_url:
+                    if rights_observation and ambiguous_rights:
+                        rows = [
+                            row for row in rows
+                            if (row['lid'], row['variant']) not in ambiguous_rights
+                        ]
                     self._diag('pagination bibliothèque',pages=page_index+1,items=len(rows))
                     return rows
                 url=next_url
@@ -480,7 +497,9 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : propriétaire unique non attesté pour les achats'
                 )
-            rows = self._rows()  # Validated authenticated MesLivres, without delivery.
+            rows = self._rows(rights_observation=True)
+            # Strict authenticated MesLivres: duplicates are ambiguous for
+            # rights, unlike legacy library display deduplication.
             if (
                 not self.connected
                 or self._inventory_owner_or_none() != owner
