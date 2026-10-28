@@ -83,7 +83,8 @@ Cette méthode n'est appelable qu'après le préflight/admission et le
 consentement persistant exact gérés par Core. Elle vérifie les coordonnées
 complètes (compte, credential, identité, type, branche, édition et droit)
 et **rejoue les contrôles fournisseurs existants** : Numilog
-`library() → download_direct(..., expected_offer_id, expected_identity_id,\n  stage_acsm_only=True)`,
+`library() → download_direct(..., expected_offer_id, expected_identity_id,
+  stage_acsm_only=True)`,
 BnF `loans() → download_digital(..., expected_offer_id,
 explicit_user_action=True)`. Un changement de propriétaire, un droit
 disparu ou une offre signée supprimée/refusée arrête la livraison ;
