@@ -219,3 +219,52 @@ def test_owner_rebinding_during_final_projection_refuses_old_edition(monkeypatch
         check_rejected(caught.value)
     finally:
         s.close()
+
+
+def test_duplicate_same_identity_owner_is_rejected_before_private_enrichment(monkeypatch):
+    """A repeated AccountRef is not proof of a uniquely bound credential."""
+    s, broker, row = make_session()
+    original_accounts = broker.accounts
+    def ambiguous():
+        return original_accounts() * 2
+    broker.accounts = ambiguous
+    seen = []
+    s._rows = lambda **_kw: (seen.append("private") or [row])
+    monkeypatch.setattr(client, "fetch_public_detail",
+                        lambda *_a: (seen.append("public") or detail(row)))
+    try:
+        with pytest.raises(ProviderCapabilityError) as caught:
+            s.enrich_owned_direct_public_detail(s._normalize(row))
+        check_rejected(caught.value)
+        assert seen == []
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("change", ["broker_replaced", "duplicate_owner"])
+def test_same_identity_broker_replacement_or_duplicate_cannot_publish_metadata(
+    monkeypatch, change,
+):
+    s, broker, row = make_session()
+    visited = []
+
+    def public_detail(product_url):
+        visited.append("public")
+        if change == "broker_replaced":
+            newer = MutableBroker()
+            newer.scope = broker.scope
+            newer.owner = broker.owner  # same identity, different broker instance
+            s.identity_broker = newer
+        else:
+            original_accounts = broker.accounts
+            broker.accounts = lambda: original_accounts() * 2
+        return detail(row)
+
+    monkeypatch.setattr(client, "fetch_public_detail", public_detail)
+    try:
+        with pytest.raises(ProviderCapabilityError) as caught:
+            s.enrich_owned_direct_public_detail(s._normalize(row))
+        check_rejected(caught.value)
+        assert visited == ["public"]
+    finally:
+        s.close()
