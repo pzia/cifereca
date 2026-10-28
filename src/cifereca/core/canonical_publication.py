@@ -47,20 +47,24 @@ def _physical_target(path: Path, root: Path, directory: str) -> Path:
         raise ValueError("invalid_canonical_profile_directory")
     root_alias = Path(os.path.abspath(root.expanduser()))
     physical = Path(os.path.abspath(path.expanduser()))
-    try:
-        relative = physical.relative_to(root_alias)
-    except ValueError as exc:
-        raise ValueError("canonical_path_outside_library") from exc
+    root_resolved = root_alias.resolve()
+    for anchor in (root_alias, root_resolved):
+        try:
+            relative = physical.relative_to(anchor)
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError("canonical_path_outside_library")
     if len(relative.parts) < 2 or relative.parts[0] != directory:
         raise ValueError("canonical_profile_path_mismatch")
-    current = root_alias
+    current = anchor
     for component in relative.parts:
         current = current / component
         if current.is_symlink():
             raise ValueError("canonical_profile_symlink")
-    resolved_root = root_alias.resolve()
     resolved_path = physical.resolve(strict=True)
-    if not resolved_path.is_relative_to(resolved_root / directory):
+    if not resolved_path.is_relative_to(root_resolved / directory):
         raise ValueError("canonical_profile_path_mismatch")
     return resolved_path
 
@@ -218,7 +222,8 @@ def publish_completed_acquisition(
         )
         existing_source = db.execute(
             "SELECT identity_id,provider_id,credential_id,account_id,"
-            "branch_id,edition_id,right_id,reference_kind "
+            "branch_id,edition_id,right_id,reference_kind,"
+            "state,evidence_kind,evidence_ref,observed_at "
             "FROM source_references WHERE source_reference_id=?", (source_id,),
         ).fetchone()
         if existing_source is None:
@@ -232,8 +237,20 @@ def publish_completed_acquisition(
                  row.evidence_ref, row.observed_at, now, now),
             )
             changed = True
-        elif existing_source != coordinates:
+        elif existing_source[:8] != coordinates:
             raise ValueError("canonical_source_reference_collision")
+        elif existing_source[8:] != (
+            "active", row.evidence_kind, row.evidence_ref, row.observed_at,
+        ):
+            # A newly attested positive observation can update only mutable
+            # right evidence, never the historical exact source coordinates.
+            db.execute(
+                "UPDATE source_references SET state='active',"
+                "evidence_kind=?,evidence_ref=?,observed_at=?,updated_at=? "
+                "WHERE source_reference_id=?",
+                (row.evidence_kind, row.evidence_ref, row.observed_at, now, source_id),
+            )
+            changed = True
 
         existing_placement = db.execute(
             "SELECT placement_id,identity_id,artifact_id,state FROM placements "
