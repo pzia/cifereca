@@ -301,3 +301,76 @@ def test_explicitly_not_owned_archived_book_does_not_produce_purchase_right():
         assert vault.calls == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("other_owner", ["identity-A", "identity-B"])
+def test_kobo_v2_two_credentials_one_upstream_account_are_independent(other_owner):
+    s, vault, broker, account = _rig([
+        {"product_id": "book-1", "account_id": "alice", "owned": True},
+    ])
+    broker.accounts = lambda: [
+        NS(provider_id="kobo", account_id="alice", identity_id="identity-A",
+           credential_id="synthetic-card", scope_version=2),
+        NS(provider_id="kobo", account_id="alice", identity_id=other_owner,
+           credential_id="other-credential", scope_version=2),
+    ]
+    try:
+        rights = s.rights_observation_snapshot(account)
+        assert [(x.right_id, x.state) for x in rights.rights] == [
+            ("book-1", "active"),
+        ]
+        assert rights.scope.credential_id == "synthetic-card"
+        assert vault.calls == 1
+        assert not rights.authorizes_negative_reconciliation
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("refs", [
+    [NS(provider_id="kobo", account_id="alice", identity_id="identity-A",
+        credential_id="other-credential", scope_version=2)],
+    [NS(provider_id="kobo", account_id="alice", identity_id="identity-A",
+        credential_id="", scope_version=2)],
+    [NS(provider_id="kobo", account_id="alice", identity_id="identity-A",
+        credential_id="synthetic-card", scope_version=2),
+     NS(provider_id="kobo", account_id="alice", identity_id="identity-A")],
+])
+def test_kobo_v2_wrong_credential_and_ambiguous_mixed_v1_v2_before_vault(refs):
+    s, vault, broker, account = _rig([
+        {"product_id": "book-1", "account_id": "alice", "owned": True},
+    ])
+    broker.accounts = lambda: refs
+    try:
+        with pytest.raises(ProviderCapabilityError, match="propriétaire unique"):
+            s.rights_observation_snapshot(account)
+        assert vault.calls == 0
+    finally:
+        s.close()
+
+
+def test_kobo_v2_credential_rebound_during_manifest_read_does_not_emit_rights():
+    s, vault, broker, account = _rig([
+        {"product_id": "book-1", "account_id": "alice", "owned": True},
+    ])
+    broker_credential = ["synthetic-card"]
+
+    def refs():
+        return [NS(provider_id="kobo", account_id="alice",
+                   identity_id="identity-A",
+                   credential_id=broker_credential[0], scope_version=2)]
+
+    broker.accounts = refs
+    original = vault.library_manifest
+
+    def rebound():
+        rows = original()
+        broker_credential[0] = "other-credential"
+        return rows
+
+    vault.library_manifest = rebound
+    try:
+        with pytest.raises(ProviderCapabilityError, match="propriétaire modifié"):
+            s.rights_observation_snapshot(account)
+        assert vault.calls == 1
+    finally:
+        s.close()
