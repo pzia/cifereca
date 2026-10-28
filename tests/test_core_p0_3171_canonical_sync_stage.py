@@ -31,6 +31,7 @@ class Service:
         )
         self.accounts = [self.account]
         self._account_context_epoch = 1
+        self.enabled = True
         self._sessions = {}
         self.events = []
         self.read_calls = 0
@@ -70,7 +71,7 @@ class Service:
         self.events.append((identity, operation, status))
 
     def sync_source_enabled(self, account):
-        return True
+        return self.enabled
 
 
 @pytest.fixture
@@ -320,3 +321,24 @@ def test_core_executor_rejects_mismatch_between_delivered_offer_and_approved_rig
     assert result["status"] == "partial"
     assert len(refs(db)[0]) == 1 and refs(db)[1] == 0
     assert db.placements() == []
+
+
+def test_disabled_source_mid_read_does_not_publish_A(rig):
+    service, db, root = rig
+    def disabled(_account):
+        service.enabled = False
+        return service.snapshot
+    service.session.rights_observation_snapshot = disabled
+    with pytest.raises(ValueError, match="canonical_rights_source_rebound"):
+        synchronize_account_source(service, service.account)
+    assert refs(db) == ([], 0)
+    assert db.placements() == []
+
+
+def test_disabled_source_before_typed_read_never_invokes_provider(rig):
+    service, db, root = rig
+    service.enabled = False
+    with pytest.raises(ValueError, match="canonical_rights_source_disabled"):
+        observe_canonical_rights_in_sync(service, service.account)
+    assert service.read_calls == 0
+    assert refs(db) == ([], 0)
