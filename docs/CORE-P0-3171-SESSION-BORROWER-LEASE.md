@@ -8,6 +8,8 @@ compte sans changer d'objet Python ni incrémenter l'époque du Core.
 
 `canonical_selected_offers.current()` refuse déjà une lecture privée de
 l'offre si le compte upstream exposé par la session est délié ou ambigu.
+`canonical_selected_delivery.bound()` revalide le même emprunteur autour
+du GET candidat et du traitement ADEPT.
 `convergence_execution.current_memory()` exige également exactement un
 `Account` correspondant à (identité, fournisseur, credential, compte)
 dans `session.accounts`. Un compte absent, changé, dupliqué ou une collection
@@ -23,6 +25,8 @@ Artifact / Placement / SourceReference / OriginLink.
 - `tests/test_core_p0_3171_selected_offer_core_sync.py` : trois refus de
   consultation privée de l'offre (compte étranger, doublon, liste invalide)
   et un changement pendant le preflight -> aucun GET candidat.
+- `tests/test_core_p0_3171_selected_candidate_finalization.py` :
+  refus direct avant GET et changement pendant GET ; aucun OriginLink publié.
 - Les fixtures de Sync et de reprise de réception terminée portent
   explicitement les comptes de session et restent compatibles avec deux
   providers ayant des droits distincts sur le même SHA.
@@ -32,4 +36,4 @@ Artifact / Placement / SourceReference / OriginLink.
 
 Aucun téléchargement fournisseur ni activation ADEPT réelle. Ce garde ne
 remplace ni les contrôles d'offre exacte du plugin #3252, ni le consentement
-persistant, ni l'exécution d'une livraison Core complète. #3171 reste ouvert.
+persistant, ni les preuves de recette avec droits réels et finalisation ADEPT. #3171 reste ouvert.
