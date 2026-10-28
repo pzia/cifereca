@@ -45,15 +45,8 @@ def signed_loan_url(href: str, loan_id: str) -> str | None:
         return None
 
 
-def signed_acsm_action(html: str, loan_id: str, resource_id: str) -> str | None:
-    """Join the ACSM control to the exact freshly observed loan, by explicit ID.
-
-    The observed aria-controls is {loan_id}-reader-acs. It is a semantic
-    relation even when the action is outside .js-loan; ancestry is not
-    presumed. An action under a conflicting card is nevertheless rejected.
-    The caller separately verifies the fresh loan/resource and account scope.
-    """
-    root = _dom(html)
+def _signed_action_in_dom(root, loan_id: str, resource_id: str) -> str | None:
+    """Use the same strict action validation on one already-parsed private DOM."""
     nodes = list(root.walk())
     candidates = [node for node in nodes if node.tag == 'a'
                   and node.attrs.get('aria-controls') == loan_id + '-reader-acs'
@@ -78,3 +71,30 @@ def signed_acsm_action(html: str, loan_id: str, resource_id: str) -> str | None:
             return None
         actions.add(url)
     return next(iter(actions)) if len(actions) == 1 else None
+
+
+def signed_acsm_action(html: str, loan_id: str, resource_id: str) -> str | None:
+    """Find one signed ACSM action tied to the exact fresh loan/resource.
+
+    An action outside .js-loan must match the loan's aria-controls and URL;
+    an action under a foreign card is rejected. The URL stays transient and
+    must never enter an inventory row, diagnosis or rights snapshot.
+    """
+    return _signed_action_in_dom(_dom(html), loan_id, resource_id)
+
+
+def reader_acs4_offer_pairs(
+    html: str, loan_resources: tuple[tuple[str, str], ...],
+) -> frozenset[tuple[str, str]]:
+    """Qualify *presence* of exact signed reader ACSM actions in one DOM parse.
+
+    Returns only pairs already supplied by a validated active-loan parser:
+    never the signed URL, token, cookie, or a catalogue-derived offer. An
+    unrecognized or conflicting action cannot become an available offer.
+    """
+    root = _dom(html)
+    return frozenset(
+        (loan_id, resource_id)
+        for loan_id, resource_id in loan_resources
+        if _signed_action_in_dom(root, loan_id, resource_id) is not None
+    )
