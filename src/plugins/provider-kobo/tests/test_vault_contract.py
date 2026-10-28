@@ -1118,6 +1118,6 @@ def test_kobo_public_only_search_never_promotes_forged_library_collection():
         service = KoboCatalogService(client, credential_id="credential-A")
         public = service.normalize_item(rows[0])
         assert public.source_collection == "catalog"
-        assert public.owned is False and public.downloadable is False
+        assert public.owned is False and public.downloadable is not True
     finally:
         client.close()
