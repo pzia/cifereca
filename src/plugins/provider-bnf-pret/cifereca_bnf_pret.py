@@ -633,7 +633,9 @@ class BnfProviderSession(ProviderSession):
 
             def scope_current():
                 return (
-                    (account.provider_id, account.credential_id,
+                    self.connected is True
+                    and not self._closed and epoch == self._epoch
+                    and (account.provider_id, account.credential_id,
                      account.unique_id, account.identity_id) == account_scope
                     and (loan.id, loan.record_id, loan.provider, loan.medium,
                          loan.state, loan.source_provider, loan.source_credential,
