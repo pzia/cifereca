@@ -38,6 +38,10 @@ def _session():
         display_name="PRIVATE_ACCOUNT_NAME", unique_id="PRIVATE_BARCODE",
         provider_id="paris", credential_id="reader-PRIVATE",
     )
+    # A legacy private loan GET is valid only for a connected, registered
+    # borrower; transport-error fixtures should exercise that same boundary.
+    session.connected = True
+    session._accounts = [account]
     return session, account, diagnostics
 
 
