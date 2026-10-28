@@ -171,8 +171,8 @@ def _numilog_card_offer_id(credential_id, account_id, right_id, evidence):
     coords = (credential_id, account_id, right_id,
               evidence.product_id, evidence.copy_index, evidence.delivery_kind)
     if (not all(type(x) is str and 0 < len(x) <= 256 for x in coords)
-            or not evidence.product_id.isdecimal()
-            or not evidence.copy_index.isdecimal()):
+            or not all(x.isascii() and x.isdecimal() and len(x) <= 16
+                       for x in (evidence.product_id, evidence.copy_index))):
         return ''
     return 'numilog.card:' + hashlib.sha256(
         '\x00'.join(coords).encode('utf-8')
@@ -684,22 +684,33 @@ class NumilogSession(ProviderSession):
                     or len(right_id) > 256
                     or not right_id.startswith('numilog:' + self.scope + ':')):
                 raise ProviderCapabilityError('numilog_offer_unobserved')
+            # Pin the broker + live Account *before* the first inventory
+            # GET; a new valid owner after that read is not the same owner.
+            live_list = self._accounts
+            live = live_list[0] if len(live_list) == 1 else None
+            owner = self._inventory_owner_or_none()
+            scope = (
+                account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id,
+            ) if type(account) is Account else None
+            bound = (
+                live.unique_id, live.identity_id,
+                live.provider_id, live.credential_id,
+            ) if live is not None else None
             base = self.rights_observation_snapshot(account)
             original = base.exact(right_id, right_id, 'purchase')
             if original is None or not original.provider_attested:
                 raise ProviderCapabilityError('numilog_offer_unobserved')
-
-            owner = self._inventory_owner_or_none()
-            live = self._accounts[0]
-            live_list = self._accounts
-            scope = (
-                account.identity_id, account.provider_id,
-                account.credential_id, account.unique_id,
-            )
-            bound = (
-                live.unique_id, live.identity_id,
-                live.provider_id, live.credential_id,
-            )
+            if (owner is None or owner[0] != 'broker'
+                    or owner[2] != (scope[0],)
+                    or not self.connected or self._accounts is not live_list
+                    or len(self._accounts) != 1 or self._accounts[0] is not live
+                    or (live.unique_id, live.identity_id,
+                        live.provider_id, live.credential_id) != bound
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != scope
+                    or self._inventory_owner_or_none() != owner):
+                raise ProviderCapabilityError('numilog_offer_owner_changed')
             rows = self._rows(
                 include_delivery=True, delivery_record_id=right_id,
             )
