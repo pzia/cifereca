@@ -674,11 +674,11 @@ class ParisProviderSession(ProviderSession):
                 right_text, edition_text = str(right_id), str(edition_id)
                 # LoanInventory v1 permits longer IDs and line breaks in
                 # legacy rows, but rights.observation/1 does not. One invalid
-                # upstream card must not abort all other positive purchases.
+                # upstream card must not abort all other positive loan rights.
                 if (not 1 <= len(right_text) <= 256
                         or not 1 <= len(edition_text) <= 256
                         or any(c in right_text or c in edition_text
-                               for c in ("\\x00", "\\r", "\\n"))
+                               for c in ("\x00", "\r", "\n"))
                         or loan.id != right_text
                         or loan.record_id != edition_text):
                     continue
