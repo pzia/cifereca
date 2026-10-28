@@ -131,6 +131,14 @@ def read_private_source(path: Path) -> bytes:
         return stream.read()
 
 
+def read_recipe_json(path: Path):
+    with source_stream(path) as stream:
+        info = os.fstat(stream.fileno())
+        if info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+            raise Rejected("Untrusted recipe metadata")
+        return json.load(stream)
+
+
 def copy_private_source(source: Path, destination: Path) -> str:
     digest = hashlib.sha256()
     private_directory(destination.parent)
@@ -242,7 +250,7 @@ def root_identity(root: Path, *, create: bool = False) -> str:
     if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
             or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600):
         raise Rejected("Untrusted recipe root identity")
-    value = json.loads(read_private_source(anchor))
+    value = read_recipe_json(anchor)
     if (value.get("root") != str(root) or type(value.get("id")) is not str
             or re.fullmatch(r"[0-9a-f]{32}", value["id"]) is None):
         raise Rejected("Untrusted recipe root identity")
@@ -306,7 +314,7 @@ def checked_target(path: Path, *, root: Path | None = None) -> tuple[Path, dict]
     if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise Rejected("Untrusted target owner/permissions")
     try:
-        marker = json.loads(read_private_source(target / "recipe.json"))
+        marker = read_recipe_json(target / "recipe.json")
     except (OSError, ValueError) as exc:
         raise Rejected("Unrecognized recipe") from exc
     if type(marker) is not dict or marker.get("format") != FORMAT or marker.get("target") != str(target):
@@ -782,7 +790,10 @@ def inventory(target: Path) -> dict:
         if path.is_file():
             if info.st_nlink != 1:
                 raise Rejected(f"Hardlink inside recipe: {path.relative_to(target)}")
-            with path.open("rb") as stream:
+            with source_stream(path) as stream:
+                current = os.fstat(stream.fileno())
+                if current.st_nlink != 1 or current.st_uid != os.getuid() or current.st_mode & 0o077:
+                    raise Rejected("Untrusted recipe inventory entry")
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             files[str(path.relative_to(target))] = {"sha256": digest, "size": info.st_size}
     return files
@@ -822,7 +833,7 @@ def confined_values(value, target: Path, key: str = "", *, forbidden_roots=(), c
 
 def verify(path: Path, *, initial: bool = False) -> dict:
     target, marker = checked_target(path)
-    manifest = json.loads((target / "manifest.json").read_text())
+    manifest = read_recipe_json(target / "manifest.json")
     if manifest.get("id") != marker.get("id"):
         raise Rejected("Manifest identity mismatch")
     files = inventory(target)
@@ -836,7 +847,7 @@ def verify(path: Path, *, initial: bool = False) -> dict:
         if Copier.directory_state(Path(source)) != expected:
             raise Rejected("Source directory changed since capture")
     for config in (target / "config/cifereca").glob("*.json"):
-        confined_values(json.loads(config.read_text()), target)
+        confined_values(read_recipe_json(config), target)
     # Freeze the executable boundary; mutable application data are checked for
     # links/permissions and confinement, not required to remain byte-identical.
     immutable = ("code/", "venv/", "runtime-tool.py", "run.sh", "stop.sh")
@@ -1010,7 +1021,7 @@ def process_identity(pid: int) -> str | None:
 
 def runtime_record(target: Path) -> dict | None:
     try:
-        row = json.loads((target / "process.json").read_text())
+        row = read_recipe_json(target / "process.json")
         if row["starttime"] and process_identity(row["pid"]) == row["starttime"]:
             return row
     except (OSError, ValueError, KeyError):

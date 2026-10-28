@@ -680,6 +680,23 @@ class RecipeFixture(unittest.TestCase):
             recette.private_append(log)
         self.assertEqual(recette.fingerprint(self.config), before)
 
+    def test_metadata_symlink_is_refused_before_reading_production(self):
+        target = self.create_fixture()
+        outside = self.production / "outside.json"
+        outside.write_text('{"pid": 123, "id": "foreign"}')
+        os.utime(outside, ns=(1, 1))
+        before = outside.stat()
+        manifest = target / "manifest.json"
+        manifest.unlink()
+        manifest.symlink_to(outside)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.verify(target)
+        (target / "process.json").symlink_to(outside)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.runtime_record(target)
+        self.assertEqual(outside.stat().st_atime_ns, before.st_atime_ns)
+        self.assertEqual(outside.stat().st_mtime_ns, before.st_mtime_ns)
+
 
 class ActualSandboxTests(unittest.TestCase):
     """Actual OS boundary, mandatory in the scoped Linux CI job."""
