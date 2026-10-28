@@ -392,6 +392,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                    if source_sync_detail else {}),
                 **({"detail": loan_download_detail, "status": loan_download_detail["status"]}
                    if loan_download_detail else {}),
+                **({"task_ref": loan_download_detail["task_ref"]}
+                   if "task_ref" in loan_download_detail else {}),
                 **({"detail": bnf_action_detail, "status": bnf_action_detail["status"],
                     **({"task_ref": bnf_action_detail["task_ref"]}
                        if "task_ref" in bnf_action_detail else {})}
@@ -605,7 +607,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 business_domain = "loan_download"
                 message = "Téléchargement du prêt · " + candidate["status"] + " · " + candidate["code"]
                 severity = ("info" if candidate["status"] == "success"
-                            else "error" if candidate["status"] == "failed"
+                            else "error" if candidate["status"] in {"failed", "refused"}
                             else "warning")
         if (category == 'LOAN' and operation == 'bnf_loan_action'
                 and type(diagnostics) is Diagnostics
@@ -696,6 +698,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             **({"detail": public_detail} if public_detail else {}),
             **({"task_ref": bnf_action_detail['task_ref']}
                if 'task_ref' in bnf_action_detail else {}),
+            **({"task_ref": loan_download_detail["task_ref"]}
+               if "task_ref" in loan_download_detail else {}),
             "status": bnf_action_detail['status'] if bnf_action_detail else loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
