@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -45,6 +46,34 @@ def _safe_https_get(candidate: dict[str, Any]) -> bool:
         return False
 
 
+def _current_expiry(envelope: dict[str, Any]) -> bool:
+    """Refuse an explicitly expired or unparseable upstream expiry.
+
+    A missing/null expiry means no expiration *was attested*; it is not a
+    permanent-URL guarantee. No clock, token, credential or URL is exported.
+    """
+    validity = envelope.get("validity")
+    if validity is not None and type(validity) is not dict:
+        return False
+    source = validity if type(validity) is dict else {}
+    for entry in (source.get("expires_at"), envelope.get("expires_at")):
+        if entry is None:
+            continue
+        if type(entry) is not str or not 20 <= len(entry) <= 48:
+            return False
+        try:
+            expires = datetime.fromisoformat(
+                entry[:-1] + "+00:00" if entry.endswith("Z") else entry
+            )
+            if (expires.tzinfo is None or expires.utcoffset() is None
+                    or not 2000 <= expires.year <= 2100
+                    or expires <= datetime.now(timezone.utc)):
+                return False
+        except (ValueError, OverflowError):
+            return False
+    return True
+
+
 def exact_kobo_offer_id(
     payload: Any, *, identity_id: str, credential_id: str,
     account_id: str, product_id: str,
@@ -77,7 +106,7 @@ def exact_kobo_offer_id(
         ):
             return ""
     acquisition = payload.get("acquisition")
-    if type(acquisition) is not dict:
+    if type(acquisition) is not dict or not _current_expiry(acquisition):
         return ""
     if (type(acquisition.get("product_id")) is not str
             or acquisition["product_id"] != product_id):
@@ -116,7 +145,7 @@ def exact_kobo_offer_id(
                 type(candidate[key]) is not str or candidate[key] != expected
             ):
                 return ""
-        if not _safe_https_get(candidate):
+        if not _safe_https_get(candidate) or not _current_expiry(candidate):
             continue
         kind, handling = candidate.get("kind"), candidate.get("handling")
         drm = candidate.get("drm")
