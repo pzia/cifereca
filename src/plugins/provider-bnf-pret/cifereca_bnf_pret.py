@@ -1,6 +1,9 @@
 """BnF reader provider using the same public provider contract as Paris."""
 from __future__ import annotations
 from pathlib import Path
+import json
+import logging
+import traceback
 from datetime import datetime, timezone
 import threading
 from uuid import uuid4
@@ -89,11 +92,25 @@ class BnfProviderSession(ProviderSession):
 
     def _report_failure(self, phase, error):
         code = _public_code(error)
+        # The public error code is for callers, not a replacement for the
+        # actual cause of this observed failure in the canonical raw journal.
+        detail = {
+            'provider': 'bnf-pret', 'phase': phase, 'code': code,
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'error_traceback': ''.join(traceback.format_exception(error)),
+        }
         try:
             if self.diagnostics is not None:
-                self.diagnostics.add('API', 'BnF Prêt', 'error', detail={
-                    'provider': 'bnf-pret', 'phase': phase, 'code': code,
-                })
+                self.diagnostics.add('API', 'BnF Prêt', 'error', detail=detail)
+            else:
+                payload = dict(
+                    schema_version=1, category='API', operation='BnF Prêt',
+                    message='BnF Prêt', status='error', detail=detail,
+                )
+                logging.getLogger('cifereca').error(
+                    'DIAG_JSON %s', json.dumps(payload, ensure_ascii=False),
+                )
         except Exception:
             pass  # Optional diagnostics never change the provider outcome.
         return code
