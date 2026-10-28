@@ -171,3 +171,17 @@ vérifie ensuite le profil ADEPT, produit EPUB/PDF, inspecte, rehash et
 valide son reçu sous transaction. Un ACSM non terminé n'est jamais B.
 Le chemin manuel historique reste inchangé. Cette correction ne livre
 pas à elle seule le routeur productif Core en cours #3613.
+
+### Kobo — cohérence des formats explicites
+
+Le descripteur Vault peut présenter `media_format` et
+`source_format` dans le même candidat. Lorsque les deux sont
+renseignés, la qualification d'une offre exige des valeurs de même
+format après normalisation des espaces et de la casse
+(`epub/pdf/kepub/acsm`). Un champ explicitement vide, mal typé ou
+contradictoire implique `delivery=unknown`, **jamais** le choix
+arbitraire du premier champ. L'exécution revalide ce même classifieur
+avant son GET signé ; le retour de téléchargement ne peut donc plus
+transformer `epub` en `pdf` ou `acsm` selon une autre interprétation
+des métadonnées. La compatibilité des anciens descripteurs ne présentant
+qu'un seul champ est conservée.
