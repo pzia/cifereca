@@ -240,3 +240,37 @@ def test_provider_origin_must_have_matching_profile_and_source_type(tmp_path):
             ).fetchone()[0] == 2
     finally:
         storage.close()
+
+
+def test_origin_history_survives_parent_delete_attempts_even_without_fk_pragma(tmp_path):
+    storage = Storage(tmp_path / "history.sqlite")
+    try:
+        storage.artifact_put({
+            "artifact_id": "sha256:" + SHA, "sha256": SHA,
+            "size": 1234, "media_format": "epub",
+        })
+        with storage._lock, storage._connect() as db:
+            assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+            _ref(db, "right")
+            _link(db, "provider-link", "provider", "A", source="right")
+            with pytest.raises(sqlite3.IntegrityError, match="origin_artifact_missing"):
+                db.execute(
+                    "INSERT INTO origin_links("
+                    "origin_link_id,origin_kind,identity_id,artifact_id,"
+                    "created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                    ("absent-artifact", "manual", "A", "sha256:" + "f" * 64, 1, 1),
+                )
+            with pytest.raises(sqlite3.IntegrityError, match="origin_artifact_still_referenced"):
+                db.execute(
+                    "DELETE FROM artifacts WHERE artifact_id=?",
+                    ("sha256:" + SHA,),
+                )
+            with pytest.raises(sqlite3.IntegrityError, match="origin_source_still_referenced"):
+                db.execute(
+                    "DELETE FROM source_references WHERE source_reference_id='right'"
+                )
+            assert db.execute("SELECT count(*) FROM origin_links").fetchone()[0] == 1
+            assert db.execute("SELECT count(*) FROM source_references").fetchone()[0] == 1
+            assert db.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 1
+    finally:
+        storage.close()
