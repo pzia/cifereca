@@ -70,7 +70,7 @@ def test_real_manifest_bridge_scopes_zero_one_many_and_archived_without_delivery
         assert not report.authorizes_mutation
         assert report.branch == "personal_manifest"
         assert [(r.edition_id, r.state) for r in report.rights] == [
-            ("book-1", "active"), ("book-2", "inactive"),
+            ("book-1", "active"), ("book-2", "active"),
         ]
         assert all(r.kind == "purchase" for r in report.rights)
         assert all(r.provider_attested for r in report.rights)
@@ -252,6 +252,52 @@ def test_kobo_caller_rebind_during_projection_is_rejected():
     try:
         with pytest.raises(ProviderCapabilityError, match="propriétaire modifié"):
             session.rights_observation_snapshot(account)
+        assert vault.calls == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("archived,collection", [
+    (True, "library"),
+    (True, "archived"),
+    (False, "archived"),
+])
+def test_archived_kobo_book_is_still_an_active_purchase_not_an_expired_right(
+    archived, collection,
+):
+    """Archived is not revoked: preserve purchase separately from delivery."""
+    session, vault, _broker, account = _rig([{
+        "product_id": "edition-archived", "account_id": "alice",
+        "title": "Synthetic archived purchase", "owned": True,
+        "downloadable": False, "archived": archived,
+        "collection": collection,
+    }])
+    try:
+        observed = session.rights_observation_snapshot(account)
+        assert len(observed.rights) == 1
+        right = observed.rights[0]
+        assert right.kind == "purchase"
+        assert right.state == "active"
+        assert right.delivery == "unknown"
+        assert right.delivery_offer_id == ""
+        assert not observed.authorizes_mutation
+        assert not observed.authorizes_negative_reconciliation
+        assert vault.calls == 1
+        assert session.backup_manifest_policy["acquisition_authorized"] is False
+    finally:
+        session.close()
+
+
+def test_explicitly_not_owned_archived_book_does_not_produce_purchase_right():
+    session, vault, _broker, account = _rig([{
+        "product_id": "edition-revoked", "account_id": "alice",
+        "owned": False, "archived": True, "collection": "archived",
+    }])
+    try:
+        observed = session.rights_observation_snapshot(account)
+        assert observed.rights == ()
+        assert observed.coverage == observed.status == "partial"
+        assert not observed.authorizes_negative_reconciliation
         assert vault.calls == 1
     finally:
         session.close()
