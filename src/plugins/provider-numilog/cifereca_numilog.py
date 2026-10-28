@@ -826,15 +826,26 @@ class NumilogSession(ProviderSession):
             ) from None
 
     def _identity_id(self):
+        """Resolve one strictly typed Core owner before any ADEPT fulfillment.
+
+        A set of identity labels can erase duplicate AccountRefs, and str()
+        of a malformed identifier can synthesize a different Core identity.
+        Use the same exact multiset/credential-account binding as the public
+        rights observations; legacy brokerless delivery stays unavailable.
+        """
         if self.identity_broker is None:
-            raise ProviderCapabilityError('Numilog : broker identités requis pour le fulfillment ACSM')
-        account_id='numilog:'+self.scope
-        matches=[ref for ref in self.identity_broker.accounts()
-                 if getattr(ref,'provider_id','')=='numilog' and getattr(ref,'account_id','')==account_id]
-        identity_ids={str(getattr(ref,'identity_id','') or '') for ref in matches if getattr(ref,'identity_id','')}
-        if len(identity_ids)!=1:
-            raise ProviderCapabilityError('Numilog : identité propriétaire du compte non résolue pour le fulfillment ACSM')
-        return next(iter(identity_ids))
+            raise ProviderCapabilityError(
+                'Numilog : broker identités requis pour le fulfillment ACSM'
+            )
+        owner = self._inventory_owner_or_none()
+        if (type(owner) is not tuple or len(owner) != 3
+                or owner[0] != 'broker' or type(owner[2]) is not tuple
+                or len(owner[2]) != 1 or type(owner[2][0]) is not str
+                or not owner[2][0]):
+            raise ProviderCapabilityError(
+                'Numilog : identité propriétaire du compte non résolue pour le fulfillment ACSM'
+            )
+        return owner[2][0]
 
     def _validate_download_owner(self, expected):
         # A newly valid binding is not the binding which authorized this
