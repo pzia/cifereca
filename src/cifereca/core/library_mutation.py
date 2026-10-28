@@ -18,6 +18,18 @@ from ..plugin_api import BundleError, load_bundle_manifest
 
 
 def materialize_to_identity(self, placement_id: str, target_identity_id: str) -> dict[str, Any]:
+    """Explicit A→B send, serialized with the canonical acquisition lock."""
+    from ..locking import InterProcessLock
+    from ..paths import acquisition_lock_file
+    with InterProcessLock(acquisition_lock_file()) as shared_lock:
+        return _materialize_to_identity_locked(
+            self, placement_id, target_identity_id, shared_lock,
+        )
+
+
+def _materialize_to_identity_locked(
+    self, placement_id: str, target_identity_id: str, shared_lock,
+) -> dict[str, Any]:
     """Send an independent local copy, never an entitlement for the recipient.
 
     All existing target files retain their ownership. Only a previously
@@ -88,6 +100,42 @@ def materialize_to_identity(self, placement_id: str, target_identity_id: str) ->
     source_entry = source_entries[0] if source_entries else {}
     artifact_id = str(source.get("artifact_id") or "").strip()
     item_id = str(source.get("source_item_id") or source_entry.get("item_id") or "").strip() or None
+
+    def publish_canonical_send(path: Path) -> None:
+        """Publish the verified local transfer only when source B is canonical.
+
+        An arbitrary legacy artifact ID, missing local SHA or unregistered
+        profile path is NOT an origin receipt. Keep preexisting legacy send
+        semantics in those cases until #3196 migrates that source, without
+        fabricating a right or adopting another recipient's copy. This
+        method is called only AFTER this explicit user-requested send has
+        created or independently verified its own target bytes.
+        """
+        if is_bundle or not artifact_id.startswith("sha256:"):
+            return
+        source_artifact = self.storage.artifact_get(artifact_id)
+        if (type(source_artifact) is not dict
+                or source_artifact.get("sha256") != source_digest
+                or artifact_id != "sha256:" + source_digest
+                or source_artifact.get("size") != src.stat().st_size):
+            return
+        from .canonical_transfer import publish_completed_local_transfer
+        from .canonical_publication import _stable
+
+        # A completed byte-for-byte copy, not a provider/ADEPT grant or a
+        # claim inferred from a recipient-owned same-SHA candidate.
+        completed_id = _stable(
+            "send", str(placement_id), owner, target_identity_id,
+            str(src), str(path), source_digest,
+        )
+        publish_completed_local_transfer(
+            self.storage, library_root=root,
+            from_identity_id=owner, to_identity_id=target_identity_id,
+            from_path=src, to_path=path,
+            transfer_id=completed_id,
+            transfer_receipt_ref=_stable("completed-local-send", completed_id),
+            explicitly_authorized=True, shared_lock=shared_lock,
+        )
 
     def verified_target(path: Path) -> bool:
         if (path.is_symlink() or path.resolve() != path
@@ -164,6 +212,7 @@ def materialize_to_identity(self, placement_id: str, target_identity_id: str) ->
             copy_regular(dest, replace=True)  # Repair a legacy hardlink.
             status = "complete"
         else:
+            publish_canonical_send(dest)
             return {
                 "status": "unchanged", "path": str(dest),
                 "placement_id": existing["placement_id"],
@@ -197,6 +246,10 @@ def materialize_to_identity(self, placement_id: str, target_identity_id: str) ->
         raise ProviderConfigurationError("Destination hors bibliothèque")
 
     if artifact_id:
+        # Canonical B placement + SourceReference(internal) + both contextual
+        # origins commit atomically before legacy catalog projections. A failed
+        # canonical write never advertises success or awards supplier rights.
+        publish_canonical_send(dest)
         stat_target = (dest / ".cifereca-bundle.json") if is_bundle else dest
         size_stat = stat_target.stat()
         placement_meta = {
