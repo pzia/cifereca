@@ -114,7 +114,7 @@ def publish_completed_acquisition(
     if (type(final_sha256) is not str or len(final_sha256) != 64
             or any(c not in "0123456789abcdef" for c in final_sha256)):
         raise ValueError("canonical_final_sha_invalid")
-    if type(library_root) is not Path or type(path) is not Path:
+    if not isinstance(library_root, Path) or not isinstance(path, Path):
         raise ValueError("canonical_path_invalid")
 
     # This is non-authoritative preliminary I/O. The authoritative owner
