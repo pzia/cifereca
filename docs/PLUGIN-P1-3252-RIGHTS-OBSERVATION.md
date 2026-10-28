@@ -1,11 +1,6 @@
 # P1 #3252 — contrat d'observation des droits fournisseurs (v1)
 
-**Tranche additive : contrat public et tests synthétiques uniquement.**
-Cette livraison **ne branche encore ni Kobo ni Numilog réels** et ne ferme pas
-#3252. Le Core P0 #3171 reste propriétaire des transactions, de l'admission,
-des verrous et de la réconciliation; #3275 reste propriétaire des copies entre
-identités. Les contrats de prêts `LoanInventorySnapshot` Paris/BnF restent
-inchangés.
+**État au 28/10/2026 : contrat public et adaptateurs réels Kobo, Numilog, Paris et BnF-Prêt déjà fusionnés, en LECTURE SEULE.** PR #3497 (contrat), #3505 (Numilog), #3508 (Kobo), #3524 (BnF) et #3525 (Paris). Les observations sont positives et généralement partielles ; elles ne prouvent aucun fichier et n'autorisent pas de droit/acquisition. Le consommateur transactionnel Core #3171, l'autorité OriginLink/Placement et la migration #3196 ne sont **pas livrés**. Voir le [contrat architectural normatif](ARCHITECTURE.md).
 
 ## Frontière publique
 
@@ -37,26 +32,16 @@ branche**; il ne peut pas effacer un droit manquant.
 
 `authorizes_mutation=False` et
 `authorizes_negative_reconciliation=False` sont invariants, même avec
-`provider_response` et `coverage=complete`. Les lectures ne déclenchent
-ni réseau ni téléchargement. Le consommateur Core doit indépendamment
+`provider_response` et `coverage=complete`. Construire ou afficher l'enveloppe ne déclenche aucun réseau ; **l'appel explicite à l'adaptateur réel peut effectuer une lecture distante authentifiée**, sans téléchargement d'ouvrage ni effet métier. Le consommateur Core doit indépendamment
 vérifier session courante, scope, epoch, preuve de fichier, permission,
 consentement et transaction. Ne pas publier de jeton/cookie ou URL signée
 comme `evidence_ref` ; utiliser une référence opaque locale à l'observation.
 
-## Adaptation réelle nécessaire avant clôture
+## État des adaptateurs et travail restant
 
-1. **Plugins Numilog et Kobo** : transformer les inventaires et reçus **réels**
-   déjà observés en snapshots par identité/connexion/compte/édition,
-   exposer le niveau de couverture réel, conserver les échecs, l'historique,
-   la pagination et l'offre de livraison séparée. Ne créer aucun droit Core
-   à partir d'une notice. Préserver les transports HTTPX et parcours legacy.
-2. **Tests d'adaptateurs indépendants** sur 0/1/N, plusieurs comptes, collisions
-   d'édition, retrait/reconnexion, reprise et absence de mutation/sauvegarde
-   automatique. Les faux Kobo/Numilog de cette PR ne valent **pas** tests
-   des adaptateurs réels.
-3. **Core #3171** consommer cette preuve uniquement après comparaison
-   d'état/session et décision de réconciliation dans ses brokers autoritaires,
-   sans écrire depuis le simple fait de lire le snapshot.
+- **Kobo et Numilog : livrés** (#3508/#3505). Les méthodes optionnelles rights_observation_snapshot(account) produisent des lignes issues des bibliothèques authentifiées, scopes et comptes exacts, couverture partial ; elles n'exécutent pas de sauvegarde.
+- **Paris et BnF-Prêt : livrés** (#3525/#3524) pour leurs observations/portées de prêts, sans autorisation de mutation. Le contrat LoanInventorySnapshot reste distinct et sa couverture par branche ne se déduit pas d'une liste vide.
+- **Core #3171 : non livré de bout en bout.** PR #3528 ajoute un lecteur explicitement scopé et PR #3523 un plan de présence **en mémoire** ; aucune des deux ne publie l'Artifact/Placement/OriginLink canonique en SQLite ni ne remplace encore les parcours des fournisseurs.
+- **Reste #3252** : compléter uniquement preuves/branches/offres propres aux adaptateurs, sans déporter la décision transactionnelle dans un plugin. Idempotence et mêmes droits sur plusieurs branches doivent être vérifiés avec comptes distincts et sans inférence par Notice.
 
-La source de vérité du droit et la preuve d'acquisition ne se déduisent
-jamais d'une couverture globale « complete » d'une bibliothèque personnelle.
+Une offre annoncée et un snapshot complet d'une seule branche ne valent ni droit d'une autre branche, ni livre téléchargé, ni absence fournisseur globale. La synchronisation automatique unique A→B est décrite dans ARCHITECTURE.md ; la réconciliation manuelle #2797 est un rattrapage exceptionnel.
