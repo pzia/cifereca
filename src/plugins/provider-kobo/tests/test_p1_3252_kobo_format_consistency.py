@@ -3,8 +3,6 @@
 The published offer and the candidate executor must agree on the exact
 HTTP/Adobe route. Synthetic Vault only, no real content GET or ADEPT.
 """
-from copy import deepcopy
-
 import pytest
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
@@ -12,7 +10,7 @@ from cifereca_kobo_delivery_offer import exact_kobo_offer_id
 from tests.test_p1_3252_kobo_descriptor_response_scope import (
     SCOPE, descriptor,
 )
-from tests.test_p1_3252_kobo_selected_delivery_offer import setup
+from tests.test_p1_3252_kobo_selected_delivery_offer import setup, descriptor as selected_descriptor
 from tests.test_p1_3252_kobo_selected_candidate import (
     admitted, execute,
 )
@@ -67,12 +65,7 @@ def test_changed_format_claim_between_preflight_and_candidate_has_zero_get(
         offer = admitted(session, account)
         def conflicted(product_id, **kwargs):
             posts.append((product_id, kwargs))
-            value = deepcopy(
-                __import__(
-                    "tests.test_p1_3252_kobo_selected_delivery_offer",
-                    fromlist=["descriptor"],
-                ).descriptor(),
-            )
+            value = selected_descriptor()
             value["acquisition"]["candidates"][0]["source_format"] = "pdf"
             return value
         vault.acquisition = conflicted
