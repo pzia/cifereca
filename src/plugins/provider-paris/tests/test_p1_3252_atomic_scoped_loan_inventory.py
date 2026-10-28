@@ -187,7 +187,9 @@ def test_typed_success_ignores_stale_legacy_failure_from_another_read():
 
 def test_typed_reader_without_scoped_branch_evidence_fails_closed():
     session, a, _ = fixture()
-    session._read_loans_for_account = (\n        lambda _account, *, publish_legacy_status=False: []\n    )  # Bad typed producer: no per-branch GET/evidence.
+    session._read_loans_for_account = (
+        lambda _account, *, publish_legacy_status=False: []
+    )  # Bad typed producer: no per-branch GET/evidence.
     try:
         with pytest.raises(ProviderConfigurationError, match="loan_inventory_evidence_missing"):
             session.loan_inventory_snapshot(a)
