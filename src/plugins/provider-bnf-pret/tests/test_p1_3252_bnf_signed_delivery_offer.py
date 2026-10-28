@@ -119,3 +119,26 @@ def test_bnf_explicit_token_path_rejects_foreign_offer_before_private_get(tmp_pa
         assert client.calls == seen  # no further private activity/token GET
     finally:
         session.close()
+
+
+def test_bnf_offer_from_old_identity_cannot_get_under_reassigned_owner(tmp_path):
+    from cifereca.plugin_api import ProviderConfigurationError
+
+    session, account, client = fixture(
+        activity(("edition-A", "loan-A")) + signed_action("loan-A")
+    )
+    try:
+        original = session.rights_observation_snapshot(account).rights[0]
+        (loan,) = session.loans(account)
+        account.identity_id = "identity-B"
+        loan.identity_id = "identity-B"
+        session.identity_broker.identities = ("identity-B",)
+        calls = list(client.calls)
+        with pytest.raises(ProviderConfigurationError, match="loan_not_observed"):
+            session.download_digital(
+                loan, account, tmp_path, explicit_user_action=True,
+                expected_offer_id=original.delivery_offer_id,
+            )
+        assert client.calls == calls
+    finally:
+        session.close()
