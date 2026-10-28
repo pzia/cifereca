@@ -76,7 +76,7 @@ Paris est désormais entièrement porté par `src/plugins/provider-paris/`. Numi
 ## Synchronisation A/B/C — cible en cours
 
 - **Déjà observables** : contrats de droits en lecture seule et adaptateurs Kobo/Numilog/Paris/BnF (#3252) ; tables historiques entitlements, artifacts, placements, acquisition_ledger et backup_items. Les lectures ne valent ni permission d'acquisition ni OriginLink publié.
-- **P0 en cours** : #3171 moteur agnostique, #3196 autorité SQL unique (sortie de backup_items), #2797/#2847 contrôles de présence et chemins, #3185 mutations et #3275 transferts. Les PR #3523/#3528 sont des étapes de lecture/plan, pas une convergence métier déjà fusionnée.
+- **P0 en cours** : #3171 moteur agnostique, #3196 autorité SQL unique (sortie de backup_items), #2797/#2847 contrôles de présence et chemins, #3185 mutations et #3275 transferts. La PR #3528 (admission de lecture explicitement scopée) est **fusionnée** ; #3523 (plan en mémoire) est **ouverte**. Ni l'une ni l'autre ne livre la convergence transactionnelle.
 - **Règle** : synchronisation automatique **unique** A→B ; lorsque la preuve OriginLink/SHA/Placement local manque, une acquisition reste possible sous admission indépendante, droits/consentements/contrôles. Le rattrapage manuel est exceptionnel, pas un deuxième processus obligatoire.
 
 ## Simulation
