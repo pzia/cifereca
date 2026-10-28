@@ -166,3 +166,55 @@ def test_resolved_file_path_remains_verifiable_with_symlink_configured_root(stor
         store, snapshot, library_root=root_alias,
     )
     assert result.decisions[0].provider_satisfied
+
+
+@pytest.mark.parametrize("non_profile", ["manual", "acsm-import", "other", "flat"])
+def test_historic_provider_origin_plus_wrong_profile_folder_not_satisfied(
+    store, tmp_path, non_profile,
+):
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    original = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", original, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied
+    root = tmp_path / "EBooks"
+    foreign = (
+        root / "book.pdf" if non_profile == "flat"
+        else root / non_profile / "book.pdf"
+    )
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_bytes(BYTES)
+    original.unlink()
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE path=?",
+            (str(foreign), str(original)),
+        )
+    decisions = plan(store, snapshot, tmp_path)
+    assert len(decisions) == 1
+    assert decisions[0].provider_satisfied is False
+    assert decisions[0].state != "present_attested"
+    assert foreign.read_bytes() == BYTES
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM origin_links WHERE origin_kind='provider'"
+        ).fetchone()[0] == 1
+
+
+def test_verified_copy_inside_target_profile_remains_positive_after_path_moves(
+    store, tmp_path,
+):
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    original = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", original, source, snapshot)
+    nested = tmp_path / "EBooks" / "A" / "nested" / "book.pdf"
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.write_bytes(BYTES)
+    original.unlink()
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE path=?",
+            (str(nested), str(original)),
+        )
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied
