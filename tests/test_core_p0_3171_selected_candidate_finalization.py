@@ -150,6 +150,48 @@ def test_consent_revoked_during_candidate_get_does_not_publish_origin(rig):
     assert refs(db)[1] == 0 and db.placements() == []
 
 
+def test_upstream_borrower_switched_during_candidate_get_never_publishes(rig):
+    service, db, root = rig
+    _prepare(service)
+
+    def candidate(*args, **kwargs):
+        received = _native(*args, **kwargs)
+        # Same connected Python session, same Core account and epoch.
+        service.session.accounts = [
+            replace(service.account, unique_id="different-borrower"),
+        ]
+        return received
+
+    service.session.rights_selected_delivery_candidate = candidate
+    outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_execution"]["failed"] == 1
+    assert refs(db)[1] == 0 and db.placements() == []
+
+
+def test_candidate_bridge_rechecks_session_borrower_before_direct_get(rig):
+    from cifereca.core.canonical_selected_delivery import complete_selected_delivery
+    from cifereca.locking import InterProcessLock
+
+    service, db, root = rig
+    service.session.accounts = [
+        replace(service.account, unique_id="different-borrower"),
+    ]
+    service.session.rights_selected_delivery_candidate = (
+        lambda *_a, **_kw: pytest.fail("foreign borrower cannot GET"),
+    )
+    offered = replace(
+        service.snapshot.rights[0],
+        delivery="available", delivery_offer_id="synthetic-signed-offer",
+    )
+    with InterProcessLock(root.parent / "state" / "acquisition.lock") as lease:
+        with pytest.raises(ValueError, match="canonical_delivery_source_rebound"):
+            complete_selected_delivery(
+                service, service.account, service.session,
+                service.source, offered, library_root=root, shared_lock=lease,
+            )
+    assert refs(db)[1] == 0 and db.placements() == []
+
+
 def test_changed_session_epoch_during_candidate_get_refuses_old_owner(rig):
     service, db, root = rig
     _prepare(service)
