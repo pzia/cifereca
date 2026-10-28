@@ -181,14 +181,23 @@ def plan_convergence(
     if len(scan_by_identity) != len(scans):
         raise ValueError("ambiguous_profile_scan")
 
-    # The same bytes in another identity are not a placement for this one.
+    # Conflicting reuses of a global placement/origin identifier are corrupt
+    # evidence, not a tie to resolve by SHA, title or insertion order.
+    by_placement_id: dict[str, PlacementEvidence] = {}
     local_by_identity_sha: dict[tuple[str, str], list[PlacementEvidence]] = {}
     for placement in placements:
+        previous = by_placement_id.setdefault(placement.placement_id, placement)
+        if previous != placement:
+            raise ValueError("conflicting_placement_evidence")
         local_by_identity_sha.setdefault(
             (placement.identity_id, placement.sha256), [],
         ).append(placement)
+    by_origin_ref: dict[str, OriginEvidence] = {}
     origins_by_source: dict[SourceKey, set[str]] = {}
     for origin in origins:
+        previous = by_origin_ref.setdefault(origin.origin_ref, origin)
+        if previous != origin:
+            raise ValueError("conflicting_origin_evidence")
         if origin.kind == "provider" and origin.attested:
             assert origin.source is not None
             origins_by_source.setdefault(origin.source, set()).add(origin.artifact_sha256)
