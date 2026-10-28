@@ -126,3 +126,53 @@ def test_selected_direct_epub_rejects_acsm_response_without_legacy_adept(
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("rebind", [
+    "same_scope_new_account", "foreign_identity", "disconnect",
+    "provider_changed", "credential_changed", "client_replaced",
+])
+def test_selected_epub_post_get_session_rebind_withdraws_candidate(
+    tmp_path, rebind,
+):
+    from dataclasses import replace
+    session, account, reads, right = _direct_epub_session()
+    requested = []
+    def handler(request):
+        requested.append(str(request.url))
+        if rebind == "same_scope_new_account":
+            session._accounts = [replace(session._accounts[0])]
+        elif rebind == "foreign_identity":
+            session._accounts[0].identity_id = "other-identity"
+        elif rebind == "disconnect":
+            session.connected = False
+        elif rebind == "provider_changed":
+            session.provider_id = "foreign-provider"
+        elif rebind == "credential_changed":
+            session.credential_id = "other-credential"
+        elif rebind == "client_replaced":
+            session.client = object()
+        return httpx.Response(
+            200, content=fake_epub_bytes(),
+            headers={"content-type": "application/epub+zip"},
+        )
+    client = session.client
+    client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        trust_env=False, follow_redirects=False,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert requested == [SIGNED_EPUB]
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        # Avoid a forged client during close() in the synthetic test.
+        if not isinstance(session.client, httpx.Client):
+            session.client = httpx.Client(
+                transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+            )
+        session.close()
