@@ -256,3 +256,74 @@ def test_http_failures_stay_in_core_staging_boundary(
         assert not list(tmp_path.rglob("*.part"))
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("failure", ["loan_withdrawn", "signed_action_revoked", "login_html"])
+def test_second_fresh_activity_does_not_get_when_offer_retracted(
+    tmp_path, failure,
+):
+    session, account, state, _, token_gets, offer = ready()
+    original = session.client.activity
+    observed = [0]
+
+    def changing_activity():
+        observed[0] += 1
+        if observed[0] == 2:
+            if failure == "loan_withdrawn":
+                state["activity"] = '<section class="active-loans"></section>'
+            elif failure == "signed_action_revoked":
+                state["activity"] = (
+                    '<section class="active-loans"><div class="js-loan">'
+                    '<a href="/resources/book-a">Book</a>'
+                    '<a href="/loans/loan-a">Loan</a></div></section>'
+                )
+            else:
+                state["activity"] = "<html>Session expired</html>"
+        return original()
+
+    session.client.activity = changing_activity
+    try:
+        with pytest.raises((ProviderError, ProviderCapabilityError), match=(
+            "loan_not_observed|url_refused|activity_unrecognized_loans"
+        )):
+            stage(session, account, offer, tmp_path)
+        assert observed == [2]
+        assert token_gets == []
+        assert not list(tmp_path.rglob("*.acsm"))
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("when", ["token", "staging"])
+def test_disconnected_without_epoch_change_rejects_completed_candidate(
+    tmp_path, monkeypatch, when,
+):
+    session, account, _, _, token_gets, offer = ready()
+    try:
+        if when == "token":
+            original = session.client.loan_token
+
+            def disconnect_after_token(*args):
+                token = original(*args)
+                session.connected = False
+                return token
+
+            session.client.loan_token = disconnect_after_token
+        else:
+            namespace = session.download_digital.__func__.__globals__
+            original = namespace["save_private_loan_token"]
+
+            def disconnect_after_staging(*args):
+                path = original(*args)
+                session.connected = False
+                return path
+
+            monkeypatch.setitem(namespace, "save_private_loan_token",
+                                disconnect_after_staging)
+        with pytest.raises(ProviderError, match="loan_not_observed"):
+            stage(session, account, offer, tmp_path)
+        assert len(token_gets) == 1
+        assert not list(tmp_path.rglob("*.acsm"))
+        assert not list(tmp_path.rglob("*.part"))
+    finally:
+        session.close()
