@@ -242,7 +242,10 @@ def test_paris_connected_reader_replaced_mid_read_cannot_publish_loan_snapshot()
     s.client.loans = replaced
     try:
         snap = read_loan_inventory(s, a)
-        assert calls == ["DILICOM", "SYRACUSE"]
+        # The v1+typed Paris boundary now aborts *before* making another
+        # private request when the current borrower was unregistered during
+        # the first GET. It must not fetch SYRACUSE for a different account.
+        assert calls == ["DILICOM"]
         assert snap.status == "failed" and snap.loans == ()
         assert snap.reason_code == "read_failed"
     finally:

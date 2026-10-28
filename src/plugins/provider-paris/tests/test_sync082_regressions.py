@@ -70,6 +70,8 @@ def test_loans_keep_other_upstream_when_one_fails(
         provider_id="paris",
         credential_id="paris-default",
     )
+    session.connected = True
+    session._accounts = [account]
     surviving = Loan(
         id=loan_id,
         provider=surviving_upstream,
@@ -104,6 +106,8 @@ def test_loans_fail_only_when_both_upstreams_fail(monkeypatch):
         provider_id="paris",
         credential_id="paris-default",
     )
+    session.connected = True
+    session._accounts = [account]
     monkeypatch.setattr(
         session.client,
         "loans",

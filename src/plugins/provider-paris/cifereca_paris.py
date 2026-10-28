@@ -447,12 +447,37 @@ class ParisProviderSession(ProviderSession):
         borrower_scope = (
             account.unique_id, account.identity_id,
             account.provider_id, account.credential_id,
-        )
+        ) if type(account) is Account else None
+        if borrower_scope is None or borrower_scope[2:] != (
+                self.provider_id, self.credential_id):
+            raise ProviderConfigurationError("account_scope_mismatch")
         borrower_id = borrower_scope[0]
+        # The typed snapshot already selected one exact live Account, but
+        # legacy loans(account) may be called directly while Core migrates.
+        # Never send a private DILICOM/SYRACUSE GET for a disconnected,
+        # removed, foreign, or ambiguous borrower.
+        def matching_accounts():
+            return [
+                active for active in self._accounts
+                if type(active) is Account
+                and (active.unique_id, active.identity_id,
+                     active.provider_id, active.credential_id) == borrower_scope
+            ]
+
+        initial = matching_accounts()
+        bound = initial[0] if len(initial) == 1 else None
 
         def scope_current():
-            return (account.unique_id, account.identity_id,
-                    account.provider_id, account.credential_id) == borrower_scope
+            return (
+                self.connected is True
+                and (account.unique_id, account.identity_id,
+                     account.provider_id, account.credential_id) == borrower_scope
+                and bound is not None
+                and (bound.unique_id, bound.identity_id,
+                     bound.provider_id, bound.credential_id) == borrower_scope
+                and len(current := matching_accounts()) == 1
+                and current[0] is bound
+            )
 
         for upstream in ("DILICOM", "SYRACUSE"):
             if not scope_current():
