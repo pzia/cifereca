@@ -842,6 +842,30 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         complete_scope = _complete_digital_loan_scope(account, snapshot)
                         if complete_scope is not None and not inventory_partial:
                             complete_by_source[source_id] = complete_scope
+
+                    # #3171: opening Sync consumes the same optional A
+                    # reader and verifies B with the exact canonical Core
+                    # phase used by explicit source Sync. No additional
+                    # reconciliation orchestration or automatic delivery
+                    # permissions are invented by the startup path.
+                    from .canonical_sync_stage import observe_canonical_rights_in_sync
+                    canonical = observe_canonical_rights_in_sync(self, account)
+                    if canonical is not None:
+                        rights_detail = detail.setdefault("canonical_rights", {
+                            "sources": 0, "observed": 0,
+                            "present_attested": 0, "source_references_changed": 0,
+                        })
+                        for field in ("observed", "present_attested",
+                                      "source_references_changed"):
+                            rights_detail[field] += canonical[field]
+                        rights_detail["sources"] += 1
+                        if canonical["status"] != "success":
+                            inventory_partial = True
+                        if canonical["status"] == "failed":
+                            errors += 1
+                            provider_errors.append({
+                                "code": "canonical_rights_observation_failed",
+                            })
                     source_outcomes[source_id] = (
                         "partial" if inventory_partial else "success"
                     )
