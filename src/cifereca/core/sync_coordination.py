@@ -311,12 +311,28 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                             # complete refresh or of any negative right.
                             result["status"] = "partial"
 
-                    # No new provider delivery ABI is guessed here. Only a
-                    # Core-registered executor and a separate Core-owned,
-                    # *persisted*, exact-right consent reader may enable GET.
-                    # Without BOTH, legacy Sync stays read-only for v14.
+                    # An optional provider-neutral candidate ABI is now
+                    # available on installed BnF/Numilog sessions. Core owns
+                    # its *finalization* callback; the provider never emits
+                    # a CompletedDelivery or OriginLink. No compatibility
+                    # fallback or implied consent for older sessions.
                     delivery = getattr(self, "_canonical_right_delivery", None)
                     consent_reader = getattr(self, "_canonical_persisted_consent", None)
+                    if (delivery is None and admitted_snapshots
+                            and callable(consent_reader)):
+                        from inspect import getattr_static
+                        try:
+                            candidate_session = self._session_for_account(account)
+                        except (AttributeError, KeyError, TypeError, ValueError):
+                            candidate_session = None
+                        if (candidate_session is not None and callable(
+                                getattr_static(candidate_session,
+                                               "rights_selected_delivery_candidate", None))):
+                            from .canonical_selected_delivery import complete_selected_delivery
+                            delivery = lambda key, offer: complete_selected_delivery(
+                                self, account, candidate_session, key, offer,
+                                library_root=self.library_dir(), shared_lock=sync_lease,
+                            )
                     if (admitted_snapshots and callable(delivery)
                             and callable(consent_reader)):
                         from .convergence_execution import execute_admitted_convergence
