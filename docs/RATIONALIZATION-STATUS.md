@@ -1,6 +1,6 @@
 # État de rationalisation CIFERECA
 
-État de référence documentaire : 7 octobre 2026.
+État de référence documentaire : **28 octobre 2026**. Voir [ARCHITECTURE.md](ARCHITECTURE.md), décision normative [#3171](https://github.com/pzia/cifereca/issues/3171). Les composants mutualisés décrits comme terminés ci-dessous ne signifient **pas** que la convergence achats/prêts A→B, la migration de backup_items ou les huit OriginLink persistés soient livrés.
 
 Ce fichier est l'index de référence pour la rationalisation. Les handoffs historiques restent utiles pour leur contexte, mais ne doivent pas être lus comme une description automatiquement à jour du tree courant.
 
@@ -18,7 +18,7 @@ Le chantier transversal de mutualisation est clos :
 - health checks / diagnostics publics ;
 - CacheBroker TTL + single-flight ;
 - normalisation langue, noms de fichiers et descriptions ;
-- redaction diagnostics publique.
+- journal brut Diagnostics et pseudonymisation de login/mot de passe au seul rendu IHM (voir [LOGGING-CONTRACT.md](LOGGING-CONTRACT.md)).
 
 Référence : [HANDOFF-MUTUALISATION-CORE-PLUGINS.md](../HANDOFF-MUTUALISATION-CORE-PLUGINS.md).
 
@@ -73,20 +73,15 @@ Le validateur local reste plus strict que l'inspection Core sur plusieurs invari
 
 Paris est désormais entièrement porté par `src/plugins/provider-paris/`. Numilog, Kobo et d'autres providers peuvent garder une session HTTP spécialisée lorsque l'authentification, les cookies ou la navigation métier dépassent le contrat générique `transport.http`.
 
+## Synchronisation A/B/C — cible en cours
+
+- **Déjà observables** : contrats de droits en lecture seule et adaptateurs Kobo/Numilog/Paris/BnF (#3252) ; tables historiques entitlements, artifacts, placements, acquisition_ledger et backup_items. Les lectures ne valent ni permission d'acquisition ni OriginLink publié.
+- **P0 en cours** : #3171 moteur agnostique, #3196 autorité SQL unique (sortie de backup_items), #2797/#2847 contrôles de présence et chemins, #3185 mutations et #3275 transferts. Les PR #3523/#3528 sont des étapes de lecture/plan, pas une convergence métier déjà fusionnée.
+- **Règle** : synchronisation automatique **unique** A→B ; lorsque la preuve OriginLink/SHA/Placement local manque, une acquisition reste possible sous admission indépendante, droits/consentements/contrôles. Le rattrapage manuel est exceptionnel, pas un deuxième processus obligatoire.
+
 ## Simulation
 
-État :
-
-- `simulation/` existe et reste l'environnement fonctionnel simulé actuel ;
-- `simulation/` n'existe pas encore.
-
-Cible :
-
-- une seule référence future sous `simulation/` ;
-- migration progressive des faux services, fixtures et profils utiles ;
-- suppression de `simulation/` lorsque ses consommateurs sont migrés.
-
-Voir [SIMULATION.md](SIMULATION.md).
+simulation/ **existe** et reste le banc fonctionnel de référence. Aucune migration de ce répertoire vers lui-même n'est requise ; conserver ses services et fixtures utiles sans seconde arborescence. Voir [SIMULATION.md](SIMULATION.md).
 
 ## Environnements
 
