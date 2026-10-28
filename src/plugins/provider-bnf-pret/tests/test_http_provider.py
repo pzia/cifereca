@@ -273,13 +273,39 @@ class HTTPProviderTests(unittest.TestCase):
 
 
 
+def _service_for_bnf_isolated_tests(tmp_path):
+    """Build the Core fixture without importing another pytest tests package.
+
+    Plugin CI imports provider-bnf-pret/tests as `tests`. Importing
+    repository-root `tests.test_sync_state_contract` from that namespace is
+    nondeterministic and fails in the isolated plugin runner.
+    """
+    from cifereca.config import Config
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+
+    cfg = Config(tmp_path / "config.json")
+    cfg.set("library.directory", str(tmp_path / "EBooks"))
+    cfg.set("identities", [
+        {"id": "default", "label": "Synthetic Default",
+         "directory_name": "default",
+         "preferences": {"reading_languages": ["fr"]}},
+        {"id": "alex", "label": "Synthetic Second",
+         "directory_name": "alex",
+         "preferences": {"reading_languages": ["fr"]}},
+    ])
+    cfg.set("providers.accounts", [])
+    return LibraryService(
+        cfg, Storage(tmp_path / "db.sqlite3"), Diagnostics(),
+    )
+
+
 def test_provider_loans_persist_through_core_without_absence_deletion(tmp_path):
     # Exercise the actual Core opening sync and SQLite with the actual provider.
-    sys.path.insert(0, str(ROOT.parents[2]))
-    from tests.test_sync_state_contract import _service
     case = HTTPProviderTests()
     session, calls, state = case.make()
-    service = _service(tmp_path)
+    service = _service_for_bnf_isolated_tests(tmp_path)
     try:
         account, = session.connect()
         account.identity_id = 'default'
@@ -491,9 +517,7 @@ class HTTPCatalogTests(unittest.TestCase):
 
 
 def test_catalogue_uses_core_search_and_detail_without_entitlement(tmp_path):
-    sys.path.insert(0, str(ROOT.parents[2]))
-    from tests.test_sync_state_contract import _service
-    service = _service(tmp_path)
+    service = _service_for_bnf_isolated_tests(tmp_path)
     case = HTTPCatalogTests()
     session, calls, state, requests = case.make()
     try:
