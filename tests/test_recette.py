@@ -23,6 +23,7 @@ spec.loader.exec_module(recette)
 
 class RecipeFixture(unittest.TestCase):
     def setUp(self):
+        self.previous_umask = os.umask(0o077)
         self.temporary = tempfile.TemporaryDirectory()
         self.base = Path(self.temporary.name)
         self.production = self.base / "production"
@@ -57,6 +58,7 @@ class RecipeFixture(unittest.TestCase):
         self.env_patch.stop()
         self.home_patch.stop()
         self.temporary.cleanup()
+        os.umask(self.previous_umask)
 
     def fake_snapshot(self, target, ref):
         (target / "code/src/plugins").mkdir(parents=True)
@@ -278,6 +280,15 @@ class RecipeFixture(unittest.TestCase):
         self.copier.capture(nested, self.target / "library")
         self.assertEqual((self.target / "library/book.epub").read_bytes(), b"nested book")
         self.assertFalse((self.target / "data/ebooks").exists())
+
+    def test_book_folders_named_browser_are_copied_as_content(self):
+        folder = self.books / "browser"
+        folder.mkdir()
+        (folder / "title.epub").write_bytes(b"book, not a browser session")
+        self.copier.register(self.books, self.target / "library")
+        self.copier.content_roots.add(self.books)
+        self.copier.capture(self.books, self.target / "library")
+        self.assertEqual((self.target / "library/browser/title.epub").read_bytes(), b"book, not a browser session")
 
     def test_dotdot_paths_cannot_escape_copy_destination(self):
         self.copier.register(self.books, self.target / "books")
