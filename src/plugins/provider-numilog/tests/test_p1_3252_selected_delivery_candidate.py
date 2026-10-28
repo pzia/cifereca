@@ -51,6 +51,7 @@ def test_selected_numilog_executes_existing_offer_guard_once(tmp_path):
         assert len(observed) == 1
         assert observed[0][1]["authorized_link"] == SIGNED
         assert observed[0][1]["expected_owner_scope"] is not None
+        assert observed[0][1]["stage_acsm_only"] is True
         assert all(url == session.library_url for url in reads)
     finally:
         session.close()
