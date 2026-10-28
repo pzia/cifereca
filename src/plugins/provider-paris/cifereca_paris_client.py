@@ -273,7 +273,15 @@ class ParisClient:
             return result
         except Exception as exc:
             if category=="PNB" and operation=="borrow digital":
-                _TRACE_LOG.warning("TRACE paris pnb-loan failed error=%s duration_ms=%s",type(exc).__name__,int((time.perf_counter()-start)*1000))
+                # The existing canonical local TRACE event must retain the
+                # *original* provider exception and traceback. A type-only
+                # summary discards the reason a real PNB action failed.
+                # Diagnostics UI pseudonymization belongs to Core, not here.
+                _TRACE_LOG.warning(
+                    "TRACE paris pnb-loan failed error=%s duration_ms=%s",
+                    type(exc).__name__, int((time.perf_counter()-start)*1000),
+                    exc_info=True,
+                )
             detail = {"error": type(exc).__name__}
             # Keep the historical policy of unrelated operations unchanged.
             # ListLoans messages are actual provider facts and must not be
