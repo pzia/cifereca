@@ -17,7 +17,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -322,6 +322,9 @@ class Storage:
         v11: structured action events for dashboard statistics.
         v12: performance indexes for catalogue/library projections.
         v13: explicit, pinned Paris borrower-to-ADEPT identity/profile grants.
+        v14: empty, additive canonical SourceReference and OriginLink storage.
+            Legacy entitlements/backup_items remain untouched; their migration
+            needs exact source/branch proofs and independent guarded writers.
         """
         version = cls._read_schema_version(db)
         _TRACE_LOG.info("TRACE storage migrate begin from=%s target=%s", version, CURRENT_SCHEMA_VERSION)
@@ -986,6 +989,240 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT migration_v13")
                 raise
             version = 13
+
+        if version < 14:
+            # Foundations only: NO copying or mirroring from backup_items,
+            # entitlements, path labels or ledger history. Old rows lack the
+            # exact verified account/branch/origin needed to assert authority.
+            # In particular, this migration performs zero file/network I/O.
+            db.execute("SAVEPOINT migration_v14")
+            try:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS source_references (
+                        source_reference_id TEXT PRIMARY KEY,
+                        identity_id TEXT NOT NULL,
+                        provider_id TEXT NOT NULL,
+                        credential_id TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        branch_id TEXT NOT NULL,
+                        edition_id TEXT NOT NULL,
+                        right_id TEXT NOT NULL,
+                        reference_kind TEXT NOT NULL CHECK (
+                            reference_kind IN ('purchase','loan','notice','internal')
+                        ),
+                        state TEXT NOT NULL DEFAULT 'unknown' CHECK (
+                            state IN ('active','inactive','unknown')
+                        ),
+                        synchronizable INTEGER NOT NULL DEFAULT 0 CHECK (
+                            synchronizable IN (0,1)
+                        ),
+                        evidence_kind TEXT NOT NULL DEFAULT 'unverified',
+                        evidence_ref TEXT NOT NULL DEFAULT '',
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        observed_at TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        UNIQUE(identity_id,provider_id,credential_id,account_id,
+                               branch_id,edition_id,right_id,reference_kind)
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_source_references_scope
+                    ON source_references(identity_id,provider_id,credential_id,
+                                         account_id,branch_id,reference_kind)
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS origin_links (
+                        origin_link_id TEXT PRIMARY KEY,
+                        origin_kind TEXT NOT NULL CHECK (
+                            origin_kind IN ('provider','manual','transfer',
+                                            'cifereca','adept','derived')
+                        ),
+                        identity_id TEXT NOT NULL,
+                        artifact_id TEXT NOT NULL,
+                        source_reference_id TEXT,
+                        evidence_ref TEXT NOT NULL DEFAULT '',
+                        parent_artifact_id TEXT,
+                        from_identity_id TEXT,
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        CHECK (
+                            origin_kind != 'provider'
+                            OR (source_reference_id IS NOT NULL
+                                AND evidence_ref <> '')
+                        ),
+                        CHECK (
+                            origin_kind != 'cifereca'
+                            OR source_reference_id IS NOT NULL
+                        ),
+                        CHECK (
+                            origin_kind != 'transfer'
+                            OR (from_identity_id IS NOT NULL
+                                AND from_identity_id <> identity_id)
+                        ),
+                        CHECK (
+                            origin_kind != 'derived'
+                            OR (parent_artifact_id IS NOT NULL
+                                AND parent_artifact_id <> artifact_id)
+                        ),
+                        CHECK (
+                            origin_kind = 'derived'
+                            OR parent_artifact_id IS NULL
+                        ),
+                        FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id),
+                        FOREIGN KEY(source_reference_id)
+                            REFERENCES source_references(source_reference_id),
+                        FOREIGN KEY(parent_artifact_id)
+                            REFERENCES artifacts(artifact_id)
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_origin_links_artifact
+                    ON origin_links(artifact_id,identity_id,origin_kind)
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_origin_links_source
+                    ON origin_links(source_reference_id,origin_kind)
+                """)
+                # The same SHA can belong to another identity's independent
+                # purchase, but a 'provider' origin may not borrow that right.
+                # Enforce even for direct SQL writers; a future broker MUST
+                # still revalidate file bytes and exact account/session.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_origin_scope_insert
+                    BEFORE INSERT ON origin_links
+                    WHEN NEW.origin_kind='provider' AND NOT EXISTS (
+                        SELECT 1 FROM source_references AS s
+                        WHERE s.source_reference_id=NEW.source_reference_id
+                        AND s.identity_id=NEW.identity_id
+                        AND s.reference_kind IN ('purchase','loan')
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'provider_origin_scope_mismatch');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_internal_origin_scope_insert
+                    BEFORE INSERT ON origin_links
+                    WHEN NEW.origin_kind='cifereca' AND NOT EXISTS (
+                        SELECT 1 FROM source_references AS s
+                        WHERE s.source_reference_id=NEW.source_reference_id
+                        AND s.identity_id=NEW.identity_id
+                        AND s.reference_kind='internal'
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'internal_origin_scope_mismatch');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_artifact_linked_sha_update
+                    BEFORE UPDATE OF sha256 ON artifacts
+                    WHEN NEW.sha256<>OLD.sha256 AND EXISTS (
+                        SELECT 1 FROM origin_links AS o
+                        WHERE o.artifact_id=OLD.artifact_id
+                           OR o.parent_artifact_id=OLD.artifact_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_sha_immutable');
+                    END
+                """)
+                # SQLite connections do not all enable PRAGMA foreign_keys;
+                # protect the physical Artifact and both source references
+                # directly so an old maintenance writer cannot erase an
+                # OriginLink's historical coordinates by deleting a parent.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_artifact_insert
+                    BEFORE INSERT ON origin_links
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM artifacts
+                        WHERE artifact_id=NEW.artifact_id
+                    ) OR (NEW.parent_artifact_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM artifacts
+                        WHERE artifact_id=NEW.parent_artifact_id
+                    ))
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_missing');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_artifact_parent_delete
+                    BEFORE DELETE ON artifacts
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links
+                        WHERE artifact_id=OLD.artifact_id
+                           OR parent_artifact_id=OLD.artifact_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_still_referenced');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_source_delete
+                    BEFORE DELETE ON source_references
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links
+                        WHERE source_reference_id=OLD.source_reference_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_source_still_referenced');
+                    END
+                """)
+                # Origin records are persistent provenance, not mutable
+                # snapshots. Changing a linked SourceReference's account,
+                # provider, branch, edition or right would silently grant a
+                # different owner the same historical SHA. Only mutable
+                # observation state/timestamps may evolve; exact coordinates
+                # and the OriginLink's evidence are append-only.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_linked_source_coords_immutable
+                    BEFORE UPDATE OF source_reference_id,identity_id,provider_id,
+                        credential_id,account_id,branch_id,edition_id,
+                        right_id,reference_kind ON source_references
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links AS o
+                        WHERE o.source_reference_id=OLD.source_reference_id
+                    ) AND (
+                        NEW.source_reference_id IS NOT OLD.source_reference_id
+                        OR NEW.identity_id IS NOT OLD.identity_id
+                        OR NEW.provider_id IS NOT OLD.provider_id
+                        OR NEW.credential_id IS NOT OLD.credential_id
+                        OR NEW.account_id IS NOT OLD.account_id
+                        OR NEW.branch_id IS NOT OLD.branch_id
+                        OR NEW.edition_id IS NOT OLD.edition_id
+                        OR NEW.right_id IS NOT OLD.right_id
+                        OR NEW.reference_kind IS NOT OLD.reference_kind
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_source_coords_immutable');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_coords_immutable
+                    BEFORE UPDATE OF origin_link_id,origin_kind,identity_id,
+                        artifact_id,source_reference_id,evidence_ref,
+                        parent_artifact_id,from_identity_id ON origin_links
+                    WHEN (
+                        NEW.origin_link_id IS NOT OLD.origin_link_id
+                        OR NEW.origin_kind IS NOT OLD.origin_kind
+                        OR NEW.identity_id IS NOT OLD.identity_id
+                        OR NEW.artifact_id IS NOT OLD.artifact_id
+                        OR NEW.source_reference_id IS NOT OLD.source_reference_id
+                        OR NEW.evidence_ref IS NOT OLD.evidence_ref
+                        OR NEW.parent_artifact_id IS NOT OLD.parent_artifact_id
+                        OR NEW.from_identity_id IS NOT OLD.from_identity_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_link_coords_immutable');
+                    END
+                """)
+                cls._write_schema_version(db, 14)
+                db.execute("RELEASE SAVEPOINT migration_v14")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v14")
+                db.execute("RELEASE SAVEPOINT migration_v14")
+                raise
+            version = 14
 
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
