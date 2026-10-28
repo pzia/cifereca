@@ -40,8 +40,6 @@ def qualify_selected_offers(
             or type(snapshot) is not ProviderRightsSnapshot
             or type(admitted_epoch) is not int
             or type(shared_lock) is not InterProcessLock
-            or shared_lock._handle is None
-            or shared_lock.path.resolve() != acquisition_lock_file().resolve()
             or not isinstance(library_root, Path)
             or type(persisted_consent) is not frozenset
             or any(type(k) is not SourceKey for k in persisted_consent)
@@ -70,6 +68,11 @@ def qualify_selected_offers(
         return snapshot
     if not callable(raw_reader):
         raise ValueError("invalid_canonical_selected_offer_reader")
+    # Require the already-held Core acquisition lease before the first
+    # extra provider I/O. A provider without this optional ABI is a no-op.
+    if (shared_lock._handle is None or
+            shared_lock.path.resolve() != acquisition_lock_file().resolve()):
+        raise ValueError("canonical_offer_core_lock_required")
 
     try:
         initial_storage = service.storage
