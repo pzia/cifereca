@@ -152,6 +152,16 @@ def execute_admitted_convergence(
                 return False
             if service.sync_source_enabled(account) is not True:
                 return False
+            connections = service.storage.provider_connections(
+                identity_id=scope.identity_id,
+            )
+            if sum(
+                conn.get("provider_id") == scope.provider_id
+                and conn.get("credential_id") == scope.credential_id
+                and conn.get("enabled") is True
+                for conn in connections
+            ) != 1:
+                return False
             return True
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
@@ -200,10 +210,11 @@ def execute_admitted_convergence(
 
         # A stale/unknown right, unsigned delivery, missing configured
         # consent or disabled source can never start a file GET or ADEPT.
-        if row.state != "active" or not row.provider_attested:
+        if (snapshot.status not in ("success", "partial")
+                or row.state != "active" or not row.provider_attested):
             results.append(ConvergenceOutcome(key, "pending", "right_unconfirmed"))
             continue
-        if row.delivery != "available":
+        if row.delivery != "available" or not row.delivery_offer_id:
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
             continue
         if key not in persisted_consent or not live_consent(key):
