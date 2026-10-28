@@ -85,7 +85,7 @@ def test_numilog_attests_positive_rows_but_no_delivery_or_negative_right():
     ])
     try:
         report = s.rights_observation_snapshot(bound_account(s))
-        assert len(reads) == 1 and reads[0] == {}
+        assert len(reads) == 1 and reads[0] == {"rights_observation": True}
         assert broker.calls == 3  # before read, after read and before publish
         assert report.scope.identity_id == "identity-A"
         assert report.scope.account_id == "numilog:" + s.scope
@@ -251,7 +251,7 @@ def test_inflight_caller_account_rebind_never_publishes_numilog_rights(
     try:
         with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
             s.rights_observation_snapshot(account)
-        assert reads == [{}]
+        assert reads == [{"rights_observation": True}]
         assert broker.owner == "identity-A"  # broker alone would miss this
     finally:
         s.close()
@@ -272,5 +272,81 @@ def test_numilog_caller_rebind_during_projection_is_rejected():
         with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
             s.rights_observation_snapshot(account)
         assert broker.owner == "identity-A"
+    finally:
+        s.close()
+
+
+def test_numilog_duplicate_purchase_cards_quarantined_in_typed_observation_only(
+    monkeypatch,
+):
+    """One repeated edition is ambiguous; other purchases remain positive.
+
+    Legacy library() still deduplicates for display. The typed rights read
+    removes the prior occurrence and the duplicate, on every source page.
+    """
+    import cifereca_numilog as provider
+
+    s, broker = session()
+    page2_url = s.library_url + "?page=2"
+    reads = []
+    page1 = [
+        owned_row(),
+        {**owned_row(), "lid": "43", "title": "Safe purchase 43"},
+    ]
+    page2 = [
+        {**owned_row(), "lid": "42", "title": "Conflicting duplicate"},
+        {**owned_row(), "lid": "44", "title": "Safe purchase 44"},
+    ]
+
+    def page(url, **kwargs):
+        reads.append(url)
+        return (url, "PAGE2" if "page=2" in url else "PAGE1")
+
+    def parse_page(html, url, **kwargs):
+        if html == "PAGE1":
+            return list(page1), page2_url
+        assert html == "PAGE2"
+        return list(page2), None
+
+    s._page = page
+    monkeypatch.setattr(provider, "parse_library_page", parse_page)
+    try:
+        normal = s.library()
+        assert len(normal) == 3
+        assert [row.title for row in normal] == [
+            "Livre synthétique", "Safe purchase 43", "Safe purchase 44",
+        ]
+        evidence = s.rights_observation_snapshot(bound_account(s))
+        assert len(evidence.rights) == 2
+        assert evidence.rights[0].edition_id == s._id(page1[1])
+        assert evidence.rights[1].edition_id == s._id(page2[1])
+        assert evidence.exact(s._id(page1[0]), s._id(page1[0]), "purchase") is None
+        assert evidence.status == evidence.coverage == "partial"
+        assert not evidence.authorizes_negative_reconciliation
+        assert reads == [s.library_url, page2_url, s.library_url, page2_url]
+        assert broker.calls >= 3
+    finally:
+        s.close()
+
+
+def test_numilog_strict_rights_rows_never_load_delivery_on_duplicate(monkeypatch):
+    """Even a tainted card triggers no scoped ACSM URL parsing or import."""
+    import cifereca_numilog as provider
+
+    s, _broker = session()
+    hints = []
+    rows = [owned_row(), owned_row()]
+    s._page = lambda url, **kwargs: (url, "SYNTHETIC")
+    def parse_page(_html, _url, **kwargs):
+        hints.append(kwargs)
+        return list(rows), None
+    monkeypatch.setattr(provider, "parse_library_page", parse_page)
+    try:
+        evidence = s.rights_observation_snapshot(bound_account(s))
+        assert evidence.rights == ()
+        assert evidence.status == "partial"
+        assert len(hints) == 1
+        assert hints[0]["delivery_evidence"] is False
+        assert hints[0]["delivery_selector"] is None
     finally:
         s.close()
