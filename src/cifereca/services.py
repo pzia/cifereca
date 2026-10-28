@@ -527,6 +527,16 @@ class LibraryService:
         raw = "\0".join((str(account.identity_id or ""), str(account.provider_id or ""), str(account.credential_id or ""), account_id))
         return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
+    def set_canonical_acquisition_consent(self, account: Account, source, *, allowed: bool) -> None:
+        """Explicit exact-right preference; never performs a provider request."""
+        from .core.source_acquisition_consent import set_source_acquisition_consent
+        set_source_acquisition_consent(self, account, source, allowed=allowed)
+
+    def _canonical_persisted_consent(self, account: Account):
+        """Fresh Core-owned consent route used by the existing source Sync."""
+        from .core.source_acquisition_consent import read_source_acquisition_consent
+        return read_source_acquisition_consent(self, account)
+
     def sync_source_enabled(self, account: Account) -> bool:
         """Same fail-closed toggle as the public Sync broker.
 
