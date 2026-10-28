@@ -648,10 +648,18 @@ class ParisProviderSession(ProviderSession):
                 raise ProviderConfigurationError("account_scope_mismatch")
             inventory = self._snapshot_for_account(account)
             scope = inventory.scope
+            # A succeeded SYRACUSE response cannot turn a failed DILICOM
+            # read into an empty but apparently successful rights branch.
+            # Use typed branch coverage, never the mutable v1 facade.
+            dilicom_failed = any(
+                branch.upstream == "dilicom"
+                and branch.reason_code == "branch_unavailable"
+                for branch in inventory.branches
+            )
             observed = datetime.now(timezone.utc).isoformat()
             rights_by_id: dict[str, ProviderRightObservation] = {}
             ambiguous_right_ids: set[str] = set()
-            for loan in inventory.loans:
+            for loan in (() if dilicom_failed else inventory.loans):
                 if loan.provider != "DILICOM" or loan.medium != "digital":
                     continue
                 raw = loan.raw
@@ -702,7 +710,8 @@ class ParisProviderSession(ProviderSession):
                     scope.credential_id, scope.account_id,
                 ),
                 rights=tuple(rights_by_id.values()),
-                status="partial", coverage="partial",
+                status="failed" if dilicom_failed else "partial",
+                coverage="unknown" if dilicom_failed else "partial",
                 pagination_complete=False, branch="dilicom",
                 observed_at=observed, snapshot_ref="paris.dilicom.listloans",
             )

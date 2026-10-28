@@ -399,3 +399,43 @@ def test_paris_empty_primary_refuses_foreign_credential_owner_before_network():
         assert client.calls == []
     finally:
         session.close()
+
+@pytest.mark.parametrize("failed_branch", ["DILICOM", "SYRACUSE"])
+def test_paris_branch_failure_preserves_exact_rights_observation_status(failed_branch):
+    """The DILICOM rights producer must not treat a failed digital GET as
+    a successful empty page merely because the physical sibling answered.
+    """
+    session, account, client = fixture(
+        digital=(upstream("digital-loan", "edition-digital"),),
+        physical=(upstream("physical-loan", "edition-physical"),),
+    )
+    original = client.loans
+
+    def fail_one_branch(branch, account_id):
+        if branch == failed_branch:
+            client.calls.append((branch, account_id))
+            raise RuntimeError("SYNTHETIC_PROVIDER_BRANCH_OUTAGE")
+        return original(branch, account_id)
+
+    client.loans = fail_one_branch
+    try:
+        report = session.rights_observation_snapshot(account)
+        if failed_branch == "DILICOM":
+            assert report.status == "failed"
+            assert report.coverage == "unknown"
+            assert report.rights == ()
+        else:
+            assert report.status == "partial"
+            assert report.coverage == "partial"
+            assert [(x.right_id, x.edition_id) for x in report.rights] == [
+                ("digital-loan", "edition-digital"),
+            ]
+        assert report.branch == "dilicom"
+        assert report.pagination_complete is False
+        assert report.authorizes_negative_reconciliation is False
+        assert report.authorizes_mutation is False
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
