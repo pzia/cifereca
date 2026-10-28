@@ -1055,7 +1055,7 @@ class KoboSession(ProviderSession):
         try:
             self._ensure_personal_binding(
                 live, generation, expected_account_id=pinned[3],
-                expected_identity_id=pinned[0],
+                expected_identity_id=live_scope[0],
             )
         except ProviderError as exc:
             raise ProviderCapabilityError("kobo_selected_offer_owner_changed") from exc
