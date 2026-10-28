@@ -207,10 +207,9 @@ def test_listloans_supplier_error_is_preserved_with_structured_code(
         assert PRIVATE in repr(diagnostics.events)
         assert "loans DILICOM" in repr(diagnostics.events)
         assert "loans SYRACUSE" in repr(diagnostics.events)
-        assert session.last_loan_errors == [
-            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
-            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
-        ]
+        # Raw diagnostics remain searchable; the typed producer does not
+        # mutate the legacy v1 side channel to report the same failure.
+        assert session.last_loan_errors == []
     finally:
         session.close()
 
@@ -276,10 +275,9 @@ def test_listloans_raw_error_is_searchable_and_exported_without_truncation(
         exported = json.loads(export_raw_journal(log_path))
         assert sum(raw in json.dumps(row, ensure_ascii=False)
                    for row in exported["events"]) == 2
-        assert session.last_loan_errors == [
-            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
-            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
-        ]
+        # Raw diagnostics remain searchable; the typed producer does not
+        # mutate the legacy v1 side channel to report the same failure.
+        assert session.last_loan_errors == []
     finally:
         session.close()
         logger.removeHandler(handler_file)
