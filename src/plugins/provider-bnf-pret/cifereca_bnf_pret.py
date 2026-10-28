@@ -161,83 +161,92 @@ class BnfProviderSession(ProviderSession):
             return self.accounts
 
     def loans(self, account):
+        """Legacy v1 facade retained for installed Plugin API clients."""
         with self._lock:
-            if (not self.connected or self._closed or len(self._accounts) != 1
-                    or account is not self._accounts[0]):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            epoch = self._epoch
-            # The legacy loans() bridge is still used during #3197 migration.
-            # A Core Account is mutable independently of this session lock:
-            # freeze its identity/credential before the provider HTML GET.
-            caller_scope = (
-                account.unique_id, account.identity_id,
-                account.provider_id, account.credential_id,
-            )
-            if caller_scope[2:] != (self.provider_id, self.credential_id):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            broker = self.identity_broker
-            owner = (
-                self._core_owner_binding(caller_scope[0])
-                if broker is not None else None
-            )
-            if broker is not None and (
-                owner is None or owner[1] != (caller_scope[1],)
-            ):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            try:
-                activity_html = self.client.activity()
-                snapshot = self._snapshot(activity_html)
-            except (ReaderHTTPError, WebParseError) as exc:
-                self.connected = False
-                self.client.clear()
-                raise ProviderConfigurationError(self._report_failure('loans', exc)) from None
-            if self._closed or epoch != self._epoch:
-                raise ProviderConfigurationError('session_closed')
-            if (not self.connected or len(self._accounts) != 1
-                    or account is not self._accounts[0]
-                    or (account.unique_id, account.identity_id,
-                        account.provider_id, account.credential_id) != caller_scope
-                    or self.identity_broker is not broker
-                    or (broker is not None and
-                        self._core_owner_binding(caller_scope[0]) != owner)):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            # Presence of one *actual* validated reader ACSM action in the
-            # same authenticated HTML is an offered retrieval route, not an
-            # acquired file. Parse once for all active loans; do not keep or
-            # export signed URLs. No token GET occurs during this observation.
-            offered_pairs = reader_acs4_offer_pairs(
-                activity_html,
-                tuple((row.loan_id, row.resource_id) for row in snapshot.loans),
-            )
-            if (self._closed or epoch != self._epoch or not self.connected
-                    or len(self._accounts) != 1 or account is not self._accounts[0]
-                    or (account.unique_id, account.identity_id,
-                        account.provider_id, account.credential_id) != caller_scope
-                    or self.identity_broker is not broker
-                    or (broker is not None and
-                        self._core_owner_binding(caller_scope[0]) != owner)):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            # A partial/empty page cannot close historical rights; nevertheless
-            # it must not authorize token downloads from stale observations.
-            self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
-            return [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
-                         record_id=row.resource_id, title=row.title or 'Prêt BnF',
-                         author=', '.join(row.authors) or None,
-                         thumbnail_url=row.thumbnail_url,
-                         document_type='Prêt numérique',
-                         source_provider=self.provider_id, source_credential=self.credential_id,
-                         source_account_id=account.unique_id, identity_id=account.identity_id,
-                         state='active', can_return=False, renewable=False,
-                         raw={
-                             'inventory_exhaustive': False,
-                             **({
-                                 'reader_acs4_offer_id': _reader_acs4_offer_id(
-                                     account.identity_id, self.credential_id,
-                                     account.unique_id, row.loan_id, row.resource_id,
-                                 ),
-                             } if (row.loan_id, row.resource_id) in offered_pairs
-                             else {}),
-                         }) for row in snapshot.loans]
+            return self._read_live_loans_locked(account)
+
+    def _read_live_loans_locked(self, account):
+        """One provider HTML GET shared by typed and legacy callers.
+
+        Must be called with _lock held; do not route typed observations back
+        through an overridable legacy loans() reader.
+        """
+        if (not self.connected or self._closed or len(self._accounts) != 1
+                or account is not self._accounts[0]):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        epoch = self._epoch
+        # The legacy loans() bridge is still used during #3197 migration.
+        # A Core Account is mutable independently of this session lock:
+        # freeze its identity/credential before the provider HTML GET.
+        caller_scope = (
+            account.unique_id, account.identity_id,
+            account.provider_id, account.credential_id,
+        )
+        if caller_scope[2:] != (self.provider_id, self.credential_id):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        broker = self.identity_broker
+        owner = (
+            self._core_owner_binding(caller_scope[0])
+            if broker is not None else None
+        )
+        if broker is not None and (
+            owner is None or owner[1] != (caller_scope[1],)
+        ):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        try:
+            activity_html = self.client.activity()
+            snapshot = self._snapshot(activity_html)
+        except (ReaderHTTPError, WebParseError) as exc:
+            self.connected = False
+            self.client.clear()
+            raise ProviderConfigurationError(self._report_failure('loans', exc)) from None
+        if self._closed or epoch != self._epoch:
+            raise ProviderConfigurationError('session_closed')
+        if (not self.connected or len(self._accounts) != 1
+                or account is not self._accounts[0]
+                or (account.unique_id, account.identity_id,
+                    account.provider_id, account.credential_id) != caller_scope
+                or self.identity_broker is not broker
+                or (broker is not None and
+                    self._core_owner_binding(caller_scope[0]) != owner)):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        # Presence of one *actual* validated reader ACSM action in the
+        # same authenticated HTML is an offered retrieval route, not an
+        # acquired file. Parse once for all active loans; do not keep or
+        # export signed URLs. No token GET occurs during this observation.
+        offered_pairs = reader_acs4_offer_pairs(
+            activity_html,
+            tuple((row.loan_id, row.resource_id) for row in snapshot.loans),
+        )
+        if (self._closed or epoch != self._epoch or not self.connected
+                or len(self._accounts) != 1 or account is not self._accounts[0]
+                or (account.unique_id, account.identity_id,
+                    account.provider_id, account.credential_id) != caller_scope
+                or self.identity_broker is not broker
+                or (broker is not None and
+                    self._core_owner_binding(caller_scope[0]) != owner)):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        # A partial/empty page cannot close historical rights; nevertheless
+        # it must not authorize token downloads from stale observations.
+        self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
+        return [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
+                     record_id=row.resource_id, title=row.title or 'Prêt BnF',
+                     author=', '.join(row.authors) or None,
+                     thumbnail_url=row.thumbnail_url,
+                     document_type='Prêt numérique',
+                     source_provider=self.provider_id, source_credential=self.credential_id,
+                     source_account_id=account.unique_id, identity_id=account.identity_id,
+                     state='active', can_return=False, renewable=False,
+                     raw={
+                         'inventory_exhaustive': False,
+                         **({
+                             'reader_acs4_offer_id': _reader_acs4_offer_id(
+                                 account.identity_id, self.credential_id,
+                                 account.unique_id, row.loan_id, row.resource_id,
+                             ),
+                         } if (row.loan_id, row.resource_id) in offered_pairs
+                         else {}),
+                     }) for row in snapshot.loans]
 
     def loan_inventory_snapshot(self, account):
         # Keep the loan GET, the active account and its typed envelope under
@@ -273,7 +282,7 @@ class BnfProviderSession(ProviderSession):
         # authenticated GET must still use the *live* session Account. The
         # historical loans() method remains instance-restricted.
         scope = LoanInventoryScope.for_account(account)
-        rows = self.loans(bound)
+        rows = self._read_live_loans_locked(bound)
         if not self.connected or self._closed:
             raise ProviderConfigurationError('session_closed')
         if (len(self._accounts) != 1 or self._accounts[0] is not bound
