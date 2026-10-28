@@ -1315,11 +1315,11 @@ class Storage:
                 size = max(0, int(row.get("size") or 0))
             except (TypeError, ValueError):
                 size = 0
+            # A legacy claim of a SHA/size is not a validation of its bytes.
+            # Preserve existing canonical content facts, even on same-SHA replay.
             db.execute(
                 "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET size=MAX(artifacts.size,excluded.size),"
-                "media_format=CASE WHEN artifacts.media_format='unknown' THEN excluded.media_format ELSE artifacts.media_format END,"
-                "updated_at=excluded.updated_at",
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO NOTHING",
                 (artifact_id, sha, size, str(row.get("format") or "unknown").lower(), None,
                  cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
             )
@@ -1328,6 +1328,9 @@ class Storage:
         if local_path:
             placement_id = cls._stable_id("placement", str(Path(local_path).expanduser().resolve()))
             # A physical pathname is unique across canonical placements.
+            # Only an untouched, unverified legacy placeholder may be refreshed.
+            # A canonical scan/publication (including missing/invalid history)
+            # has higher authority than this writer and must not be relabelled.
             # Another right/identity cannot silently take it over merely
             # because its legacy Kobo projection names the same local file.
             placement_cursor = db.execute(
@@ -1336,14 +1339,16 @@ class Storage:
                 "ON CONFLICT(path) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,placements.artifact_id),"
                 "provider_id=COALESCE(excluded.provider_id,placements.provider_id),source_item_id=COALESCE(excluded.source_item_id,placements.source_item_id),"
                 "updated_at=excluded.updated_at "
-                "WHERE (placements.identity_id IS NULL OR excluded.identity_id IS NULL "
+                "WHERE placements.state='unverified' AND placements.metadata_json=? "
+                "AND (placements.identity_id IS NULL OR excluded.identity_id IS NULL "
                 "OR placements.identity_id=excluded.identity_id) "
                 "AND (placements.provider_id IS NULL OR excluded.provider_id IS NULL "
                 "OR placements.provider_id=excluded.provider_id) "
                 "AND (placements.source_item_id IS NULL OR excluded.source_item_id IS NULL "
                 "OR placements.source_item_id=excluded.source_item_id)",
                 (placement_id, artifact_id, str(Path(local_path).expanduser().resolve()), row.get("identity_id"), row.get("provider_id"),
-                 row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+                 row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
+                 cls._json_dump({"imported_from": "backup_items"})),
             )
             if placement_cursor.rowcount != 1:
                 # The historical backup projection can contain multiple

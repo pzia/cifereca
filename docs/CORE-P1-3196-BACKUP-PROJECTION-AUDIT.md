@@ -128,3 +128,21 @@ En revanche, les transitions **actives** `acquiring`, `attention_required`,
 des flux Kobo et du traitement ADEPT. Aucun refus générique du passage
 intermédiaire par un état divergent : la migration vers une source d'autorité
 unique demeure nécessaire et distincte.
+
+## Barrière d'écriture legacy sur les faits physiques canoniques (#3196)
+
+Le miroir de `backup_put()` ne modifie plus un Artifact existant depuis une
+simple déclaration SHA/taille/format. Il ne rafraîchit un Placement existant
+que si celui-ci est encore un placeholder `unverified` portant exclusivement
+la métadonnée d'import `backup_items`. Un scan ou une publication canonique,
+y compris un Placement ensuite `missing` ou `invalid`, conserve ses octets,
+son propriétaire, son état et son catalogue face au rejeu legacy. Les
+SourceReference et OriginLink restent inchangés. La tentative historique est
+conservée sans nouveau rattachement à cet Artifact dans le ledger.
+
+Les tests exercent une vraie publication SQLite v14 suivie de rejeux de même
+SHA et de SHA contradictoires, les états present/missing/invalid, un
+placeholder canonique non issu de backup_items et la compatibilité du
+rafraîchissement legacy non vérifié. Aucun réseau ni traitement ADEPT réel.
+Cette barrière ne retire pas encore les writers et lecteurs backup_items :
+#3196 reste ouvert jusqu'à leur migration et à la projection lecture seule.
