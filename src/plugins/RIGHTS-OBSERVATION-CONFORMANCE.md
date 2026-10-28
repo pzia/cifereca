@@ -129,7 +129,7 @@ Core transmet une copie défensive liée à A. L'autorité est exclusivement
 le **broker** (un seul propriétaire attesté du bon
 `provider/credential/account`). Le plugin exige l'égalité des trois
 coordonnées fournisseur du compte vivant, accepte son identité seulement
-si elle est vide ou A, puis fige et recontrôle **tous** ses champs et le
+si elle est non renseignée (vide, `None` ou valeur legacy `default`) ou A, puis fige et recontrôle **tous** ses champs et le
 broker avant de lancer le téléchargement historique exact. Une identité
 vivante B contradictoire est refusée, même si le broker porte A. Une
 mutation A→B du compte vivant pendant `library()` stoppe avant GET
