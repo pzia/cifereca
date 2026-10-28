@@ -175,16 +175,15 @@ def publish_completed_acquisition(
         if (owner != (scope.identity_id, 1)
                 or registered_profile != (directory,)):
             raise ValueError("canonical_connection_or_profile_rebound")
-        # Exact upstream account required when Core has persisted an account
-        # registry for this connection. The primary upstream '' is legal.
+        # An authenticated credential may serve several borrower IDs.
+        # Require one exact registered account, not a credential-only match
+        # or an opportunistic first item. Upstream primary '' is legal.
         account_rows = db.execute(
             "SELECT account_id FROM provider_accounts "
             "WHERE identity_id=? AND provider_id=? AND credential_id=?",
             (scope.identity_id, scope.provider_id, scope.credential_id),
         ).fetchall()
-        if account_rows and (
-            len([a for a in account_rows if a[0] == scope.account_id]) != 1
-        ):
+        if sum(a[0] == scope.account_id for a in account_rows) != 1:
             raise ValueError("canonical_account_not_registered")
         if not _same_file(target, before):
             raise ValueError("canonical_final_file_changed")
