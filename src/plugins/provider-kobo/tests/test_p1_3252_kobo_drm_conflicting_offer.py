@@ -101,7 +101,14 @@ def test_session_preserves_owned_right_but_refuses_untrusted_drm_offer(bad):
     def mismatched(product_id, **opts):
         calls.append("POST")
         payload = descriptor()
-        payload["acquisition"]["candidates"][0]["drm"] = bad
+        candidate = payload["acquisition"]["candidates"][0]
+        candidate["drm"] = bad
+        if bad["raw_type"] == "AdobeDrm":
+            # Otherwise the unsupported HTTP-plain shape alone would deny
+            # the offer and conceal a regression in the DRM contradiction.
+            candidate["kind"] = "acsm"
+            candidate["handling"] = "adobe_adept"
+            candidate["media_format"] = "acsm"
         return payload
     vault.acquisition = mismatched
     try:
