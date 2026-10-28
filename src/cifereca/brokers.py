@@ -61,6 +61,8 @@ def _account_ref(service: Any, account: Any) -> AccountRef:
         label=str(getattr(account, "display_name", "") or getattr(account, "provider_label", "") or provider),
         connected=bool(session is not None and getattr(session, "connected", False)),
         capabilities=tuple(capabilities),
+        credential_id=credential,
+        scope_version=2 if credential else 1,
     )
 
 
@@ -105,9 +107,14 @@ class AcquisitionBrokerImpl:
     def acquire(self, item: Any, *, identity_id: str | None = None, account_id: str | None = None):
         eligible = self.eligible_accounts(item, identity_id=identity_id)
         if account_id:
-            chosen = next((row for row in eligible if row.account_id == account_id), None)
-            if chosen is None:
+            choices = [row for row in eligible if row.account_id == account_id]
+            if not choices:
                 raise ValueError(f"account not eligible: {account_id}")
+            if len(choices) != 1:
+                # Two credentials may legitimately share an upstream ID.
+                # A first-match route would acquire under an arbitrary owner.
+                raise ValueError("ambiguous eligible account: credential selection required")
+            chosen = choices[0]
         elif len(eligible) == 1:
             chosen = eligible[0]
         elif not eligible:
@@ -116,10 +123,19 @@ class AcquisitionBrokerImpl:
             raise ValueError("account selection required")
         # Preserve the source object but bind the selected credential when the
         # model supports mutable dataclass attributes (SearchResult does).
-        internal = next((account for account in self.service.accounts_for_identity(chosen.identity_id)
-                         if _account_id(account) == chosen.account_id and str(getattr(account, "provider_id", "")) == chosen.provider_id), None)
-        if internal is None:
-            raise ValueError(f"account disappeared: {chosen.account_id}")
+        matches = [
+            account for account in self.service.accounts_for_identity(chosen.identity_id)
+            if (_account_id(account), str(getattr(account, "identity_id", "") or ""),
+                str(getattr(account, "provider_id", "") or ""),
+                str(getattr(account, "credential_id", "") or "")) == (
+                    chosen.account_id, chosen.identity_id, chosen.provider_id,
+                    chosen.credential_id,
+                )
+        ]
+        if len(matches) != 1:
+            # Never silently rebind a selected account to another credential.
+            raise ValueError("selected account binding changed or ambiguous")
+        internal = matches[0]
         try:
             setattr(item, "source_credential", str(getattr(internal, "credential_id", "") or ""))
         except Exception:
