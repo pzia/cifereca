@@ -519,9 +519,11 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) 
     original = load_config(config_path)
     target = target_path(target)
     target.mkdir(mode=0o700)  # Exclusive: never reuse/overwrite an existing recipe.
+    reservation = (target / "run.lock").open("a")
+    fcntl.flock(reservation, fcntl.LOCK_EX | fcntl.LOCK_NB)
     marker = {"format": FORMAT, "id": uuid.uuid4().hex, "target": str(target), "state": "preparing"}
-    write_json(target / "recipe.json", marker)
     try:
+        write_json(target / "recipe.json", marker)
         for name in ("home", "config/cifereca", "data/cifereca", "cache", "state", "runtime", "tmp"):
             (target / name).mkdir(parents=True, exist_ok=True, mode=0o700)
         (target / "runtime/machine-id").write_text(marker["id"] + "\n")
@@ -598,6 +600,7 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) 
                     "excluded_sessions": copier.excluded, "files": inventory(target)}
         write_json(target / "manifest.json", manifest)
         verify(target, initial=True)
+        reservation.close()  # The runtime supervisor now owns the same lock.
         if not no_start:
             start(target)
         return target
@@ -606,6 +609,8 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) 
             marker["state"] = "failed"
             write_json(target / "recipe.json", marker)
         raise
+    finally:
+        reservation.close()
 
 
 def process_identity(pid: int) -> str | None:

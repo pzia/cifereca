@@ -238,6 +238,19 @@ class RecipeFixture(unittest.TestCase):
         recette.destroy(self.target)
         self.assertFalse(self.target.exists())
 
+    def test_destroy_cannot_race_with_active_preparation(self):
+        self.target.rmdir()
+        def snapshot(target, ref):
+            with self.assertRaisesRegex(recette.Rejected, "Supervisor still running"):
+                recette.destroy(target)
+            self.assertTrue(target.exists())
+            return self.fake_snapshot(target, ref)
+        with patch.object(recette, "export_snapshot", side_effect=snapshot), patch.object(recette, "install", side_effect=self.fake_install):
+            recette.create(self.config, self.target, "main", no_start=True)
+        self.assertTrue(recette.verify(self.target)["ok"])
+        recette.destroy(self.target)
+        self.assertFalse(self.target.exists())
+
     def test_sandbox_command_has_no_host_bus_proxy_home_or_network(self):
         with patch("shutil.which", return_value="/usr/bin/bwrap"):
             command = recette.sandbox(self.target, ["/usr/bin/true"])

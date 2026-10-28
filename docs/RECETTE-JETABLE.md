@@ -34,6 +34,10 @@ privée 0700 appartenant à l'utilisateur. Une cible préexistante, un alias ou
 une cible extérieure sont refusés, même avec `--target`. Ni écrasement ni
 fusion avec une installation existante. `destroy` vérifie la racine, le
 marqueur, l'identité du processus et le verrou avant suppression.
+Une préparation encore active garde ce verrou : `destroy` la refuse plutôt
+que de supprimer un dossier qu'un copieur pourrait recréer. Interrompre d'abord
+la commande de préparation, puis lancer `destroy`. Une préparation interrompue
+ou en échec reste supprimable ; une recette lancée est arrêtée automatiquement.
 
 ## Contenu et preuve d'intégrité
 
