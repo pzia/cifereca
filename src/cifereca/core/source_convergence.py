@@ -176,7 +176,11 @@ class ConvergenceDecision:
         Requires a separate executor admission, scope/consent/rights check and
         a new local preflight; this flag NEVER grants an automatic download.
         """
-        return self.reason == "scan_incomplete_independent_admission_required"
+        return self.reason in {
+            "scan_incomplete_independent_admission_required",
+            "local_evidence_independent_admission_required",
+            "candidate_only_independent_admission_required",
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,21 +305,46 @@ def plan_convergence(
                 decision("present_declared", "fresh_user_declaration_not_provider_proof",
                          tuple(current))
                 continue
-            if matching or candidates_by_source.get(key) or active_declarations:
-                decision("needs_reconciliation", "local_evidence_unverified")
+            # An old receipt/placement or stale user declaration is not proof
+            # of satisfaction. Preserve the diagnostic, but never impose a
+            # perpetual manual reconciliation veto on an authorized purchase.
+            permitted_offer = row.delivery == "available" and key in consent_references
+            if matching or active_declarations:
+                decision(
+                    "needs_reconciliation",
+                    "local_evidence_independent_admission_required"
+                    if permitted_offer else "local_evidence_unverified",
+                )
                 continue
             scan = scan_by_identity.get(key.scope.identity_id)
             if scan is None or not scan.complete:
-                # No verified absence can be asserted. Yet an explicitly
-                # consented offer may be independently admitted later after
-                # fresh, fail-closed local checks; do not veto it forever.
-                if row.delivery == "available" and key in consent_references:
-                    decision("pending", "scan_incomplete_independent_admission_required")
+                # An incomplete scan never demonstrates physical absence.
+                # A bibliographic candidate remains only a descriptive hint,
+                # not a second ownership or acquisition authorization.
+                if permitted_offer:
+                    decision(
+                        "pending",
+                        "candidate_only_independent_admission_required"
+                        if candidates_by_source.get(key)
+                        else "scan_incomplete_independent_admission_required",
+                    )
+                elif candidates_by_source.get(key):
+                    decision("needs_reconciliation", "bibliographic_candidate_unattested")
                 else:
                     decision("pending", "local_scan_incomplete")
                 continue
-            if row.delivery == "available" and key in consent_references:
-                decision("missing_to_download", "no_local_proof_after_complete_scan")
+            if permitted_offer:
+                # "Missing" here means no attested satisfaction for this right,
+                # NOT no similarly titled file. Executor must revalidate and
+                # may acquire instead of requiring a manual title-based link.
+                decision(
+                    "missing_to_download",
+                    "unattested_candidate_no_satisfaction"
+                    if candidates_by_source.get(key)
+                    else "no_local_proof_after_complete_scan",
+                )
+            elif candidates_by_source.get(key):
+                decision("needs_reconciliation", "bibliographic_candidate_unattested")
             else:
                 decision("pending", "delivery_or_consent_unavailable")
     return ConvergencePlan(tuple(decisions))
