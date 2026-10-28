@@ -439,3 +439,33 @@ def test_paris_branch_failure_preserves_exact_rights_observation_status(failed_b
         ]
     finally:
         session.close()
+
+
+def test_paris_malformed_dilicom_right_identifiers_do_not_drop_valid_siblings():
+    """LoanInventory v1 accepts IDs beyond the tighter rights/1 envelope.
+
+    Only invalid provider evidence is skipped. No card can turn a public
+    notice or a failed conversion into rights for a different edition.
+    """
+    session, account, client = fixture(digital=(
+        upstream("good-loan-1", "good-edition-1"),
+        upstream("bad-right" + "\n" + "id", "edition-newline"),
+        upstream("bad-right" + "\r" + "id", "edition-carriage"),
+        upstream("x" * 257, "edition-long-right"),
+        upstream("loan-long-edition", "y" * 257),
+        upstream("loan-newline-edition", "edition" + "\n" + "suffix"),
+        upstream("loan-null-edition", "edition" + "\x00" + "suffix"),
+        upstream("good-loan-2", "good-edition-2"),
+    ))
+    try:
+        report = session.rights_observation_snapshot(account)
+        assert [(right.right_id, right.edition_id) for right in report.rights] == [
+            ("good-loan-1", "good-edition-1"),
+            ("good-loan-2", "good-edition-2"),
+        ]
+        assert report.status == report.coverage == "partial"
+        assert report.pagination_complete is False
+        assert not report.authorizes_negative_reconciliation
+        assert len(client.calls) == 2
+    finally:
+        session.close()

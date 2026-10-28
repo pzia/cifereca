@@ -669,16 +669,24 @@ class ParisProviderSession(ProviderSession):
                 edition_id = raw.get("RecordId")
                 # bool is an int in Python, but not a stable upstream ID.
                 if (type(right_id) not in (str, int)
-                        or type(edition_id) not in (str, int)
-                        or not str(right_id) or not str(edition_id)
-                        or loan.id != str(right_id)
-                        or loan.record_id != str(edition_id)):
+                        or type(edition_id) not in (str, int)):
+                    continue
+                right_text, edition_text = str(right_id), str(edition_id)
+                # LoanInventory v1 permits longer IDs and line breaks in
+                # legacy rows, but rights.observation/1 does not. One invalid
+                # upstream card must not abort all other positive loan rights.
+                if (not 1 <= len(right_text) <= 256
+                        or not 1 <= len(edition_text) <= 256
+                        or any(c in right_text or c in edition_text
+                               for c in ("\x00", "\r", "\n"))
+                        or loan.id != right_text
+                        or loan.record_id != edition_text):
                     continue
                 # The same provider loan ID on two upstream cards is an
                 # ambiguous right, even when both cards cite one edition.
                 # Exclude *both* occurrences without invalidating other
                 # attested DILICOM rights in this partial inventory.
-                right_key = str(right_id)
+                right_key = right_text
                 if right_key in ambiguous_right_ids:
                     continue
                 if right_key in rights_by_id:
@@ -686,7 +694,7 @@ class ParisProviderSession(ProviderSession):
                     ambiguous_right_ids.add(right_key)
                     continue
                 rights_by_id[right_key] = ProviderRightObservation(
-                    edition_id=str(edition_id), right_id=right_key,
+                    edition_id=edition_text, right_id=right_key,
                     kind="loan", state="unknown",
                     evidence_kind="provider_response",
                     evidence_ref="paris.dilicom.listloans",
