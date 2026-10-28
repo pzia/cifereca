@@ -641,7 +641,8 @@ class ParisProviderSession(ProviderSession):
             inventory = self._snapshot_for_account(account)
             scope = inventory.scope
             observed = datetime.now(timezone.utc).isoformat()
-            rights = []
+            rights_by_id: dict[str, ProviderRightObservation] = {}
+            ambiguous_right_ids: set[str] = set()
             for loan in inventory.loans:
                 if loan.provider != "DILICOM" or loan.medium != "digital":
                     continue
@@ -657,13 +658,24 @@ class ParisProviderSession(ProviderSession):
                         or loan.id != str(right_id)
                         or loan.record_id != str(edition_id)):
                     continue
-                rights.append(ProviderRightObservation(
-                    edition_id=str(edition_id), right_id=str(right_id),
+                # The same provider loan ID on two upstream cards is an
+                # ambiguous right, even when both cards cite one edition.
+                # Exclude *both* occurrences without invalidating other
+                # attested DILICOM rights in this partial inventory.
+                right_key = str(right_id)
+                if right_key in ambiguous_right_ids:
+                    continue
+                if right_key in rights_by_id:
+                    rights_by_id.pop(right_key)
+                    ambiguous_right_ids.add(right_key)
+                    continue
+                rights_by_id[right_key] = ProviderRightObservation(
+                    edition_id=str(edition_id), right_id=right_key,
                     kind="loan", state="unknown",
                     evidence_kind="provider_response",
                     evidence_ref="paris.dilicom.listloans",
                     observed_at=observed, delivery="unknown",
-                ))
+                )
             # Core may mutate the mutable borrower independently from the
             # session lock. Revalidate its exact scope before publication.
             current = bound_accounts()
@@ -681,7 +693,7 @@ class ParisProviderSession(ProviderSession):
                     scope.identity_id, scope.provider_id,
                     scope.credential_id, scope.account_id,
                 ),
-                rights=tuple(rights),
+                rights=tuple(rights_by_id.values()),
                 status="partial", coverage="partial",
                 pagination_complete=False, branch="dilicom",
                 observed_at=observed, snapshot_ref="paris.dilicom.listloans",
