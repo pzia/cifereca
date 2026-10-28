@@ -220,3 +220,39 @@ def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
         assert len(list(tmp_path.iterdir())) == 1
     finally:
         session.close()
+
+
+def test_selected_acsm_rejects_valid_epub_without_legacy_publication(
+    tmp_path, monkeypatch,
+):
+    session, account, broker, reads, right = setup()
+    seen = []
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: (
+                seen.append(str(request.url))
+                or httpx.Response(
+                    200, content=fake_epub_bytes(),
+                    headers={"content-type": "application/epub+zip"},
+                )
+            ),
+        ),
+        trust_env=False, follow_redirects=False,
+    )
+    monkeypatch.setattr(provider, "publish", lambda *a, **kw: pytest.fail(
+        "ACSM offer cannot publish a fallback EPUB",
+    ))
+    monkeypatch.setattr(
+        provider, "publish_artifact_file",
+        lambda *a, **kw: pytest.fail("ACSM offer cannot publish fallback"),
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match="format_changed"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert len(seen) == 1
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
