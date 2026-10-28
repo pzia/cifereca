@@ -155,9 +155,11 @@ class LocalCatalog:
         except ValueError:
             return None, None
         parts = rel.parts
-        # Target layout is root/<identity>/<provider>/... . Do not invent an
-        # identity for legacy flat files; 0.8.1 will make identities explicit.
-        if len(parts) >= 3:
+        # The first directory may be a registered identity even when a book
+        # lives directly under it (root/<identity>/book.pdf). Neither that
+        # directory nor its children attest any acquisition provider.
+        # Legacy flat files still have no inferred identity.
+        if len(parts) >= 2:
             directory_name = parts[0]
             identity_id = None
             try:
@@ -199,6 +201,11 @@ class LocalCatalog:
         existing = self.storage.placement_for_path(Path(path_text))
         placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
         identity_hint, provider_hint = self._path_hints(root)
+        if identity_id is not None and identity_hint and identity_id != identity_hint:
+            # An explicit caller cannot register A's physical bundle as B's
+            # placement, even when no SQLite placement exists yet.
+            return {"status": "invalid", "path": path_text,
+                    "reason": "placement_scope_conflict", "artifact_kind": "bundle"}
         identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
         if existing and any((
@@ -332,6 +339,12 @@ class LocalCatalog:
         if not path.is_relative_to(root_resolved) or linked_child():
             return {"status": "invalid", "path": str(submitted),
                     "reason": "catalog_index_path_not_local"}
+        path_owner, _ = self._path_hints(path)
+        if identity_id is not None and path_owner and path_owner != identity_id:
+            # This is a new path, not necessarily an existing SQLite placement.
+            # Reject the foreign owner *before* reading/hashing the file.
+            return {"status": "invalid", "path": str(path),
+                    "reason": "placement_scope_conflict"}
         if path.is_dir():
             return self._index_bundle(
                 path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
