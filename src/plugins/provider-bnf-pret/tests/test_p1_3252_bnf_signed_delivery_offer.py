@@ -9,7 +9,7 @@ import json
 import pytest
 
 from cifereca_bnf_pret_signed_action import reader_acs4_offer_pairs
-from tests.test_p1_3252_rights_observation_snapshot import fixture, activity
+from test_p1_3252_rights_observation_snapshot import fixture, activity
 
 
 def signed_action(loan, *, nonce="NONCE", token="SECRET_TOKEN"):
