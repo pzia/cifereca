@@ -389,6 +389,7 @@ class KoboVaultClient:
         page: int = 0,
         limit: int = 50,
         cursor: str | None = None,
+        private_guard: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """Compatibility facade returning a merged ``items`` array.
 
@@ -415,14 +416,23 @@ class KoboVaultClient:
                 self.search_catalog(query, field=field, limit=limit, page=page)
             )
         if scope == "library":
-            return self._quarantine_personal_search(
-                self.search_library(query, field=field, limit=limit, cursor=cursor)
-            )
+            if private_guard is not None:
+                private_guard()
+            library = self.search_library(query, field=field, limit=limit, cursor=cursor)
+            if private_guard is not None:
+                private_guard()
+            return self._quarantine_personal_search(library)
 
         catalog = self._public_catalog_payload(
             self.search_catalog(query, field=field, limit=limit, page=page)
         )
+        # Public discovery might have taken seconds; Core can revoke or
+        # rebind the owner before the following *private* library GET.
+        if private_guard is not None:
+            private_guard()
         library = self.search_library(query, field=field, limit=limit, cursor=cursor)
+        if private_guard is not None:
+            private_guard()
         merged: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for source, payload in (("catalog", catalog), ("library", library)):
