@@ -14,7 +14,7 @@ from cifereca.plugin_api.provider_rights_observation import (
 )
 
 DecisionState = Literal[
-    "present_attested", "needs_reconciliation", "missing_to_download",
+    "present_attested", "present_declared", "needs_reconciliation", "missing_to_download",
     "pending", "inactive",
 ]
 OriginKind = Literal["provider", "manual", "transfer", "cifereca", "adept", "derived"]
@@ -128,6 +128,31 @@ class LocalCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class DeclaredAssociationEvidence:
+    """Core-only user declaration, never an origin/right/receipt.
+
+    'declared_current' requires a fresh file check by Core. The verification
+    reference is distinct from the user's recorded association identifier.
+    Revoked links are history only; stale links require reconciliation.
+    """
+    source: SourceKey
+    relation_id: str
+    placement_id: str
+    status: Literal["declared_current", "needs_review", "revoked"]
+    verification_ref: str = ""
+
+    def __post_init__(self) -> None:
+        if (type(self.source) is not SourceKey
+                or not _id(self.relation_id) or not _id(self.placement_id)
+                or type(self.status) is not str
+                or self.status not in ("declared_current", "needs_review", "revoked")
+                or not _id(self.verification_ref, empty=True)
+                or (self.status == "declared_current" and not self.verification_ref)
+                or (self.status != "declared_current" and self.verification_ref)):
+            raise ValueError("invalid_declared_association_evidence")
+
+
+@dataclass(frozen=True, slots=True)
 class ConvergenceDecision:
     source: SourceKey
     state: DecisionState
@@ -159,6 +184,7 @@ def plan_convergence(
     origins: tuple[OriginEvidence, ...] = (),
     scans: tuple[ProfileScan, ...] = (),
     candidates: tuple[LocalCandidate, ...] = (),
+    declarations: tuple[DeclaredAssociationEvidence, ...] = (),
     consent_references: frozenset[SourceKey] = frozenset(),
 ) -> ConvergencePlan:
     """Plan positives only. No filesystem/network/store access or write permit.
@@ -177,6 +203,8 @@ def plan_convergence(
             or any(type(x) is not ProfileScan for x in scans)
             or type(candidates) is not tuple or len(candidates) > 100_000
             or any(type(x) is not LocalCandidate for x in candidates)
+            or type(declarations) is not tuple or len(declarations) > 100_000
+            or any(type(x) is not DeclaredAssociationEvidence for x in declarations)
             or type(consent_references) is not frozenset
             or any(type(x) is not SourceKey for x in consent_references)):
         raise ValueError("invalid_convergence_input")
@@ -208,6 +236,15 @@ def plan_convergence(
     for candidate in candidates:
         candidates_by_source.setdefault(candidate.source, set()).add(candidate.placement_id)
 
+    declared_by_source: dict[SourceKey, list[DeclaredAssociationEvidence]] = {}
+    relation_ids: dict[str, DeclaredAssociationEvidence] = {}
+    for relation in declarations:
+        previous = relation_ids.setdefault(relation.relation_id, relation)
+        if previous != relation:
+            raise ValueError("conflicting_declared_association")
+        if relation.status != "revoked":
+            declared_by_source.setdefault(relation.source, []).append(relation)
+
     decisions = []
     seen: set[SourceKey] = set()
     for snapshot in snapshots:
@@ -236,7 +273,18 @@ def plan_convergence(
             if verified:
                 decision("present_attested", "exact_origin_verified_in_profile", tuple(verified))
                 continue
-            if matching or candidates_by_source.get(key):
+            active_declarations = declared_by_source.get(key, ())
+            current = sorted({
+                relation.placement_id for relation in active_declarations
+                if relation.status == "declared_current"
+            })
+            stale = any(relation.status != "declared_current"
+                        for relation in active_declarations)
+            if current and not stale and len(current) == 1:
+                decision("present_declared", "fresh_user_declaration_not_provider_proof",
+                         tuple(current))
+                continue
+            if matching or candidates_by_source.get(key) or active_declarations:
                 decision("needs_reconciliation", "local_evidence_unverified")
                 continue
             scan = scan_by_identity.get(key.scope.identity_id)
@@ -252,6 +300,6 @@ def plan_convergence(
 
 __all__ = [
     "SourceKey", "PlacementEvidence", "OriginEvidence", "ProfileScan",
-    "LocalCandidate", "ConvergenceDecision", "ConvergencePlan",
+    "LocalCandidate", "DeclaredAssociationEvidence", "ConvergenceDecision", "ConvergencePlan",
     "plan_convergence",
 ]
