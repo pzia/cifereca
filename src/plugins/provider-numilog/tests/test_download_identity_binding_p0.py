@@ -130,3 +130,66 @@ def test_rebinding_inside_broker_keeps_original_identity_and_does_not_claim_succ
         _assert_clean(tmp_path)
     finally:
         session.client.close()
+
+
+def test_same_owner_new_broker_during_owned_inventory_refuses_signed_delivery(tmp_path):
+    """A->A broker replacement is not the original owner attestation."""
+    from tests.test_numilog_signed_acsm_transport_p0 import IdentityBroker
+
+    session, _diag, acquisition, requested = _session(
+        tmp_path, _page(_card(12, 9001, SIGNED)),
+    )
+    try:
+        item = session.library()[0]
+        original = session._rows
+
+        def replace_after_fresh_library(**kwargs):
+            rows = original(**kwargs)
+            newer = IdentityBroker(("fictional-reader",))
+            newer.account_id = "numilog:" + session.scope
+            session.identity_broker = newer
+            return rows
+
+        session._rows = replace_after_fresh_library
+        with pytest.raises(ProviderCapabilityError, match="rattachement du compte modifié"):
+            session.download_direct(item, tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert acquisition.calls == []
+        _assert_clean(tmp_path)
+    finally:
+        session.client.close()
+
+
+def test_same_owner_new_broker_during_direct_epub_body_never_returns_artifact(tmp_path):
+    """The direct EPUB path must not accept the text of owner A from broker B."""
+    from tests.test_numilog_signed_acsm_transport_p0 import IdentityBroker
+
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml",
+                         '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>')
+        archive.writestr("content.opf", '<package><metadata/><manifest/><spine/></package>')
+    session_holder = []
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        replacement = IdentityBroker(("fictional-reader",))
+        replacement.account_id = "numilog:" + session_holder[0].scope
+        session_holder[0].identity_broker = replacement
+        return httpx.Response(200, headers={"content-type": "application/epub+zip"},
+                              content=data.getvalue())
+
+    session, _diag, acquisition = setup(tmp_path, handler)
+    session_holder.append(session)
+    destination = tmp_path / "new-file.epub"
+    try:
+        with pytest.raises(ProviderCapabilityError, match="rattachement du compte modifié"):
+            session._download(READ_BOOK, destination)
+        assert requests == [READ_BOOK]
+        assert not destination.exists()
+        assert not acquisition.calls
+        _assert_clean(tmp_path)
+    finally:
+        session.client.close()
