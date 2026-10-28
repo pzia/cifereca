@@ -144,7 +144,7 @@ class CoreCompatibility(unittest.TestCase):
         self.core=CiferecaCore.open(config_path=self.path/'config.json',database_path=self.path/'db.sqlite')
         self.iid=self.core.library.current_identity.identity_id
     def tearDown(self): self.core.close();self.tmp.cleanup()
-    def test_schema9(self): self.assertEqual(self.core.storage.schema_version(),13)
+    def test_schema9(self): self.assertEqual(self.core.storage.schema_version(),14)
     def test_builtin_plugins_activate_headless(self):
         self.assertEqual({s.state for s in self.core.plugins.statuses()},{'ready'})
         self.assertEqual(len(self.core.plugins.page_contributions()),12)
