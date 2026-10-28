@@ -136,10 +136,14 @@ class AcquisitionBrokerImpl:
             # Never silently rebind a selected account to another credential.
             raise ValueError("selected account binding changed or ambiguous")
         internal = matches[0]
-        try:
-            setattr(item, "source_credential", str(getattr(internal, "credential_id", "") or ""))
-        except Exception:
-            pass
+        exact_credential = str(getattr(internal, "credential_id", "") or "")
+        if str(getattr(item, "source_credential", "") or "") != exact_credential:
+            try:
+                setattr(item, "source_credential", exact_credential)
+            except (AttributeError, TypeError) as exc:
+                raise ValueError("item credential binding unavailable") from exc
+        if str(getattr(item, "source_credential", "") or "") != exact_credential:
+            raise ValueError("item credential binding unavailable")
         return self.service.acquire_direct_item(item)
 
     def import_acsm(self, path: Any, **options: Any):
