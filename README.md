@@ -4,7 +4,7 @@
 
 Une **synchronisation automatique unique** observe achats/prêts exacts (A, SourceReference, identité/compte/branche), vérifie une copie locale par l'origine fournisseur attestée et son SHA final/Placement **dans le profil** (B), puis **acquiert les absents non satisfaits** dans les limites de droits, offres et consentements autorisés. Un titre/ISBN similaire ne suffit pas à rapprocher ; un scan incomplet n'est ni une absence prouvée ni un veto permanent. Après ACSM/ADEPT éventuel, publication transactionnelle Artifact global SHA, Placement propre au profil et OriginLink contextuels. Les notices bibliographiques (C) demeurent descriptives. Le rapprochement manuel #2797 est un rattrapage **exceptionnel**, pas une seconde boucle obligatoire.
 
-**État réel (28/10)** : les observations en lecture seule des fournisseurs Kobo/Numilog/Paris/BnF sont disponibles ; le moteur transactionnel convergent **n'est pas encore livré**. Les PR #3523 (plan pur) et #3528 (lecture scopée) sont des tranches ouvertes, non une publication d'OriginLink SQLite. La migration de backup_items relève de #3196 ; les flux historiques restent actifs et protégés jusqu'à équivalence vérifiée.
+**État réel (28/10)** : les observations en lecture seule des fournisseurs Kobo/Numilog/Paris/BnF sont disponibles ; le moteur transactionnel convergent **n'est pas encore livré**. La PR #3528 (lecture Core scopée) est **fusionnée** ; la PR #3523 (plan pur) reste **ouverte**. Ni l'une ni l'autre n'est une publication d'OriginLink SQLite. La migration de backup_items relève de #3196 ; les flux historiques restent actifs et protégés jusqu'à équivalence vérifiée.
 
 Repères du dépôt :
 - Core : src/cifereca/ ; API des plugins : src/cifereca/plugin_api/ ; CoreUI : src/cifereca/gui/ et builtin_ui/.
