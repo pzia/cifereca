@@ -588,6 +588,27 @@ class ParisProviderSession(ProviderSession):
         response IDs and RecordId may be promoted to this versioned envelope.
         """
         with self._loan_inventory_lock:
+            # A Core account copy is permitted, but only one *live* account
+            # instance with these exact values may authorize the observation.
+            # Pin its instance beyond the legacy inventory reader's last
+            # check: a caller can replace _accounts during rights projection.
+            scope_key = (
+                account.unique_id, account.identity_id,
+                account.provider_id, account.credential_id,
+            ) if type(account) is Account else None
+
+            def bound_accounts():
+                return [
+                    current for current in self._accounts
+                    if type(current) is Account
+                    and (current.unique_id, current.identity_id,
+                         current.provider_id, current.credential_id) == scope_key
+                ] if scope_key is not None else []
+
+            original = bound_accounts()
+            bound = original[0] if len(original) == 1 else None
+            if bound is None:
+                raise ProviderConfigurationError("account_scope_mismatch")
             inventory = self._snapshot_for_account(account)
             scope = inventory.scope
             observed = datetime.now(timezone.utc).isoformat()
@@ -616,8 +637,12 @@ class ParisProviderSession(ProviderSession):
                 ))
             # Core may mutate the mutable borrower independently from the
             # session lock. Revalidate its exact scope before publication.
+            current = bound_accounts()
             if (not self.connected
-                    or LoanInventoryScope.for_account(account) != scope):
+                    or (self.provider_id, self.credential_id)
+                    != (scope.provider_id, scope.credential_id)
+                    or LoanInventoryScope.for_account(account) != scope
+                    or len(current) != 1 or current[0] is not bound):
                 raise ProviderConfigurationError("account_scope_mismatch")
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
