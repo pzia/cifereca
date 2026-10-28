@@ -144,7 +144,7 @@ def test_typed_branch_failure_survives_legacy_side_channel_cleared():
         session.last_loan_errors.clear()
         return rows
 
-    session.loans = clear_v1_after_read
+    session._read_loans_for_account = clear_v1_after_read
     try:
         snapshot = session.loan_inventory_snapshot(a)
         assert session.last_loan_errors == []
@@ -171,7 +171,7 @@ def test_typed_success_ignores_stale_legacy_failure_from_another_read():
         session.last_loan_errors = [{"upstream": "DILICOM", "code": "stale"}]
         return rows
 
-    session.loans = inject_v1_error_after_read
+    session._read_loans_for_account = inject_v1_error_after_read
     try:
         snapshot = session.loan_inventory_snapshot(b)
         assert snapshot.status == "success"
