@@ -52,7 +52,7 @@ def plan(*snapshots, placements=(), origins=(), scans=(), candidates=(), consent
     return plan_convergence(
         tuple(snapshots), placements=tuple(placements), origins=tuple(origins),
         scans=tuple(scans), candidates=tuple(candidates),
-        consent_scopes=frozenset(consent),
+        consent_references=frozenset(consent),
     )
 
 
@@ -72,7 +72,7 @@ def test_two_providers_share_sha_but_require_distinct_exact_origins():
     no_b_origin = plan(a, b, placements=files, origins=(origin(ak),),
                        scans=(scan("A"), scan("B")),
                        candidates=(LocalCandidate(bk, "file-B"),),
-                       consent=(b.scope,))
+                       consent=(bk,))
     assert no_b_origin.decisions[1].state == "needs_reconciliation"
 
 
@@ -81,7 +81,7 @@ def test_same_edition_different_sha_does_not_link_by_metadata():
     result = plan(snap, placements=(placement("A", "unrelated", SHA_B),),
                   origins=(origin(key, SHA_A),), scans=(scan("A"),),
                   candidates=(LocalCandidate(key, "unrelated"),),
-                  consent=(snap.scope,))
+                  consent=(key,))
     assert result.decisions[0].state == "needs_reconciliation"
     assert result.decisions[0].placement_ids == ()
 
@@ -99,7 +99,7 @@ def test_scope_is_exact_credential_account_identity_edition_and_right():
     for other in changes:
         result = plan(snap, placements=(placement("A", "file-A"),),
                       origins=(origin(other),), scans=(scan("A"),),
-                      consent=(snap.scope,))
+                      consent=(key,))
         assert result.decisions[0].state == "missing_to_download"
         assert result.decisions[0].placement_ids == ()
 
@@ -143,7 +143,7 @@ def test_transfer_A_to_B_to_C_not_automatically_recreated():
     assert len(origins) == 8
     result = plan(a, b, placements=(placement("A", "A-file"),),
                   origins=origins, scans=(scan("A"), scan("B")),
-                  consent=(b.scope,))
+                  consent=(bk,))
     assert [d.state for d in result.decisions] == [
         "present_attested", "missing_to_download",
     ]
@@ -154,20 +154,20 @@ def test_transfer_A_to_B_to_C_not_automatically_recreated():
 def test_missing_file_after_complete_scan_proposes_only_if_deliverable_and_consented():
     snap, key = source()
     assert plan(snap, origins=(origin(key),), scans=(scan("A"),),
-                consent=(snap.scope,)).decisions[0].state == "missing_to_download"
+                consent=(key,)).decisions[0].state == "missing_to_download"
     assert plan(snap, origins=(origin(key),), scans=(scan("A"),)).decisions[0].state == "pending"
-    no_delivery, _ = source(delivery="unknown")
+    no_delivery, no_delivery_key = source(delivery="unknown")
     assert plan(no_delivery, scans=(scan("A"),),
-                consent=(no_delivery.scope,)).decisions[0].state == "pending"
+                consent=(no_delivery_key,)).decisions[0].state == "pending"
     assert plan(snap, scans=(scan("A", False),),
-                consent=(snap.scope,)).decisions[0].reason == "local_scan_incomplete"
+                consent=(key,)).decisions[0].reason == "local_scan_incomplete"
 
 
 def test_stale_file_does_not_count_as_presence_or_initiate_download():
     snap, key = source()
     result = plan(snap, placements=(placement("A", "stale", verified=False),),
                   origins=(origin(key),), scans=(scan("A"),),
-                  consent=(snap.scope,))
+                  consent=(key,))
     assert result.decisions[0].state == "needs_reconciliation"
 
 
@@ -178,10 +178,10 @@ def test_stale_file_does_not_count_as_presence_or_initiate_download():
     ("active", "legacy_unverified", "pending"),
 ])
 def test_unconfirmed_or_inactive_right_cannot_request_download(state, evidence, expected):
-    snap, _ = source(state=state, evidence_kind=evidence,
+    snap, key = source(state=state, evidence_kind=evidence,
                      delivery="available" if evidence != "legacy_unverified" and state == "active" else "unknown")
     assert plan(snap, scans=(scan("A"),),
-                consent=(snap.scope,)).decisions[0].state == expected
+                consent=(key,)).decisions[0].state == expected
 
 
 def test_loan_is_distinct_from_purchase_even_for_same_edition_and_bytes():
@@ -189,7 +189,7 @@ def test_loan_is_distinct_from_purchase_even_for_same_edition_and_bytes():
     loan, lk = source(right="loan-1", kind="loan")
     result = plan(purchase, loan, placements=(placement("A", "one-copy"),),
                   origins=(origin(pk),), scans=(scan("A"),),
-                  consent=(purchase.scope,))
+                  consent=(pk,))
     assert result.decisions[0].state == "present_attested"
     assert result.decisions[1].state == "pending"
 
