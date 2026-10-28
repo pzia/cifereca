@@ -137,7 +137,10 @@ def test_provider_download_trace_omits_loan_account_and_filename(
     account = SimpleNamespace(is_primary=False, unique_id="user-SUPERPRIVATE")
     session = SimpleNamespace(client=FakeClient())
     with caplog.at_level(logging.INFO, logger="cifereca"):
-        path, returned_url = cifereca_paris.ParisProviderSession.download_digital(
+        # Isolate the existing transport logging contract with a fake
+        # transport. The public download_digital entrypoint now enforces the
+        # real authenticated account/loan/Core-owner binding separately.
+        path, returned_url = cifereca_paris.ParisProviderSession._download_digital_scoped_impl(
             session, loan, account, tmp_path,
         )
     assert path.exists()
