@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from urllib.parse import quote
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
@@ -513,7 +513,7 @@ class KoboVaultClient:
             params["cursor"] = checked_cursor
         return self._json("GET", "/library/manifest", params=params)
 
-    def library_manifest(self) -> list[dict[str, Any]]:
+    def library_manifest(self, *, page_guard: Callable[[], None] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         self.last_manifest_rejections = []
         # Rejected conflicting aliases can precede/follow an apparently valid
@@ -527,7 +527,13 @@ class KoboVaultClient:
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
+            # A Core rebind between cursor pages revokes authority for the
+            # *next* private request, not merely the returned final snapshot.
+            if page_guard is not None:
+                page_guard()
             payload = self.library_manifest_page(cursor=cursor)
+            if page_guard is not None:
+                page_guard()
             items = payload.get("items")
             if isinstance(items, list):
                 for raw in items:
