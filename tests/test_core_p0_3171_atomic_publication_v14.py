@@ -265,3 +265,31 @@ def test_same_path_with_new_unverified_bytes_does_not_mutate_existing_right(stor
         publish(store, tmp_path / "EBooks", path, key, snap)
     assert rows(store) == old_counts
     assert store.placement_for_path(path)["artifact_id"] == first.artifact_id
+
+
+def test_epub_and_kepub_same_final_sha_do_not_split_artifact(store, tmp_path):
+    import zipfile
+
+    first, one = new_source(profile="A", provider="seller-A", credential="card-A")
+    second, two = new_source(profile="B", provider="seller-B", credential="card-B")
+    register(store, "A", "seller-A", "card-A")
+    register(store, "B", "seller-B", "card-B")
+    root = tmp_path / "EBooks"
+    a = root / "A" / "book.epub"
+    b = root / "B" / "book.kepub.epub"
+    a.parent.mkdir(parents=True)
+    b.parent.mkdir(parents=True)
+    with zipfile.ZipFile(a, "w") as archive:
+        archive.writestr("META-INF/container.xml", "<container/>")
+    b.write_bytes(a.read_bytes())
+    same_sha = hashlib.sha256(a.read_bytes()).hexdigest()
+    def save(path, source, snapshot):
+        return publish_completed_acquisition(
+            store, library_root=root, path=path, source=source,
+            snapshot=snapshot, final_sha256=same_sha,
+            delivery_receipt_ref="synthetic-completed-delivery",
+        )
+    x, y = save(a, first, one), save(b, second, two)
+    assert x.artifact_id == y.artifact_id
+    assert x.placement_id != y.placement_id
+    assert rows(store) == (1, 2, 2, 2)
