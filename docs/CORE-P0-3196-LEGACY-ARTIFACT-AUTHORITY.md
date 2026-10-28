@@ -1,15 +1,15 @@
-# Core P0 #3196 — SHA legacy ≠ Artifact vérifié
+# Core P0 #3196 — Artifact legacy réparable uniquement après preuve des octets
 
-`Storage._mirror_backup_row()` maintient l'historique Kobo 0.7 (`backup_items`, `entitlements`, `acquisition_ledger`) pendant la transition. La présence d'un champ `sha256` ou `size` dans cet historique n'atteste **pas** les octets finaux. Le miroir ne pré-insère désormais **aucun** enregistrement `artifacts` à partir de cette seule déclaration.
+Le miroir Kobo 0.7 `Storage._mirror_backup_row()` garde temporairement ses placeholders historiques dans `artifacts`, `placements` et `acquisition_ledger`. Cette compatibilité demeure nécessaire au parcours explicite, hors ligne et réversible de rapprochement Kobo (`#1345`), qui compare des snapshots SQL sans écriture lors du preview. **Un placeholder `{"imported_from":"backup_items"}` n'atteste pas les octets**, le droit ni une origine provider.
 
-## Invariant
+## Contrat de promotion
 
-Les anciennes références `sha256:<digest>` peuvent subsister dans un `Placement` **unverified** et un checkpoint de ledger pour la compatibilité et les diagnostics, mais elles ne sont ni un `OriginLink(provider)`, ni un Artifact final validé, ni une preuve de satisfaction locale. Seul le scan physique vérifié ou le publisher canonique Core post-GET produit la description autoritative `Artifact(SHA, taille, format)`.
+Après téléchargement autorisé et vérification indépendante du fichier final dans son profil, le seul publisher Core `publish_completed_acquisition` peut corriger dans **sa transaction atomique** le format et la taille d'un Artifact dont l'empreinte SHA est déjà correcte, mais que la projection 0.7 avait renseigné avec des données fausses.
 
-Ainsi, une ancienne ligne déclarant la bonne empreinte mais une taille ou un format faux ne peut plus bloquer une nouvelle acquisition, même si le nouvel Artifact a exactement le même SHA. Une source/compte distinct conserve ses propres SourceReference/OriginLink et Placements.
+La correction est **strictement bornée** aux placeholders marqués exactement `{"imported_from":"backup_items"}`, sans Placement autre que `unverified`, sans OriginLink référent et sans variante utilisant le SHA comme source ou résultat. Tous les autres désaccords restent `canonical_artifact_collision`. À l'issue, métadonnées legacy retirées au profit du SHA, format et taille physiquement vérifiés. Aucun nouveau droit n'est inféré : seuls le SourceReference exact et l'OriginLink issu du témoin de livraison attestée sont créés par le publisher.
 
-## Régression
+## Régressions
 
-`tests/test_legacy_backup_canonical_write_fence.py` démontre l'absence d'Artifact fantôme pour un fichier absent, puis l'acceptation d'une publication atomique réelle du PDF même quand la projection 0.7 avait mensongèrement déclaré un EPUB et une taille incompatible. Les protections contre l'écrasement de Placements vérifiés et la conservation des receipts historiques restent testées.
+`tests/test_legacy_backup_canonical_write_fence.py` couvre le rapprochement compatible, la publication réelle d'un PDF après fausse taille/extension EPUB v0.7, la conservation de l'ancien historique, et l'interdiction de réécrire un Artifact déjà lié à un OriginLink réel même en présence du marqueur legacy.
 
-Ce lot n'abandonne pas encore les anciens Placements unverified, le catalogue de compatibilité, le writer `backup_put` ni la migration de 0.7/0.8 : #3196 demeure ouvert. Aucune suppression de données, aucun appel fournisseurs live et aucun P2.
+L'alternative de supprimer immédiatement toute création de placeholder v0.7 a été rejetée par la CI : elle bloquait le preview/undo Kobo existant (41 régressions). Cette adaptation conserve cette compatibilité tout en restaurant la priorité des octets vérifiés au moment de la publication. La migration complète 0.7/0.8 et le retrait des writers/consommateurs `backup_items` restent à faire sous #3196. Aucun P2.
