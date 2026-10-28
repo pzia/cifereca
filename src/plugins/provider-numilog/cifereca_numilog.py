@@ -798,29 +798,29 @@ class NumilogSession(ProviderSession):
             return ('unverified_broker', id(broker))
 
     def _enrichment_identity_snapshot(self):
-        """Optionally pin the owning identity for ONE explicit metadata read.
+        """Pin the exact Core broker, candidate multiset and owner per read.
 
-        Unlike acquisition, old plugin-only clients may not have an identity
-        broker. When one is connected, never export a refreshed private
-        purchase after the account binding changes while public HTTP runs.
+        The old _identity_id() set discarded duplicate mappings and tracked
+        only the identity string. Replacing the broker A->A (or adding another
+        same-identity account ref) must not publish a stale private purchase
+        after a public metadata GET. Brokerless legacy enrichment stays explicit.
         """
         if self.identity_broker is None:
             return None
-        try:
-            return self._identity_id()
-        except Exception:
+        owner = self._inventory_owner_or_none()
+        if (type(owner) is not tuple or len(owner) != 3
+                or owner[0] != 'broker'
+                or type(owner[2]) is not tuple or len(owner[2]) != 1
+                or type(owner[2][0]) is not str or not owner[2][0]):
             raise ProviderCapabilityError(
                 'Numilog : identité propriétaire indisponible ; enrichissement arrêté'
-            ) from None
+            )
+        return owner
 
     def _ensure_enrichment_identity(self, expected):
         if expected is None:
             return  # Legacy no-broker path; credential/record ID still checked.
-        try:
-            current = self._identity_id()
-        except Exception:
-            current = None
-        if current != expected:
+        if self._inventory_owner_or_none() != expected:
             raise ProviderCapabilityError(
                 'Numilog : identité propriétaire modifiée ; enrichissement arrêté'
             ) from None
