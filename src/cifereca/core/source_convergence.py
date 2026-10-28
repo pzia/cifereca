@@ -170,6 +170,15 @@ class ConvergenceDecision:
         return False
 
     @property
+    def provider_satisfied(self) -> bool:
+        """Only exact OriginLink(provider) + verified profile bytes satisfy A.
+
+        A checked user declaration remains visible but is never a supplier
+        receipt and must not be accepted as a no-download finality.
+        """
+        return self.state == "present_attested"
+
+    @property
     def independent_acquisition_review_possible(self) -> bool:
         """Incomplete scan does not prove absence or permanently veto a request.
 
