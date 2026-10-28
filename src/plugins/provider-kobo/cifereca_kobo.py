@@ -1045,6 +1045,7 @@ class KoboSession(ProviderSession):
         # live account's *original* identity, even if empty, across the POST.
         if ((live_scope[1], live_scope[2], live_scope[3])
                 != (pinned[1], pinned[2], pinned[3])
+                or live_scope[0] not in (None, "", "default", pinned[0])
                 or not pinned[0] or not pinned[3]
                 or owner is None or owner[1] != (pinned[0],)):
             raise ProviderCapabilityError("kobo_selected_offer_owner_changed")
@@ -1079,6 +1080,24 @@ class KoboSession(ProviderSession):
                 or not selected.provider_attested):
             raise ProviderCapabilityError("kobo_selected_offer_right_unobserved")
         return offer
+
+    def rights_selected_delivery_candidate(
+        self, account, *, edition_id, right_id, kind, branch,
+        delivery_offer_id, target_dir, explicit_user_action=False,
+    ):
+        """Optional Core #3171 selected-candidate ABI; never a final receipt.
+
+        Verify one currently owned exact purchase and fresh Vault descriptor,
+        then stage its HTTPS payload under the Core-selected path. The public
+        peer-pinned HTTP client never receives Vault Authorization or cookies.
+        """
+        from cifereca_kobo_selected_candidate import stage_selected_candidate
+        return stage_selected_candidate(
+            self, account, edition_id=edition_id, right_id=right_id,
+            kind=kind, branch=branch, delivery_offer_id=delivery_offer_id,
+            target_dir=target_dir,
+            explicit_user_action=explicit_user_action,
+        )
 
     def backup_manifest(self) -> list[dict[str, Any]]:
         # No diagnostic may outlive the previous manifest if fetching raises.
