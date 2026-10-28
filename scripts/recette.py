@@ -332,7 +332,9 @@ def sandbox(target: Path, command: list[str], *, network: bool = False, gui: boo
                  "--setenv", "GDK_BACKEND", "x11", "--setenv", "NO_AT_BRIDGE", "1"]
         if (target / "runtime/Xauthority").exists():
             args += ["--setenv", "XAUTHORITY", str(target / "runtime/Xauthority")]
-    return args + ["--"] + command
+    # bwrap's synthetic root is otherwise owned/writable by the namespace's
+    # user. Keep only the explicit target and private tmpfs mounts writable.
+    return args + ["--remount-ro", "/", "--"] + command
 
 
 def probe(target: Path) -> None:
