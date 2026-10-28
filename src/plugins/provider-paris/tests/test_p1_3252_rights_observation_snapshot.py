@@ -268,7 +268,9 @@ def test_paris_core_owner_rebind_mid_dilicom_refuses_final_rights(race):
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.rights_observation_snapshot(account)
-        assert client.calls == [("DILICOM", "reader-A"), ("SYRACUSE", "reader-A")]
+        # The owner is already invalid after the DILICOM response:
+        # the stronger two-branch fence MUST deny SYRACUSE before its GET.
+        assert client.calls == [("DILICOM", "reader-A")]
     finally:
         session.close()
 

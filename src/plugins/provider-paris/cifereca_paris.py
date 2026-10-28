@@ -496,10 +496,39 @@ class ParisProviderSession(ProviderSession):
 
         initial = matching_accounts()
         bound = initial[0] if len(initial) == 1 else None
+        broker = self.identity_broker
+
+        def broker_owner_binding():
+            """Pin the actual Core owner, not only a mutable Account object.
+
+            Legacy inventory remains readable with an absent or ambiguous
+            broker, but a mid-read change must never permit a second private
+            GET under a different or newly selected Core owner.
+            """
+            if broker is None:
+                return None
+            try:
+                refs = broker.accounts()
+                if type(refs) not in (list, tuple):
+                    return None
+                key = borrower_scope[0] if borrower_scope[0] else (
+                    f"{self.provider_id}:{self.credential_id}:primary"
+                )
+                return _core_account_owners(
+                    refs, provider_id=self.provider_id,
+                    account_id=key, credential_id=self.credential_id,
+                )
+            except Exception:
+                return None
+
+        initial_owner = broker_owner_binding()
 
         def scope_current():
             return (
                 self.connected is True
+                and self.identity_broker is broker
+                and (broker is None or
+                     broker_owner_binding() == initial_owner)
                 and (account.unique_id, account.identity_id,
                      account.provider_id, account.credential_id) == borrower_scope
                 and bound is not None
