@@ -93,8 +93,21 @@ def reader_acs4_offer_pairs(
     unrecognized or conflicting action cannot become an available offer.
     """
     root = _dom(html)
+    active = [n for n in root.walk() if n.has_class('active-loans') and n.closed]
+    if len(active) != 1:
+        return frozenset()
+    source_pairs: dict[str, set[str]] = {}
+    for card in active[0].walk():
+        if not card.has_class('js-loan') or not card.closed:
+            continue
+        loan_ids, resource_ids = _links(card, 'loans'), _links(card, 'resources')
+        if len(loan_ids) == len(resource_ids) == 1:
+            source_pairs.setdefault(next(iter(loan_ids)), set()).add(
+                next(iter(resource_ids))
+            )
     return frozenset(
         (loan_id, resource_id)
         for loan_id, resource_id in loan_resources
-        if _signed_action_in_dom(root, loan_id, resource_id) is not None
+        if source_pairs.get(loan_id) == {resource_id}
+        and _signed_action_in_dom(root, loan_id, resource_id) is not None
     )
