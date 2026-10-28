@@ -424,7 +424,9 @@ class KoboSession(ProviderSession):
         if personal_binding is not None:
             # Detect a rebind between the initial account check and the
             # network request, not only after its result is projected.
-            self._ensure_personal_binding(*personal_binding)
+            self._ensure_personal_binding(
+                *personal_binding, expected_account_id=account_id,
+            )
         # Input validation above accepts harmless casing/outer whitespace,
         # but the Vault API must always receive the *declared* canonical
         # general-search value. Passing " ALL " to Vault would be a different
@@ -543,15 +545,22 @@ class KoboSession(ProviderSession):
         if personal_binding is not None:
             # A close/rebind inside catalogue HTTP or local row projection
             # must not present stale purchased items as current search hits.
-            self._ensure_personal_binding(*personal_binding)
+            self._ensure_personal_binding(
+                *personal_binding, expected_account_id=account_id,
+            )
         return accepted
 
-    def _ensure_personal_binding(self, account: Account, generation: int) -> None:
+    def _ensure_personal_binding(
+        self, account: Account, generation: int, *,
+        expected_account_id: str | None = None,
+    ) -> None:
         """Reject an in-flight Vault snapshot after account/session replacement."""
         if (
             self._personal_binding_generation != generation
             or not self.connected or len(self._accounts) != 1
             or self._accounts[0] is not account
+            or (expected_account_id is not None
+                and account.unique_id != expected_account_id)
             or account.provider_id != self.provider_id
             or account.credential_id != self.credential_id
             or not _strict_account_scope(account.unique_id)
@@ -577,7 +586,9 @@ class KoboSession(ProviderSession):
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
         items = self.client.library_manifest()
-        self._ensure_personal_binding(bound_account, generation)
+        self._ensure_personal_binding(
+            bound_account, generation, expected_account_id=account_id,
+        )
         self.last_library_rejections.extend(
             _public_kobo_rejections(
                 getattr(self.client, "last_manifest_rejections", ())
@@ -668,7 +679,9 @@ class KoboSession(ProviderSession):
         # also race normalization (including a custom catalogue adapter).
         # Never publish rights under an account generation which has changed
         # while projecting the provider's raw rows.
-        self._ensure_personal_binding(bound_account, generation)
+        self._ensure_personal_binding(
+            bound_account, generation, expected_account_id=account_id,
+        )
         return rows
 
     def _rights_owner_snapshot(self, expected_account: str):
@@ -735,9 +748,13 @@ class KoboSession(ProviderSession):
             raise ProviderCapabilityError(
                 "Kobo-Vault : propriétaire unique non attesté pour les droits"
             )
-        self._ensure_personal_binding(bound, generation)
+        self._ensure_personal_binding(
+            bound, generation, expected_account_id=account_id,
+        )
         results = self.library()  # ONE existing authenticated Vault GET.
-        self._ensure_personal_binding(bound, generation)
+        self._ensure_personal_binding(
+            bound, generation, expected_account_id=account_id,
+        )
         if (self._rights_owner_snapshot(account_id) != owner
                 or bound.unique_id != account_id
                 or (account.identity_id, account.provider_id,
@@ -776,7 +793,9 @@ class KoboSession(ProviderSession):
                 evidence_ref="kobo.personal_manifest",
                 observed_at=observed, delivery="unknown",
             ))
-        self._ensure_personal_binding(bound, generation)
+        self._ensure_personal_binding(
+            bound, generation, expected_account_id=account_id,
+        )
         if (self._rights_owner_snapshot(account_id) != owner
                 or bound.unique_id != account_id
                 or (account.identity_id, account.provider_id,
@@ -812,11 +831,14 @@ class KoboSession(ProviderSession):
             return []
         bound_account = self._accounts[0]
         generation = self._personal_binding_generation
+        account_id = bound_account.unique_id
         items = self.client.library_manifest()
         # Unlike an empty manifest, a disconnected/replaced session is not
         # evidence that purchases disappeared. Do not publish rows OR an
         # authoritative empty manifest after this race.
-        self._ensure_personal_binding(bound_account, generation)
+        self._ensure_personal_binding(
+                bound_account, generation, expected_account_id=account_id,
+            )
         # Keep the complete raw snapshot only inside this provider call so
         # its advisory classification can count foreign-account rows. Such
         # rows must never reach Core's legacy materialization loop.
@@ -837,11 +859,8 @@ class KoboSession(ProviderSession):
         # Provider-only projection: no local file checks or entitlement
         # authorization, no further Vault request. Core can consume the
         # bounded summary after it has independently resolved the identity.
-        account_id = (
-            self._accounts[0].unique_id
-            if self.connected and len(self._accounts) == 1
-            else None
-        )
+        # The authenticated account was pinned before the GET; re-reading
+        # it now would trust a mutable in-place rebind after remote activity.
         if account_id is not None:
             def foreign_account(row: Any) -> bool:
                 return (
@@ -934,7 +953,9 @@ class KoboSession(ProviderSession):
         # Classification and cover extraction happen after the initial GET
         # fence; a close/reconnect there must not return a stale backup batch.
         try:
-            self._ensure_personal_binding(bound_account, generation)
+            self._ensure_personal_binding(
+                bound_account, generation, expected_account_id=account_id,
+            )
         except ProviderError:
             self.backup_manifest_rejection_count = 0
             raise
