@@ -1,5 +1,7 @@
 # Rôle : plugins
 
+**Architecture directrice du 28/10/2026 :** [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) priment sur les descriptions de sync historiques : **un seul parcours automatique** SourceReference A → preuve OriginLink/SHA/Placement B → acquisition autorisée si nécessaire ; Notice C descriptive, vérification manuelle #2797 exceptionnelle. Les observations read-only ne signifient pas que l'intégration Core est livrée. Respecter la frontière de responsabilité de ce rôle et la politique de journal brut ci-dessous.
+
 **Skill journalisation obligatoire :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) · [contrat transverse](../../docs/LOGGING-CONTRACT.md). Les consignes Diagnostics ci-dessous restent prioritaires.
 
 **Confidentialité :** seuls les credentials (mot de passe, token d'accès/refresh, cookie de session authentifiant, secret API/clé privée, URL signée d'accès) justifient une protection spécifique. Erreurs, messages HTTP, chemins, titres, comptes, identifiants et captures sans secret n'imposent aucun ticket, expurgation ou correctif de confidentialité. Voir [la doctrine commune](../../AGENTS.md). Ne pas élargir un ticket Plugins pour cela.
