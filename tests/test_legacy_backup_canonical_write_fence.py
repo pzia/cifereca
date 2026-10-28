@@ -127,7 +127,7 @@ def test_unverified_legacy_sha_cannot_poison_real_final_artifact_publication(tmp
         })
         path = tmp_path / "books" / "A" / "book.pdf"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"%PDF-1.7\\nFinal confirmed bytes\\n")
+        path.write_bytes(b"%PDF-1.7\nFinal confirmed bytes\n")
         sha = hashlib.sha256(path.read_bytes()).hexdigest()
 
         # The v0.7 compatibility record claims an impossible EPUB format and
