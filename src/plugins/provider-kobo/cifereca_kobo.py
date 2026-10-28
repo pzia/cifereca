@@ -998,6 +998,11 @@ class KoboSession(ProviderSession):
             delivery="available" if offer_id else "unknown",
             delivery_offer_id=offer_id,
         )
+        # The offer classifier and dataclass projection run *after* the
+        # private POST fence. A Core rebind during either local step must
+        # not publish an old owner's otherwise valid offer snapshot.
+        if not scope_current():
+            raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         return replace(baseline, rights=(qualified,))
 
     def backup_manifest(self) -> list[dict[str, Any]]:
