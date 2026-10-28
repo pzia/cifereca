@@ -226,3 +226,51 @@ def test_repeated_same_edition_never_creates_two_attested_purchase_rows():
             s.rights_observation_snapshot(bound_account(s))
     finally:
         s.close()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("identity_id", "identity-B"),
+    ("provider_id", "kobo"),
+    ("credential_id", "other-credential"),
+    ("unique_id", "numilog:another-account"),
+])
+def test_inflight_caller_account_rebind_never_publishes_numilog_rights(
+    field, replacement,
+):
+    """The mutable caller Account is independent of the Core owner broker."""
+    s, broker = session()
+    account = bound_account(s)
+    reads = []
+
+    def rows(**kwargs):
+        reads.append(kwargs)
+        setattr(account, field, replacement)
+        return [owned_row()]
+
+    s._rows = rows
+    try:
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
+            s.rights_observation_snapshot(account)
+        assert reads == [{}]
+        assert broker.owner == "identity-A"  # broker alone would miss this
+    finally:
+        s.close()
+
+
+def test_numilog_caller_rebind_during_projection_is_rejected():
+    s, broker = session()
+    account = bound_account(s)
+    s._rows = lambda **kwargs: [owned_row()]
+    original_id = s._id
+
+    def rebind_in_normalization(row):
+        account.identity_id = "identity-B"
+        return original_id(row)
+
+    s._id = rebind_in_normalization
+    try:
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
+            s.rights_observation_snapshot(account)
+        assert broker.owner == "identity-A"
+    finally:
+        s.close()
