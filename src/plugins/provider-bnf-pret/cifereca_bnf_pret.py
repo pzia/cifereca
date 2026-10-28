@@ -515,16 +515,15 @@ class BnfProviderSession(ProviderSession):
                     or type(self._accounts[0]) is not Account):
                 raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
             live = self._accounts[0]
+            owner = self._core_owner_binding(pinned[3])
             if ((live.identity_id, live.provider_id,
                  live.credential_id, live.unique_id) != pinned
-                    or self._core_owner_binding(pinned[3]) is None
-                    or self._core_owner_binding(pinned[3])[1] != (pinned[0],)
+                    or owner is None or owner[1] != (pinned[0],)
                     or delivery_offer_id != _reader_acs4_offer_id(
                         pinned[0], pinned[2], pinned[3], right_id, edition_id,
                     )):
                 raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
             epoch = self._epoch
-            owner = self._core_owner_binding(pinned[3])
             loans = self.loans(live)
             if (self._closed or not self.connected or epoch != self._epoch
                     or len(self._accounts) != 1 or self._accounts[0] is not live
