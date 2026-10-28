@@ -110,3 +110,53 @@ def test_kobo_stable_real_vault_pagination_still_reads_two_pages(reader):
         assert page_calls == [None, "second"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("reader", [
+    "rights_observation_snapshot", "library", "backup_manifest",
+])
+@pytest.mark.parametrize("phase", ["get", "projection"])
+def test_kobo_one_page_legacy_vault_cannot_publish_rebound_live_identity(
+    reader, phase,
+):
+    """Even a 1-page injected Vault must not exploit a mutable Account ID."""
+    session, vault, broker, account = _rig([
+        one_page("book-1"),
+    ])
+    original_get = vault.library_manifest
+    original_normalize = session.normalize_item
+
+    def mutate_identity():
+        session._accounts[0].identity_id = "identity-B"
+
+    def during_get():
+        rows = original_get()
+        if phase == "get":
+            mutate_identity()
+        return rows
+
+    def during_projection(*args, **kwargs):
+        result = original_normalize(*args, **kwargs)
+        if phase == "projection":
+            mutate_identity()
+        return result
+
+    vault.library_manifest = during_get
+    session.normalize_item = during_projection
+    if phase == "projection" and reader == "backup_manifest":
+        # Backups classify raw rows without normalize_item; inject the race
+        # in its existing cover projection instead, without extra GETs.
+        original_policy = session.catalog.cover_url
+        def cover_rebind(row):
+            mutate_identity()
+            return original_policy(row)
+        session.catalog.cover_url = cover_rebind
+    try:
+        with pytest.raises(ProviderError, match="session modifiée pendant lecture"):
+            if reader == "rights_observation_snapshot":
+                session.rights_observation_snapshot(account)
+            else:
+                getattr(session, reader)()
+        assert vault.calls == 1
+    finally:
+        session.close()
