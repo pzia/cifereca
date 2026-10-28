@@ -1,0 +1,213 @@
+"""#3171: optional typed A admitted inside existing source Sync, no second loop.
+
+Real SQLite v14; provider snapshots and PDF bytes synthetic only.
+"""
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace as NS
+import sqlite3
+
+import pytest
+
+from cifereca.core.sync_coordination import synchronize_account_source
+from cifereca.core.canonical_sync_stage import observe_canonical_rights_in_sync
+from cifereca.models import Account
+from cifereca.storage import Storage
+from tests.test_core_p0_3171_atomic_publication_v14 import (
+    new_source, register, target, publish,
+)
+
+
+class Service:
+    def __init__(self, storage, root, *, typed=True):
+        self.storage = storage
+        self.root = root
+        self.account = Account(
+            identity_id="A", provider_id="seller-a",
+            credential_id="card-a", unique_id="buyer-a",
+        )
+        self.accounts = [self.account]
+        self._account_context_epoch = 1
+        self._sessions = {}
+        self.events = []
+        self.read_calls = 0
+        self.source, self.snapshot = new_source(
+            "A", provider="seller-a", credential="card-a", account="buyer-a",
+        )
+        session = NS(
+            provider_id="seller-a", credential_id="card-a",
+            connected=True, _closed=False,
+        )
+        if typed:
+            def read(_account):
+                self.read_calls += 1
+                return self.snapshot
+            session.rights_observation_snapshot = read
+        self.session = session
+        self._sessions[self._session_key("seller-a", "card-a")] = session
+        self._synchronize_account_source_impl = lambda account, deep=False, control=None: {
+            "provider": account.provider_id, "status": "ok",
+        }
+        self.registry = None
+        self.diagnostics = NS(add_core_source_sync=lambda *args, **kwargs: None)
+
+    @staticmethod
+    def _session_key(provider, credential):
+        return provider + ":" + credential
+
+    def _session_for_account(self, account):
+        return self._sessions[self._session_key(
+            account.provider_id, account.credential_id,
+        )]
+
+    def library_dir(self):
+        return self.root
+
+    def _record_action(self, identity, operation, status, **kwargs):
+        self.events.append((identity, operation, status))
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    db = Storage(tmp_path / "db.sqlite")
+    assert db.schema_version() == 14
+    register(db, "A", "seller-a", "card-a", account="buyer-a")
+    root = tmp_path / "EBooks"
+    service = Service(db, root)
+    monkeypatch.setattr(
+        "cifereca.core.sync_coordination.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
+    try:
+        yield service, db, root
+    finally:
+        db.close()
+
+
+def refs(db):
+    with db._lock, db._connect() as connection:
+        refs = connection.execute(
+            "SELECT identity_id,provider_id,credential_id,account_id,"
+            "branch_id,edition_id,right_id,reference_kind,state "
+            "FROM source_references ORDER BY source_reference_id"
+        ).fetchall()
+        links = connection.execute(
+            "SELECT count(*) FROM origin_links"
+        ).fetchone()[0]
+    return refs, links
+
+
+def test_typed_A_saved_in_same_existing_source_sync_once_and_without_get(rig):
+    service, db, root = rig
+    first = synchronize_account_source(service, service.account)
+    assert first["status"] == "partial"
+    assert service.read_calls == 1
+    assert first["canonical_rights"] == {
+        "status": "partial", "observed": 1, "attested_active": 1,
+        "source_references_changed": 1, "present_attested": 0,
+        "pending": 1, "read_only_plan": True, "acquisition_authorized": False,
+    }
+    saved, links = refs(db)
+    assert saved == [(
+        "A", "seller-a", "card-a", "buyer-a",
+        "purchases", "edition", "purchase", "purchase", "active",
+    )]
+    assert links == 0 and db.placements() == []
+    assert db.entitlements() == [] and db.acquisitions() == []
+    second = synchronize_account_source(service, service.account)
+    assert service.read_calls == 2
+    assert second["canonical_rights"]["source_references_changed"] == 0
+    assert refs(db) == (saved, 0)
+
+
+def test_zero_rights_and_partial_snapshot_never_revoke_prior_positive(rig):
+    service, db, root = rig
+    synchronize_account_source(service, service.account)
+    prior, _ = refs(db)
+    service.snapshot = replace(service.snapshot, rights=())
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_rights"]["observed"] == 0
+    assert result["canonical_rights"]["source_references_changed"] == 0
+    assert refs(db) == (prior, 0)
+
+
+def test_completed_delivery_origin_is_present_on_next_source_sync(rig):
+    service, db, root = rig
+    synchronize_account_source(service, service.account)
+    file = target(root.parent, "A")
+    publish(db, root, file, service.source, service.snapshot)
+    summary = synchronize_account_source(service, service.account)
+    assert summary["canonical_rights"]["present_attested"] == 1
+    assert summary["canonical_rights"]["pending"] == 0
+    assert len(db.placements()) == 1
+    assert db.placements()[0]["identity_id"] == "A"
+
+
+def test_reader_failure_preserves_positive_and_marks_source_partial(rig):
+    service, db, root = rig
+    synchronize_account_source(service, service.account)
+    before, _ = refs(db)
+    service.snapshot = replace(
+        service.snapshot, rights=(), status="failed", coverage="unknown",
+    )
+    result = synchronize_account_source(service, service.account)
+    assert result["status"] == "partial"
+    assert result["canonical_rights"]["status"] == "failed"
+    assert refs(db) == (before, 0)
+
+
+def test_missing_optional_producer_leaves_existing_source_sync_unchanged(rig):
+    service, db, root = rig
+    del service.session.rights_observation_snapshot
+    result = synchronize_account_source(service, service.account)
+    assert result["status"] == "ok"
+    assert "canonical_rights" not in result
+    assert service.read_calls == 0 and refs(db) == ([], 0)
+
+
+def test_rebound_during_provider_read_cannot_publish_new_reference(rig):
+    service, db, root = rig
+    def rebound(_account):
+        service._account_context_epoch += 1
+        return service.snapshot
+    service.session.rights_observation_snapshot = rebound
+    with pytest.raises(ValueError, match="canonical_rights_source_rebound"):
+        synchronize_account_source(service, service.account)
+    assert refs(db) == ([], 0)
+
+
+def test_sql_error_rolls_back_full_positive_batch_without_origin(rig):
+    service, db, root = rig
+    extra = replace(
+        service.snapshot.rights[0], edition_id="edition-second",
+        right_id="purchase-second",
+    )
+    service.snapshot = replace(
+        service.snapshot, rights=service.snapshot.rights + (extra,),
+    )
+    with db._lock, db._connect() as conn:
+        conn.execute(
+            "CREATE TRIGGER synthetic_abort BEFORE INSERT ON source_references "
+            "WHEN NEW.edition_id='edition-second' BEGIN "
+            "SELECT RAISE(ABORT,'synthetic_rights_failure'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic_rights_failure"):
+        synchronize_account_source(service, service.account)
+    assert refs(db) == ([], 0)
+    with db._lock, db._connect() as conn:
+        conn.execute("DROP TRIGGER synthetic_abort")
+    outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_rights"]["source_references_changed"] == 2
+    assert len(refs(db)[0]) == 2
+
+
+def test_unverified_historical_receipt_never_promoted_to_canonical_right(rig):
+    service, db, root = rig
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], evidence_kind="historical_receipt",
+    ),))
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_rights"]["attested_active"] == 0
+    assert refs(db) == ([], 0)

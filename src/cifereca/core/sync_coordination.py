@@ -284,6 +284,28 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 locks.enter_context(InterProcessLock(acquisition_lock_file()))
             with measure("locked_work_ms"):
                 result = self._synchronize_account_source_impl(account, deep=deep, control=control)
+                if result.get("status") != "skipped":
+                    # #3171: the same source Sync performs one optional typed
+                    # rights read and verifies A→OriginLink→SHA→Placement B.
+                    # No separate reconciliation pass or automatic GET here.
+                    from .canonical_sync_stage import observe_canonical_rights_in_sync
+
+                    def cancelled_for_rights() -> bool:
+                        if control is not None:
+                            check = getattr(control, "check_cancelled", None)
+                            if callable(check):
+                                check()
+                        return False
+
+                    canonical = observe_canonical_rights_in_sync(
+                        self, account, cancelled=cancelled_for_rights,
+                    )
+                    if canonical is not None:
+                        result["canonical_rights"] = canonical
+                        if canonical["status"] != "success":
+                            # A partial/failed rights branch is not a
+                            # successful complete synchronization of A.
+                            result["status"] = "partial"
         outcome = (
             "skipped" if result.get("status") == "skipped"
             else "partial" if result.get("status") == "partial"
