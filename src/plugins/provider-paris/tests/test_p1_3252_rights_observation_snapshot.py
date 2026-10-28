@@ -152,7 +152,9 @@ def test_paris_wrong_credential_refused_before_both_gets():
         upstream("loan-1", "edition-1"),
     ))
     try:
-        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+        # New broker-backed rights preflight must refuse before the legacy
+        # inventory reader (which retains its own scope-mismatch code).
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
             session.rights_observation_snapshot(
                 replace(account, credential_id="other-card"),
             )
