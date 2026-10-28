@@ -81,7 +81,7 @@ def test_retry_replaces_persisted_plan_without_leaving_acquiring(tmp_path: Path)
 def test_schema_v3_mirrors_legacy_backup_into_generic_ledger():
     with tempfile.TemporaryDirectory() as td:
         storage = Storage(Path(td) / "db.sqlite3")
-        assert storage.schema_version() == 13
+        assert storage.schema_version() == 14
         storage.backup_put({
             "provider_id": "kobo",
             "credential_id": "identity-a",
@@ -128,7 +128,7 @@ def test_v2_database_migrates_forward_without_losing_backup_rows():
         """)
         db.commit(); db.close()
         storage = Storage(db_path)
-        assert storage.schema_version() == 13
+        assert storage.schema_version() == 14
         assert storage.backup_get("kobo", "vault", "book")["title"] == "Legacy Book"
         assert storage.acquisitions(provider_id="kobo")[0]["status"] == "complete"
         assert storage.entitlements(provider_id="kobo")[0]["item_id"] == "book"
