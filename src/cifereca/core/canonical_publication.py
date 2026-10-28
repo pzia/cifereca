@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import sqlite3
 import time
 
 from .source_convergence import SourceKey
@@ -90,6 +91,7 @@ def publish_completed_acquisition(
     delivery_receipt_ref: str,
     adept_receipt_ref: str = "",
     context_current: Callable[[], bool] | None = None,
+    transaction_guard: Callable[[sqlite3.Connection], bool] | None = None,
 ) -> PublicationResult:
     """Publish an *already completed* authorized acquisition into schema v14.
 
@@ -124,6 +126,8 @@ def publish_completed_acquisition(
         raise ValueError("canonical_path_invalid")
     if context_current is not None and not callable(context_current):
         raise ValueError("canonical_invalid_epoch_guard")
+    if transaction_guard is not None and not callable(transaction_guard):
+        raise ValueError("canonical_invalid_transaction_guard")
 
     # This is non-authoritative preliminary I/O. The authoritative owner
     # binding and file identity are rechecked *inside* the SQL transaction.
@@ -172,6 +176,10 @@ def publish_completed_acquisition(
         db.execute("BEGIN IMMEDIATE")
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_publisher_context_rebound")
+        # The Core policy guard uses THIS connection, never Storage methods
+        # that would re-enter its non-recursive lock. Recheck after hashing.
+        if transaction_guard is not None and transaction_guard(db) is not True:
+            raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.
         owner = db.execute(
             "SELECT identity_id,enabled FROM provider_connections "
@@ -310,4 +318,6 @@ def publish_completed_acquisition(
         # lock is non-recursive, so no storage method can be called by it.
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_publisher_context_rebound")
+        if transaction_guard is not None and transaction_guard(db) is not True:
+            raise ValueError("canonical_publication_policy_changed")
     return PublicationResult(artifact_id, placement_id, source_id, origin_ids, changed)

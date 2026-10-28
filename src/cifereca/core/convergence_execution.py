@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -73,6 +74,7 @@ def execute_admitted_convergence(
     consent_still_current: Callable[[SourceKey], bool],
     deliver: Callable[[SourceKey, ProviderRightObservation], CompletedDelivery],
     cancelled: Callable[[], bool] = lambda: False,
+    publication_guard: Callable[[sqlite3.Connection, SourceKey], bool] | None = None,
 ) -> tuple[ConvergenceOutcome, ...]:
     """Execute the authorized part of the same Sync; no second remote read.
 
@@ -90,6 +92,7 @@ def execute_admitted_convergence(
         or any(type(key) is not SourceKey for key in persisted_consent)
         or not callable(deliver) or not callable(cancelled)
         or not callable(consent_still_current)
+        or (publication_guard is not None and not callable(publication_guard))
         or not isinstance(library_root, Path)
         or type(shared_lock) is not InterProcessLock
         or shared_lock._handle is None
@@ -289,6 +292,10 @@ def execute_admitted_convergence(
                 delivery_receipt_ref=completed.receipt_ref,
                 adept_receipt_ref=completed.adept_receipt_ref,
                 context_current=current_memory,
+                transaction_guard=(
+                    (lambda db: publication_guard(db, key))
+                    if publication_guard is not None else None
+                ),
             )
             try:
                 mark_completed_delivery_published(
