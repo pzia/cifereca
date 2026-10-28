@@ -17,6 +17,7 @@ from .settings_ai_section import build_ai_settings_section
 from .settings_ai_actions import bind_settings_ai_callbacks
 from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_diagnostics_actions import bind_settings_diagnostics
+from .settings_capabilities_overview import append_settings_capability_overview
 from .settings_commit_actions import bind_settings_commit
 
 
@@ -141,6 +142,17 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         application_ui=application_ui, Gtk=Gtk, Adw=Adw, Gdk=Gdk,
         clear_box=clear_box,
     )
+    # Optional, read-only snapshot. No provider call and no background
+    # refresh: a code declaration is not a verified remote capability.
+    if callable(getattr(self.service, "capability_matrices", None)):
+        append_settings_capability_overview(
+            section=sections["diagnostic"], service=self.service,
+            Gtk=Gtk, Adw=Adw,
+            identity_id=getattr(
+                getattr(self.service, "current_identity", None),
+                "identity_id", None,
+            ),
+        )
     save_settings, save_and_reconnect = bind_settings_commit(
         self, page_lifetime=page_lifetime, settings_state=settings_state,
         identity_editors=identity_editors, account_editors=account_editors,
