@@ -354,3 +354,48 @@ def test_paris_two_distinct_loans_for_one_edition_are_not_duplicate_rights():
         ]
     finally:
         session.close()
+
+
+def test_paris_empty_primary_borrower_matches_credential_scoped_core_account_ref():
+    """The Core AccountRef key is not the provider's empty upstream account."""
+    session, account, client = fixture(digital=(
+        upstream("primary-loan", "primary-edition"),
+    ))
+    account.unique_id = ""  # Upstream Paris primary borrower convention
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="paris:card-A:primary",
+           identity_id="identity-A"),
+        # An empty primary from another card must NOT be accepted for card-A.
+        NS(provider_id="paris", account_id="paris:other-card:primary",
+           identity_id="identity-B"),
+    ]
+    try:
+        observed = session.rights_observation_snapshot(account)
+        assert observed.scope.identity_id == "identity-A"
+        assert observed.scope.account_id == ""
+        assert observed.scope.credential_id == "card-A"
+        assert [(r.right_id, r.edition_id) for r in observed.rights] == [
+            ("primary-loan", "primary-edition"),
+        ]
+        assert observed.status == observed.coverage == "partial"
+        assert not observed.authorizes_negative_reconciliation
+        assert client.calls == [("DILICOM", ""), ("SYRACUSE", "")]
+    finally:
+        session.close()
+
+
+def test_paris_empty_primary_refuses_foreign_credential_owner_before_network():
+    session, account, client = fixture(digital=(
+        upstream("primary-loan", "primary-edition"),
+    ))
+    account.unique_id = ""
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="paris:other-card:primary",
+           identity_id="identity-A"),
+    ]
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == []
+    finally:
+        session.close()
