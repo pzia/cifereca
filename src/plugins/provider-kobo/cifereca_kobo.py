@@ -1085,6 +1085,38 @@ class KoboSession(ProviderSession):
             or not _strict_account_scope(self._accounts[0].unique_id)
         ):
             raise ProviderError("Kobo-Vault : acquisition sans compte attesté")
+        # Acquisition descriptors may contain private links. A POST started
+        # under one connected account must not return those links or poison
+        # a different account's delegated 403 state after an in-flight rebind.
+        # This is a provider-boundary fence, not a Core entitlement decision.
+        bound_account = self._accounts[0]
+        bound_accounts = self._accounts
+        generation = self._personal_binding_generation
+        account_id = bound_account.unique_id
+        identity_id = bound_account.identity_id
+        client = self.client
+        broker = self.identity_broker
+        owner = (
+            self._rights_owner_snapshot(account_id)
+            if broker is not None else None
+        )
+
+        def ensure_acquisition_scope() -> None:
+            self._ensure_personal_binding(
+                bound_account, generation,
+                expected_account_id=account_id,
+                expected_identity_id=identity_id,
+            )
+            if (self._accounts is not bound_accounts
+                    or self.client is not client
+                    or self.identity_broker is not broker
+                    or (broker is not None
+                        and self._rights_owner_snapshot(account_id) != owner)):
+                raise ProviderError(
+                    "Kobo-Vault : compte modifié pendant acquisition"
+                )
+
+        ensure_acquisition_scope()
         # The generic engine already avoids delegated 403 retries, but direct
         # provider callers must not bypass the account-scoped refusal. A
         # delegated denial is mode-specific: it must not block a separately
@@ -1101,14 +1133,19 @@ class KoboSession(ProviderSession):
             profile = self.display_profile
         acsm = include_acsm if self.supports_acquisition_acsm else None
         try:
-            return self.client.acquisition(
+            result = client.acquisition(
                 product_id,
                 revision_id=revision_id,
                 mode=mode,
                 display_profile=profile,
                 include_acsm=acsm,
             )
+            ensure_acquisition_scope()
+            return result
         except KoboVaultError as exc:
+            # In-flight reconnect/owner change invalidates the old account's
+            # error as well as its success. Never persist its 403 on B.
+            ensure_acquisition_scope()
             # A direct delegated 403 must affect only this verified account,
             # just as Core's executor does. Persist the denial *before*
             # propagating so the next book cannot produce another POST.

@@ -176,3 +176,76 @@ def test_descriptor_403_does_not_poison_delegated_scope():
         assert calls == ["descriptor", "delegated"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("race", [
+    "account_replaced", "account_rebound", "reconnect_ABA",
+    "credential_rebound", "broker_ABA", "broker_owner_B", "vault_replaced",
+])
+@pytest.mark.parametrize("outcome", ["success", "delegated_403"])
+def test_kobo_acquisition_inflight_rebind_cannot_publish_old_descriptor_or_denial(
+    race, outcome,
+):
+    """A completed Vault POST is not a Core delivery proof for another owner."""
+    from dataclasses import replace
+    from types import SimpleNamespace as NS
+    from cifereca_kobo_vault import KoboVaultError
+
+    vault = FakeVault([])
+    session = session_with_vault(vault)
+    broker = NS(owner="identity-A")
+    broker.accounts = lambda: [
+        NS(provider_id="kobo", account_id="alice", identity_id=broker.owner,
+           credential_id=session.credential_id, scope_version=2)
+    ]
+    session.identity_broker = broker
+    session._accounts[0].identity_id = "identity-A"
+    calls = []
+
+    def acquire(product_id, **_):
+        calls.append("POST")
+        if race == "account_replaced":
+            session._accounts = [replace(session._accounts[0])]
+        elif race == "account_rebound":
+            session._accounts[0].identity_id = "identity-B"
+        elif race == "reconnect_ABA":
+            session._personal_binding_generation += 1
+        elif race == "credential_rebound":
+            session._accounts[0].credential_id = "different-credential"
+        elif race == "broker_ABA":
+            other = NS(owner="identity-A")
+            other.accounts = broker.accounts
+            session.identity_broker = other
+        elif race == "broker_owner_B":
+            broker.owner = "identity-B"
+        else:
+            session.client = FakeVault([])
+        if outcome == "delegated_403":
+            raise KoboVaultError(
+                "Private upstream error",
+                code="forbidden", status_code=403,
+            )
+        return {"private_signed_descriptor": "PRIVATE-URL"}
+
+    vault.acquisition = acquire
+    try:
+        with pytest.raises(ProviderError, match="modifiée|modifié"):
+            session.resolve_acquisition("edition-1", mode="delegated")
+        assert calls == ["POST"]
+        assert not getattr(session, "_cifereca_delegation_forbidden", False)
+    finally:
+        session.close()
+
+
+def test_kobo_acquisition_stable_scope_returns_only_selected_descriptor():
+    vault = FakeVault([])
+    calls = []
+    vault.acquisition = lambda product_id, **opts: (
+        calls.append((product_id, opts["mode"])) or {"ok": True}
+    )
+    session = session_with_vault(vault)
+    try:
+        assert session.resolve_acquisition("edition-1", mode="descriptor") == {"ok": True}
+        assert calls == [("edition-1", "descriptor")]
+    finally:
+        session.close()
