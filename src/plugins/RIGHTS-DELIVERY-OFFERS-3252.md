@@ -11,10 +11,10 @@ C = Notice descriptive. A ne prouve pas B.
 
 | Fournisseur | Branche et preuve positive A | Offre exacte utilisable | Action existante, effets et limite |
 |---|---|---|---|
-| Numilog | `meslivres`, achat actif, `lid+variant`, credential et compte exacts | **Scan ordinaire : `unknown`**. Préflight **ciblé et explicite** `rights_delivery_offer_snapshot(account, right_id)` (#3586 fusionnée) : `available` seulement si le HTML du compte relie une seule action JS `OwnedDelivery` à la carte achetée exacte. `delivery_offer_id` opaque : produit+exemplaire+type ACSM/EPUB et portée, sans URL signée. | `download_direct(item,target_dir,expected_offer_id=...,expected_identity_id=...)` (#3587 fusionnée) relit la carte avant GET signé et refuse les changements de propriétaire/offre. Import ADEPT/Core distinct si ACSM. La préqualification lit des pages **MesLivres**, pas le fichier. |
-| BnF Prêt | `bnf_html`, section `active-loans`, `loan_id+resource_id` exacts | PR #3585 fusionnée : `available` **uniquement** lorsque le même HTML authentifié contient une action signée `reader-acs4` unique, correspondant au prêt actif et validée par le parseur existant. ID opaque dépendant de l'identité Core, credential, compte et des deux IDs fournisseur. Sinon `unknown`. | `download_digital(...,explicit_user_action=True,expected_offer_id=...)` reste un **token ACSM candidat** ; aucune activation automatique ou EPUB final n'est attesté. Le contrôle d'offer optionnel ne contourne pas l'action explicite. |
-| Kobo | `personal_manifest`, produit acheté non ambigu, archives conservées | **Scan normal : `unknown`**. Préflight **explicitement sélectionné** `rights_delivery_offer_snapshot(account,right_id,explicit_user_action=True)` (#3592) : GET manifeste privé positif, puis POST `acquisition(mode=descriptor)` pour **une seule édition**. `available` uniquement pour un candidat HTTPS GET unique et admissible EPUB/PDF/ACSM, URL jamais exportée ; compte/credential/identité exacts et candidat contradictoire/KDRM => `unknown`. | `resolve_acquisition(...,expected_offer_id=...,expected_identity_id=...)` (#3592) requalifie l’offre fraîche et refuse une identité ou recette étrangère avant de rendre un descripteur privé. Consentement Core **avant tout préflight POST**, puis exécution Core distincte et vérification des octets finaux ; 403 délégué n’interdit pas les autres modes. |
-| Paris | `dilicom`, `Id/HoldingId+RecordId` exacts ; état `unknown` | **`unknown`**. `AdditionalProperties.EbookUrl` est parfois un candidat PNB lié au prêt, mais ListLoans ne prouve toujours pas le droit `state=active` : une URL ne peut pas qualifier `delivery=available` selon le contrat v1. | `download_digital(...,expected_right_id=...,expected_identity_id=...)` (#3596) peut **optionnellement** relire le prêt DILICOM unique et son lien courant avant tout GET de contenu, et refuse le fallback `DownloadDigitalDocument` (POST potentiellement consommateur de quota) quand le lien sélectionné manque. Les parcours historiques demeurent. La lecture DILICOM→SYRACUSE conserve la vérification Core avant le second GET (#3593). Ni offre automatique ni droit actif déduits. |
+| Numilog | `meslivres`, achat positif `lid+variant` exact, identité/credential/compte attestés | Scan ordinaire `unknown`, préflight explicite sélectionné `rights_selected_delivery_offer_snapshot` (#3605), carte `OwnedDelivery` actuelle et identifiant d'offre opaque | `rights_selected_delivery_candidate` (#3606) relit l'offre et ne livre que l'EPUB direct ou l'**ACSM brut** (#3616) dans le staging demandé, sans import ADEPT legacy ; le download manuel reste inchangé. Broker exact et identité `default` historique contrôlée (#3612). |
+| BnF Prêt | `bnf_html`, section `active-loans`, identifiants prêt + ressource exacts | Action signée `reader-acs4` unique, active et liée au prêt ; préflight optionnel #3605, `unknown` sans preuve | `rights_selected_delivery_candidate` (#3606) et `download_digital` exact produisent un **ACSM candidat** sous staging Core. Aucune activation ADEPT ni EPUB final attesté côté plugin. |
+| Kobo | `personal_manifest`, achat du produit exact, archives conservées | Scan ordinaire `unknown` ; préflight ciblé #3610 : manifeste positif + POST `descriptor`, offre HTTPS opaque unique (EPUB/PDF/ACSM), DRM/format cohérents (#3602/#3621), KDRM et contradictions exclus | `rights_selected_delivery_candidate` (#3618) relit le droit et l'offre, puis livre le candidat sous staging Core via client public à peer épinglé, sans proxy, cookie Vault ou redirect. Propriétaire revalidé et URL signée jamais retournée ; **Core seul** inspecte/re-hashe/ADEPT et publie. |
+| Paris | `dilicom`, identifiants Id/HoldingId + RecordId et emprunteur exacts, **état toujours `unknown`** | Aucune offre automatique `available` depuis `EbookUrl` tant que ListLoans ne prouve pas l'activité du droit | #3596 fusionnée : le téléchargement PNB explicitement sélectionné relit le prêt exact et son URL actuelle ; pas de POST d'emprunt de secours sans lien et aucun reçu canonique attribué. La voie historique reste distincte. |
 
 **Source d'autorité :** seule la réponse privée authentifiée, sous le bon
 broker d'identités Core, produit la preuve A. Aucun titre, ISBN, catalogue
@@ -48,11 +48,17 @@ n'affirme **jamais** la disparition d'un droit depuis un snapshot partiel.
    Le Core doit rehasher le Placement cible à la Sync suivante : présence
    exacte attestée => zéro nouveau GET ; rien n'est rapproché par ISBN/titre.
 
-La callback `CompletedDelivery` des PR Core #3569/#3570 est **interne**
-au Core, pas une API importable par les plugins. Ces PR ne doivent pas
-être dupliquées. La nouvelle Sync ne possède pas encore de routage productif
-de livraison ni de lecteur de consentement persisté : **aucune activation
-automatique par le simple merge des PR Plugins**.
+La callback `CompletedDelivery` reste **interne** au Core :
+aucun plugin ne l'importe ni ne publie de transaction SQLite. Le lecteur
+de consentement persistant (#3601), le préflight Core (#3608) et le
+routeur de candidat sous staging strict (#3613) sont fusionnés.
+Le Core émet un témoin de retour `core-delivery:` **après** octets et
+ADEPT éventuel, distinct de la preuve A fournisseur ; ce témoin n'est
+pas présenté comme un reçu émis par le fournisseur. La projection
+descriptive post-publication est livrée par #3617.
+Aucune fusion de ces PR ne démontre à elle seule la recette live
+fournisseur, la reprise crash matérielle ni une deuxième Sync à zéro GET
+réel. Les tickets #3252, #3171 et #3228 restent ouverts.
 
 ## Recette et limites
 
