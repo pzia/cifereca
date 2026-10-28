@@ -407,7 +407,18 @@ class Storage:
             db.execute('INSERT INTO migrated VALUES (14)')
     def schema_version(self): return 14
 ''')
-        recette.install(self.target)
+        with socket.socket() as host_service:
+            host_service.bind(("127.0.0.1", 0))
+            host_service.listen()
+            # Executed by real setuptools metadata/wheel builds. Local code
+            # must never inherit the dependency worker's host networking.
+            (self.target / "code/setup.py").write_text(
+                "from setuptools import setup\nimport socket\n"
+                "s=socket.socket(); s.settimeout(1)\n"
+                f"assert s.connect_ex(('127.0.0.1', {host_service.getsockname()[1]})) != 0\n"
+                "setup()\n"
+            )
+            recette.install(self.target)
         with sqlite3.connect(self.target / "data/cifereca/library.sqlite3") as db:
             self.assertEqual(db.execute("SELECT version FROM migrated").fetchone(), (14,))
         self.assertTrue((self.target / "requirements-installed.txt").exists())

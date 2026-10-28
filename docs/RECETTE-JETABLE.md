@@ -94,6 +94,8 @@ Les copies déjà préparées (configurations, données, livres, imports, HOME e
 état) sont également masquées par des montages temporaires pendant cette phase :
 un outil d'installation ayant accès au réseau ne peut pas lire leurs credentials
 ou leur contenu. Seuls code, venv et cache de dépendances persistent pour le build.
+Le build local du Core et toutes les commandes suivantes sont déjà hors ligne ;
+seule la récupération des dépendances binaires utilise cette phase réseau.
 L'application et tous ses descendants ont ensuite un namespace réseau isolé.
 Tous les comptes, hooks de téléchargement, sauvegarde automatique Kobo et LLM
 sont désactivés, et le lancement impose `--no-plugins`. Les sessions/cookies

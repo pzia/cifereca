@@ -396,12 +396,15 @@ def install(target: Path) -> None:
     with log.open("a") as stream:
         project = tomllib.loads((target / "code/pyproject.toml").read_text())["project"]
         commands = [
-            ["/usr/bin/python3", "-m", "venv", "--copies", "--system-site-packages", str(target / "venv")],
-            [str(target / "venv/bin/python"), "-m", "pip", "install", "--only-binary=:all:", "setuptools>=69", "wheel", *project.get("dependencies", [])],
-            [str(target / "venv/bin/python"), "-m", "pip", "install", "--no-build-isolation", "--no-deps", str(target / "code")],
+            (["/usr/bin/python3", "-m", "venv", "--copies", "--system-site-packages", str(target / "venv")], False),
+            ([str(target / "venv/bin/python"), "-m", "pip", "install", "--only-binary=:all:", "setuptools>=69", "wheel", *project.get("dependencies", [])], True),
+            ([str(target / "venv/bin/python"), "-m", "pip", "install", "--no-build-isolation", "--no-deps", str(target / "code")], False),
         ]
-        for command in commands:
-            subprocess.run(sandbox(target, command, network=True), check=True, stdout=stream, stderr=subprocess.STDOUT)
+        # Only the wheel-fetch/install worker gets egress, with private copies
+        # hidden. Subsequent Python startups may execute installed .pth files:
+        # local builds and all later commands must already be offline.
+        for command, network in commands:
+            subprocess.run(sandbox(target, command, network=network), check=True, stdout=stream, stderr=subprocess.STDOUT)
         # venv creates a redundant lib64 -> lib convenience symlink.
         lib64 = target / "venv/lib64"
         if lib64.is_symlink() and lib64.readlink() == Path("lib"):
