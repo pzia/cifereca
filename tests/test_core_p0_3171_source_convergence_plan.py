@@ -244,3 +244,20 @@ def test_duplicate_attested_origin_is_idempotent_not_a_second_placement():
                   origins=(link, link), scans=(scan("A"),))
     assert result.decisions[0].placement_ids == ("copy",)
     assert result.decisions[0].state == "present_attested"
+
+
+def test_conflicting_placement_identifier_is_rejected_across_profiles():
+    snap, key = source()
+    with pytest.raises(ValueError, match="conflicting_placement_evidence"):
+        plan(snap, placements=(
+            placement("A", "same-ID", SHA_A),
+            placement("B", "same-ID", SHA_B),
+        ), origins=(origin(key),), scans=(scan("A"),))
+
+
+def test_conflicting_origin_identifier_is_rejected_without_overwriting():
+    snap, key = source()
+    first = origin(key)
+    second = replace(first, artifact_sha256=SHA_B)
+    with pytest.raises(ValueError, match="conflicting_origin_evidence"):
+        plan(snap, origins=(first, second), scans=(scan("A"),))
