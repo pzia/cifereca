@@ -22,6 +22,10 @@ def _isolate_delivery_lock(monkeypatch, tmp_path):
         "cifereca.core.canonical_selected_delivery.acquisition_lock_file",
         lambda: tmp_path / "state" / "acquisition.lock",
     )
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_offers.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
 
 
 def _prepare(service):
