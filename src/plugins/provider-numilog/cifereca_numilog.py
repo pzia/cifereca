@@ -340,14 +340,16 @@ class NumilogSession(ProviderSession):
         if not self.connected:
             self._session_event('not_connected')
             raise ProviderError('Numilog : connecter le compte avant cette opération')
-        # A Core owner can be rebound while MesLivres is paginating.
-        # Fence both the positive rights read and the *targeted* explicit
-        # delivery-card refresh before every private GET. The latter must
-        # not follow page 1 with a GET under a foreign owner. A brokerless
-        # legacy explicit download keeps its existing behavior.
-        protected_read = rights_observation or (
+        # Scope every authenticated MesLivres page before another private
+        # GET, including the legacy library/search and targeted enrichment.
+        # A legacy read with an unresolved broker may remain readable but
+        # its *exact* candidate owners and live account instances must stay
+        # unchanged throughout pagination. Only typed rights or explicitly
+        # selected delivery requires one attested owner up front.
+        strict_owner = rights_observation or (
             include_delivery and self.identity_broker is not None
         )
+        protected_read = rights_observation or self.identity_broker is not None
         read_owner = self._inventory_owner_or_none() if protected_read else None
         read_account = (
             self._legacy_inventory_account_binding() if protected_read else None
@@ -360,7 +362,7 @@ class NumilogSession(ProviderSession):
                 and self._legacy_inventory_account_binding() == read_account
             ))
 
-        if protected_read and (
+        if strict_owner and (
             type(read_owner) is not tuple or len(read_owner) != 3
             or read_owner[0] != 'broker'
             or type(read_owner[2]) is not tuple or len(read_owner[2]) != 1
@@ -380,7 +382,8 @@ class NumilogSession(ProviderSession):
                     raise ProviderCapabilityError(
                         'Numilog : identité propriétaire modifiée ; ' + (
                             'observations arrêtées' if rights_observation
-                            else 'livraison arrêtée'
+                            else 'livraison arrêtée' if include_delivery
+                            else 'inventaire arrêté'
                         )
                     )
                 if url in seen_pages:
@@ -393,7 +396,8 @@ class NumilogSession(ProviderSession):
                     raise ProviderCapabilityError(
                         'Numilog : identité propriétaire modifiée ; ' + (
                             'observations arrêtées' if rights_observation
-                            else 'livraison arrêtée'
+                            else 'livraison arrêtée' if include_delivery
+                            else 'inventaire arrêté'
                         )
                     )
                 if (url_origin(final_url) != url_origin(self.library_url)
