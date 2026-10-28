@@ -46,7 +46,7 @@ def test_title_candidate_never_enables_get_without_existing_account_opt_in(
     assert candidate.read_bytes() == old
     assert service.storage.acquisitions(provider_id="manual") == []
 
-    assert broker.set_bnf_auto_download(broker._source_id(account), False)
+    assert broker.set_bnf_auto_download(broker._source_id(account), False) is False
     assert materialize(service, account, loan)["status"] == "skipped"
     assert attempts == [True] and downloaded == []
     assert candidate.read_bytes() == old
