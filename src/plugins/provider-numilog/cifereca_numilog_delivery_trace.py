@@ -25,7 +25,7 @@ _PUBLIC_CODES = frozenset({
     "link_expired", "http_error", "origin_rejected", "redirect_loop",
     "redirect_limit", "mime_unexpected", "download_oversize",
     "artifact_invalid", "xml_not_acsm", "adept_attention_required",
-    "adept_unconfirmed", "epub_complete", "acsm_complete",
+    "adept_unconfirmed", "epub_complete", "acsm_complete", "acsm_candidate",
     "html_oversize",
     "unclassified_error",
 })
@@ -209,7 +209,7 @@ class DeliveryTrace:
         self._emit(detail, level="detailed", status="ok")
 
     def success(self, code: str) -> None:
-        self._success_code = code if code in {"epub_complete", "acsm_complete"} else ""
+        self._success_code = code if code in {"epub_complete", "acsm_complete", "acsm_candidate"} else ""
 
     def _emit(self, detail: dict[str, object], *, level: str, status: str) -> None:
         if self._diagnostics is None:
