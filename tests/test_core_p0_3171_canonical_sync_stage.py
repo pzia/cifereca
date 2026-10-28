@@ -354,8 +354,10 @@ def test_connection_disabled_in_sql_during_read_refuses_A_publication(rig):
             )
         return service.snapshot
     service.session.rights_observation_snapshot = disabled
-    with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
-        synchronize_account_source(service, service.account)
+    result = synchronize_account_source(service, service.account)
+    assert result["status"] == "partial"
+    assert result["canonical_rights"]["status"] == "failed"
+    assert result["canonical_rights"]["source_references_changed"] == 0
     assert refs(db) == ([], 0)
     assert db.placements() == []
 
@@ -364,6 +366,37 @@ def test_removed_profile_cannot_receive_new_A_through_stale_connection(rig):
     service, db, root = rig
     with db._lock, db._connect() as conn:
         conn.execute("DELETE FROM identities WHERE identity_id='A'")
-    with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
-        synchronize_account_source(service, service.account)
+    result = synchronize_account_source(service, service.account)
+    assert result["status"] == "partial"
+    assert result["canonical_rights"]["status"] == "failed"
+    assert result["canonical_rights"]["source_references_changed"] == 0
+    assert refs(db) == ([], 0)
+
+
+def test_typed_session_without_registered_upstream_account_does_not_break_legacy_sync(rig):
+    service, db, root = rig
+    with db._lock, db._connect() as conn:
+        conn.execute(
+            "DELETE FROM provider_accounts WHERE identity_id='A' "
+            "AND provider_id='seller-a' AND credential_id='card-a'"
+        )
+    result = synchronize_account_source(service, service.account)
+    assert service.read_calls == 1
+    assert result["provider"] == "seller-a"
+    assert result["status"] == "partial"
+    assert result["canonical_rights"]["status"] == "failed"
+    assert result["canonical_rights"]["source_references_changed"] == 0
+    assert refs(db) == ([], 0)
+    assert db.entitlements() == [] and db.placements() == []
+
+
+def test_sessionless_local_source_without_canonical_reader_preserves_exact_result(rig):
+    service, db, root = rig
+    service.accounts = [Account(
+        identity_id="A", provider_id="local",
+        credential_id="local", unique_id="local",
+    )]
+    service._sessions.clear()
+    result = synchronize_account_source(service, service.accounts[0])
+    assert result == {"provider": "local", "status": "ok"}
     assert refs(db) == ([], 0)
