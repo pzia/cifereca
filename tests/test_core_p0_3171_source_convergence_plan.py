@@ -284,10 +284,17 @@ def test_fresh_user_declaration_is_present_but_not_attested_or_acquired(provider
     expected = plan(snap, scans=(scan("A"),), declarations=(record,),
                     consent=(key,))
     assert expected.decisions[0].state == "present_declared"
-    assert expected.decisions[0].reason == "fresh_user_declaration_not_provider_proof"
+    assert expected.decisions[0].reason == "declared_current_independent_admission_required"
+    assert expected.decisions[0].independent_acquisition_review_possible
     assert expected.decisions[0].placement_ids == ("file-1",)
     assert not expected.acquisition_authorized
     assert not expected.decisions[0].acquisition_authorized
+    # The same declared file without existing, exact-right auto-acquisition
+    # consent still remains a visible declaration, never a GET permission.
+    no_consent = plan(snap, scans=(scan("A"),), declarations=(record,))
+    assert no_consent.decisions[0].state == "present_declared"
+    assert no_consent.decisions[0].reason == "fresh_user_declaration_not_provider_proof"
+    assert not no_consent.decisions[0].independent_acquisition_review_possible
 
 
 def test_stale_or_conflicting_declared_links_require_review_not_download():
@@ -429,3 +436,28 @@ def test_stale_origin_does_not_become_an_indefinite_manual_veto():
     no_consent = plan(snap, placements=(placement("A", "old", verified=False),),
                       origins=(origin(key),), scans=(scan("A"),)).decisions[0]
     assert not no_consent.independent_acquisition_review_possible
+
+
+@pytest.mark.parametrize("right_kind", ["purchase", "loan"])
+def test_declared_copy_cannot_veto_pre_authorized_acquisition(right_kind):
+    snap, key = source(kind=right_kind, right="same-edition", delivery="available")
+    declaration = DeclaredAssociationEvidence(
+        key, "recorded-correlation", "candidate-file",
+        "declared_current", "fresh-file-check", identity_id="A",
+    )
+    action = plan(snap, declarations=(declaration,), scans=(scan("A"),),
+                  consent=(key,)).decisions[0]
+    assert action.state == "present_declared"
+    assert action.placement_ids == ("candidate-file",)
+    assert action.independent_acquisition_review_possible
+    assert not action.acquisition_authorized
+    # Even with the same physical candidate, a distinct right or another
+    # account never inherits either this declaration or the stored consent.
+    other, other_key = source(account="account-B", credential="cred-B",
+                              right="same-edition", kind=right_kind,
+                              delivery="available")
+    foreign = plan(other, declarations=(declaration,), scans=(scan("A"),),
+                   consent=(key,)).decisions[0]
+    assert foreign.state == "pending"
+    assert not foreign.independent_acquisition_review_possible
+    assert not foreign.acquisition_authorized
