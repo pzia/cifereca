@@ -81,16 +81,28 @@ def read_account_rights_snapshot(service, account: Account, *,
         ) != (scope.identity_id, scope.provider_id,
               scope.credential_id, scope.account_id):
             return False
-        if sum(
-            row is account for row in service.accounts
+        # A second same-scoped Account may be appended to the *same* list
+        # while the provider reads. Counting only the original object would
+        # miss that ambiguity, even though the epoch/list identity is stable.
+        current_accounts = [
+            row for row in accounts
             if type(row) is Account and (
                 row.identity_id, row.provider_id,
                 row.credential_id, row.unique_id,
             ) == (scope.identity_id, scope.provider_id,
                   scope.credential_id, scope.account_id)
-        ) != 1:
+        ]
+        if len(current_accounts) != 1 or current_accounts[0] is not account:
             return False
-        if not any(value is session for value in sessions.values()):
+        # Similarly, a second session can be inserted into the same mapping
+        # without replacing the original selected instance. Neither can
+        # authorize a positive observation after a mid-read owner race.
+        registered = [
+            value for value in sessions.values()
+            if (getattr(value, "provider_id", None) == scope.provider_id
+                and getattr(value, "credential_id", None) == scope.credential_id)
+        ]
+        if len(registered) != 1 or registered[0] is not session:
             return False
         if getattr_static(session, "_closed", False) not in (None, False):
             return False
