@@ -405,3 +405,51 @@ def test_bnf_single_conflicting_right_is_only_partial_not_revoked():
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("bad_coordinate", [
+    ("edition-" + "x" * 257, "loan-bad"),
+    ("edition-bad", "loan-" + "x" * 257),
+    ("edition-bad", "loan\\nbad"),
+    ("edition\\x00bad", "loan-bad"),
+])
+def test_bnf_invalid_typed_loan_coordinates_keep_valid_sibling(bad_coordinate):
+    """A malformed typed row is not allowed to erase independently valid rights.
+
+    The live HTML parser is stricter (128 ASCII route characters). This test
+    also fences future typed adapters, without assuming any absent loan was
+    revoked or allowing a new token/network operation.
+    """
+    from cifereca.plugin_api import LoanInventoryScope
+
+    session, account, client = fixture(activity())
+    try:
+        def typed_loan(edition_id, right_id):
+            return Loan(
+                id=right_id, record_id=edition_id, title="Synthetic",
+                provider="BNF_PRET", medium="digital", state="active",
+                source_provider=session.provider_id,
+                source_credential=session.credential_id,
+                source_account_id=account.unique_id,
+                identity_id=account.identity_id,
+            )
+
+        session._loan_inventory_snapshot_locked = lambda bound: NS(
+            scope=LoanInventoryScope.for_account(bound),
+            loans=(
+                typed_loan("edition-valid", "loan-valid"),
+                typed_loan(*bad_coordinate),
+                typed_loan("edition-second", "loan-second"),
+            ),
+        )
+        result = session.rights_observation_snapshot(account)
+        assert [(row.edition_id, row.right_id) for row in result.rights] == [
+            ("edition-valid", "loan-valid"),
+            ("edition-second", "loan-second"),
+        ]
+        assert result.status == result.coverage == "partial"
+        assert not result.authorizes_negative_reconciliation
+        assert not result.authorizes_mutation
+        assert client.calls == ["login"]  # typed projection adds no HTTP
+    finally:
+        session.close()
