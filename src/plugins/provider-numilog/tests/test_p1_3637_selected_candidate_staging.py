@@ -176,3 +176,47 @@ def test_selected_epub_post_get_session_rebind_withdraws_candidate(
                 transport=httpx.MockTransport(lambda _: httpx.Response(200)),
             )
         session.close()
+
+
+def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
+    tmp_path,
+):
+    from cifereca.plugin_api import ProviderError
+    session, account, reads, right = _direct_epub_session()
+    calls = []
+    failing = {"value": True}
+    def handler(request):
+        calls.append(str(request.url))
+        if failing["value"]:
+            return httpx.Response(
+                503, content=b"SYNTHETIC_PRIVATE_BODY_NEVER_LOGGED",
+            )
+        return httpx.Response(
+            200, content=fake_epub_bytes(),
+            headers={"content-type": "application/epub+zip"},
+        )
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        trust_env=False, follow_redirects=False,
+    )
+    try:
+        with pytest.raises(ProviderError) as failed:
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert SIGNED_EPUB not in str(failed.value)
+        assert "SYNTHETIC_PRIVATE_BODY_NEVER_LOGGED" not in str(failed.value)
+        assert list(tmp_path.iterdir()) == []
+        first_reads = len(reads)
+        failing["value"] = False
+        staged, _ = session.rights_selected_delivery_candidate(
+            account, **selected(right, tmp_path),
+        )
+        assert staged.is_file() and staged.suffix == ".epub"
+        assert staged.read_bytes() == fake_epub_bytes()
+        assert calls == [SIGNED_EPUB, SIGNED_EPUB]
+        assert len(reads) > first_reads  # no reuse of stale signed evidence
+        assert len(list(tmp_path.iterdir())) == 1
+    finally:
+        session.close()
