@@ -46,17 +46,25 @@ d'un autre profil, titre, cache public ou fichier `manual/` ne crée ce droit.
   vérifie lui aussi les changements de broker, sans autoriser l'acquisition
   par le simple inventaire.
 
-**Limite d'architecture restante, Core #3171 :**
-`AccountRef` du broker public expose `provider_id`, `account_id`,
-`identity_id`, mais **pas `credential_id`**. Si deux credentials d'un
-même fournisseur ont le même `account_id` amont non vide, les plugins ne
-peuvent pas prouver la liaison à un credential exact en ne lisant que le
-broker. Une évolution **additive/versionnée du broker ou d'une requête
-d'attestation Core** est nécessaire : la comparaison du seul nom de compte
-ou d'un identifiant d'identité n'est pas équivalente. Les gardes fournisseur
-actuels sont conservateurs, sans contournement de cette lacune. Handoff
-explicite consigné dans les tickets #3171 et #3252 ; **ne pas clore #3252
-uniquement sur cette matrice**.
+**Preuve de credential, frontière Core #3171 — transition v1/v2 :**
+les producteurs Plugins ont désormais adopté de façon **additive**
+`AccountRef(scope_version=2, credential_id=...)` dans leurs contrôles du
+broker d'identités. Cette preuve distingue plusieurs credentials d'un
+même fournisseur partageant un `account_id` amont non vide, et la liaison
+est revalidée après I/O. Les adaptations sont fusionnées :
+**Paris #3562**, **Kobo #3564**, **BnF Prêt #3565** et
+**Numilog #3566** (droits et parcours de livraison concerné).
+L'émission du contrat public v2 et le routage Core des acquisitions relèvent
+de **la PR Core #3559**, indépendamment de cette réception Plugins.
+**Tant que le Core en service n'émet que v1**, son `AccountRef` ne
+fournit *pas* de credential attesté : un résultat legacy reste une preuve
+d'identité de portée limitée et **ne devient jamais une autorisation de
+téléchargement ou une preuve transactionnelle v2**. Un mélange v1/v2
+ambigu sur un même compte échoue fermé ; un v2 de credential étranger
+n'est pas un candidat à la liaison de ce compte. Des credentials distincts
+sans propriétaire attesté ne sont pas rapprochés par nom, ISBN, SHA,
+copie de profil ou fichier local. Handoff #3171/#3252 :
+**ne pas fermer #3252 sur cette seule compatibilité v2.**
 
 ## Conformance synthétique à conserver pour les quatre fournisseurs
 
@@ -64,7 +72,8 @@ uniquement sur cette matrice**.
 |---|---|
 | 0 / 1 / N prêts ou achats exacts | seulement les lignes réellement attestées, dans le bon compte et la bonne branche |
 | A/B et credential concurrent | jamais de droit attribué à une autre identité ; broker manquant, ambigu ou remplacé = échec fermé |
-| Session fermée, compte modifié ou remplacé A→A pendant GET/projection | aucune publication des anciennes preuves |
+| Core AccountRef v1/v2 | deux credentials partageant un même ID amont restent distincts en v2 ; credential v2 absent/étranger, version inconnue ou v1/v2 ambigu = échec fermé ; aucun mandat de téléchargement dans le broker |
+| Session fermée, compte modifié ou remplacé A→A pendant GET/projection | aucune publication des anciennes preuves ; avant un deuxième GET privé paginé Numilog ou une deuxième branche Paris, stop immédiat si compte réaffecté |
 | Doublon d'ID ou édition contradictoire | mise en quarantaine des preuves ambiguës ; autres positifs conservés quand possible |
 | Branche qui échoue ou inventaire partiel | échec/partiel **sans preuve négative**, pas de déduction de révocation |
 | Archives et notices descriptives | catalogue public, archive, titre, ISBN ou SHA isolé ne servent jamais de droit |
