@@ -161,3 +161,42 @@ def test_manifest_retaining_item_does_not_mark_right_inactive(tmp_path):
         assert len(storage.backup_list("opaque-seller")) == 1
     finally:
         storage.close()
+
+
+
+@pytest.mark.parametrize("seen_ids", [
+    None, "book", b"book", {"book": True}, (part for part in ("book",)),
+    [None], [123], [""], ["   "], ["book", ""],
+    ["book\x00other"], ["book\nother"], ["book\rother"],
+    ["x" * 1025], ["book"] * 100_001,
+])
+def test_malformed_inventory_never_prunes_current_rights_or_history(tmp_path, seen_ids):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        before_backup = storage.backup_list("opaque-seller")
+        before_right = storage.entitlements()
+        before_receipt = storage.acquisitions(provider_id="opaque-seller")
+        with pytest.raises(ValueError, match="invalid_authoritative_manifest_item_ids"):
+            storage.backup_prune_missing("opaque-seller", "card", seen_ids)
+        assert storage.backup_list("opaque-seller") == before_backup
+        assert storage.entitlements() == before_right
+        assert storage.acquisitions(provider_id="opaque-seller") == before_receipt
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("seen_ids", [
+    {"book"}, ["book"], ("book",), (" book ",),
+])
+def test_valid_complete_inventory_preserves_exact_legacy_right(tmp_path, seen_ids):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        assert storage.backup_prune_missing("opaque-seller", "card", seen_ids) == {
+            "pruned": 0, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert _right(storage)["state"] == "active"
+    finally:
+        storage.close()

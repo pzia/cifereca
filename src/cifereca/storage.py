@@ -1659,7 +1659,19 @@ class Storage:
         """
         provider = str(provider_id or "").strip()
         credential = str(credential_id or "").strip()
-        seen = {str(item).strip() for item in seen_item_ids if str(item).strip()}
+        # An absence decision is destructive to a source's *current* right.
+        # A malformed/partial caller payload (notably a string, dict or None)
+        # is NOT an authoritative empty manifest. Reject the entire batch
+        # before BEGIN IMMEDIATE rather than silently pruning every right.
+        if type(seen_item_ids) not in (set, list, tuple) or len(seen_item_ids) > 100_000:
+            raise ValueError("invalid_authoritative_manifest_item_ids")
+        seen: set[str] = set()
+        for raw_item in seen_item_ids:
+            if (type(raw_item) is not str or not raw_item.strip()
+                    or len(raw_item) > 1024
+                    or any(c in raw_item for c in "\x00\r\n")):
+                raise ValueError("invalid_authoritative_manifest_item_ids")
+            seen.add(raw_item.strip())
         now = int(time.time())
         if not provider or not credential:
             return {"pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0}
