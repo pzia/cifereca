@@ -128,6 +128,8 @@ def test_active_dilicom_loan_prefers_direct_ebook_url(monkeypatch, tmp_path: Pat
         credential_id="paris-default",
         is_primary=True,
     )
+    session.connected = True
+    session._accounts = [account]
     loan = Loan(
         id="loan-direct",
         provider="DILICOM",
@@ -180,12 +182,17 @@ def test_digital_download_falls_back_when_ebook_url_is_missing(monkeypatch, tmp_
         credential_id="paris-default",
         is_primary=True,
     )
+    session.connected = True
+    session._accounts = [account]
     loan = Loan(
         id="loan-fallback",
         provider="DILICOM",
         medium="digital",
         record_id="42",
         title="Fallback",
+        source_provider="paris",
+        source_credential="paris-default",
+        source_account_id="primary",
     )
 
     preferences = {"ReaderId": "r", "PassPhrase": "p", "Hint": "h"}
