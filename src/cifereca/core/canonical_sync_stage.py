@@ -57,7 +57,13 @@ def persist_attested_source_references(
             "WHERE identity_id=? AND provider_id=? AND credential_id=?",
             (scope.identity_id, scope.provider_id, scope.credential_id),
         ).fetchall()
+        profile = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (scope.identity_id,),
+        ).fetchall()
         if (binding != (scope.identity_id, 1)
+                or len(profile) != 1
+                or type(profile[0][0]) is not str or not profile[0][0]
                 or sum(a[0] == scope.account_id for a in accounts) != 1):
             raise ValueError("canonical_rights_core_binding_changed")
         for row in admitted:
