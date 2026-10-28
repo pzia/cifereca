@@ -1421,6 +1421,13 @@ class NumilogSession(ProviderSession):
                         cookie_header_present=bool(r.request.headers.get('cookie')))
                     trace.fail(public_http_code(r.status_code))
                     if r.status_code in REDIRECTS:
+                        if stage_acsm_only and attested_hop:
+                            # A Core-selected signed action is a one-GET
+                            # candidate route, not permission to navigate to
+                            # another supplier URL or a login/renewal flow.
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_redirect_unexpected'
+                            )
                         # The P0 pre-normalization guard can reject this hop
                         # before another GET. Attribute that failure safely.
                         trace.fail('origin_rejected')
@@ -1444,6 +1451,10 @@ class NumilogSession(ProviderSession):
                     trace.fail('mime_unexpected')
                     mime = r.headers.get('content-type','').split(';')[0].lower().strip()
                     if mime == 'text/html':
+                        if stage_acsm_only and attested_hop:
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_html_unexpected'
+                            )
                         trace.fail('html_oversize')
                         html = self._small(r).decode('utf-8-sig',errors='replace')
                         try:
