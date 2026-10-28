@@ -3,10 +3,11 @@
 Synthetic HTML only. No SSO network, download/token/ACSM, SQLite or Core write.
 """
 from dataclasses import replace
+from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.plugin_api import ProviderConfigurationError
+from cifereca.plugin_api import ProviderConfigurationError, ProviderCapabilityError
 from cifereca_bnf_pret import BnfProviderSession
 
 
@@ -41,13 +42,28 @@ class Client:
         self.calls.append("close")
 
 
+class CoreOwnerBroker:
+    def __init__(self, identities=("identity-A",)):
+        self.identities = identities
+        self.calls = 0
+
+    def accounts(self):
+        self.calls += 1
+        return [
+            NS(provider_id="bnf-pret", account_id="credential-A",
+               identity_id=identity)
+            for identity in self.identities
+        ]
+
+
 def fixture(html):
     client = Client(html)
+    broker = CoreOwnerBroker()
     session = BnfProviderSession(
         client=client, credential_id="credential-A",
         label="Synthetic BnF", credentials={
             "username": "synthetic", "password": "synthetic",
-        }, options={},
+        }, options={}, identity_broker=broker,
     )
     (account,) = session.connect()
     account.identity_id = "identity-A"
@@ -120,5 +136,95 @@ def test_bnf_other_account_is_rejected_without_activity_get():
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.rights_observation_snapshot(replace(account))
         assert client.calls == ["login"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("owners", [
+    (), ("identity-B",), ("identity-A", "identity-B"),
+    ("identity-A", "identity-A"),
+])
+def test_bnf_owner_missing_foreign_or_ambiguous_is_refused_before_activity(owners):
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    session.identity_broker.identities = owners
+    try:
+        with pytest.raises(ProviderCapabilityError, match="bnf_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == ["login"]  # no private activity GET
+    finally:
+        session.close()
+
+
+def test_bnf_rights_need_broker_but_legacy_loan_inventory_stays_supported():
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    session.identity_broker = None
+    try:
+        with pytest.raises(ProviderCapabilityError, match="bnf_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == ["login"]
+        inventory = session.loan_inventory_snapshot(account)
+        assert len(inventory.loans) == 1
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("race", [
+    "identity_reassigned", "broker_swapped_same_owner", "owner_duplicated",
+])
+def test_bnf_owner_rebind_during_activity_cannot_publish_rights(race):
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    broker = session.identity_broker
+    original = client.activity
+
+    def during_activity():
+        html = original()
+        if race == "identity_reassigned":
+            broker.identities = ("identity-B",)
+        elif race == "broker_swapped_same_owner":
+            session.identity_broker = CoreOwnerBroker(("identity-A",))
+        else:
+            broker.identities = ("identity-A", "identity-A")
+        return html
+
+    client.activity = during_activity
+    try:
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
+def test_bnf_pre_read_identity_rebind_is_rejected_without_private_activity():
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    account.identity_id = "identity-B"  # Core still owns identity-A
+    try:
+        with pytest.raises(ProviderCapabilityError, match="bnf_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == ["login"]
+    finally:
+        session.close()
+
+
+def test_bnf_plugin_activation_injects_core_identity_broker_into_new_sessions():
+    from cifereca_bnf_pret import BnfProviderPlugin
+
+    broker = CoreOwnerBroker()
+    plugin = BnfProviderPlugin()
+    plugin.activate(NS(broker=lambda name: broker if name == "identities" else None))
+    session = plugin.create_session(
+        credential_id="credential-A", label="Synthetic BnF",
+        credentials={"username": "synthetic", "password": "synthetic"},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    try:
+        assert session.identity_broker is broker
+        plugin.deactivate()
+        assert plugin._identity_broker is None
+        # An already created session retains the exact broker instance to
+        # allow an in-flight rights read to detect replacement rather than
+        # silently adopting a newly activated context.
+        assert session.identity_broker is broker
     finally:
         session.close()

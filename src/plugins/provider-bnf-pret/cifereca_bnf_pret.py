@@ -78,10 +78,11 @@ def _public_code(error):
 
 
 class BnfProviderSession(ProviderSession):
-    def __init__(self, *, client=None, diagnostics=None, **kwargs):
+    def __init__(self, *, client=None, diagnostics=None, identity_broker=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         self.client = client or ReaderHTTPClient(diagnostics=diagnostics)
         self.diagnostics = diagnostics
+        self.identity_broker = identity_broker
         self._lock = threading.RLock()
         self._epoch = uuid4().hex
         self._closed = False
@@ -220,11 +221,48 @@ class BnfProviderSession(ProviderSession):
         # Same lock as connect/close and legacy loan GET. Freeze the mutable
         # borrower across both the typed inventory and rights projection.
         with self._lock:
+            # A mutable Account.identity_id is not evidence that Core still
+            # owns this credential's borrower. Require the same unique,
+            # exact Core AccountRef binding used by the purchased-book
+            # adapters; never infer a new right from an unlinked session.
+            caller_scope = (
+                account.unique_id, account.identity_id,
+                account.provider_id, account.credential_id,
+            ) if type(account) is Account else None
+
+            def core_binding():
+                broker = self.identity_broker
+                if broker is None or caller_scope is None:
+                    return None
+                try:
+                    refs = broker.accounts()
+                    if type(refs) not in (tuple, list):
+                        return None
+                    owners = [
+                        ref.identity_id if type(ref.identity_id) is str else ""
+                        for ref in refs
+                        if (getattr(ref, "provider_id", None) == self.provider_id
+                            and getattr(ref, "account_id", None) == caller_scope[0])
+                    ]
+                    return (id(broker), tuple(sorted(owners)))
+                except Exception:
+                    return None
+
+            owner_binding = core_binding()
+            if (caller_scope is None or caller_scope[2:] !=
+                    (self.provider_id, self.credential_id)
+                    or type(caller_scope[1]) is not str or not caller_scope[1]
+                    or owner_binding is None
+                    or owner_binding[1] != (caller_scope[1],)):
+                raise ProviderCapabilityError("bnf_rights_owner_unverified")
             inventory = self._loan_inventory_snapshot_locked(account)
             scope = inventory.scope
             if (not self.connected or self._closed or len(self._accounts) != 1
                     or account is not self._accounts[0]
-                    or LoanInventoryScope.for_account(account) != scope):
+                    or LoanInventoryScope.for_account(account) != scope
+                    or (account.unique_id, account.identity_id,
+                        account.provider_id, account.credential_id) != caller_scope
+                    or core_binding() != owner_binding):
                 raise ProviderConfigurationError('account_scope_mismatch')
             observed = datetime.now(timezone.utc).isoformat()
             rights = []
@@ -244,7 +282,10 @@ class BnfProviderSession(ProviderSession):
                 ))
             if (not self.connected or self._closed or len(self._accounts) != 1
                     or account is not self._accounts[0]
-                    or LoanInventoryScope.for_account(account) != scope):
+                    or LoanInventoryScope.for_account(account) != scope
+                    or (account.unique_id, account.identity_id,
+                        account.provider_id, account.credential_id) != caller_scope
+                    or core_binding() != owner_binding):
                 raise ProviderConfigurationError('account_scope_mismatch')
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
@@ -464,9 +505,17 @@ class BnfProviderSession(ProviderSession):
 class BnfProviderPlugin(ProviderPlugin):
     descriptor = DESCRIPTOR
 
+    def activate(self, context):
+        self._identity_broker = context.broker("identities")
+        return self
+
+    def deactivate(self):
+        self._identity_broker = None
+
     def create_session(self, *, credential_id, label, credentials, options, config, storage, diagnostics):
         return BnfProviderSession(credential_id=credential_id, label=label,
-                                  credentials=credentials, options=options, diagnostics=diagnostics)
+                                  credentials=credentials, options=options, diagnostics=diagnostics,
+                                  identity_broker=getattr(self, "_identity_broker", None))
 
 
 PLUGIN = BnfProviderPlugin()
