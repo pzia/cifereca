@@ -8,7 +8,7 @@ from cifereca.plugin_api.provider_rights_observation import (
 )
 from cifereca.core.source_convergence import (
     SourceKey, PlacementEvidence, OriginEvidence, ProfileScan,
-    LocalCandidate, plan_convergence,
+    LocalCandidate, DeclaredAssociationEvidence, plan_convergence,
 )
 
 
@@ -56,10 +56,10 @@ def scan(identity, complete=True):
     return ProfileScan(identity, complete, "core-scan-proof" if complete else "")
 
 
-def plan(*snapshots, placements=(), origins=(), scans=(), candidates=(), consent=()):
+def plan(*snapshots, placements=(), origins=(), scans=(), candidates=(), declarations=(), consent=()):
     return plan_convergence(
         tuple(snapshots), placements=tuple(placements), origins=tuple(origins),
-        scans=tuple(scans), candidates=tuple(candidates),
+        scans=tuple(scans), candidates=tuple(candidates), declarations=tuple(declarations),
         consent_references=frozenset(consent),
     )
 
@@ -269,3 +269,65 @@ def test_conflicting_origin_identifier_is_rejected_without_overwriting():
 def test_verified_placement_without_actual_core_check_is_not_admissible():
     with pytest.raises(ValueError, match="invalid_placement_evidence"):
         PlacementEvidence("A", "file", SHA_A, 1234, True)
+
+
+@pytest.mark.parametrize("provider", ["provider-alpha", "provider-beta"])
+def test_fresh_user_declaration_is_present_but_not_attested_or_acquired(provider):
+    snap, key = source(provider=provider)
+    record = DeclaredAssociationEvidence(
+        key, "relation-1", "file-1", "declared_current",
+        "fresh-Core-file-verification",
+    )
+    expected = plan(snap, scans=(scan("A"),), declarations=(record,),
+                    consent=(key,))
+    assert expected.decisions[0].state == "present_declared"
+    assert expected.decisions[0].reason == "fresh_user_declaration_not_provider_proof"
+    assert expected.decisions[0].placement_ids == ("file-1",)
+    assert not expected.acquisition_authorized
+    assert not expected.decisions[0].acquisition_authorized
+
+
+def test_stale_or_conflicting_declared_links_require_review_not_download():
+    snap, key = source()
+    current = DeclaredAssociationEvidence(
+        key, "rel-current", "local-1", "declared_current", "fresh-check",
+    )
+    stale = DeclaredAssociationEvidence(key, "rel-stale", "local-2", "needs_review")
+    result = plan(snap, declarations=(current, stale),
+                  scans=(scan("A"),), consent=(key,))
+    assert result.decisions[0].state == "needs_reconciliation"
+    different = replace(current, relation_id="rel-other", placement_id="local-2")
+    ambiguous = plan(snap, declarations=(current, different), scans=(scan("A"),))
+    assert ambiguous.decisions[0].state == "needs_reconciliation"
+
+
+def test_revoked_declaration_is_historical_and_does_not_block_new_candidate():
+    snap, key = source()
+    revoked = DeclaredAssociationEvidence(key, "revoked", "old-file", "revoked")
+    decision = plan(snap, declarations=(revoked,), scans=(scan("A"),),
+                    consent=(key,)).decisions[0]
+    assert decision.state == "missing_to_download"
+    with pytest.raises(ValueError, match="conflicting_declared_association"):
+        plan(snap, declarations=(revoked, replace(revoked, status="needs_review")))
+
+
+def test_declaration_is_scoped_to_exact_right_including_loan():
+    purchase, pk = source()
+    loan, lk = source(right="temporary-loan", kind="loan")
+    declaration = DeclaredAssociationEvidence(
+        pk, "rel-purchase", "shared-file", "declared_current", "fresh-file",
+    )
+    result = plan(purchase, loan, scans=(scan("A"),),
+                  declarations=(declaration,), consent=(lk,))
+    assert result.decisions[0].state == "present_declared"
+    assert result.decisions[1].state == "missing_to_download"
+
+
+@pytest.mark.parametrize("status,proof", [
+    ("declared_current", ""), ("needs_review", "forged"),
+    ("revoked", "forged"),
+])
+def test_inconsistent_declaration_verification_is_rejected(status, proof):
+    snap, key = source()
+    with pytest.raises(ValueError, match="invalid_declared_association_evidence"):
+        DeclaredAssociationEvidence(key, "relation", "file", status, proof)
