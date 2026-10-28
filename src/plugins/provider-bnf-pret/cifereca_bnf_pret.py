@@ -151,6 +151,15 @@ class BnfProviderSession(ProviderSession):
                     or account is not self._accounts[0]):
                 raise ProviderConfigurationError('account_scope_mismatch')
             epoch = self._epoch
+            # The legacy loans() bridge is still used during #3197 migration.
+            # A Core Account is mutable independently of this session lock:
+            # freeze its identity/credential before the provider HTML GET.
+            caller_scope = (
+                account.unique_id, account.identity_id,
+                account.provider_id, account.credential_id,
+            )
+            if caller_scope[2:] != (self.provider_id, self.credential_id):
+                raise ProviderConfigurationError('account_scope_mismatch')
             try:
                 snapshot = self._snapshot(self.client.activity())
             except (ReaderHTTPError, WebParseError) as exc:
@@ -159,6 +168,11 @@ class BnfProviderSession(ProviderSession):
                 raise ProviderConfigurationError(self._report_failure('loans', exc)) from None
             if self._closed or epoch != self._epoch:
                 raise ProviderConfigurationError('session_closed')
+            if (not self.connected or len(self._accounts) != 1
+                    or account is not self._accounts[0]
+                    or (account.unique_id, account.identity_id,
+                        account.provider_id, account.credential_id) != caller_scope):
+                raise ProviderConfigurationError('account_scope_mismatch')
             # A partial/empty page cannot close historical rights; nevertheless
             # it must not authorize token downloads from stale observations.
             self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
