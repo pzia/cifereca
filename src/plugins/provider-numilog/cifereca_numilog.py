@@ -811,9 +811,18 @@ class NumilogSession(ProviderSession):
             pinned = (account.identity_id, account.provider_id,
                       account.credential_id, account.unique_id)
             owner = self._inventory_owner_or_none()
-            if (not self.connected or live is None
-                    or (live.identity_id, live.provider_id,
-                        live.credential_id, live.unique_id) != pinned
+            # The session's Account may be an older provider-created object
+            # with no Core identity yet (legacy 'default'), while Core supplies a
+            # Account copy. Only the unique broker owner attests Core identity.
+            # A conflicting nonempty identity on the live account is refused.
+            live_scope = (
+                live.identity_id, live.provider_id,
+                live.credential_id, live.unique_id,
+            ) if type(live) is Account else None
+            if (not self.connected or live_scope is None
+                    or live_scope[0] not in ('', None, 'default', pinned[0])
+                    or live_scope[1:] != pinned[1:]
+                    or type(pinned[0]) is not str or not pinned[0]
                     or owner is None or owner[0] != 'broker'
                     or owner[2] != (pinned[0],)):
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
@@ -826,7 +835,7 @@ class NumilogSession(ProviderSession):
                     or (account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id) != pinned
                     or (live.identity_id, live.provider_id,
-                        live.credential_id, live.unique_id) != pinned
+                        live.credential_id, live.unique_id) != live_scope
                     or self._inventory_owner_or_none() != owner):
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
             matches = [

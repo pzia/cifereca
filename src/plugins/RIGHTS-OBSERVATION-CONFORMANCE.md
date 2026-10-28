@@ -120,3 +120,18 @@ A→A, doublon de broker et credentials croisés dans un lot de tests distinct.
 routage Core et retour d'un reçu indépendant avec octets finaux EPUB/PDF
 contrôlés puis `OriginLink→SHA→Placement` atomique ; deuxième Sync à zéro
 GET après rehash. Les producteurs ne fournissent pas cette autorité.
+
+### Numilog — compte Core copié et identité du compte vivant
+
+Pour la **livraison candidate sélectionnée**, le `Account` de session
+Numilog peut conserver une identité Core non renseignée, tandis que le
+Core transmet une copie défensive liée à A. L'autorité est exclusivement
+le **broker** (un seul propriétaire attesté du bon
+`provider/credential/account`). Le plugin exige l'égalité des trois
+coordonnées fournisseur du compte vivant, accepte son identité seulement
+si elle est non renseignée (vide, `None` ou valeur legacy `default`) ou A, puis fige et recontrôle **tous** ses champs et le
+broker avant de lancer le téléchargement historique exact. Une identité
+vivante B contradictoire est refusée, même si le broker porte A. Une
+mutation A→B du compte vivant pendant `library()` stoppe avant GET
+du fichier ; aucune propagation à un compte étranger. Cette adaptation
+n'autorise ni droit de propriété nouveau, ni consentement implicite.
