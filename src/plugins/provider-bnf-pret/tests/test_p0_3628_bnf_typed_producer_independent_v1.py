@@ -10,7 +10,49 @@ import pytest
 from cifereca.plugin_api import (
     LoanInventorySnapshot, ProviderConfigurationError, read_loan_inventory,
 )
-from tests.test_p1_3252_snapshot_scope_mutation import HTML, fixture
+from cifereca_bnf_pret import BnfProviderSession
+
+# Keep this fixture local to the package. Importing the plugin's
+# `tests` namespace would shadow the top-level Core `tests` package
+# required by the older BnF cross-package integration tests.
+HTML = (
+    '<section class="active-loans"><div class="js-loan">'
+    '<a href="/resources/book-synthetic">Synthetic Book</a>'
+    '<a href="/loans/loan-synthetic">Private loan action</a>'
+    '</div></section>'
+)
+
+
+class Client:
+    def __init__(self):
+        self.calls = []
+
+    def login(self, username, password):
+        self.calls.append("login")
+        return HTML
+
+    def activity(self):
+        self.calls.append("activity")
+        return HTML
+
+    def clear(self):
+        self.calls.append("clear")
+
+    def close(self):
+        self.calls.append("close")
+
+
+def fixture():
+    client = Client()
+    session = BnfProviderSession(
+        client=client, credential_id="synthetic-credential",
+        label="Synthetic BnF",
+        credentials={"username": "synthetic", "password": "synthetic"},
+        options={},
+    )
+    (account,) = session.connect()
+    account.identity_id = "synthetic-identity"
+    return session, account, client
 
 
 def test_typed_read_ignores_poisoned_v1_facade_and_mutable_error_channel(
