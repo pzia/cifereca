@@ -465,7 +465,15 @@ class ParisProviderSession(ProviderSession):
         with self._loan_inventory_lock:
             return self._read_loans_for_account(account)
 
-    def _read_loans_for_account(self, account: Account) -> list[Loan]:
+    def _read_loans_for_account(
+        self, account: Account, *, publish_legacy_errors: bool = True,
+    ) -> list[Loan]:
+        """Read both scoped branches once; typed snapshots never publish v1 errors.
+
+        The ContextVar keeps evidence local to THIS read under the session
+        lock. Only an explicit legacy loans() caller updates its compatibility
+        side channel, which has no entitlement/absence authority.
+        """
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -581,7 +589,8 @@ class ParisProviderSession(ProviderSession):
         # Do not let a later mutation of the legacy error facade change the
         # branch coverage of this particular typed read.
         self._loan_branch_failures.set(frozenset(error["upstream"] for error in errors))
-        self.last_loan_errors = errors
+        if publish_legacy_errors:
+            self.last_loan_errors = errors
         if errors and not rows and len(errors) == 2:
             raise ProviderConfigurationError(
                 "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
@@ -644,11 +653,14 @@ class ParisProviderSession(ProviderSession):
 
         if not still_bound():
             raise ProviderConfigurationError("account_scope_mismatch")
-        # A typed snapshot never interprets last_loan_errors: that v1 public
-        # side channel can be overwritten by legacy consumers or wrappers.
+        # The typed reader does not call loans() or write last_loan_errors.
+        # Its per-read ContextVar evidence cannot be replaced by the v1
+        # facade of a different borrower.
         token = self._loan_branch_failures.set(None)
         try:
-            rows = self.loans(account)
+            rows = self._read_loans_for_account(
+                account, publish_legacy_errors=False,
+            )
             failed = self._loan_branch_failures.get()
         finally:
             self._loan_branch_failures.reset(token)
