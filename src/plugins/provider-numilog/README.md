@@ -1766,3 +1766,21 @@ Les tests offline utilisent une carte `jefferson` réellement enregistrée
 et des balises EAN **synthétiques** ; aucune relation réelle entre le livre
 Jefferson et ces numéros de test n'est revendiquée. La recette serveur
 auteur/ISBN, les conditions d'accès et le raccordement UX restent ouverts.
+
+## #3637 — candidats Core sélectionnés : EPUB direct et ACSM
+
+La façade `rights_selected_delivery_candidate` exige un compte et une offre
+`numilog.card:` exacts, une décision explicite de Core et un **dossier de
+staging existant non symbolique**, contrôlé avant la première lecture privée.
+Le GET signé reste conditionné à la relecture `MesLivres` actuelle et à
+l'attestation de la même carte, édition, identité et route.
+
+Une offre `acsm` ne peut être remplacée par un EPUB et une offre
+`epub_direct` ne peut être remplacée par un jeton ACSM. Les deux parcours
+produisent uniquement un fichier privé temporaire (`.acsm` ou `.epub`) dans
+le staging fourni par Core, **sans** passer par `publish()`,
+`publish_artifact_file()` ni l'import ADEPT legacy. La validation finale
+SHA, le rapprochement aux origines et la publication sont réservés à Core.
+Le canal ancien `download_direct` sans sélection demeure compatible avec
+les clients historiques ; il ne vaut pas preuve de complétude ou de droit.
+Les tests sont synthétiques (HTTPX/MockTransport), sans compte fournisseur.
