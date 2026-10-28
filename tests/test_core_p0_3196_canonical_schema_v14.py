@@ -219,11 +219,11 @@ def test_provider_origin_must_have_matching_profile_and_source_type(tmp_path):
             with pytest.raises(sqlite3.IntegrityError, match="provider_origin_scope_mismatch"):
                 _link(db, "internal-is-not-a-purchase", "provider", "C",
                       source="transferred-C")
-            with pytest.raises(sqlite3.IntegrityError, match="provider_origin_scope_mismatch"):
+            with pytest.raises(sqlite3.IntegrityError, match="origin_link_coords_immutable"):
                 db.execute(
                     "UPDATE origin_links SET identity_id='C' WHERE origin_link_id='A-provider'"
                 )
-            with pytest.raises(sqlite3.IntegrityError, match="provider_origin_source_immutable"):
+            with pytest.raises(sqlite3.IntegrityError, match="origin_source_coords_immutable"):
                 db.execute(
                     "UPDATE source_references SET identity_id='C' "
                     "WHERE source_reference_id='purchase-A'"
@@ -296,7 +296,7 @@ def test_transfer_and_internal_source_require_exact_profiles(tmp_path):
                 _link(db, "same-profile", "transfer", "B", from_identity="B")
             with pytest.raises(sqlite3.IntegrityError, match="internal_origin_scope_mismatch"):
                 _link(db, "foreign-internal", "cifereca", "B", source="internal-C")
-            with pytest.raises(sqlite3.IntegrityError, match="internal_origin_source_immutable"):
+            with pytest.raises(sqlite3.IntegrityError, match="origin_source_coords_immutable"):
                 db.execute(
                     "UPDATE source_references SET identity_id='C' "
                     "WHERE source_reference_id='internal-B'"
@@ -307,5 +307,67 @@ def test_transfer_and_internal_source_require_exact_profiles(tmp_path):
                     ("f" * 64, "sha256:" + SHA),
                 )
             assert db.execute("SELECT count(*) FROM origin_links").fetchone()[0] == 2
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("column,value", [
+    ("provider_id", "another-seller"),
+    ("credential_id", "another-card"),
+    ("account_id", "another-buyer"),
+    ("branch_id", "dilicom"),
+    ("edition_id", "another-edition"),
+    ("right_id", "another-right"),
+])
+def test_attested_origin_cannot_inherit_another_source_coordinate(
+    tmp_path, column, value,
+):
+    storage = Storage(tmp_path / ("immutable-" + column + ".sqlite"))
+    try:
+        storage.artifact_put({
+            "artifact_id": "sha256:" + SHA, "sha256": SHA,
+            "size": 1234, "media_format": "epub",
+        })
+        with storage._lock, storage._connect() as db:
+            _ref(db, "right")
+            _link(db, "right-provider", "provider", "A", source="right")
+            with pytest.raises(sqlite3.IntegrityError, match="origin_source_coords_immutable"):
+                db.execute(
+                    "UPDATE source_references SET " + column + "=? "
+                    "WHERE source_reference_id='right'", (value,),
+                )
+            assert db.execute(
+                "SELECT " + column + " FROM source_references WHERE source_reference_id='right'"
+            ).fetchone()[0] != value
+            assert db.execute("SELECT count(*) FROM origin_links").fetchone()[0] == 1
+    finally:
+        storage.close()
+
+
+def test_origin_link_cannot_be_retargeted_to_another_right_same_profile(tmp_path):
+    storage = Storage(tmp_path / "retarget.sqlite")
+    try:
+        storage.artifact_put({
+            "artifact_id": "sha256:" + SHA, "sha256": SHA,
+            "size": 1234, "media_format": "epub",
+        })
+        with storage._lock, storage._connect() as db:
+            _ref(db, "first-right")
+            _ref(db, "second-right", right="purchase-2")
+            _link(db, "fixed-link", "provider", "A", source="first-right")
+            with pytest.raises(sqlite3.IntegrityError, match="origin_link_coords_immutable"):
+                db.execute(
+                    "UPDATE origin_links SET source_reference_id='second-right' "
+                    "WHERE origin_link_id='fixed-link'"
+                )
+            with pytest.raises(sqlite3.IntegrityError, match="origin_link_coords_immutable"):
+                db.execute(
+                    "UPDATE origin_links SET evidence_ref='forged-new-proof' "
+                    "WHERE origin_link_id='fixed-link'"
+                )
+            assert db.execute(
+                "SELECT source_reference_id,evidence_ref FROM origin_links "
+                "WHERE origin_link_id='fixed-link'"
+            ).fetchone() == ("first-right", "synthetic-proof")
     finally:
         storage.close()
