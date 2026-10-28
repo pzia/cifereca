@@ -43,7 +43,7 @@ def rig(tmp_path, monkeypatch, *, typed=True):
     reads = []
     session = NS(
         provider_id="seller-a", credential_id="card-a",
-        connected=True, _closed=False,
+        connected=True, _closed=False, accounts=[account],
         capabilities=NS(loans=False, personal_library=False, backup=False),
     )
     if typed:
