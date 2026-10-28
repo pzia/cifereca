@@ -203,7 +203,13 @@ def publish_completed_acquisition(
                  "{}", now, now),
             )
             changed = True
-        elif artifact != (final_sha256, before.st_size, fmt):
+        elif not (
+            artifact[0] == final_sha256 and artifact[1] == before.st_size
+            and (artifact[2] == fmt or {artifact[2], fmt} <= {"epub", "kepub"})
+        ):
+            # KEPUB and EPUB are both ZIP-based EPUB bytes. When an already
+            # indexed identical file has another extension, preserve its
+            # immutable SHA record instead of creating an artificial clash.
             raise ValueError("canonical_artifact_collision")
 
         coordinates = (
