@@ -102,9 +102,16 @@ def publish_completed_local_transfer(
         raise ValueError("canonical_transfer_missing_physical_copy") from exc
 
     artifact_id = "sha256:" + sha
+    # The internal SourceReference identifies this *particular donor* and
+    # transfer, not merely a recipient and arbitrarily reused transfer_id.
+    # Two donors providing the same bytes to B remain separate histories.
+    transfer_right_id = _stable(
+        "transfer-right", from_identity_id, to_identity_id,
+        artifact_id, transfer_id,
+    )
     internal_id = _stable(
         "source", to_identity_id, "cifereca", "local", to_identity_id,
-        "transfer", artifact_id, transfer_id, "internal",
+        "transfer", artifact_id, transfer_right_id, "internal",
     )
     placement_id = _stable("placement", str(received))
     transfer_origin = _stable(
@@ -150,7 +157,7 @@ def publish_completed_local_transfer(
 
         coordinates = (
             to_identity_id, "cifereca", "local", to_identity_id, "transfer",
-            artifact_id, transfer_id, "internal",
+            artifact_id, transfer_right_id, "internal",
         )
         ref = db.execute(
             "SELECT identity_id,provider_id,credential_id,account_id,"
