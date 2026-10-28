@@ -1310,15 +1310,19 @@ class Storage:
         artifact_id = None
         sha = str(row.get("sha256") or "").strip().lower()
         if sha:
-            # Historical Kobo SHA is a claim, NOT verified final bytes. It
-            # may remain on an unverified placement/ledger checkpoint for
-            # reconciliation, but it must never pre-create an authoritative
-            # Artifact. A later verified acquisition may have the *same SHA*
-            # with a different (untrusted) legacy size/format: pre-insertion
-            # would then poison canonical publication with an artificial
-            # artifact collision. Only a physical scan or Core's post-GET
-            # atomic publisher may insert the actual Artifact.
             artifact_id = f"sha256:{sha}"
+            try:
+                size = max(0, int(row.get("size") or 0))
+            except (TypeError, ValueError):
+                size = 0
+            # A legacy claim of a SHA/size is not a validation of its bytes.
+            # Preserve existing canonical content facts, even on same-SHA replay.
+            db.execute(
+                "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO NOTHING",
+                (artifact_id, sha, size, str(row.get("format") or "unknown").lower(), None,
+                 cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+            )
         local_path = str(row.get("local_path") or "").strip()
         placement_id = None
         if local_path:
@@ -1655,7 +1659,19 @@ class Storage:
         """
         provider = str(provider_id or "").strip()
         credential = str(credential_id or "").strip()
-        seen = {str(item).strip() for item in seen_item_ids if str(item).strip()}
+        # An absence decision is destructive to a source's *current* right.
+        # A malformed/partial caller payload (notably a string, dict or None)
+        # is NOT an authoritative empty manifest. Reject the entire batch
+        # before BEGIN IMMEDIATE rather than silently pruning every right.
+        if type(seen_item_ids) not in (set, list, tuple) or len(seen_item_ids) > 100_000:
+            raise ValueError("invalid_authoritative_manifest_item_ids")
+        seen: set[str] = set()
+        for raw_item in seen_item_ids:
+            if (type(raw_item) is not str or not raw_item.strip()
+                    or len(raw_item) > 1024
+                    or any(c in raw_item for c in "\x00\r\n")):
+                raise ValueError("invalid_authoritative_manifest_item_ids")
+            seen.add(raw_item.strip())
         now = int(time.time())
         if not provider or not credential:
             return {"pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0}
