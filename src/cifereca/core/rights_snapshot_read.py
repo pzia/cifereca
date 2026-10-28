@@ -94,6 +94,24 @@ def read_account_rights_snapshot(service, account: Account, *,
         ]
         if len(current_accounts) != 1 or current_accounts[0] is not account:
             return False
+        # The live provider session may switch its authenticated borrower
+        # without changing the Core registry, Python object or epoch.
+        # Check the current upstream account BEFORE and AFTER the private
+        # rights inventory read; a sibling account is not the selected one.
+        try:
+            upstream_accounts = session.accounts
+        except Exception:
+            return False
+        if (not isinstance(upstream_accounts, (tuple, list))
+                or sum(
+                    type(row) is Account
+                    and (row.identity_id, row.provider_id,
+                         row.credential_id, row.unique_id) == (
+                            scope.identity_id, scope.provider_id,
+                            scope.credential_id, scope.account_id)
+                    for row in upstream_accounts
+                ) != 1):
+            return False
         # Similarly, a second session can be inserted into the same mapping
         # without replacing the original selected instance. Neither can
         # authorize a positive observation after a mid-read owner race.
