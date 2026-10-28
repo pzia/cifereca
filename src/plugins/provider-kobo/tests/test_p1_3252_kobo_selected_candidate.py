@@ -236,3 +236,26 @@ def test_broker_aba_after_fresh_descriptor_prevents_any_get(
         assert clients == [] and not list(tmp_path.iterdir())
     finally:
         session.close()
+
+def test_live_account_with_other_core_identity_fails_before_private_read(
+    tmp_path, monkeypatch,
+):
+    session, vault, broker, account, posts = setup()
+    clients = []
+    fake_public_client(monkeypatch, lambda request: pytest.fail(
+        "no request for contradictory live identity",
+    ), clients)
+    try:
+        session._accounts[0].identity_id = "identity-B"
+        with pytest.raises(ProviderCapabilityError, match="owner_changed"):
+            session.rights_selected_delivery_offer_snapshot(
+                account, edition_id="book-1", right_id="book-1",
+                kind="purchase", branch="personal_manifest",
+                explicit_user_action=True,
+            )
+        assert vault.calls == 0 and posts == [] and clients == []
+        with pytest.raises(ProviderCapabilityError, match="owner_unverified"):
+            execute(session, account, "kobo.descriptor:" + "f" * 64, tmp_path)
+        assert vault.calls == 0 and posts == [] and clients == []
+    finally:
+        session.close()
