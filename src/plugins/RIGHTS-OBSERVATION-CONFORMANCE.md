@@ -19,7 +19,7 @@ généralisé, aucun veto à partir d'un titre ou d'un ISBN candidat.
 |---|---|---|---|---|---|
 | `provider-numilog` | `MesLivres` authentifié ; `meslivres` | `numilog:<scope-credential>:<lid>:<variant-hash>` ; pas de rapprochement avec la fiche commerciale | achat, `active`, preuve `numilog.meslivres` | `partial`, pagination non attestée exhaustive, doublons `(lid, variant)` mis en quarantaine | `unknown`, aucune URL signée dans le snapshot |
 | `provider-kobo` | manifeste Vault personnel ; `personal_manifest` | `product_id` authentifié strict, compte exact ; édition = droit dans le contrat v1 | achat `owned=True`, `active` même si archivé ; `owned=False` non promu ; preuve `kobo.personal_manifest` | `partial`, vignettes catalogue et résultats publics non probants | `unknown`, archive ≠ droit de télécharger |
-| `provider-paris` | prêts DILICOM ; `dilicom` | `Id` ou `HoldingId` **réel** + `RecordId` ; jamais repli titre/UUID | prêt, `unknown` (aucun état actif inféré) ; preuve `paris.dilicom.listloans` | `partial`, pas d'exhaustivité ; branche SYRACUSE physique séparée. Si DILICOM échoue, la PR #3547 précise `failed/unknown` (validation CI requise). | `unknown`, ni ACSM ni PNB déclenché |
+| `provider-paris` | prêts DILICOM ; `dilicom` | `Id` ou `HoldingId` **réel** + `RecordId` ; jamais repli titre/UUID | prêt, `unknown` (aucun état actif inféré) ; preuve `paris.dilicom.listloans` | `partial`, pas d'exhaustivité ; branche SYRACUSE physique séparée. Si DILICOM échoue, la PR #3547 (fusionnée) précise `failed/unknown`. | `unknown`, ni ACSM ni PNB déclenché |
 | `provider-bnf-pret` | section `active-loans` du HTML authentifié ; `bnf_html` | `loan_id` + `resource_id` exacts, pas de couverture/titre de catalogue comme preuve | prêt `active` observé dans la section active ; preuve `bnf_html.active_loans` | `partial`, même si la page renvoie 0 prêt | `unknown` ; récupération de jeton séparée, uniquement après action explicitement admise |
 
 Chaque ligne `ProviderRightObservation` rapporte une observation positive
@@ -40,7 +40,7 @@ d'un autre profil, titre, cache public ou fichier `manual/` ne crée ce droit.
 - **Paris** : emprunteur DILICOM/SYRACUSE unique par session et identité
   broker, vérifié après projection. Le compte principal peut avoir
   `Account.unique_id=""` ; la vue Core `AccountRef.account_id` utilise
-  `paris:<credential>:primary` (couvert par PR #3545, à fusionner après CI).
+  `paris:<credential>:primary` (couvert par PR #3545, fusionnée et validée en CI).
 - **BnF** : prêt observé et credential de session exacts, broker Core unique
   pour le nouveau snapshot. Le flux de jeton explicitement déclenché
   vérifie lui aussi les changements de broker, sans autoriser l'acquisition
