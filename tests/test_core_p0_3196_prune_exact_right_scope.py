@@ -167,7 +167,7 @@ def test_manifest_retaining_item_does_not_mark_right_inactive(tmp_path):
 @pytest.mark.parametrize("seen_ids", [
     None, "book", b"book", {"book": True}, (part for part in ("book",)),
     [None], [123], [""], ["   "], ["book", ""],
-    ["book\\x00other"], ["book\\nother"], ["book\\rother"],
+    ["book\x00other"], ["book\\nother"], ["book\\rother"],
     ["x" * 1025], ["book"] * 100_001,
 ])
 def test_malformed_inventory_never_prunes_current_rights_or_history(tmp_path, seen_ids):
