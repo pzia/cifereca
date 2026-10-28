@@ -153,6 +153,38 @@ def exact_kobo_offer_id(
                    else candidate.get("drm_type"))
         if type(raw_drm) is not str:
             continue
+        # A signed candidate is not an executable plain/Adobe route if its
+        # own DRM fields disagree. The executor may read family/protected
+        # separately, so a plausible raw_type must not override contradictory
+        # nested/root flags to manufacture one "available" offer.
+        known_drm = {
+            "SignedNoDrm": (frozenset({"none"}), False),
+            "AdobeDrm": (frozenset({"adobe", "adobe_adept"}), True),
+        }
+        if raw_drm not in known_drm:
+            continue
+        families, required_protected = known_drm[raw_drm]
+        nested = drm if type(drm) is dict else {}
+        if ("drm_type" in candidate and candidate["drm_type"] != raw_drm):
+            continue
+        if any(
+            key in container
+            and (type(container[key]) is not str
+                 or container[key] not in families)
+            for container, key in (
+                (nested, "family"), (candidate, "drm_family"),
+            )
+        ):
+            continue
+        if any(
+            key in container
+            and (type(container[key]) is not bool
+                 or container[key] is not required_protected)
+            for container, key in (
+                (nested, "protected"), (candidate, "protected"),
+            )
+        ):
+            continue
         media = candidate.get("media_format") or candidate.get("source_format")
         if type(media) is not str:
             continue
