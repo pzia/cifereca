@@ -32,6 +32,12 @@ Le code de production d'un plugin importe les services Core via `cifereca.plugin
 
 Voir `docs/PLUGIN-BOUNDARIES.md`.
 
+Pour la synchronisation convergente #3171, consulter la
+**[matrice d'observations et de preuves des quatre fournisseurs](RIGHTS-OBSERVATION-CONFORMANCE.md)** :
+portées exactes, branches, couverture, limites de livraison et tests de
+conformance #3252. Les faits fournisseurs ne valent ni preuve d'Artifact
+ni autorisation de publication Core.
+
 ## Exemples déjà rationalisés
 
 - Paris réutilise l'inspection et la publication publiques d'artefacts.
