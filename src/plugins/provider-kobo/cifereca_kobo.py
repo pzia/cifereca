@@ -930,6 +930,11 @@ class KoboSession(ProviderSession):
         bound_identity_id = bound_account.identity_id
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
+        broker = self.identity_broker
+        owner = (
+            self._rights_owner_snapshot(account_id)
+            if broker is not None else None
+        )
         items = self._scoped_personal_manifest(
             bound_account, generation, account_id,
         )
@@ -1055,9 +1060,19 @@ class KoboSession(ProviderSession):
         # fence; a close/reconnect there must not return a stale backup batch.
         try:
             self._ensure_personal_binding(
-            bound_account, generation, expected_account_id=account_id,
-            expected_identity_id=bound_identity_id,
-        )
+                bound_account, generation, expected_account_id=account_id,
+                expected_identity_id=bound_identity_id,
+            )
+            # The per-page guard does not cover the local filtering/policy
+            # projection after Vault returns. Core may reassign the exact
+            # upstream account while that CPU work runs; never hand a stale
+            # manifest to its legacy materialization reader.
+            if (self.identity_broker is not broker
+                    or (broker is not None and
+                        self._rights_owner_snapshot(account_id) != owner)):
+                raise ProviderError(
+                    "Kobo-Vault : propriétaire modifié pendant sauvegarde"
+                )
         except ProviderError:
             self.backup_manifest_rejection_count = 0
             raise
