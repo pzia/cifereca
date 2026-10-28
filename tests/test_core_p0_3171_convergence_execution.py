@@ -68,6 +68,10 @@ def rig(tmp_path, monkeypatch):
         "cifereca.core.convergence_execution.acquisition_lock_file",
         lambda: lock_path,
     )
+    monkeypatch.setattr(
+        "cifereca.core.canonical_recovery.acquisition_lock_file",
+        lambda: lock_path,
+    )
     try:
         yield service, account, source, offered, root, lock_path
     finally:
