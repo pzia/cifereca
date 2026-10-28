@@ -447,9 +447,11 @@ class NumilogSession(ProviderSession):
         return (
             id(accounts),
             tuple(
-                (id(account), account.unique_id, account.identity_id,
-                 account.provider_id, account.credential_id)
-                for account in accounts if type(account) is Account
+                (id(account), getattr(account, "unique_id", None),
+                 getattr(account, "identity_id", None),
+                 getattr(account, "provider_id", None),
+                 getattr(account, "credential_id", None))
+                for account in accounts
             ),
             len(accounts),
         )
