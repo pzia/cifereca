@@ -1412,6 +1412,9 @@ class Storage:
 
         keys = ["provider_id", "credential_id", "item_id", *self._backup_keys()]
         with self._lock, self._connect() as db:
+            # An authoritative snapshot cannot race with a concurrent right
+            # ownership migration or an independent legacy projection update.
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT " + ",".join(keys) + " FROM backup_items WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
@@ -1425,22 +1428,53 @@ class Storage:
                     local_preserved += 1
 
                 entitlement_id = self._entitlement_id_for(row)
+                # The legacy projection primary key omits identity. An old
+                # row can name an entitlement ID now assigned to a different
+                # identity (or still UNKNOWN). A manifest for the projection
+                # does not authorize inactivation of that other owner's right.
+                # Retain the right and canonical acquisition history even
+                # when the obsolete compatibility row itself is pruned.
                 entitlement = db.execute(
-                    "SELECT metadata_json FROM entitlements WHERE entitlement_id=?", (entitlement_id,)
+                    "SELECT provider_id,credential_id,account_id,item_id,"
+                    "entitlement_type,loan_id,identity_id,metadata_json "
+                    "FROM entitlements WHERE entitlement_id=?",
+                    (entitlement_id,),
                 ).fetchone()
-                if entitlement is not None:
-                    metadata = self._json_load(entitlement[0])
+                identity = row.get("identity_id")
+                exact_right = (
+                    type(identity) is str and bool(identity)
+                    and entitlement is not None
+                    and entitlement[:7] == (
+                        provider, credential, row.get("account_id"),
+                        str(row.get("item_id") or ""),
+                        str(row.get("entitlement_type") or "owned"),
+                        row.get("loan_id"), identity,
+                    )
+                )
+                if exact_right:
+                    metadata = self._json_load(entitlement[7])
                     if (
                         metadata.get("compatibility_projection") == "backup_items"
                         or metadata.get("imported_from") == "backup_items"
                     ):
                         metadata["compatibility_projection_pruned"] = True
                         metadata["compatibility_projection_pruned_at"] = now
-                        db.execute(
-                            "UPDATE entitlements SET state='inactive',metadata_json=?,updated_at=? WHERE entitlement_id=?",
-                            (self._json_dump(metadata), now, entitlement_id),
+                        cursor = db.execute(
+                            "UPDATE entitlements SET state='inactive',"
+                            "metadata_json=?,updated_at=? "
+                            "WHERE entitlement_id=? AND identity_id=? "
+                            "AND provider_id=? AND credential_id=? "
+                            "AND account_id IS ? AND item_id=? "
+                            "AND entitlement_type=? AND loan_id IS ?",
+                            (
+                                self._json_dump(metadata), now, entitlement_id,
+                                identity, provider, credential,
+                                row.get("account_id"), str(row.get("item_id") or ""),
+                                str(row.get("entitlement_type") or "owned"),
+                                row.get("loan_id"),
+                            ),
                         )
-                        entitlements_inactivated += 1
+                        entitlements_inactivated += int(cursor.rowcount == 1)
 
                 db.execute(
                     "DELETE FROM backup_items WHERE provider_id=? AND credential_id=? AND item_id=?",

@@ -1,0 +1,163 @@
+"""P0 #3196: pruning an old Kobo 0.7 projection must not revoke a foreign right.
+
+All operations use synthetic SQLite, no account login, EPUB or HTTP.
+The historical compatibility key lacks the Cifereca library identity.
+"""
+from __future__ import annotations
+
+import pytest
+
+from cifereca.storage import Storage
+
+
+def _legacy(*, identity="alice", account="primary", item="book"):
+    return {
+        "provider_id": "opaque-seller", "credential_id": "card",
+        "account_id": account, "identity_id": identity,
+        "item_id": item, "entitlement_type": "owned",
+        "title": "Synthetic book", "status": "complete",
+    }
+
+
+def _right(storage):
+    rights = storage.entitlements(provider_id="opaque-seller")
+    assert len(rights) == 1
+    return rights[0]
+
+
+def test_same_explicit_right_is_inactivated_only_on_authoritative_prune(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        right = _right(storage)
+        receipt = storage.acquisitions(provider_id="opaque-seller")
+        assert right["state"] == "active"
+        assert len(receipt) == 1
+        assert storage.backup_prune_missing("opaque-seller", "card", set()) == {
+            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 1,
+        }
+        after = _right(storage)
+        assert after["identity_id"] == "alice"
+        assert after["state"] == "inactive"
+        assert after["metadata"]["compatibility_projection_pruned"] is True
+        assert storage.acquisitions(provider_id="opaque-seller") == receipt
+        assert storage.backup_list("opaque-seller") == []
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("new_owner", ["bob", None, ""])
+def test_legacy_projection_cannot_inactivate_right_reassigned_or_unknown(
+    tmp_path, new_owner,
+):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        original = _legacy()
+        storage.backup_put(original)
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE entitlements SET identity_id=? WHERE entitlement_id=?",
+                (new_owner, storage._entitlement_id_for(original)),
+            )
+        before = _right(storage)
+        history = storage.acquisitions(provider_id="opaque-seller")
+        assert storage.backup_prune_missing(
+            "opaque-seller", "card", set(),
+        ) == {
+            "pruned": 1, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert _right(storage) == before
+        assert storage.acquisitions(provider_id="opaque-seller") == history
+        assert storage.backup_list("opaque-seller") == []
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("unverified_legacy_identity", [None, ""])
+def test_old_projection_without_owner_cannot_revoke_exactly_identified_right(
+    tmp_path, unverified_legacy_identity,
+):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE backup_items SET identity_id=? "
+                "WHERE provider_id='opaque-seller'",
+                (unverified_legacy_identity,),
+            )
+        before = _right(storage)
+        assert storage.backup_prune_missing(
+            "opaque-seller", "card", set(),
+        )["entitlements_inactivated"] == 0
+        assert _right(storage) == before
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("changed", [
+    {"account_id": "other-borrower"},
+    {"account_id": None},
+    {"entitlement_type": "loan"},
+    {"provider_id": "other-seller"},
+    {"credential_id": "another-card"},
+    {"item_id": "different-edition"},
+])
+def test_collision_with_same_entitlement_id_cannot_change_other_source(
+    tmp_path, changed,
+):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        original = _legacy()
+        columns = sorted(changed)
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE entitlements SET "
+                + ",".join(f"{key}=?" for key in columns)
+                + " WHERE entitlement_id=?",
+                (*[changed[key] for key in columns],
+                 storage._entitlement_id_for(original)),
+            )
+        before = storage.entitlements()
+        assert storage.backup_prune_missing(
+            "opaque-seller", "card", set(),
+        )["entitlements_inactivated"] == 0
+        assert storage.entitlements() == before
+    finally:
+        storage.close()
+
+
+def test_canonical_right_without_legacy_marker_is_never_inactivated(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE entitlements SET metadata_json='{\"source\":\"canonical\"}'"
+            )
+        before = _right(storage)
+        assert storage.backup_prune_missing(
+            "opaque-seller", "card", set(),
+        )["entitlements_inactivated"] == 0
+        assert _right(storage) == before
+    finally:
+        storage.close()
+
+
+def test_manifest_retaining_item_does_not_mark_right_inactive(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        before = _right(storage)
+        assert storage.backup_prune_missing(
+            "opaque-seller", "card", {"book"},
+        ) == {
+            "pruned": 0, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert _right(storage) == before
+        assert len(storage.backup_list("opaque-seller")) == 1
+    finally:
+        storage.close()
