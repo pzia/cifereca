@@ -236,6 +236,15 @@ def test_multiple_local_candidates_become_conflict_without_deletion(tmp_path: Pa
 def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path: Path):
     service = _service(tmp_path, manifest=[])
     try:
+        # A complete empty manifest can inactivate a legacy right only when
+        # its current credential AND borrower are registered in SQLite.
+        current = next(c for c in service.storage.provider_connections()
+                       if c["provider_id"] == "kobo" and c["credential_id"] == "vault-1")
+        service.storage.provider_account_put({
+            "connection_id": current["connection_id"],
+            "identity_id": "default", "provider_id": "kobo",
+            "credential_id": "vault-1", "account_id": "account",
+        })
         local = service._kobo_backup_target_dir("default") / "Old Local.epub"
         _write_epub(local, b"old-local")
         service.catalog_index_path(
@@ -250,6 +259,7 @@ def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path
             "provider_id": "kobo",
             "credential_id": "vault-1",
             "identity_id": "default",
+            "account_id": "account",
             "item_id": "old-local",
             "revision_id": "old-r1",
             "title": "Old Local",
@@ -264,6 +274,7 @@ def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path
             "provider_id": "kobo",
             "credential_id": "vault-1",
             "identity_id": "default",
+            "account_id": "account",
             "item_id": "old-remote",
             "revision_id": "old-r2",
             "title": "Old Remote",
