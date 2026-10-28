@@ -181,3 +181,61 @@ def test_rotating_signed_url_does_not_change_opaque_offer_id():
     b = exact_kobo_offer_id(second, **options)
     assert a and a == b
     assert a != exact_kobo_offer_id(first, **{**options, "identity_id": "identity-B"})
+
+
+def test_selected_kobo_offer_revalidated_by_fresh_descriptor_before_private_return():
+    s, vault, broker, a, requests = setup()
+    try:
+        offered = s.rights_delivery_offer_snapshot(
+            a, "book-1", explicit_user_action=True,
+        ).rights[0]
+        assert len(requests) == 1
+        renewed = s.resolve_acquisition(
+            "book-1", mode="descriptor", expected_identity_id="identity-A",
+            expected_offer_id=offered.delivery_offer_id,
+        )
+        assert renewed["acquisition"]["product_id"] == "book-1"
+        assert len(requests) == 2
+        with pytest.raises(ProviderCapabilityError, match="offer_changed"):
+            s.resolve_acquisition(
+                "book-1", mode="descriptor", expected_identity_id="identity-A",
+                expected_offer_id="kobo.descriptor:" + "0" * 64,
+            )
+        assert len(requests) == 3
+    finally:
+        s.close()
+
+
+def test_kobo_offer_rebind_refused_before_private_descriptor_post():
+    s, vault, broker, a, requests = setup()
+    try:
+        offered = s.rights_delivery_offer_snapshot(
+            a, "book-1", explicit_user_action=True,
+        ).rights[0]
+        broker.identities = ("identity-B",)
+        count = len(requests)
+        with pytest.raises(ProviderCapabilityError, match="not_admitted"):
+            s.resolve_acquisition(
+                "book-1", mode="descriptor", expected_identity_id="identity-A",
+                expected_offer_id=offered.delivery_offer_id,
+            )
+        assert len(requests) == count
+    finally:
+        s.close()
+
+
+def test_kobo_opaque_offer_never_bypasses_explicit_core_identity():
+    s, vault, broker, a, requests = setup()
+    try:
+        offered = s.rights_delivery_offer_snapshot(
+            a, "book-1", explicit_user_action=True,
+        ).rights[0]
+        count = len(requests)
+        with pytest.raises(ProviderCapabilityError, match="not_admitted"):
+            s.resolve_acquisition(
+                "book-1", mode="descriptor",
+                expected_offer_id=offered.delivery_offer_id,
+            )
+        assert len(requests) == count
+    finally:
+        s.close()
