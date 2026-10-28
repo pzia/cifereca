@@ -256,3 +256,46 @@ def test_selected_acsm_rejects_valid_epub_without_legacy_publication(
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("response", "reason"), [
+    (
+        httpx.Response(
+            302, headers={"location": (
+                "https://entrepot2r.numilog.com/fulfillment/another.acsm"
+            )},
+        ),
+        "redirect_unexpected",
+    ),
+    (
+        httpx.Response(
+            200, text="<html><a href='/other'>Login</a></html>",
+            headers={"content-type": "text/html"},
+        ),
+        "html_unexpected",
+    ),
+])
+def test_selected_numilog_signed_link_never_follows_unexpected_second_get(
+    tmp_path, response, reason,
+):
+    from tests.test_numilog_owned_js_delivery_p0 import SIGNED
+    session, account, broker, reads, right = setup()
+    requested = []
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: (
+                requested.append(str(request.url)) or response
+            ),
+        ),
+        trust_env=False, follow_redirects=False,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match=reason):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert requested == [SIGNED]
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
