@@ -143,8 +143,10 @@ def _project_paris_acquisition_formats(item: SearchResult) -> SearchResult:
 
 
 class ParisProviderSession(ProviderSession):
-    def __init__(self, *, config: Any, diagnostics: Any, **kwargs: Any) -> None:
+    def __init__(self, *, config: Any, diagnostics: Any,
+                 identity_broker=None, **kwargs: Any) -> None:
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
+        self.identity_broker = identity_broker
         base_url = str(self.options.get("base_url") or (config.paris_base_url(self.credential_id) if hasattr(config, "paris_base_url") else config.get("base_url", "https://bibliotheques.paris.fr")))
         timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.diagnostics = diagnostics
@@ -605,6 +607,33 @@ class ParisProviderSession(ProviderSession):
                          current.provider_id, current.credential_id) == scope_key
                 ] if scope_key is not None else []
 
+            def core_owner_binding():
+                broker = self.identity_broker
+                if broker is None or scope_key is None:
+                    return None
+                try:
+                    refs = broker.accounts()
+                    if type(refs) not in (tuple, list):
+                        return None
+                    owners = [
+                        ref.identity_id if type(ref.identity_id) is str else ""
+                        for ref in refs
+                        if (getattr(ref, "provider_id", None) == self.provider_id
+                            and getattr(ref, "account_id", None) == scope_key[0])
+                    ]
+                    return (id(broker), tuple(sorted(owners)))
+                except Exception:
+                    return None
+
+            # Only Core can attest that a mutable borrower belongs to this
+            # local identity, including the empty primary Paris account ID.
+            owner_binding = core_owner_binding()
+            if (scope_key is None or scope_key[2:] !=
+                    (self.provider_id, self.credential_id)
+                    or type(scope_key[1]) is not str or not scope_key[1]
+                    or owner_binding is None
+                    or owner_binding[1] != (scope_key[1],)):
+                raise ProviderCapabilityError("paris_rights_owner_unverified")
             original = bound_accounts()
             bound = original[0] if len(original) == 1 else None
             if bound is None:
@@ -642,7 +671,10 @@ class ParisProviderSession(ProviderSession):
                     or (self.provider_id, self.credential_id)
                     != (scope.provider_id, scope.credential_id)
                     or LoanInventoryScope.for_account(account) != scope
-                    or len(current) != 1 or current[0] is not bound):
+                    or len(current) != 1 or current[0] is not bound
+                    or (account.unique_id, account.identity_id,
+                        account.provider_id, account.credential_id) != scope_key
+                    or core_owner_binding() != owner_binding):
                 raise ProviderConfigurationError("account_scope_mismatch")
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
@@ -851,6 +883,13 @@ class ParisProviderSession(ProviderSession):
 class ParisProviderPlugin(ProviderPlugin):
     descriptor = DESCRIPTOR
 
+    def activate(self, context):
+        self._identity_broker = context.broker("identities")
+        return self
+
+    def deactivate(self):
+        self._identity_broker = None
+
     def create_session(self, *, credential_id: str, label: str, credentials: dict[str, Any], options: dict[str, Any], config: Any, storage: Any, diagnostics: Any) -> ProviderSession:
         return ParisProviderSession(
             credential_id=credential_id,
@@ -859,6 +898,7 @@ class ParisProviderPlugin(ProviderPlugin):
             options=options,
             config=config,
             diagnostics=diagnostics,
+            identity_broker=getattr(self, "_identity_broker", None),
         )
 
 

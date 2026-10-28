@@ -3,10 +3,11 @@
 Synthetic in-memory service only. No login/network, PNB/ACSM, disk or Core write.
 """
 from dataclasses import replace
+from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.plugin_api import Account, ProviderConfigurationError
+from cifereca.plugin_api import Account, ProviderConfigurationError, ProviderCapabilityError
 from cifereca_paris import ParisProviderSession
 from cifereca_paris_normalize import normalize_loan
 
@@ -32,10 +33,25 @@ class Client:
         pass
 
 
+class CoreOwnerBroker:
+    def __init__(self, identities=("identity-A",)):
+        self.identities = identities
+        self.calls = 0
+
+    def accounts(self):
+        self.calls += 1
+        return [
+            NS(provider_id="paris", account_id="reader-A", identity_id=identity)
+            for identity in self.identities
+        ]
+
+
 def fixture(*, digital=(), physical=()):
+    broker = CoreOwnerBroker()
     session = ParisProviderSession(
         credential_id="card-A", label="Paris",
         credentials={}, options={}, config={}, diagnostics=Diagnostics(),
+        identity_broker=broker,
     )
     session.client.close()
     client = Client(digital=digital, physical=physical)
@@ -136,7 +152,9 @@ def test_paris_wrong_credential_refused_before_both_gets():
         upstream("loan-1", "edition-1"),
     ))
     try:
-        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+        # New broker-backed rights preflight must refuse before the legacy
+        # inventory reader (which retains its own scope-mismatch code).
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
             session.rights_observation_snapshot(
                 replace(account, credential_id="other-card"),
             )
@@ -194,5 +212,92 @@ def test_paris_copy_of_bound_borrower_remains_compatible_after_instance_pin():
         assert report.scope.account_id == "reader-A"
         assert report.scope.identity_id == "identity-A"
         assert len(client.calls) == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("identities", [
+    (), ("identity-B",), ("identity-A", "identity-B"),
+    ("identity-A", "identity-A"),
+])
+def test_paris_unverified_core_owner_never_calls_private_loan_branches(identities):
+    session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
+    session.identity_broker.identities = identities
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == []
+    finally:
+        session.close()
+
+
+def test_paris_missing_core_broker_refuses_only_new_rights_api():
+    session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
+    session.identity_broker = None
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == []
+        old = session.loan_inventory_snapshot(account)
+        assert len(old.loans) == 1
+        assert client.calls == [("DILICOM", "reader-A"), ("SYRACUSE", "reader-A")]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("race", [
+    "owner_reassigned", "same_owner_new_broker", "duplicate_owner",
+])
+def test_paris_core_owner_rebind_mid_dilicom_refuses_final_rights(race):
+    session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
+    broker = session.identity_broker
+    original = client.loans
+
+    def changed_loans(branch, owner_id):
+        rows = original(branch, owner_id)
+        if branch == "DILICOM":
+            if race == "owner_reassigned":
+                broker.identities = ("identity-B",)
+            elif race == "same_owner_new_broker":
+                session.identity_broker = CoreOwnerBroker()
+            else:
+                broker.identities = ("identity-A", "identity-A")
+        return rows
+
+    client.loans = changed_loans
+    try:
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == [("DILICOM", "reader-A"), ("SYRACUSE", "reader-A")]
+    finally:
+        session.close()
+
+
+def test_paris_identity_changed_before_observation_refuses_both_private_gets():
+    session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
+    account.identity_id = "identity-B"
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == []
+    finally:
+        session.close()
+
+
+def test_paris_plugin_lifecycle_injects_the_public_core_identity_broker():
+    from cifereca_paris import ParisProviderPlugin
+
+    broker = CoreOwnerBroker()
+    plugin = ParisProviderPlugin()
+    plugin.activate(NS(broker=lambda key: broker if key == "identities" else None))
+    session = plugin.create_session(
+        credential_id="card-A", label="Paris", credentials={},
+        options={}, config={}, storage=None, diagnostics=Diagnostics(),
+    )
+    try:
+        assert session.identity_broker is broker
+        plugin.deactivate()
+        assert plugin._identity_broker is None
+        assert session.identity_broker is broker
     finally:
         session.close()
