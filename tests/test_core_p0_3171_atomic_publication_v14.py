@@ -161,8 +161,8 @@ def test_bad_evidence_or_physical_target_cannot_write(store, tmp_path, tamper):
 def test_same_account_id_two_credentials_cannot_cross_published_profiles(store, tmp_path):
     key_a, snap_a = new_source(credential="first", account="upstream")
     key_b, snap_b = new_source(credential="second", account="upstream")
-    register(store, "A", "seller", "first")
-    register(store, "B", "seller", "second")
+    register(store, "A", "seller", "first", account="upstream")
+    register(store, "B", "seller", "second", account="upstream")
     path = target(tmp_path, "A")
     first = publish(store, tmp_path / "EBooks", path, key_a, snap_a)
     assert first.changed
