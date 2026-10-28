@@ -847,7 +847,7 @@ assert not target.exists()
 """
         before = recette.fingerprint(self.config)
         command = [shutil.which("bwrap"), "--unshare-all", "--die-with-parent",
-                   "--ro-bind", "/", "/", "--proc", "/proc", "--tmpfs", "/tmp",
+                   "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
                    "--ro-bind", str(self.production), str(self.production), "--tmpfs", "/media",
                    "--dir", "/media/fixture", "--bind", str(volume), "/media/fixture/KDATAS",
                    "--", "/usr/bin/python3", "-c", program, str(SCRIPT), str(self.config)]

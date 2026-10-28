@@ -19,7 +19,10 @@ bubblewrap dbus-x11 python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`. L'affichage utilise
 un serveur X11 local (`DISPLAY=:N`), y compris XWayland. Aucun port serveur
 Cifereca n'est ouvert : l'application actuelle est GTK et son bus D-Bus est
 privé. Un bureau Wayland sans XWayland ou une plateforme autre que Linux sont
-refusés. Aucun lancement sans confinement ne remplace un Bubblewrap défaillant.
+refusés. Pour copier des symlinks sources, Bubblewrap doit prendre en charge
+`--ro-bind-fd` (version 0.10 ou correctif distributeur correspondant). Une
+version dépourvue de cette capacité est refusée pour ces liens, sans solution
+moins confinée. Aucun lancement sans confinement ne remplace un Bubblewrap défaillant.
 
 Le script essaie `~/.config/cifereca/config.toml`, puis le format actuellement
 utilisé par le Core, `$XDG_CONFIG_HOME/cifereca/config.json` (par défaut

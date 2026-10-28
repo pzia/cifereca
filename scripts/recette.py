@@ -72,13 +72,13 @@ def readlink_noatime(parent: int, name: str) -> str:
     command += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/etc"]
     if Path("/etc/ld.so.cache").exists():
         command += ["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]
-    # Keep the parent's descriptor open until the worker exits. Unlike a
-    # pathname, this bind source cannot be redirected by an ancestor swap.
-    proc_pid = os.readlink("/proc/self")
-    command += ["--ro-bind", f"/proc/{proc_pid}/fd/{parent}", "/source",
+    # Use Bubblewrap's FD binding, not another process's /proc/PID/fd path:
+    # crossing into a user namespace can forbid that procfs dereference.
+    # The bind operation itself validates the pinned directory identity.
+    command += ["--ro-bind-fd", str(parent), "/source",
                 "--remount-ro", "/", "--", "/usr/bin/python3", "-I", "-B", "-c",
                 "import json,os,sys; print(json.dumps(os.readlink('/source/'+sys.argv[1])))", name]
-    return json.loads(subprocess.check_output(command, text=True, timeout=15))
+    return json.loads(subprocess.check_output(command, text=True, timeout=15, pass_fds=(parent,)))
 
 
 @contextmanager
