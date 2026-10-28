@@ -14,6 +14,8 @@ import stat
 import time
 
 from ..catalog import LocalCatalog
+from ..locking import InterProcessLock
+from ..paths import acquisition_lock_file
 from .canonical_publication import _physical_target, _same_file, _stable
 
 
@@ -38,6 +40,7 @@ def publish_completed_local_transfer(
     transfer_id: str,
     transfer_receipt_ref: str,
     explicitly_authorized: bool,
+    shared_lock: InterProcessLock,
 ) -> TransferPublication:
     """Commit an explicitly completed, distinct A→B physical copy in v14.
 
@@ -55,7 +58,10 @@ def publish_completed_local_transfer(
             or from_identity_id == to_identity_id or not token(transfer_id)
             or not token(transfer_receipt_ref)
             or not isinstance(library_root, Path)
-            or not isinstance(from_path, Path) or not isinstance(to_path, Path)):
+            or not isinstance(from_path, Path) or not isinstance(to_path, Path)
+            or type(shared_lock) is not InterProcessLock
+            or shared_lock._handle is None
+            or shared_lock.path.resolve() != acquisition_lock_file().resolve()):
         raise ValueError("canonical_transfer_authorization_required")
 
     try:
