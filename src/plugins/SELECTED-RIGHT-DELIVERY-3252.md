@@ -102,3 +102,29 @@ Tests provider-only : refus avant lecture privée sur portée/action fausse,
 changement de propriétaire avant/après lecture, disparition de l'offre
 signée, invocation d'un seul chemin de livraison explicite. Aucune
 attestation de recette live ni de zéro GET au deuxième Sync n'est revendiquée.
+
+## Kobo — préflight de sélection identique (Plugins #3252)
+
+`provider-kobo` offre désormais la **même signature** de
+`rights_selected_delivery_offer_snapshot(...)`, avec la branche exacte
+`personal_manifest`, le type `purchase` et
+`edition_id == right_id == product_id`. Elle réutilise **uniquement**
+`rights_delivery_offer_snapshot` : manifeste privé positif puis
+POST Vault `descriptor` pour ce produit précis, sans GET de fichier.
+Un mauvais choix, l'absence d'action explicite ou une identité non liée
+arrêtent la demande **avant tout réseau**. Une seconde garde rejette le
+rebind A→B/A→A, la modification du compte et de la session pendant la
+projection du `ProviderRightsSnapshot`.
+
+Les sécurités de #3595 (propriétaire après projection) et #3602
+(cohérence des drapeaux DRM) sont fusionnées. Le résultat reste
+`available` ou `unknown` suivant les preuves du descripteur ; pas
+de déduction d'acquisition depuis `downloadable` ni depuis une archive.
+
+**Limite :** Kobo n'implémente pas ici
+`rights_selected_delivery_candidate`. `resolve_acquisition` produit
+un **descripteur privé**, pas des octets vérifiés : son URL ne doit jamais
+devenir un reçu Core. Le GET de contenu, la validation du format/DRM et
+le reçu indépendant demeurent à raccorder sous le contrôle de A/#3171.
+Paris reste `state=unknown`, donc pas de promotion en droit actif
+pour une Sync automatique.
