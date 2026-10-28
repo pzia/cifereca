@@ -120,7 +120,7 @@ def _manual_receipt(service, tmp_path, title, identity="default", directory="man
 
 
 @pytest.mark.parametrize("directory", ["manual", "acsm-import"])
-def test_bnf_existing_manual_epub_blocks_get_and_second_sync(
+def test_bnf_existing_manual_epub_does_not_veto_independently_authorized_get(
     connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = _enable(connected_core)
@@ -133,9 +133,9 @@ def test_bnf_existing_manual_epub_blocks_get_and_second_sync(
         outcome = materialize(service, account, loan)
         assert outcome == {
             "status": "attention_required",
-            "code": "bnf_local_candidate_reconciliation_required",
+            "code": "bnf_auto_acquisition_failed",
         }
-    assert errors == downloaded == []
+    assert errors == ["called", "called"] and downloaded == []
     assert manual.read_bytes() == original
     assert service.storage.entitlements() == before
     assert len(service.storage.acquisitions(provider_id="manual")) == 1
@@ -172,9 +172,9 @@ def test_unrelated_second_loan_still_reaches_provider_after_manual_screen(
         attempted.append(True)
         raise RuntimeError("synthetic stop")
     monkeypatch.setattr(session, "download_digital", stop_before_get)
-    assert materialize(service, account, loan)["code"] == "bnf_local_candidate_reconciliation_required"
+    assert materialize(service, account, loan)["code"] == "bnf_auto_acquisition_failed"
     assert materialize(service, account, second)["code"] == "bnf_auto_acquisition_failed"
-    assert attempted == [True] and not downloaded
+    assert attempted == [True, True] and not downloaded
     assert first.is_file()
 
 
@@ -193,24 +193,29 @@ def test_old_manual_catalogue_entry_blocks_even_without_manual_receipt(
     })
     attempted = []
     monkeypatch.setattr(session, "download_digital", lambda *a, **k: attempted.append(True))
-    assert materialize(service, account, loan)["code"] == "bnf_local_candidate_reconciliation_required"
-    assert attempted == downloaded == []
+    assert materialize(service, account, loan)["code"] == "bnf_auto_acquisition_failed"
+    assert attempted == [True] and downloaded == []
     assert manual.exists()
 
 
-def test_source_sync_reports_reconciliation_count_without_private_file_data(
-    connected_core, tmp_path,
+def test_source_sync_title_hint_does_not_require_manual_reconciliation(
+    connected_core, tmp_path, monkeypatch,
 ):
     service, _session, account, loan, downloaded = _enable(connected_core)
+    attempted = []
+    def synthetic_stop(*_a, **_kw):
+        attempted.append(True)
+        raise RuntimeError("synthetic stop before HTTP")
+    monkeypatch.setattr(_session, "download_digital", synthetic_stop)
     old = _manual_receipt(service, tmp_path, loan.title)
     sid = SynchronizationBrokerImpl._source_id(account)
     before = old.read_bytes()
     outcome = SynchronizationBrokerImpl(service).synchronize_source(sid)
     assert outcome.facts["status"] == "partial"
-    assert outcome.facts["files_reconciliation_required"] == 1
+    assert outcome.facts["files_reconciliation_required"] == 0
     assert outcome.facts["reason"] == "source_partial"
     # No file was changed merely because the title raised a review candidate.
     assert str(old) not in repr(outcome.facts)
     assert loan.title not in repr(outcome.facts)
-    assert downloaded == []
+    assert downloaded == [] and attempted == [True]
     assert old.read_bytes() == before
