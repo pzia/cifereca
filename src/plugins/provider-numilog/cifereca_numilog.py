@@ -812,7 +812,7 @@ class NumilogSession(ProviderSession):
                       account.credential_id, account.unique_id)
             owner = self._inventory_owner_or_none()
             # The session's Account may be an older provider-created object
-            # with no Core identity yet, while Core supplies an exact defensive
+            # with no Core identity yet (legacy 'default'), while Core supplies a
             # Account copy. Only the unique broker owner attests Core identity.
             # A conflicting nonempty identity on the live account is refused.
             live_scope = (
@@ -820,7 +820,7 @@ class NumilogSession(ProviderSession):
                 live.credential_id, live.unique_id,
             ) if type(live) is Account else None
             if (not self.connected or live_scope is None
-                    or live_scope[0] not in ('', None, pinned[0])
+                    or live_scope[0] not in ('', None, 'default', pinned[0])
                     or live_scope[1:] != pinned[1:]
                     or type(pinned[0]) is not str or not pinned[0]
                     or owner is None or owner[0] != 'broker'
