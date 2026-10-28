@@ -118,7 +118,8 @@ def complete_selected_delivery(
     if not bound():
         raise ValueError("canonical_delivery_source_rebound_after_get")
     if (type(candidate) is not tuple or len(candidate) != 2
-            or type(candidate[0]) not in (str, Path)
+            or (type(candidate[0]) is not str
+                and not isinstance(candidate[0], Path))
             or type(candidate[1]) is not str):
         raise ValueError("canonical_delivery_candidate_invalid")
 
