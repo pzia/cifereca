@@ -38,7 +38,7 @@ def test_step_a_core_is_single_composition_root():
             assert isinstance(core.storage, Storage)
             assert isinstance(core.diagnostics, Diagnostics)
             assert isinstance(core.library, LibraryService)
-            assert core.storage.schema_version() == 13
+            assert core.storage.schema_version() == 14
 
 
 def test_step_a_local_search_is_network_free_and_identity_scoped():
