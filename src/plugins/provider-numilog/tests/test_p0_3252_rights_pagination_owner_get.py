@@ -228,3 +228,109 @@ def test_brokerless_legacy_targeted_delivery_remains_readable(monkeypatch):
         assert seen == [s.library_url]
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("phase", ["response", "parse"])
+@pytest.mark.parametrize("race", [
+    "owner_B", "owner_missing", "broker_ABA", "same_owner_duplicate",
+    "live_account_ABA", "live_account_credential",
+])
+def test_legacy_numilog_library_no_second_private_get_after_rebind(
+    monkeypatch, phase, race,
+):
+    """Legacy positive inventory is not a license for an in-flight foreign GET."""
+    s, broker = session()
+    next_url = s.library_url + "?page=2"
+    seen = []
+
+    def rebind():
+        if race == "owner_B":
+            broker.owner = "identity-B"
+        elif race == "owner_missing":
+            broker.owner = None
+        elif race == "broker_ABA":
+            other = type(broker)()
+            other.account_id = broker.account_id
+            s.identity_broker = other
+        elif race == "same_owner_duplicate":
+            broker.accounts = lambda: [
+                SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
+                                identity_id="identity-A"),
+                SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
+                                identity_id="identity-A"),
+            ]
+        elif race == "live_account_ABA":
+            s._accounts = [replace(s._accounts[0])]
+        else:
+            s._accounts[0].credential_id = "different-credential"
+
+    def page(url, **_):
+        seen.append(url)
+        if url == s.library_url and phase == "response":
+            rebind()
+        return url, "PAGE1" if url == s.library_url else "PAGE2"
+
+    def parse_page(html, _url, **_):
+        if html == "PAGE1":
+            if phase == "parse":
+                rebind()
+            return [owned_row()], next_url
+        return [{**owned_row(), "lid": "43"}], None
+
+    s._page = page
+    monkeypatch.setattr(provider, "parse_library_page", parse_page)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="inventaire arrêté"):
+            s.library()
+        assert seen == [s.library_url]
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("owners", [
+    ("identity-A", "identity-B"),
+    ("identity-A", "identity-A"),
+    (),
+])
+def test_legacy_unverified_owner_stays_readable_but_not_transactional(
+    monkeypatch, owners,
+):
+    """Existing partial legacy inventory may be inspected, never attested."""
+    s, broker = session()
+    broker.accounts = lambda: [
+        SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
+                        identity_id=identity)
+        for identity in owners
+    ]
+    seen = []
+    next_url = s.library_url + "?page=2"
+    s._page = lambda url, **_: (seen.append(url) or
+                               (url, "PAGE1" if url == s.library_url else "PAGE2"))
+    monkeypatch.setattr(
+        provider, "parse_library_page",
+        lambda page, _url, **_: (
+            [owned_row()] if page == "PAGE1" else
+            [{**owned_row(), "lid": "43"}],
+            next_url if page == "PAGE1" else None,
+        ),
+    )
+    try:
+        items = s.library()
+        assert len(items) == 2
+        assert seen == [s.library_url, next_url]
+        assert all(row.source_provider == "numilog" for row in items)
+    finally:
+        s.close()
+
+
+def test_legacy_brokerless_inventory_still_reads_private_owned_cards(monkeypatch):
+    s, _ = session(with_broker=False)
+    seen = []
+    s._page = lambda url, **_: (seen.append(url) or (url, "PAGE"))
+    monkeypatch.setattr(provider, "parse_library_page",
+                        lambda *_a, **_k: ([owned_row()], None))
+    try:
+        assert len(s.library()) == 1
+        assert seen == [s.library_url]
+    finally:
+        s.close()
