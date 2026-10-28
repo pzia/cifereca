@@ -8,8 +8,10 @@ présence du livre ni un titre identique n'attestent une même édition, licence
 Adobe ou provenance BnF. L'ancien garde `bnf_auto_ref` ne couvre que les
 réceptions automatiques déjà liées au prêt exact.
 
-Cette tranche **n'est pas un moteur de rapprochement** : elle empêche seulement
-un nouveau GET signé lorsqu'un candidat local préexistant est *plausible*.
+Cette tranche **n'est pas un moteur de rapprochement** : son observation
+ne décide jamais de l'autorisation ni d'un veto permanent de GET. Depuis le
+blueprint #3171 du 28/10/2026, un candidat bibliographique *plausible* reste
+un indice descriptif, non une présence fournisseur attestée.
 
 ## API générique
 
@@ -43,11 +45,15 @@ puis applique la primitive générique aux seules branches
 existant, avec validation de la génération de consentement et du contexte
 compte/session après inspection des références.
 
-Un candidat bloque **avant tout GET ACSM**, staging et import ADEPT avec
-`attention_required / bnf_local_candidate_reconciliation_required`.
-Le broker expose un compteur borné `files_reconciliation_required` et
-n'augmente pas `SyncResult.changed` à cause d'une simple revue. Un livre
-distinct sans indice reste éligible aux autorisations préexistantes.
+Un candidat sûr `local_candidate_found` est **conservé comme indice mais
+ne bloque plus** l'acquisition déjà explicitement consentie du prêt courant :
+l'action ACSM signée reste soumise aux gardes indépendants du fournisseur,
+compte, identité, politique activée, session, droit actif et pipeline ADEPT.
+Aucun livre manuel n'est adopté, supprimé ou déplacé sur la seule
+correspondance de titre. Une inspection `local_evidence_unavailable`
+(lecture impossible, symlink/scan incomplet ou incohérence) demeure bloquante
+avec `attention_required / bnf_local_evidence_unavailable`. Un prêt différent
+sans indice reste lui aussi éligible aux mêmes autorisations préexistantes.
 
 ## À livrer avant fermeture #3228 / #3171 / #2797
 
