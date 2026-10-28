@@ -81,7 +81,7 @@ class LocalCatalog:
 
     0.8.0 deliberately discovers facts from disk instead of deleting or moving
     user files. Identity/provider path components are interpreted when present;
-    legacy flat layouts stay cataloged with hints inferred from the 0.7 ledger.
+    legacy flat layouts stay cataloged without inferring origin from a 0.7 backup.
     """
 
     def __init__(self, storage: Any, root: Path) -> None:
@@ -182,9 +182,6 @@ class LocalCatalog:
             return identity_id, None
         # Likewise a top-level directory is not a supplier declaration.
         return None, None
-
-    def _legacy_provenance(self, path: Path) -> dict[str, Any] | None:
-        return self.storage.backup_find_by_local_path(str(path))
 
     def _index_bundle(
         self,
@@ -382,18 +379,11 @@ class LocalCatalog:
         placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
         identity_hint, provider_hint = self._path_hints(path)
         identity_hint = identity_id or identity_hint
-        legacy = self._legacy_provenance(path)
-        # The ordinary scan already rejects cross-identity legacy receipts.
-        # Targeted indexing must apply the SAME rule: a historical backup
-        # mentioning this path is not provenance for a different library.
-        if legacy and (
-            not identity_hint or legacy.get("identity_id") != identity_hint
-        ):
-            legacy = None
-        if legacy:
-            provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
+        # The compatibility backup_items table may describe a path, but it
+        # is not evidence of supplier ownership or an edition. Explicit
+        # caller scope and an existing Placement remain authoritative here.
         provider_hint = provider_id or provider_hint
-        proposed_item = item_id or (legacy.get("item_id") if legacy else None)
+        proposed_item = item_id
         if existing and any((
             identity_hint and existing.get("identity_id")
                 and identity_hint != existing["identity_id"],
@@ -487,8 +477,8 @@ class LocalCatalog:
         })
         self.storage.catalog_entry_put({
             "catalog_entry_id": catalog_entry_id, "artifact_id": artifact_id,
-            "placement_id": placement_id, "title": str(title or (legacy or {}).get("title") or ((previous_entry or {}).get("title") if (previous_entry or {}).get("artifact_id")==artifact_id else None) or path.stem),
-            "author": (legacy or {}).get("author") or ((previous_entry or {}).get("author") if (previous_entry or {}).get("artifact_id")==artifact_id else None), "media_format": media_format,
+            "placement_id": placement_id, "title": str(title or ((previous_entry or {}).get("title") if (previous_entry or {}).get("artifact_id")==artifact_id else None) or path.stem),
+            "author": ((previous_entry or {}).get("author") if (previous_entry or {}).get("artifact_id")==artifact_id else None), "media_format": media_format,
             "identity_id": identity_hint, "provider_id": provider_hint, "item_id": source_item_id,
             "local_state": "local", "metadata": {**(dict((previous_entry or {}).get("metadata") or {}) if (previous_entry or {}).get("artifact_id")==artifact_id else {}), "path": path_text, "artifact_kind": "file"},
         })
@@ -684,19 +674,9 @@ class LocalCatalog:
             path_text = str(path.resolve())
             seen_paths.add(path_text)
             identity_hint, provider_hint = self._path_hints(path)
-            legacy = self._legacy_provenance(path.resolve())
-            # A filename is not evidence that a backup purchased by another
-            # identity belongs to this scanned profile. Even a UNIQUE
-            # backup_items.local_path row may name the wrong identity (or be
-            # legacy-unscoped); do not lift its provider/item provenance into
-            # this placement without an exact identity coordinate.
-            if legacy and (
-                not identity_hint
-                or legacy.get("identity_id") != identity_hint
-            ):
-                legacy = None
-            if legacy:
-                provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
+            # A historic backup_items.local_path is never a current
+            # provider/edition attestation, even for a single exact match.
+            # Preserve the existing Placement scope, not the legacy hint.
             if not ok:
                 invalid += 1
                 # Invalid bytes revoke physical presence, not historic source
@@ -713,7 +693,7 @@ class LocalCatalog:
                         "identity_id": (previous or {}).get("identity_id") or identity_hint,
                         "provider_id": (previous or {}).get("provider_id") or provider_hint,
                         "source_item_id": (previous or {}).get("source_item_id")
-                            or (legacy.get("item_id") if legacy else None),
+                            or None,
                         "state": "invalid",
                         "last_seen_at": started_at,
                         "metadata": {**((previous or {}).get("metadata") or {}),
@@ -734,12 +714,12 @@ class LocalCatalog:
                 continue
 
             existing = self.storage.placement_for_path(Path(path_text))
-            # A folder hint or old backup row is not a transaction that
+            # A folder hint is not a transaction that
             # transfers a file's already recorded owner/provider/edition.
             # Keep existing authority and mark the physical projection
             # untrusted for review rather than silently moving provenance to
             # another identity on an ordinary (including deep) scan.
-            proposed_item = legacy.get("item_id") if legacy else None
+            proposed_item = None
             if existing and any((
                 identity_hint and existing.get("identity_id")
                     and identity_hint != existing["identity_id"],
@@ -842,8 +822,8 @@ class LocalCatalog:
                                         or stable_id("catalog", placement_id),
                     "artifact_id": artifact_id,
                     "placement_id": placement_id,
-                    "title": str((legacy or {}).get("title") or path.stem),
-                    "author": (legacy or {}).get("author"),
+                    "title": path.stem,
+                    "author": None,
                     "media_format": media_format,
                     "identity_id": identity_hint,
                     "provider_id": provider_hint,

@@ -1,4 +1,4 @@
-"""#2565: legacy path provenance never crosses local profile boundaries.
+"""#2565/#3196: a legacy path never creates supplier provenance.
 
 Provider, profile and book values are synthetic and never contact the network.
 """
@@ -10,13 +10,9 @@ from cifereca.catalog import LocalCatalog
 from cifereca.storage import Storage
 
 
-@pytest.mark.parametrize(("backup_owner", "expected_provider", "expected_item"), [
-    ("profile-a", None, None),
-    (None, None, None),
-    ("profile-b", "numilog", "edition-b"),
-])
-def test_only_exact_identity_backup_can_supply_legacy_local_provenance(
-    tmp_path, backup_owner, expected_provider, expected_item,
+@pytest.mark.parametrize("backup_owner", ["profile-a", None, "profile-b"])
+def test_even_exact_identity_backup_never_supplies_new_local_provenance(
+    tmp_path, backup_owner,
 ):
     root = tmp_path / "library"
     book = root / "profile-b" / "local" / "Book.pdf"
@@ -47,14 +43,14 @@ def test_only_exact_identity_backup_can_supply_legacy_local_provenance(
     assert len(placements) == 1
     assert placements[0]["state"] == "present"
     assert placements[0]["identity_id"] == "profile-b"
-    assert placements[0]["provider_id"] == expected_provider
-    assert placements[0]["source_item_id"] == expected_item
+    assert placements[0]["provider_id"] is None
+    assert placements[0]["source_item_id"] is None
     entries = [
         row for row in storage.catalog_entries()
         if row["placement_id"] == placements[0]["placement_id"]
     ]
     assert entries
     assert all(row["identity_id"] == "profile-b" for row in entries)
-    assert all(row["provider_id"] == expected_provider for row in entries)
-    assert all(row["item_id"] == expected_item for row in entries)
+    assert all(row["provider_id"] is None for row in entries)
+    assert all(row["item_id"] is None for row in entries)
     assert storage.entitlements() == []
