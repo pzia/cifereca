@@ -75,7 +75,7 @@ def test_paris_download_valid_exact_core_account_copy_stages_only_own_loan(tmp_p
     "foreign_identity", "foreign_credential", "foreign_account",
     "foreign_loan_account", "foreign_loan_credential", "physical_loan",
     "unlinked_broker", "ambiguous_broker", "replaced_account",
-    "primary_flag_inconsistent",
+    "foreign_loan_provider",
 ])
 def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monkeypatch, change):
     session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
@@ -96,8 +96,8 @@ def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monk
             session.identity_broker.identities = ("identity-B",)
         elif change == "ambiguous_broker":
             session.identity_broker.identities = ("identity-A", "identity-A")
-        elif change == "primary_flag_inconsistent":
-            account.is_primary = True
+        elif change == "foreign_loan_provider":
+            loan.source_provider = "other-provider"
         else:
             session._accounts = [replace(account)]
         with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
@@ -111,7 +111,7 @@ def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monk
 
 @pytest.mark.parametrize("race", [
     "mutable_caller", "mutable_loan", "broker_swap_same_owner",
-    "broker_rebind", "live_account_aba",
+    "broker_rebind", "live_account_aba", "primary_flag_mutation",
 ])
 def test_paris_scope_rebind_during_signed_get_refuses_file_publication(
     tmp_path, monkeypatch, race,
@@ -129,6 +129,8 @@ def test_paris_scope_rebind_during_signed_get_refuses_file_publication(
             session.identity_broker = type(session.identity_broker)()
         elif race == "broker_rebind":
             session.identity_broker.identities = ("identity-B",)
+        elif race == "primary_flag_mutation":
+            account.is_primary = not account.is_primary
         else:
             session._accounts[0] = replace(account)
         return response
