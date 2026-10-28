@@ -210,7 +210,7 @@ class HTTPProviderTests(unittest.TestCase):
             s.loans(account)
         self.assertFalse(s.connected)
 
-    def test_diagnostics_keep_closed_phase_and_error_without_private_data(self):
+    def test_diagnostics_keep_public_code_and_original_provider_failure(self):
         from types import SimpleNamespace
         for error, expected in [('access_denied', 'access_denied'),
                                 ('PRIVATE_RESPONSE_cookie=secret', 'bnf_reader_failed')]:
@@ -220,10 +220,37 @@ class HTTPProviderTests(unittest.TestCase):
             def login(*args):
                 raise ReaderHTTPError(error)
             s.client.login = login
-            with self.assertRaisesRegex(ProviderConfigurationError, '^' + expected + '$'):
-                s.connect()
-            self.assertEqual(events, [{'provider':'bnf-pret', 'phase':'login', 'code':expected}])
-            self.assertNotIn('PRIVATE_RESPONSE', json.dumps(events))
+            try:
+                with self.assertRaises(ProviderConfigurationError) as captured:
+                    s.connect()
+                self.assertEqual(str(captured.exception), expected)
+                self.assertEqual(len(events), 1)
+                detail = events[0]
+                self.assertEqual((detail['provider'], detail['phase'], detail['code']),
+                                 ('bnf-pret', 'login', expected))
+                self.assertEqual(detail['error_type'], 'ReaderHTTPError')
+                self.assertEqual(detail['error_message'], error)
+                self.assertIn(error, detail['error_traceback'])
+            finally:
+                s.close()
+
+    def test_missing_optional_diagnostics_still_logs_original_error_once(self):
+        s, _, _ = self.make()
+        s.diagnostics = None
+        message = 'SYNTHETIC_HTML_FAILURE_original_reason'
+        s.client.login = lambda *args: (_ for _ in ()).throw(ReaderHTTPError(message))
+        try:
+            with self.assertLogs('cifereca', level='ERROR') as logs:
+                with self.assertRaises(ProviderConfigurationError) as captured:
+                    s.connect()
+            self.assertEqual(str(captured.exception), 'bnf_reader_failed')
+            rows = [json.loads(row.split('DIAG_JSON ', 1)[1])
+                    for row in logs.output if 'DIAG_JSON ' in row]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['detail']['error_message'], message)
+            self.assertEqual(rows[0]['detail']['code'], 'bnf_reader_failed')
+            self.assertEqual(rows[0]['detail']['phase'], 'login')
+        finally:
             s.close()
 
     def test_diagnostic_failure_does_not_hide_provider_failure(self):
