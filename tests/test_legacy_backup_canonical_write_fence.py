@@ -185,3 +185,36 @@ def test_legacy_sha_without_existing_file_does_not_create_artifact(tmp_path):
             assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
     finally:
         store.close()
+
+
+
+def test_legacy_marker_cannot_repair_artifact_with_existing_provider_origin(published):
+    """A referenced Artifact remains immutable even after poisoned SQL metadata."""
+    store, path, sha = published
+    artifact_id = "sha256:" + sha
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE artifacts SET size=999999,media_format='epub',"
+            "metadata_json=? WHERE artifact_id=?",
+            ('{"imported_from":"backup_items"}', artifact_id),
+        )
+        before_rows = db.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+    scope = ProviderRightsScope("A", "seller", "card", "buyer")
+    source = SourceKey(scope, "edition", "right", "purchase", "purchases")
+    snapshot = ProviderRightsSnapshot(
+        scope, (ProviderRightObservation(
+            "edition", "right", "purchase", "active", "provider_response",
+            "observation", "2026-10-28T08:00:00+00:00", "unknown",
+        ),), branch="purchases", status="partial", coverage="partial",
+    )
+    with pytest.raises(ValueError, match="canonical_artifact_collision"):
+        publish_completed_acquisition(
+            store, library_root=path.parents[1], path=path,
+            source=source, snapshot=snapshot, final_sha256=sha,
+            delivery_receipt_ref="another-actual-delivery",
+        )
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)
+        ).fetchone() == before_rows
+        assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 1
