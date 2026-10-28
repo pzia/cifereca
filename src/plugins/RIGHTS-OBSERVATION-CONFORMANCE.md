@@ -104,22 +104,26 @@ et la validation après publication. Pas de nouvelle file de réconciliation.
 
 | Fournisseur | Préflight ciblé admis | Candidat finalisable par Core | Épreuve sur comptes/credentials |
 |---|---|---|---|
-| **Numilog** | `rights_selected_delivery_offer_snapshot`, branche `meslivres`, achat `edition_id == right_id`; action signée de la carte actuelle | `rights_selected_delivery_candidate` réemploie `download_direct` et exige l'offre opaque et le propriétaire courant, sans alternative par titre | refus A→B et A→A, doubles `AccountRef`, compte/credential étranger, offre révoquée ; 0 GET de contenu si garde négative |
-| **BnF-Prêt** | même signature, branche `bnf_html`, paire `resource_id + loan_id` ; action ACS4 observée | même signature de candidat ; `download_digital` relit la session et délivre **un ACSM candidat**, non EPUB final | prêt exact, rejet A→B/A→A, doublons et compte/credential étranger, action signée disparue ; 0 token GET si refus |
-| **Kobo** | `rights_delivery_offer_snapshot` explicite par `product_id` et POST descriptor, PR de garde DRM concurrente #3602 | `resolve_acquisition` privé revalide l'offre, **pas encore de façade commune ni de GET de contenu raccordé** | les gardes multi-identité et contradictions DRM sont testées par le fournisseur ; ne pas présumer les PR ouvertes fusionnées |
-| **Paris** | aucune offre `available` tant que `ListLoans` ne démontre pas un `state=active` utilisable ; restent `unknown` | téléchargement explicite historique, **pas de candidat automatique canonique** | vérification DILICOM fraîche en PR #3596, pas une preuve de réception tant que CI non verte/fusionnée |
+| **Numilog** | `rights_selected_delivery_offer_snapshot` (`meslivres`, `purchase`) avec preuve positive de carte exacte | `rights_selected_delivery_candidate` relit le droit et l'offre opaque ; EPUB direct ou **ACSM brut** sous staging Core (#3616), aucun `import_acsm` legacy en voie sélectionnée | identité Core A via broker unique, compte de session éventuellement `default` (#3612) ; refus A→B/A→A, doublons, credential étranger et offre révoquée |
+| **BnF-Prêt** | même interface, `bnf_html`, identifiants resource/loan exacts, action ACS4 active | `download_digital` sélectionné revalide et rend un ACSM candidat dans le staging, non un EPUB final | refus B/A, doublons, compte étranger et offre absente avant GET du jeton |
+| **Kobo** | même interface optionnelle depuis #3610, `personal_manifest/purchase`, édition==droit, POST descriptor explicitement admis | `rights_selected_delivery_candidate` depuis #3618 : relecture achat, offre opaque exacte, client HTTP public à peer épinglé, sans redirection ni cookies Vault, staging EPUB/PDF/ACSM ; formats contradictoires refusés (#3621) | fournisseur/credential/compte/broker exacts, A→B/A→A, contenu HTTP faux ou démesuré, offre révoquée ; zéro GET de contenu en refus |
+| **Paris** | `dilicom`, prêt/édition exacts, mais `state/delivery=unknown` faute de champ amont attestant une activité | pas d'offre automatique canonique ; action PNB sélectionnée relit DILICOM et refuse le POST d'emprunt fallback si lien courant absent (#3596) | contrôle de compte/session/identité ; pas d'ACSM automatique ni droit fabriqué depuis `EbookUrl` |
 
-**Preuves de merge Plugins :** #3605 (`87f7f84c`, PR CI 40698713127
-SUCCESS) et #3606 (`a95f0a0b`, PR CI 40700334565 SUCCESS). Les tests de
-source exacte s'exécutent sur les vrais adaptateurs avec réseau synthétique.
-Ils ne constituent ni un reçu de livraison indépendant, ni une acquisition
-post-ADEPT, ni une publication transactionnelle de Core. Gardes renforcées
-A→A, doublon de broker et credentials croisés dans un lot de tests distinct.
+**Preuves de merge Plugins :** #3605/#3606/#3609 (BnF/Numilog,
+sélection et rebind), #3610/#3618/#3621 (Kobo, offre + candidat HTTP +
+contradictions de format), #3612/#3616 (Numilog, identité et ACSM brut)
+et #3596 (Paris DILICOM frais), tous fusionnés après CI PR réussies.
+La suite fournisseur teste les **sessions réelles sous HTTP synthétique**,
+mais ne revendique aucune connexion privée en production ni réception ADEPT.
 
-**Critère encore ouvert :** admission/consentement effectivement persisté,
-routage Core et retour d'un reçu indépendant avec octets finaux EPUB/PDF
-contrôlés puis `OriginLink→SHA→Placement` atomique ; deuxième Sync à zéro
-GET après rehash. Les producteurs ne fournissent pas cette autorité.
+**Intégration Core vérifiée distinctement :** #3601 (consentement persistant
+exact), #3608 (préflight dans la Sync), #3613 (candidate→inspection→
+ADEPT éventuel→reçu témoin Core→publication canonique) et #3617
+(index descriptif après commit) sont fusionnées avec CI. Le reçu
+`core-delivery:` témoigne de l'exécution Core, **pas** d'une quittance
+indépendante émise par Kobo/BnF/Numilog. Aucune preuve terrain de
+deuxième Sync sans GET réel ni de reprise crash matérielle. Le ticket
+#3252 reste P1 ouvert, Core #3171/ACSM BnF #3228 P0 ouverts.
 
 ### Numilog — compte Core copié et identité du compte vivant
 
