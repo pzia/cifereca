@@ -33,6 +33,9 @@ def loan_for(account):
 def prepare(tmp_path, monkeypatch):
     session, account, client = fixture()
     loan = loan_for(account)
+    # The base URL is part of the real ParisClient contract. The synthetic
+    # fixture only replaced its HTTP methods for the rights-read tests.
+    client.base_url = "https://bibliotheques.paris.fr"
     observed = []
 
     def get(url):
@@ -74,7 +77,7 @@ def test_paris_download_valid_exact_core_account_copy_stages_only_own_loan(tmp_p
 @pytest.mark.parametrize("change", [
     "foreign_identity", "foreign_credential", "foreign_account",
     "foreign_loan_account", "foreign_loan_credential", "physical_loan",
-    "unlinked_broker", "ambiguous_broker", "replaced_account",
+    "unlinked_broker", "ambiguous_broker", "ambiguous_account",
     "foreign_loan_provider",
 ])
 def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monkeypatch, change):
@@ -99,7 +102,7 @@ def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monk
         elif change == "foreign_loan_provider":
             loan.source_provider = "other-provider"
         else:
-            session._accounts = [replace(account)]
+            session._accounts = [account, replace(account)]
         with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
             session.download_digital(loan, account, tmp_path)
         assert requested == []
