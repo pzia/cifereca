@@ -440,9 +440,25 @@ class ParisProviderSession(ProviderSession):
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
         errors: list[dict[str, str]] = []
+        # The two independent private branches MUST address the *same*
+        # borrower. Core can mutate an Account while DILICOM is in flight;
+        # rereading unique_id for SYRACUSE would make a foreign-account GET
+        # before the typed reader has a chance to reject stale results.
+        borrower_scope = (
+            account.unique_id, account.identity_id,
+            account.provider_id, account.credential_id,
+        )
+        borrower_id = borrower_scope[0]
+
+        def scope_current():
+            return (account.unique_id, account.identity_id,
+                    account.provider_id, account.credential_id) == borrower_scope
+
         for upstream in ("DILICOM", "SYRACUSE"):
+            if not scope_current():
+                raise ProviderConfigurationError("account_scope_mismatch")
             try:
-                rows.extend(self.client.loans(upstream, account.unique_id))
+                rows.extend(self.client.loans(upstream, borrower_id))
             except Cancelled:
                 # Cooperative cancellation is NOT an unavailable branch.
                 # Stop the second upstream GET and never publish a partial
@@ -473,6 +489,11 @@ class ParisProviderSession(ProviderSession):
                     )
                 except Exception:
                     pass
+            # This check must run OUTSIDE the exception handler: a borrower
+            # change is an authorization failure, never merely a partial
+            # provider branch failure that permits another private GET.
+            if not scope_current():
+                raise ProviderConfigurationError("account_scope_mismatch")
         # Do not let a later mutation of the legacy error facade change the
         # branch coverage of this particular typed read.
         self._loan_branch_failures.set(frozenset(error["upstream"] for error in errors))
@@ -486,8 +507,10 @@ class ParisProviderSession(ProviderSession):
             self._enrich_digital_loan_metadata(loan)
         # Persist the exact borrower on each loan. Paris uses the empty string
         # for the primary account, which must not be confused with "unknown".
+        if not scope_current():
+            raise ProviderConfigurationError("account_scope_mismatch")
         for loan in rows:
-            loan.source_account_id = account.unique_id or "primary"
+            loan.source_account_id = borrower_id or "primary"
         return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
