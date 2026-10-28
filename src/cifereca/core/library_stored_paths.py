@@ -22,6 +22,9 @@ from .library_reconciliation import EvidenceSnapshot
 class StoredPathReport:
     # Private ephemeral SQLite row indices; never expose path/identity values.
     states: dict[int, str] = field(default_factory=dict)
+    # Closed reasons from the existing probes, private to the same row index.
+    # Not a second probe or a permission to mutate paths/rights.
+    observation_reasons: dict[int, str] = field(default_factory=dict)
     reasons: set[str] = field(default_factory=set)
     # Filled by the Core audit orchestrator, absent for standalone checks.
     duration_ms: int | None = None
@@ -95,6 +98,7 @@ def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path
         raw = row.get('path')
         if type(raw) is not str or not raw or '\0' in raw:
             result.states[index] = 'stored_path_unavailable'
+            result.observation_reasons[index] = 'invalid_path'
             result.reasons.add('stored_path_unavailable')
             continue
         path = Path(raw)
@@ -103,6 +107,7 @@ def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path
                    and path != root and path.is_relative_to(root)]
         if len(matches) != 1:
             result.states[index] = 'stored_path_out_of_scope'
+            result.observation_reasons[index] = 'out_of_scope'
             continue
         root, relative = matches[0]
         def probe(anchor):
@@ -117,16 +122,21 @@ def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path
                     chain.append((info.st_dev, info.st_ino))
                 info = os.stat(relative.name, dir_fd=parent, follow_symlinks=False)
                 state = 'stored_path_present' if stat.S_ISREG(info.st_mode) else 'stored_path_unavailable'
-                return state, chain
+                return state, chain, ('regular_file_observed' if state == 'stored_path_present' else 'not_regular_file')
             except OSError as exc:
                 # ENOTDIR, ELOOP, EACCES, etc. do not attest file absence.
                 state = 'stored_path_missing' if exc.errno == errno.ENOENT else 'stored_path_unavailable'
-                return state, chain
+                reason = ('enoent_observed' if exc.errno == errno.ENOENT else
+                          'permission_denied' if isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM) else
+                          'symlink_or_not_directory' if exc.errno in (errno.ELOOP, errno.ENOTDIR) else
+                          'io_unavailable')
+                return state, chain, reason
             finally:
                 os.close(parent)
 
         root_fd = -1
         state = 'stored_path_unavailable'
+        reason = 'probe_unavailable'
         try:
             root_fd = _open_root(root)
             first = probe(root_fd)
@@ -138,14 +148,21 @@ def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path
                 # probes, invalidates the earlier absence/presence evidence.
                 if (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino) and first == second:
                     state = first[0]
+                    reason = first[2]
+                else:
+                    reason = 'root_changed' if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino) else 'path_changed'
             finally:
                 os.close(current)
-        except OSError:
+        except OSError as exc:
             state = 'stored_path_unavailable'
+            reason = ('root_missing' if exc.errno == errno.ENOENT else
+                      'root_permission_denied' if isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM) else
+                      'root_unavailable')
         finally:
             if root_fd >= 0:
                 os.close(root_fd)
         result.states[index] = state
+        result.observation_reasons[index] = reason
         if state == 'stored_path_missing':
             sqlite_state = row.get('state')
             bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'

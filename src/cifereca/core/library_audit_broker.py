@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from pathlib import Path
 from time import monotonic
 
@@ -68,23 +69,52 @@ class LibraryReconciliationReadBrokerImpl:
 
 
 def _run_scoped_audit(service, identity_id, control, finish):
-    """One terminal, aggregate-only event per broker attempt.
+    """One terminal per attempt; public output remains aggregate-only.
 
     The event collector is optional; it can neither block the offline audit
     nor receive the private Inventory/Snapshot or untrusted exception text.
+    Core Diagnostics may also receive bounded already-observed Placement facts.
     """
     from ..diagnostics import Diagnostics
 
     started = monotonic()
-    result = _execute_scoped_audit(service, identity_id, control, finish)
+    completed = []
+
+    def capture_finished(audit, scope_valid, source_stamp):
+        # Retain only the existing audit until final broker revalidation.
+        # Never attach private rows to the plugin-facing return dictionary.
+        outcome = finish(audit, scope_valid, source_stamp)
+        completed[:] = [(audit, scope_valid, source_stamp)]
+        return outcome
+
+    result = _execute_scoped_audit(service, identity_id, control, capture_finished)
     try:
         diagnostics = getattr(service, 'diagnostics', None)
         # The same scoped helper serves CoreUI's *private* LocalInspection.
         # Only broker summaries are report-shaped; never classify a private
         # inspection object as a failed audit or pass it to Diagnostics.
         if type(diagnostics) is Diagnostics and type(result) is dict:
+            diagnostic_result = result
+            if (diagnostics.enabled and completed
+                    and type(result.get('stored_paths')) is dict):
+                try:
+                    audit, scope_valid, source_stamp = completed[0]
+                    def facts_current():
+                        return (source_stamp is not None and scope_valid()
+                                and sqlite_source_stamp(Path(service.storage.path)) == source_stamp
+                                and (control is None or not control.cancelled()))
+                    if facts_current():
+                        from .library_placement_observations import placement_observations
+                        facts = placement_observations(audit, identity_id)
+                        if facts_current():
+                            diagnostic_result = {
+                                **deepcopy(result), 'placement_observations': facts,
+                            }
+                except Exception:
+                    # Optional detail cannot suppress the existing terminal.
+                    pass
             diagnostics.add_core_reconciliation_result(
-                result, duration_ms=max(0, int((monotonic() - started) * 1000)),
+                diagnostic_result, duration_ms=max(0, int((monotonic() - started) * 1000)),
             )
     except Exception:
         # Diagnostics are optional and cannot change the audit result.
