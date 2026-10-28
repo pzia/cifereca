@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from cifereca.catalog import LocalCatalog
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
@@ -234,3 +235,31 @@ def test_account_unregistered_after_selected_offer_blocks_candidate_get(rig):
     result = synchronize_account_source(service, service.account)
     assert result["canonical_execution"]["downloaded"] == 0
     assert refs(db)[1] == 0 and db.placements() == []
+
+
+def test_uncommitted_staging_is_invisible_until_atomic_provider_publication(rig):
+    service, db, root = rig
+    _prepare(service)
+    catalog = LocalCatalog(db, root)
+    staged = []
+
+    def candidate(*args, **kwargs):
+        delivery = _native(*args, **kwargs)
+        staged.append(delivery[0])
+        assert catalog.index_path(delivery[0])["reason"] == "canonical_staging_not_published"
+        observed = catalog.scan()
+        assert observed.cataloged == 0
+        assert db.placements() == [] and db.catalog_entries() == []
+        return delivery
+
+    service.session.rights_selected_delivery_candidate = candidate
+    synced = synchronize_account_source(service, service.account)
+    assert synced["canonical_execution"]["downloaded"] == 1
+    assert len(staged) == 1 and staged[0].is_file()
+    # Only after Core commits both the exact OriginLink and Placement may
+    # the physical library scanner reveal the EPUB/PDF as a local catalogue.
+    scanned = catalog.scan()
+    assert scanned.cataloged == 1 and scanned.invalid == 0
+    entries = db.catalog_entries()
+    assert len(entries) == 1
+    assert entries[0]["placement_id"] == db.placements()[0]["placement_id"]
