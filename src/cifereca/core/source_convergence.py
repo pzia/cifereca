@@ -180,6 +180,7 @@ class ConvergenceDecision:
             "scan_incomplete_independent_admission_required",
             "local_evidence_independent_admission_required",
             "candidate_only_independent_admission_required",
+            "declared_current_independent_admission_required",
         }
 
 
@@ -302,8 +303,20 @@ def plan_convergence(
             stale = any(relation.status != "declared_current"
                         for relation in active_declarations)
             if current and not stale and len(current) == 1:
-                decision("present_declared", "fresh_user_declaration_not_provider_proof",
-                         tuple(current))
+                # A fresh user-declared match is not a verified provider
+                # OriginLink. Keep the declared copy visible, but do not make
+                # the statement a permanent no-GET gate: the independent
+                # executor can still admit a previously authorized purchase
+                # after rechecking exact right, consent, local bytes and lock.
+                authorized_offer = (
+                    row.delivery == "available" and key in consent_references
+                )
+                decision(
+                    "present_declared",
+                    "declared_current_independent_admission_required"
+                    if authorized_offer else "fresh_user_declaration_not_provider_proof",
+                    tuple(current),
+                )
                 continue
             # An old receipt/placement or stale user declaration is not proof
             # of satisfaction. Preserve the diagnostic, but never impose a
