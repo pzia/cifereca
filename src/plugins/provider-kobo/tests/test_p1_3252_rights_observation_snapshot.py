@@ -205,3 +205,53 @@ def test_inconsistent_archived_marker_cannot_publish_false_active_purchase():
         assert report.rights[0].state == "active"
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("identity_id", "identity-B"),
+    ("provider_id", "numilog"),
+    ("credential_id", "other-credential"),
+    ("unique_id", "bob"),
+])
+def test_inflight_caller_account_rebind_never_publishes_kobo_rights(
+    field, replacement,
+):
+    """Owner broker and Vault session stay stable while caller Account changes."""
+    session, vault, broker, account = _rig([
+        {"product_id": "book-1", "account_id": "alice", "owned": True},
+    ])
+    original = vault.library_manifest
+
+    def rebind_during_read():
+        result = original()
+        setattr(account, field, replacement)
+        return result
+
+    vault.library_manifest = rebind_during_read
+    try:
+        with pytest.raises(ProviderCapabilityError, match="propriétaire modifié"):
+            session.rights_observation_snapshot(account)
+        assert vault.calls == 1
+        assert broker.identities == ("identity-A",)
+    finally:
+        session.close()
+
+
+def test_kobo_caller_rebind_during_projection_is_rejected():
+    session, vault, broker, account = _rig([
+        {"product_id": "book-1", "account_id": "alice", "owned": True},
+    ])
+    original = session.normalize_item
+
+    def rebind_in_normalization(*args, **kwargs):
+        result = original(*args, **kwargs)
+        account.identity_id = "identity-B"
+        return result
+
+    session.normalize_item = rebind_in_normalization
+    try:
+        with pytest.raises(ProviderCapabilityError, match="propriétaire modifié"):
+            session.rights_observation_snapshot(account)
+        assert vault.calls == 1
+    finally:
+        session.close()
