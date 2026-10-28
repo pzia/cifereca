@@ -1053,6 +1053,15 @@ class Storage:
                                 AND evidence_ref <> '')
                         ),
                         CHECK (
+                            origin_kind != 'cifereca'
+                            OR source_reference_id IS NOT NULL
+                        ),
+                        CHECK (
+                            origin_kind != 'transfer'
+                            OR (from_identity_id IS NOT NULL
+                                AND from_identity_id <> identity_id)
+                        ),
+                        CHECK (
                             origin_kind != 'derived'
                             OR (parent_artifact_id IS NOT NULL
                                 AND parent_artifact_id <> artifact_id)
@@ -1121,6 +1130,61 @@ class Storage:
                     )
                     BEGIN
                         SELECT RAISE(ABORT,'provider_origin_source_immutable');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_internal_origin_scope_insert
+                    BEFORE INSERT ON origin_links
+                    WHEN NEW.origin_kind='cifereca' AND NOT EXISTS (
+                        SELECT 1 FROM source_references AS s
+                        WHERE s.source_reference_id=NEW.source_reference_id
+                        AND s.identity_id=NEW.identity_id
+                        AND s.reference_kind='internal'
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'internal_origin_scope_mismatch');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_internal_origin_scope_update
+                    BEFORE UPDATE OF origin_kind,identity_id,source_reference_id
+                    ON origin_links
+                    WHEN NEW.origin_kind='cifereca' AND NOT EXISTS (
+                        SELECT 1 FROM source_references AS s
+                        WHERE s.source_reference_id=NEW.source_reference_id
+                        AND s.identity_id=NEW.identity_id
+                        AND s.reference_kind='internal'
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'internal_origin_scope_mismatch');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_internal_scope_update
+                    BEFORE UPDATE OF identity_id,reference_kind,source_reference_id
+                    ON source_references
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links AS o
+                        WHERE o.source_reference_id=OLD.source_reference_id
+                        AND o.origin_kind='cifereca'
+                        AND (NEW.identity_id<>o.identity_id
+                             OR NEW.reference_kind<>'internal'
+                             OR NEW.source_reference_id<>OLD.source_reference_id)
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'internal_origin_source_immutable');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_artifact_linked_sha_update
+                    BEFORE UPDATE OF sha256 ON artifacts
+                    WHEN NEW.sha256<>OLD.sha256 AND EXISTS (
+                        SELECT 1 FROM origin_links AS o
+                        WHERE o.artifact_id=OLD.artifact_id
+                           OR o.parent_artifact_id=OLD.artifact_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_sha_immutable');
                     END
                 """)
                 # SQLite connections do not all enable PRAGMA foreign_keys;
