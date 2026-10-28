@@ -123,3 +123,86 @@ def test_signed_link_in_fresh_activity_is_not_exported_to_core():
     assert len(snapshot.loans) == 1
     assert 'token=' not in repr(snapshot)
     assert 'nonce=' not in repr(asdict(snapshot))
+
+
+class CoreOwnerBroker:
+    def __init__(self, account_id, identity_id):
+        self.account_id = account_id
+        self.identity_id = identity_id
+        self.calls = 0
+
+    def accounts(self):
+        from types import SimpleNamespace as NS
+        self.calls += 1
+        return [NS(provider_id="bnf-pret", account_id=self.account_id,
+                   identity_id=self.identity_id)]
+
+
+def test_explicit_bnf_token_refused_before_fresh_activity_when_core_owner_wrong(tmp_path):
+    session, account, loan, state, calls, downloaded = connected()
+    session.identity_broker = CoreOwnerBroker(account.unique_id, "foreign-identity")
+    before = len(calls)
+    try:
+        with pytest.raises(ProviderConfigurationError, match="loan_not_observed"):
+            session.download_digital(loan, account, tmp_path,
+                                     explicit_user_action=True)
+        assert len(calls) == before
+        assert downloaded == [] and list(tmp_path.rglob("*.acsm")) == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("race", [
+    "reassigned_during_activity", "broker_swapped_during_activity",
+    "reassigned_during_token",
+])
+def test_explicit_bnf_token_owner_rebind_never_publishes_acsm(tmp_path, race):
+    session, account, loan, _state, _calls, downloaded = connected()
+    broker = CoreOwnerBroker(account.unique_id, account.identity_id)
+    session.identity_broker = broker
+    original_activity = session.client.activity
+    original_token = session.client.loan_token
+
+    def activity():
+        html = original_activity()
+        if race == "reassigned_during_activity":
+            broker.identity_id = "another-identity"
+        elif race == "broker_swapped_during_activity":
+            session.identity_broker = CoreOwnerBroker(
+                account.unique_id, account.identity_id,
+            )  # same owner, new broker instance A->A
+        return html
+
+    def token(loan_id, url):
+        value = original_token(loan_id, url)
+        if race == "reassigned_during_token":
+            broker.identity_id = "another-identity"
+        return value
+
+    session.client.activity = activity
+    session.client.loan_token = token
+    try:
+        with pytest.raises(ProviderError, match="loan_not_observed"):
+            session.download_digital(loan, account, tmp_path,
+                                     explicit_user_action=True)
+        assert len(downloaded) == (1 if race == "reassigned_during_token" else 0)
+        assert list(tmp_path.rglob("*.acsm")) == []
+        assert list(tmp_path.rglob("*.part")) == []
+    finally:
+        session.close()
+
+
+def test_stable_core_owner_does_not_change_explicit_bnf_token_result(tmp_path):
+    session, account, loan, _state, _calls, downloaded = connected()
+    broker = CoreOwnerBroker(account.unique_id, account.identity_id)
+    session.identity_broker = broker
+    try:
+        path, url = session.download_digital(
+            loan, account, tmp_path, explicit_user_action=True,
+        )
+        assert path.read_bytes() == TOKEN
+        assert url == ""
+        assert len(downloaded) == 1
+        assert broker.calls >= 2
+    finally:
+        session.close()
