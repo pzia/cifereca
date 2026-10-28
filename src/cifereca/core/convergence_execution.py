@@ -112,8 +112,8 @@ def execute_admitted_convergence(
     except AttributeError as exc:
         raise ValueError("convergence_core_context_required") from exc
 
-    def current() -> bool:
-        """Core authority; reject both A→B and A→A registry rebind in flight."""
+    def current_memory() -> bool:
+        """No database I/O: safe inside canonical publication's SQL lock."""
         try:
             if (service._account_context_epoch != admitted_epoch
                     or service.accounts is not registered_accounts
@@ -139,30 +139,37 @@ def execute_admitted_convergence(
                 and getattr(candidate, "credential_id", None) == scope.credential_id
             ) != 1:
                 return False
-            if (service._sessions.get(service._session_key(
+            return (
+                service._sessions.get(service._session_key(
                     scope.provider_id, scope.credential_id,
-                )) is not session
-                    or getattr(session, "_closed", False) is not False
-                    or getattr(session, "connected", None) is not True
-                    or getattr(session, "provider_id", None) != scope.provider_id
-                    or getattr(session, "credential_id", None) != scope.credential_id
-                    or service.storage.identity_for_connection(
-                        scope.provider_id, scope.credential_id,
-                    ) != scope.identity_id):
-                return False
-            if service.sync_source_enabled(account) is not True:
+                )) is session
+                and getattr(session, "_closed", False) is False
+                and getattr(session, "connected", None) is True
+                and getattr(session, "provider_id", None) == scope.provider_id
+                and getattr(session, "credential_id", None) == scope.credential_id
+            )
+        except (AttributeError, TypeError, ValueError, KeyError):
+            return False
+
+    def current() -> bool:
+        """Check active SQL credential and Core source policy before I/O."""
+        if not current_memory():
+            return False
+        try:
+            if (service.storage.identity_for_connection(
+                    scope.provider_id, scope.credential_id,
+            ) != scope.identity_id
+                    or service.sync_source_enabled(account) is not True):
                 return False
             connections = service.storage.provider_connections(
                 identity_id=scope.identity_id,
             )
-            if sum(
+            return sum(
                 conn.get("provider_id") == scope.provider_id
                 and conn.get("credential_id") == scope.credential_id
                 and conn.get("enabled") is True
                 for conn in connections
-            ) != 1:
-                return False
-            return True
+            ) == 1
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
@@ -281,6 +288,7 @@ def execute_admitted_convergence(
                 final_sha256=completed.final_sha256,
                 delivery_receipt_ref=completed.receipt_ref,
                 adept_receipt_ref=completed.adept_receipt_ref,
+                context_current=current_memory,
             )
             try:
                 mark_completed_delivery_published(

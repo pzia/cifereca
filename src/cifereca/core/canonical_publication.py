@@ -9,6 +9,7 @@ right inventory, filename, ISBN, matching SHA or a different profile.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 import hashlib
 import json
 import os
@@ -88,6 +89,7 @@ def publish_completed_acquisition(
     final_sha256: str,
     delivery_receipt_ref: str,
     adept_receipt_ref: str = "",
+    context_current: Callable[[], bool] | None = None,
 ) -> PublicationResult:
     """Publish an *already completed* authorized acquisition into schema v14.
 
@@ -120,6 +122,8 @@ def publish_completed_acquisition(
         raise ValueError("canonical_final_sha_invalid")
     if not isinstance(library_root, Path) or not isinstance(path, Path):
         raise ValueError("canonical_path_invalid")
+    if context_current is not None and not callable(context_current):
+        raise ValueError("canonical_invalid_epoch_guard")
 
     # This is non-authoritative preliminary I/O. The authoritative owner
     # binding and file identity are rechecked *inside* the SQL transaction.
@@ -166,6 +170,8 @@ def publish_completed_acquisition(
     changed = False
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        if context_current is not None and context_current() is not True:
+            raise ValueError("canonical_publisher_context_rebound")
         # Do not rely on a caller's old account-to-credential binding.
         owner = db.execute(
             "SELECT identity_id,enabled FROM provider_connections "
@@ -298,4 +304,10 @@ def publish_completed_acquisition(
                 raise ValueError("canonical_origin_collision")
         if not _same_file(target, before):
             raise ValueError("canonical_final_file_changed")
+        # A rebind during artifact/source/placement/origin SQL writes cannot
+        # turn a previously valid offer into a commit for the old session.
+        # Only a pure in-memory epoch/registry guard may run here: Storage's
+        # lock is non-recursive, so no storage method can be called by it.
+        if context_current is not None and context_current() is not True:
+            raise ValueError("canonical_publisher_context_rebound")
     return PublicationResult(artifact_id, placement_id, source_id, origin_ids, changed)
