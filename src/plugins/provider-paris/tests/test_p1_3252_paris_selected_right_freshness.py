@@ -28,7 +28,9 @@ def test_selected_fresh_loan_gets_only_current_url(tmp_path, monkeypatch):
             loan, replace(account), tmp_path,
             expected_right_id="loan-1", expected_identity_id="identity-A",
         )
-        assert path.exists() and used_url == fresh_url
+        # The signed PNB URL is used internally for the fresh GET only;
+        # the selected-right return must not expose it as a public receipt.
+        assert path.exists() and used_url == ""
         assert content_gets == [fresh_url]  # never the caller's stale URL
         assert client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
