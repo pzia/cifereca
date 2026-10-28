@@ -281,9 +281,93 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         # processes; never wait for the lock on a caller/UI thread.
         with timing_scope(timings), ExitStack() as locks:
             with measure("lock_acquire_ms"):
-                locks.enter_context(InterProcessLock(acquisition_lock_file()))
+                sync_lease = locks.enter_context(
+                    InterProcessLock(acquisition_lock_file())
+                )
             with measure("locked_work_ms"):
                 result = self._synchronize_account_source_impl(account, deep=deep, control=control)
+                if result.get("status") != "skipped":
+                    # #3171: one optional typed A read and verified B plan
+                    # within the existing source Sync's acquisition lock.
+                    from .canonical_sync_stage import observe_canonical_rights_in_sync
+
+                    def cancelled_for_rights() -> bool:
+                        if control is not None:
+                            check = getattr(control, "check_cancelled", None)
+                            if callable(check):
+                                check()
+                        return False
+
+                    admitted_epoch = self._account_context_epoch
+                    admitted_snapshots = []
+                    canonical = observe_canonical_rights_in_sync(
+                        self, account, cancelled=cancelled_for_rights,
+                        snapshot_sink=admitted_snapshots.append,
+                    )
+                    if canonical is not None:
+                        result["canonical_rights"] = canonical
+                        if canonical["status"] != "success":
+                            # A partial or failed source is not proof of
+                            # complete refresh or of any negative right.
+                            result["status"] = "partial"
+
+                    # No new provider delivery ABI is guessed here. Only a
+                    # Core-registered executor and a separate Core-owned,
+                    # *persisted*, exact-right consent reader may enable GET.
+                    # Without BOTH, legacy Sync stays read-only for v14.
+                    delivery = getattr(self, "_canonical_right_delivery", None)
+                    consent_reader = getattr(self, "_canonical_persisted_consent", None)
+                    if (admitted_snapshots and callable(delivery)
+                            and callable(consent_reader)):
+                        from .convergence_execution import execute_admitted_convergence
+                        from .source_convergence import SourceKey
+
+                        try:
+                            consent = consent_reader(account)
+                        except Exception:
+                            logging.getLogger("cifereca").exception(
+                                "TRACE canonical Sync consent read failed provider_id=%s "
+                                "credential_id=%s", account.provider_id, account.credential_id,
+                            )
+                            consent = frozenset()
+                        if type(consent) is not frozenset or any(
+                            type(source) is not SourceKey for source in consent
+                        ):
+                            consent = frozenset()
+
+                        def current_consent(key: SourceKey) -> bool:
+                            # Called by the Core executor both before GET and
+                            # after GET, rejecting consent revoked in flight.
+                            latest = consent_reader(account)
+                            return (type(latest) is frozenset
+                                    and key in latest
+                                    and all(type(x) is SourceKey for x in latest))
+
+                        outcomes = execute_admitted_convergence(
+                            self, account, self._session_for_account(account),
+                            admitted_snapshots[0], admitted_epoch=admitted_epoch,
+                            shared_lock=sync_lease, library_root=self.library_dir(),
+                            persisted_consent=consent,
+                            consent_still_current=current_consent,
+                            deliver=delivery, cancelled=cancelled_for_rights,
+                        )
+                        counts = {
+                            status: sum(row.status == status for row in outcomes)
+                            for status in ("downloaded", "present_attested", "pending",
+                                           "blocked", "failed", "cancelled")
+                        }
+                        result["canonical_execution"] = counts
+                        if counts["cancelled"]:
+                            raise Cancelled("canonical_sync_cancelled")
+                        if counts["failed"] or counts["blocked"]:
+                            result["status"] = "partial"
+                        if counts["downloaded"]:
+                            # Changed is physical materialization, not merely
+                            # new positive SourceReference observations.
+                            result["files_materialized"] = (
+                                int(result.get("files_materialized") or 0)
+                                + counts["downloaded"]
+                            )
         outcome = (
             "skipped" if result.get("status") == "skipped"
             else "partial" if result.get("status") == "partial"
