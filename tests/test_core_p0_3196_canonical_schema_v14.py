@@ -274,3 +274,38 @@ def test_origin_history_survives_parent_delete_attempts_even_without_fk_pragma(t
             assert db.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 1
     finally:
         storage.close()
+
+
+def test_transfer_and_internal_source_require_exact_profiles(tmp_path):
+    storage = Storage(tmp_path / "transfer.sqlite")
+    try:
+        storage.artifact_put({
+            "artifact_id": "sha256:" + SHA, "sha256": SHA,
+            "size": 1234, "media_format": "epub",
+        })
+        with storage._lock, storage._connect() as db:
+            _ref(db, "internal-B", identity="B", provider="cifereca",
+                 credential="local", account="B", kind="internal")
+            _ref(db, "internal-C", identity="C", provider="cifereca",
+                 credential="local", account="C", kind="internal")
+            _link(db, "A-to-B", "transfer", "B", from_identity="A")
+            _link(db, "B-cifereca", "cifereca", "B", source="internal-B")
+            with pytest.raises(sqlite3.IntegrityError):
+                _link(db, "not-a-transfer", "transfer", "B")
+            with pytest.raises(sqlite3.IntegrityError):
+                _link(db, "same-profile", "transfer", "B", from_identity="B")
+            with pytest.raises(sqlite3.IntegrityError, match="internal_origin_scope_mismatch"):
+                _link(db, "foreign-internal", "cifereca", "B", source="internal-C")
+            with pytest.raises(sqlite3.IntegrityError, match="internal_origin_source_immutable"):
+                db.execute(
+                    "UPDATE source_references SET identity_id='C' "
+                    "WHERE source_reference_id='internal-B'"
+                )
+            with pytest.raises(sqlite3.IntegrityError, match="origin_artifact_sha_immutable"):
+                db.execute(
+                    "UPDATE artifacts SET sha256=? WHERE artifact_id=?",
+                    ("f" * 64, "sha256:" + SHA),
+                )
+            assert db.execute("SELECT count(*) FROM origin_links").fetchone()[0] == 2
+    finally:
+        storage.close()
