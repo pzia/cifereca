@@ -1,0 +1,226 @@
+"""#3171: ONE Core A→B executor, for a Core-admitted snapshot under Sync lock.
+
+This is an internal orchestration primitive, not another broker, reconciliation
+tool or new permission for providers. The installed Sync must supply its
+already-held acquisition lock, the account/session/epoch that admitted A,
+and the prior persisted per-source acquisition consent. Provider adapters only
+deliver bytes after a positive scoped offer; they never write Core SQLite.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import logging
+from pathlib import Path
+from typing import Callable, Literal
+
+from ..locking import InterProcessLock
+from ..models import Account
+from ..paths import acquisition_lock_file
+from ..plugin_api.errors import Cancelled
+from ..plugin_api.provider_rights_observation import (
+    ProviderRightObservation, ProviderRightsSnapshot,
+)
+from .canonical_publication import publish_completed_acquisition
+from .convergence_verified_presence import plan_existing_verified_presence
+from .source_convergence import SourceKey
+
+_LOG = logging.getLogger("cifereca")
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedDelivery:
+    """Exactly one *completed* download or ADEPT final output, not an ACSM stub."""
+    path: Path
+    final_sha256: str
+    receipt_ref: str
+    adept_receipt_ref: str = ""
+
+
+OutcomeStatus = Literal[
+    "present_attested", "downloaded", "pending", "blocked", "failed", "cancelled",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ConvergenceOutcome:
+    source: SourceKey
+    status: OutcomeStatus
+    reason: str
+    artifact_id: str = ""
+
+
+def execute_admitted_convergence(
+    service,
+    account: Account,
+    session: object,
+    snapshot: ProviderRightsSnapshot,
+    *,
+    admitted_epoch: int,
+    shared_lock: InterProcessLock,
+    library_root: Path,
+    persisted_consent: frozenset[SourceKey],
+    deliver: Callable[[SourceKey, ProviderRightObservation], CompletedDelivery],
+    cancelled: Callable[[], bool] = lambda: False,
+) -> tuple[ConvergenceOutcome, ...]:
+    """Execute the authorized part of the same Sync; no second remote read.
+
+    This method is deliberately inaccessible from plugin_api. Its Core caller
+    must already have obtained the *single* typed snapshot from the selected
+    session and admitted the exact offer/consent under the same lock. An offer
+    in A alone is never authorization, and an uncertain local bibliographic
+    candidate never vetoes an otherwise authorized acquisition.
+    """
+    if (
+        type(account) is not Account
+        or type(snapshot) is not ProviderRightsSnapshot
+        or type(admitted_epoch) is not int
+        or type(persisted_consent) is not frozenset
+        or any(type(key) is not SourceKey for key in persisted_consent)
+        or not callable(deliver) or not callable(cancelled)
+        or not isinstance(library_root, Path)
+        or type(shared_lock) is not InterProcessLock
+        or shared_lock._handle is None
+        or shared_lock.path.resolve() != acquisition_lock_file().resolve()
+    ):
+        raise ValueError("convergence_core_admission_required")
+
+    scope = snapshot.scope
+    if (account.identity_id, account.provider_id, account.credential_id,
+            account.unique_id) != (
+                scope.identity_id, scope.provider_id,
+                scope.credential_id, scope.account_id,
+            ):
+        raise ValueError("convergence_source_scope_mismatch")
+
+    try:
+        registered_accounts = service.accounts
+        sessions = service._sessions
+        initial_storage = service.storage
+    except AttributeError as exc:
+        raise ValueError("convergence_core_context_required") from exc
+
+    def current() -> bool:
+        """Core authority; reject both A→B and A→A registry rebind in flight."""
+        try:
+            if (service._account_context_epoch != admitted_epoch
+                    or service.accounts is not registered_accounts
+                    or service._sessions is not sessions
+                    or service.storage is not initial_storage):
+                return False
+            if (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id) != (
+                        scope.identity_id, scope.provider_id,
+                        scope.credential_id, scope.account_id):
+                return False
+            matching_accounts = [
+                a for a in service.accounts if type(a) is Account
+                and (a.identity_id, a.provider_id, a.credential_id, a.unique_id)
+                == (scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id)
+            ]
+            if len(matching_accounts) != 1 or matching_accounts[0] is not account:
+                return False
+            if sum(
+                candidate is session for candidate in sessions.values()
+                if getattr(candidate, "provider_id", None) == scope.provider_id
+                and getattr(candidate, "credential_id", None) == scope.credential_id
+            ) != 1:
+                return False
+            if (service._sessions.get(service._session_key(
+                    scope.provider_id, scope.credential_id,
+                )) is not session
+                    or getattr(session, "_closed", False) is not False
+                    or getattr(session, "connected", None) is not True
+                    or getattr(session, "provider_id", None) != scope.provider_id
+                    or getattr(session, "credential_id", None) != scope.credential_id
+                    or service.storage.identity_for_connection(
+                        scope.provider_id, scope.credential_id,
+                    ) != scope.identity_id):
+                return False
+            if service.sync_source_enabled(account) is not True:
+                return False
+            return True
+        except (AttributeError, TypeError, ValueError, KeyError):
+            return False
+
+    if cancelled():
+        raise Cancelled("convergence_cancelled_before_admission")
+    if not current():
+        raise ValueError("convergence_session_rebound")
+
+    # Neither the Core presence probe nor a partially observed provider
+    # inventory may assert local absence. Only a valid provider OriginLink
+    # paired with the currently hashed target placement is satisfied.
+    plan = plan_existing_verified_presence(
+        initial_storage, snapshot, library_root=library_root,
+    )
+    plan_by_source = {decision.source: decision for decision in plan.decisions}
+    results: list[ConvergenceOutcome] = []
+    for row in snapshot.rights:
+        key = SourceKey(
+            scope, row.edition_id, row.right_id, row.kind, snapshot.branch,
+        )
+        decision = plan_by_source[key]
+        if cancelled():
+            results.append(ConvergenceOutcome(key, "cancelled", "cancelled"))
+            break
+        if not current():
+            results.append(ConvergenceOutcome(key, "blocked", "scope_rebound"))
+            break
+        if decision.provider_satisfied:
+            results.append(
+                ConvergenceOutcome(key, "present_attested", "exact_verified_origin")
+            )
+            continue
+
+        # A stale/unknown right, unsigned delivery, missing configured
+        # consent or disabled source can never start a file GET or ADEPT.
+        if row.state != "active" or not row.provider_attested:
+            results.append(ConvergenceOutcome(key, "pending", "right_unconfirmed"))
+            continue
+        if row.delivery != "available":
+            results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
+            continue
+        if key not in persisted_consent:
+            results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
+            continue
+
+        try:
+            completed = deliver(key, row)
+            if type(completed) is not CompletedDelivery:
+                raise ValueError("invalid_completed_delivery")
+            # The adapter can have replaced an account, credential, session or
+            # switched identity during its GET. Never publish under its old A.
+            if cancelled():
+                results.append(ConvergenceOutcome(key, "cancelled", "cancelled_after_get"))
+                break
+            if not current():
+                results.append(ConvergenceOutcome(key, "blocked", "scope_rebound_after_get"))
+                break
+            published = publish_completed_acquisition(
+                initial_storage,
+                library_root=library_root,
+                path=completed.path,
+                source=key,
+                snapshot=snapshot,
+                final_sha256=completed.final_sha256,
+                delivery_receipt_ref=completed.receipt_ref,
+                adept_receipt_ref=completed.adept_receipt_ref,
+            )
+            results.append(ConvergenceOutcome(
+                key, "downloaded" if published.changed else "present_attested",
+                "canonical_delivery_committed", published.artifact_id,
+            ))
+        except Cancelled:
+            results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
+            break
+        except Exception:
+            # Journal retains the unmodified exception and traceback; the
+            # result code itself is bounded and not a fabricated receipt.
+            _LOG.exception(
+                "TRACE convergence delivery failed provider_id=%s "
+                "credential_id=%s account_id=%s right_id=%s",
+                scope.provider_id, scope.credential_id, scope.account_id, key.right_id,
+            )
+            results.append(ConvergenceOutcome(key, "failed", "delivery_or_commit_failed"))
+    return tuple(results)
