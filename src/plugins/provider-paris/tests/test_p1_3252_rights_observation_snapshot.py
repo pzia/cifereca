@@ -301,3 +301,101 @@ def test_paris_plugin_lifecycle_injects_the_public_core_identity_broker():
         assert session.identity_broker is broker
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("duplicate_records", [
+    # Identical repeated page card and contradictory edition for one loan ID:
+    # neither case is proof of two independent rights.
+    (upstream("loan-repeated", "edition-A"),
+     upstream("loan-repeated", "edition-A")),
+    (upstream("loan-repeated", "edition-A"),
+     upstream("loan-repeated", "edition-B")),
+])
+def test_paris_duplicate_loan_id_quarantines_both_copies_not_other_loans(
+    duplicate_records,
+):
+    session, account, client = fixture(digital=(
+        upstream("loan-unique-1", "edition-1"),
+        duplicate_records[0],
+        upstream("loan-unique-2", "edition-2"),
+        duplicate_records[1],
+        duplicate_records[0],  # repeated a third time remains quarantined
+    ))
+    try:
+        snapshot = session.rights_observation_snapshot(account)
+        assert [(right.right_id, right.edition_id) for right in snapshot.rights] == [
+            ("loan-unique-1", "edition-1"),
+            ("loan-unique-2", "edition-2"),
+        ]
+        assert snapshot.exact("edition-A", "loan-repeated", "loan") is None
+        assert snapshot.exact("edition-B", "loan-repeated", "loan") is None
+        assert snapshot.status == snapshot.coverage == "partial"
+        assert snapshot.pagination_complete is False
+        assert not snapshot.authorizes_negative_reconciliation
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
+def test_paris_two_distinct_loans_for_one_edition_are_not_duplicate_rights():
+    session, account, client = fixture(digital=(
+        upstream("loan-1", "same-edition"),
+        upstream("loan-2", "same-edition"),
+    ))
+    try:
+        snapshot = session.rights_observation_snapshot(account)
+        assert [(right.right_id, right.edition_id) for right in snapshot.rights] == [
+            ("loan-1", "same-edition"), ("loan-2", "same-edition"),
+        ]
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
+def test_paris_empty_primary_borrower_matches_credential_scoped_core_account_ref():
+    """The Core AccountRef key is not the provider's empty upstream account."""
+    session, account, client = fixture(digital=(
+        upstream("primary-loan", "primary-edition"),
+    ))
+    account.unique_id = ""  # Upstream Paris primary borrower convention
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="paris:card-A:primary",
+           identity_id="identity-A"),
+        # An empty primary from another card must NOT be accepted for card-A.
+        NS(provider_id="paris", account_id="paris:other-card:primary",
+           identity_id="identity-B"),
+    ]
+    try:
+        observed = session.rights_observation_snapshot(account)
+        assert observed.scope.identity_id == "identity-A"
+        assert observed.scope.account_id == ""
+        assert observed.scope.credential_id == "card-A"
+        assert [(r.right_id, r.edition_id) for r in observed.rights] == [
+            ("primary-loan", "primary-edition"),
+        ]
+        assert observed.status == observed.coverage == "partial"
+        assert not observed.authorizes_negative_reconciliation
+        assert client.calls == [("DILICOM", ""), ("SYRACUSE", "")]
+    finally:
+        session.close()
+
+
+def test_paris_empty_primary_refuses_foreign_credential_owner_before_network():
+    session, account, client = fixture(digital=(
+        upstream("primary-loan", "primary-edition"),
+    ))
+    account.unique_id = ""
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="paris:other-card:primary",
+           identity_id="identity-A"),
+    ]
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == []
+    finally:
+        session.close()
