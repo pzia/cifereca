@@ -150,7 +150,7 @@ def observe_canonical_rights_in_sync(
     if snapshot.status == "cancelled" or cancelled():
         raise Cancelled("canonical_rights_sync_cancelled")
 
-    def current_context() -> bool:
+    def current_context(*, require_upstream: bool = True) -> bool:
         """Pure in-memory registry check: safe under the SQLite storage lock."""
         try:
             scope = snapshot.scope
@@ -164,12 +164,41 @@ def observe_canonical_rights_in_sync(
                     scope.credential_id, scope.account_id,
                 )
             ]
+            # The provider may replace its live borrower after the rights
+            # read, even while SQLite is writing A, without a Core epoch
+            # change. This callback also runs just before COMMIT: inspect
+            # in-memory session facts only, never call Storage here.
+            upstream_bound = True
+            if require_upstream:
+                upstream_accounts = session.accounts
+                if (not isinstance(upstream_accounts, (list, tuple))
+                        or sum(
+                            type(row) is Account and (
+                                row.identity_id, row.provider_id,
+                                row.credential_id, row.unique_id,
+                            ) == (
+                                scope.identity_id, scope.provider_id,
+                                scope.credential_id, scope.account_id,
+                            ) for row in upstream_accounts
+                        ) != 1):
+                    return False
+                registered = [
+                    value for value in service._sessions.values()
+                    if getattr(value, "provider_id", None) == scope.provider_id
+                    and getattr(value, "credential_id", None) == scope.credential_id
+                ]
+                upstream_bound = (
+                    len(registered) == 1 and registered[0] is session
+                    and getattr(session, "provider_id", None) == scope.provider_id
+                    and getattr(session, "credential_id", None) == scope.credential_id
+                )
             return (
                 service._account_context_epoch == before_epoch
                 and service.accounts is registered_accounts
                 and service._sessions is registered_sessions
                 and service.storage is original_storage
                 and len(matches) == 1 and matches[0] is account
+                and upstream_bound
                 and service._sessions.get(
                     service._session_key(scope.provider_id, scope.credential_id)
                 ) is session
@@ -186,7 +215,10 @@ def observe_canonical_rights_in_sync(
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
-    if (not current_context()
+    # A reader-rejected snapshot has no positive batch or delivery lease.
+    # Preserve that existing failed result; the Core registry must still be
+    # current. Every positive write/check/handoff uses the full lease below.
+    if (not current_context(require_upstream=snapshot.status != "failed")
             or service.sync_source_enabled(account) is not True
             or service.storage.identity_for_connection(
                 account.provider_id, account.credential_id,
