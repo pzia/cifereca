@@ -29,15 +29,54 @@ neuve par défaut. La configuration produite est toujours le JSON attendu par
 le Core. Le script n'importe jamais `Config` sur le fichier de production,
 car cette classe peut changer ses permissions à l'ouverture.
 
-Chaque cible est un **nouvel enfant direct** de `~/cifereca-recettes/`, racine
-privée 0700 appartenant à l'utilisateur. Une cible préexistante, un alias ou
-une cible extérieure sont refusés, même avec `--target`. Ni écrasement ni
-fusion avec une installation existante. `destroy` vérifie la racine, le
-marqueur, l'identité du processus et le verrou avant suppression.
+Chaque cible est un **nouveau sous-répertoire** de la racine approuvée,
+`~/cifereca-recettes/` par défaut. `--recipe-root` choisit explicitement une
+autre racine, y compris sur un volume monté. Racine et conteneurs imbriqués
+doivent appartenir à l'utilisateur et être privés 0700 ; une permission
+existante insuffisante est refusée, jamais corrigée par chmod automatique.
+Le système de fichiers doit effectivement assurer les modes privés 0600/0700,
+le verrouillage `flock`, le renommage atomique et l'exécution : un volume
+`noexec` ou incompatible est refusé avant la copie de production.
+
+Une cible préexistante, un alias, `..`, une cible extérieure ou un
+chevauchement racine/source sont refusés. Ni écrasement ni fusion avec une
+installation existante. La racine est enregistrée avec une identité privée
+`.cifereca-recipe-root.json`, et chaque recette conserve ce lien d'approbation.
+`verify`, `run.sh`, `stop.sh` et `destroy` retrouvent cette racine enregistrée ;
+`--recipe-root` est facultatif pour les actions, mais s'il est fourni il doit
+correspondre. Les anciennes recettes v1 sans cette identité restent acceptées
+uniquement à leur emplacement par défaut. Ne pas déplacer/renommer une
+recette préparée. `destroy` vérifie marqueur, racine, inode du dossier,
+identité du processus et verrou, puis supprime par descripteur sans suivre
+les liens. Seule l'approbation commune de la racine et les conteneurs vides
+peuvent rester après suppression ; données et journaux de la recette sont
+sous la cible.
 Une préparation encore active garde ce verrou : `destroy` la refuse plutôt
 que de supprimer un dossier qu'un copieur pourrait recréer. Interrompre d'abord
 la commande de préparation, puis lancer `destroy`. Une préparation interrompue
 ou en échec reste supprimable ; une recette lancée est arrêtée automatiquement.
+
+### Exemple sur un volume monté (#3642)
+
+Pour `/media/hbernard/KDATAS/cifereca-tests/T1` lorsque `$USER=hbernard`, sans
+coder un utilisateur particulier dans l'outil :
+
+```sh
+recipe_root="/media/$USER/KDATAS/cifereca-tests"
+recipe_target="$recipe_root/T1"
+python3 scripts/recette.py --recipe-root "$recipe_root" --target "$recipe_target" --ref main --no-start
+python3 scripts/recette.py verify "$recipe_target" --recipe-root "$recipe_root"
+"$recipe_target/run.sh"
+"$recipe_target/stop.sh"
+python3 scripts/recette.py verify "$recipe_target"
+python3 scripts/recette.py destroy "$recipe_target" --recipe-root "$recipe_root"
+```
+
+Le montage doit déjà être disponible en écriture et compatible avec les
+contrôles ci-dessus. La racine privée est créée si nécessaire. Une cible
+imbriquée, par exemple `--target "$recipe_root/campagne/T1"`, est également
+possible. Les mêmes commandes fonctionnent avec la racine par défaut.
+Aucun lien, permission ou dossier de production n'est à modifier.
 
 ## Contenu et preuve d'intégrité
 
@@ -49,10 +88,26 @@ ou en échec reste supprimable ; une recette lancée est arrêtée automatiqueme
   Identifiants et credentials restent des valeurs opaques, même lorsqu'ils
   commencent par `/` ou ressemblent à un chemin ; ils ne sont pas copiés comme
   fichiers ni ajoutés au mapping du manifeste.
-- Lecture des sources avec `O_NOATIME`, sans changement de permissions ; liens
-  symboliques et fichiers spéciaux refusés. Une source inaccessible sans
-  modifier son atime provoque un refus, notamment un fichier appartenant à un
-  autre utilisateur sans permission `O_NOATIME`.
+- Lecture des sources avec `O_NOATIME`, sans changement de permissions. Les
+  fichiers spéciaux sont refusés. Les liens internes absolus ou relatifs,
+  notamment `runtime/current`, sont résolus uniquement entre les racines de
+  copie déjà approuvées. Leur contenu est **matérialisé en fichiers et dossiers
+  indépendants au chemin remappé** : aucun symlink/hardlink vers la production
+  ne subsiste dans la recette. Les liens de production restent intacts.
+  Cible externe/non approuvée, cassée, cyclique, contenant `..`, ou visant une
+  session exclue : refus ciblé avant lecture de cette cible. Une entrée de
+  session exclue est ignorée et attestée, même si c'est un lien cassé/externe,
+  sans résoudre sa cible. Un nom de dossier `browser` dans les livres reste
+  du contenu ordinaire ; un lien vers une telle entrée est conservateur.
+  Identité, texte et timestamps des liens ainsi que les répertoires sources
+  figurent au manifeste : changement pendant la copie ou avant `verify/run`
+  = refus. Les ouvertures traversent les ancêtres avec des descripteurs sans
+  suivi de lien ; les destinations et la destruction sont également protégées.
+  La lecture du texte d'un lien passe par un montage Bubblewrap en lecture
+  seule du répertoire source épinglé : `readlink` ne peut ainsi modifier son
+  atime. Aucun timestamp de production n'est restauré par une écriture.
+  Une source inaccessible sans modifier son atime provoque un refus, notamment
+  un fichier appartenant à un autre utilisateur sans permission `O_NOATIME`.
 - SQLite : copie privée de l'ensemble base/WAL/SHM/journal entre deux
   observations identiques (empreintes et métadonnées), puis **SQLite Backup
   API** sur cet ensemble. Les transactions WAL validées sont présentes. Aucun
@@ -136,4 +191,9 @@ la vie du processus sous Bubblewrap (lancement, arrêt brutal, relancement,
 destruction avec un processus de test). Ce test de cycle de vie n'est pas une
 preuve de recette GTK sur données réelles. Sur un hôte ne permettant pas les
 namespaces, ces deux tests sont explicitement ignorés localement ; la CI dédiée
-pose `CIFERECA_REQUIRE_SANDBOX_TESTS=1` et interdit leur omission.
+pose `CIFERECA_REQUIRE_SANDBOX_TESTS=1` et interdit leur omission. #3642 ajoute
+la racine alternative, les chemins imbriqués, le remapping des liens internes,
+les refus ciblés, le changement de lien/d'ancêtre et la substitution de cible
+lors de la destruction. La CI exerce aussi une vraie destination montée sous
+`/media/fixture/KDATAS` dans un namespace Bubblewrap, et le cycle de vie sur
+racine alternative ; toutes les données restent synthétiques.

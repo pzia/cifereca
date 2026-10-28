@@ -7,7 +7,7 @@ The OS sandbox, rather than rewritten settings, is the security boundary.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import fcntl
 import hashlib
 import io
@@ -55,11 +55,71 @@ def no_links(path: Path) -> None:
             raise Rejected(f"Symbolic link refused: {part}")
 
 
+def readlink_noatime(parent: int, name: str) -> str:
+    """readlink can update symlink atime even with O_PATH|O_NOATIME.
+
+    Read through a read-only mount of the pinned parent instead. No source
+    metadata is restored afterwards (that would itself write production).
+    """
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        raise Rejected("Bubblewrap required to read source links without changing atime")
+    command = [bwrap, "--unshare-all", "--die-with-parent", "--new-session",
+               "--cap-drop", "ALL", "--clearenv"]
+    for system in ("/usr", "/bin", "/lib", "/lib64"):
+        if Path(system).exists():
+            command += ["--ro-bind", system, system]
+    command += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/etc"]
+    if Path("/etc/ld.so.cache").exists():
+        command += ["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]
+    # Keep the parent's descriptor open until the worker exits. Unlike a
+    # pathname, this bind source cannot be redirected by an ancestor swap.
+    proc_pid = os.readlink("/proc/self")
+    command += ["--ro-bind", f"/proc/{proc_pid}/fd/{parent}", "/source",
+                "--remount-ro", "/", "--", "/usr/bin/python3", "-I", "-B", "-c",
+                "import json,os,sys; print(json.dumps(os.readlink('/source/'+sys.argv[1])))", name]
+    return json.loads(subprocess.check_output(command, text=True, timeout=15))
+
+
+@contextmanager
+def parent_fd(path: Path):
+    """Pin every ancestor without following a symlink, including race swaps."""
+    path = path.absolute()
+    if ".." in path.parts:
+        raise Rejected("Path traversal refused")
+    fd = os.open("/", os.O_PATH | os.O_DIRECTORY)
+    try:
+        for component in path.parent.parts[1:]:
+            child = os.open(component, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def private_directory(path: Path) -> None:
+    """Create private destination containers; never chmod an existing path."""
+    no_links(path)
+    if not path.parent.exists():
+        private_directory(path.parent)
+    with parent_fd(path) as fd:
+        try:
+            os.mkdir(path.name, mode=0o700, dir_fd=fd)
+        except FileExistsError:
+            pass
+        info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise Rejected(f"Directory must belong to current user with mode 0700: {path}")
+
+
 @contextmanager
 def source_stream(path: Path):
     """No atime change, symlink following, FIFO/device access or source writes."""
     no_links(path)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME)
+    with parent_fd(path) as parent:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME, dir_fd=parent)
     with os.fdopen(fd, "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise Rejected(f"Not a regular file: {path}")
@@ -73,18 +133,23 @@ def read_private_source(path: Path) -> bytes:
 
 def copy_private_source(source: Path, destination: Path) -> str:
     digest = hashlib.sha256()
-    with source_stream(source) as stream, destination.open("wb") as output:
-        while chunk := stream.read(1024 * 1024):
-            output.write(chunk)
-            digest.update(chunk)
-    destination.chmod(0o700 if source.stat().st_mode & 0o111 else 0o600)
+    private_directory(destination.parent)
+    with source_stream(source) as stream:
+        with parent_fd(destination) as parent:
+            fd = os.open(destination.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=parent)
+        with os.fdopen(fd, "wb") as output:
+            while chunk := stream.read(1024 * 1024):
+                output.write(chunk)
+                digest.update(chunk)
+            os.fchmod(output.fileno(), 0o700 if os.fstat(stream.fileno()).st_mode & 0o111 else 0o600)
     return digest.hexdigest()
 
 
 def fingerprint(path: Path) -> dict:
     with source_stream(path) as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    info = path.stat()
+        info = os.fstat(stream.fileno())
     return {"sha256": digest, "size": info.st_size,
             "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns,
             "mode": stat.S_IMODE(info.st_mode), "device": info.st_dev,
@@ -92,11 +157,40 @@ def fingerprint(path: Path) -> dict:
 
 
 def write_json(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
-    temp.chmod(0o600)
-    temp.replace(path)
+    private_directory(path.parent)
+    temp = path.name + "." + uuid.uuid4().hex + ".tmp"
+    with parent_fd(path) as parent:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                stream.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+            os.replace(temp, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+        finally:
+            try:
+                os.unlink(temp, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+
+
+def private_append(path: Path):
+    """Open a recipe log/lock without following or writing an existing alias."""
+    with parent_fd(path) as parent:
+        fd = os.open(path.name, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     0o600, dir_fd=parent)
+    info = os.fstat(fd)
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or info.st_uid != os.getuid() or info.st_mode & 0o077):
+        os.close(fd)
+        raise Rejected("Untrusted recipe log/lock")
+    return os.fdopen(fd, "a")
+
+
+def unlink_private(path: Path) -> None:
+    with parent_fd(path) as parent:
+        try:
+            os.unlink(path.name, dir_fd=parent)
+        except FileNotFoundError:
+            pass
 
 
 def load_config(path: Path) -> dict:
@@ -107,42 +201,163 @@ def load_config(path: Path) -> dict:
     return value
 
 
-def local_path(value: str) -> Path:
+def local_path(value: str, *, links: bool = False) -> Path:
     value = os.path.expandvars(os.path.expanduser(value))
     if "$" in value:
         raise Rejected("Unresolved environment variable in local path")
     path = Path(value)
     if not path.is_absolute():
         path = Path.home() / path
-    no_links(path)
+    if not links:
+        no_links(path)
     return Path(os.path.abspath(path))
 
 
-def target_path(value: Path | None) -> Path:
-    root = recipe_root().absolute()
+def approved_root(value: Path | None = None) -> Path:
+    root = (value if value is not None else recipe_root()).expanduser().absolute()
+    if ".." in root.parts:
+        raise Rejected("Recipe root traversal refused")
     no_links(root)
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if root.stat().st_uid != os.getuid() or stat.S_IMODE(root.stat().st_mode) != 0o700:
-        raise Rejected("Recipe root must belong to current user with mode 0700")
-    target = value.absolute() if value else root / (time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8])
+    return root
+
+
+def root_identity(root: Path, *, create: bool = False) -> str:
+    if not create and not root.exists():
+        raise Rejected("Approved recipe root missing")
+    private_directory(root)
+    anchor = root / ".cifereca-recipe-root.json"
+    if create and not anchor.exists():
+        # An explicit create is the approval of this private root. Keep a
+        # persistent identity so run.sh/verify/destroy need no default root.
+        with parent_fd(anchor) as parent:
+            try:
+                fd = os.open(anchor.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=parent)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, "w") as stream:
+                    json.dump({"root": str(root), "id": uuid.uuid4().hex}, stream)
+    info = anchor.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600):
+        raise Rejected("Untrusted recipe root identity")
+    value = json.loads(read_private_source(anchor))
+    if (value.get("root") != str(root) or type(value.get("id")) is not str
+            or re.fullmatch(r"[0-9a-f]{32}", value["id"]) is None):
+        raise Rejected("Untrusted recipe root identity")
+    return value["id"]
+
+
+def target_path(value: Path | None, *, root: Path | None = None) -> Path:
+    root = approved_root(root)
+    target = value.expanduser().absolute() if value else root / (time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8])
     no_links(target)
-    if target.parent != root or target.name.startswith("."):
-        raise Rejected(f"Target must be a direct child of {root}")
+    if (not target.is_relative_to(root) or target == root
+            or any(p == ".." or p.startswith(".") for p in target.relative_to(root).parts)):
+        raise Rejected(f"Target must be below approved recipe root {root}")
+    private_directory(root)
+    private_directory(target.parent)
     return target
 
 
-def checked_target(path: Path) -> tuple[Path, dict]:
-    target = path.absolute()
+def check_recipe_filesystem(root: Path) -> None:
+    """Require working POSIX modes, independent flock, rename and execution."""
+    directory = root / (".probe-" + uuid.uuid4().hex)
+    with parent_fd(directory) as parent:
+        os.mkdir(directory.name, mode=0o700, dir_fd=parent)
+    try:
+        private_directory(directory)
+        program = directory / "check"
+        with parent_fd(program) as parent:
+            fd = os.open(program.name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=parent)
+        with os.fdopen(fd, "w") as stream:
+            if stat.S_IMODE(os.fstat(stream.fileno()).st_mode) != 0o600:
+                raise Rejected("Recipe filesystem does not enforce private file modes")
+            stream.write("#!/bin/sh\nexit 0\n")
+            stream.flush()
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with program.open("r") as second:
+                try:
+                    fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise Rejected("Recipe filesystem does not enforce flock")
+            os.fchmod(stream.fileno(), 0o700)
+            if stat.S_IMODE(os.fstat(stream.fileno()).st_mode) != 0o700:
+                raise Rejected("Recipe filesystem does not enforce executable modes")
+        renamed = directory / "executable"
+        program.rename(renamed)
+        subprocess.run([str(renamed)], env={"PATH": "/usr/bin:/bin"}, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Rejected("Recipe filesystem must support private modes, flock, atomic rename and execution (no noexec volume)") from exc
+    finally:
+        with parent_fd(directory) as parent:
+            shutil.rmtree(directory.name, dir_fd=parent)
+
+
+def checked_target(path: Path, *, root: Path | None = None) -> tuple[Path, dict]:
+    target = path.expanduser().absolute()
     no_links(target)
-    if target.parent != recipe_root().absolute():
-        raise Rejected("Target outside recipe root")
     info = target.stat()
     if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise Rejected("Untrusted target owner/permissions")
-    marker = json.loads((target / "recipe.json").read_text())
-    if marker.get("format") != FORMAT or marker.get("target") != str(target):
+    try:
+        marker = json.loads(read_private_source(target / "recipe.json"))
+    except (OSError, ValueError) as exc:
+        raise Rejected("Unrecognized recipe") from exc
+    if type(marker) is not dict or marker.get("format") != FORMAT or marker.get("target") != str(target):
         raise Rejected("Unrecognized recipe")
+    recorded = marker.get("recipe_root")
+    if recorded is None:
+        # Old v1 recipes remain usable only in the old default location.
+        if target.parent != approved_root(root):
+            raise Rejected("Target outside recipe root")
+        private_directory(target.parent)
+    else:
+        if type(recorded) is not str:
+            raise Rejected("Untrusted recipe root identity")
+        recorded = approved_root(Path(recorded))
+        if root is not None and approved_root(root) != recorded:
+            raise Rejected("Recipe root does not match recorded approval")
+        if (target == recorded or not target.is_relative_to(recorded)
+                or any(p == ".." or p.startswith(".") for p in target.relative_to(recorded).parts)
+                or root_identity(recorded) != marker.get("root_id")):
+            raise Rejected("Target outside approved recipe root")
+        # All nested containers must retain their original private boundary.
+        for parent in (target.parent, *target.parent.parents):
+            private_directory(parent)
+            if parent == recorded:
+                break
+    after = target.lstat()
+    if (not stat.S_ISDIR(after.st_mode)
+            or (after.st_dev, after.st_ino) != (info.st_dev, info.st_ino)):
+        raise Rejected("Recipe target changed during validation")
+    marker["_checked_directory"] = (info.st_dev, info.st_ino)
     return target, marker
+
+
+@contextmanager
+def recipe_lock(target: Path, marker: dict):
+    with parent_fd(target) as parent:
+        directory = os.open(target.name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+    try:
+        info = os.fstat(directory)
+        if (info.st_dev, info.st_ino) != marker["_checked_directory"]:
+            raise Rejected("Recipe target changed before locking")
+        fd = os.open("run.lock", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     0o600, dir_fd=directory)
+        with os.fdopen(fd, "a") as lock:
+            info = os.fstat(lock.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.getuid() or info.st_mode & 0o077):
+                raise Rejected("Untrusted recipe lock")
+            yield lock, directory
+    finally:
+        os.close(directory)
 
 
 class Copier:
@@ -154,6 +369,108 @@ class Copier:
         self.copied: set[Path] = set()
         self.excluded: list[str] = []
         self.content_roots: set[Path] = set()
+        self.links: dict[str, dict] = {}
+        self.directories: dict[str, dict] = {}
+
+    @staticmethod
+    def excluded_name(name: str) -> bool:
+        return name.lower() in SESSION_PARTS or name.lower().startswith(("cookies.", "session.", "storage_state."))
+
+    @staticmethod
+    def directory_state(path: Path) -> dict:
+        with parent_fd(path) as parent:
+            info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode):
+            raise Rejected("Source directory changed")
+        return {"device": info.st_dev, "inode": info.st_ino, "mode": info.st_mode,
+                "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns}
+
+    @staticmethod
+    def directory_entries(path: Path) -> list[str]:
+        with parent_fd(path) as parent:
+            fd = os.open(path.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NOATIME, dir_fd=parent)
+        try:
+            with os.scandir(fd) as entries:
+                return sorted(entry.name for entry in entries)
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def link_metadata(path: Path) -> dict:
+        with parent_fd(path) as parent:
+            info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            if not stat.S_ISLNK(info.st_mode):
+                raise Rejected("Source symbolic link changed")
+        return {"device": info.st_dev, "inode": info.st_ino,
+                "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns}
+
+    @staticmethod
+    def link_state(path: Path) -> dict:
+        before = Copier.link_metadata(path)
+        with parent_fd(path) as parent:
+            value = readlink_noatime(parent, path.name)
+        if Copier.link_metadata(path) != before:
+            raise Rejected("Source symbolic link changed")
+        return {"target": value, **before}
+
+    def resolve_source(self, source: Path) -> Path:
+        """Resolve only links between registered source roots; never probe an external target.
+
+        Copies are materialized as independent regular files/directories at
+        the alias's mapped destination, not as symlinks back to production.
+        """
+        source = source.absolute()
+        if ".." in source.parts:
+            raise Rejected("Source traversal refused")
+        current = source
+        seen = set()
+        while True:
+            prefix = Path("/")
+            for index, component in enumerate(current.parts[1:], 1):
+                prefix = prefix / component
+                try:
+                    with parent_fd(prefix) as parent:
+                        info = os.stat(prefix.name, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    if seen:
+                        raise Rejected(f"Broken source symbolic link: {source}") from None
+                    return current
+                if not stat.S_ISLNK(info.st_mode):
+                    continue
+                if self.mapped(prefix) is None:
+                    raise Rejected(f"Symbolic link outside approved sources: {prefix}")
+                if prefix in seen or len(seen) >= 40:
+                    raise Rejected(f"Cyclic source symbolic link: {source}")
+                seen.add(prefix)
+                previous = self.links.get(str(prefix))
+                if previous is not None:
+                    if self.link_metadata(prefix) != {k: v for k, v in previous.items() if k != "target"}:
+                        raise Rejected("Source symbolic link changed during copy")
+                    state = previous
+                else:
+                    state = self.link_state(prefix)
+                relative = Path(state["target"])
+                if ".." in relative.parts:
+                    raise Rejected(f"Symbolic link traversal refused: {prefix}")
+                resolved = relative if relative.is_absolute() else prefix.parent / relative
+                if self.mapped(resolved) is None:
+                    raise Rejected(f"External source symbolic link refused: {prefix}")
+                for root in self.mapping:
+                    if resolved.is_relative_to(root) and any(
+                            self.excluded_name(part) for part in resolved.relative_to(root).parts):
+                        raise Rejected(f"Symbolic link targets excluded session: {prefix}")
+                previous = self.links.setdefault(str(prefix), state)
+                if previous != state:
+                    raise Rejected("Source symbolic link changed during copy")
+                current = resolved.joinpath(*current.parts[index + 1:])
+                break
+            else:
+                return current
+
+    def validate_links(self) -> None:
+        for path, state in self.links.items():
+            if self.link_metadata(Path(path)) != {k: v for k, v in state.items() if k != "target"}:
+                raise Rejected("Source symbolic link changed during copy")
 
     def register(self, source: Path, destination: Path) -> None:
         source = source.absolute()
@@ -170,26 +487,38 @@ class Copier:
                 return self.mapping[source] / path.relative_to(source)
         return None
 
-    def capture(self, source: Path, destination: Path) -> None:
-        no_links(source)
-        destination = self.mapped(source) or destination
+    def capture(self, source: Path, destination: Path, *, logical: Path | None = None,
+                ancestors: frozenset[Path] = frozenset()) -> None:
+        source = source.absolute()
+        logical = logical or source
+        destination = self.mapped(logical) or destination
         if not destination.is_relative_to(self.target) or ".." in destination.parts:
             raise Rejected("Copy destination outside recipe")
-        if source in self.copied or not source.exists():
+        if logical in self.copied:
             return
-        name = source.name.lower()
-        is_content = any(source.is_relative_to(root) for root in self.content_roots)
-        if not is_content and (name in SESSION_PARTS or name.startswith(("cookies.", "session.", "storage_state."))):
+        is_content = any(logical.is_relative_to(root) for root in self.content_roots)
+        if not is_content and self.excluded_name(source.name):
             self.excluded.append(str(source))
             return
+        source = self.resolve_source(source)
+        if not source.exists():
+            return
         if source.is_dir():
-            destination.mkdir(parents=True, exist_ok=True, mode=0o700)
-            self.copied.add(source)
-            for entry in sorted(source.iterdir()):
+            if source in ancestors:
+                raise Rejected(f"Cyclic source directory link: {source}")
+            before = self.directory_state(source)
+            private_directory(destination)
+            self.copied.add(logical)
+            for name in self.directory_entries(source):
                 # Sidecars are staged together with their main database below.
-                if entry.name.endswith(("-wal", "-shm", "-journal")):
+                if name.endswith(("-wal", "-shm", "-journal")):
                     continue
-                self.capture(entry, destination / entry.name)
+                self.capture(source / name, destination / name, logical=logical / name,
+                             ancestors=ancestors | {source})
+            if self.directory_state(source) != before:
+                raise Rejected("Source directory changed during copy")
+            self.directories[str(source)] = before
+            self.validate_links()
             return
         with source_stream(source) as stream:
             header = stream.read(16)
@@ -197,11 +526,12 @@ class Copier:
             self.backup(source, destination)
         else:
             self.sources[str(source)] = fingerprint(source)
-            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            private_directory(destination.parent)
             digest = copy_private_source(source, destination)
             if digest != self.sources[str(source)]["sha256"] or fingerprint(source) != self.sources[str(source)]:
                 raise Rejected("Source changed during copy")
-        self.copied.add(source)
+        self.copied.add(logical)
+        self.validate_links()
 
     def backup(self, source: Path, destination: Path) -> None:
         """Stage a stable DB/WAL set without opening production via SQLite.
@@ -211,8 +541,10 @@ class Copier:
         then run Backup API against the private set (including committed WAL).
         Busy writers cause bounded retry, never an inconsistent fallback.
         """
+        no_links(destination)
+        private_directory(destination.parent)
         stage = self.target / ".sqlite-stage"
-        stage.mkdir(mode=0o700, exist_ok=True)
+        private_directory(stage)
         try:
             for _attempt in range(5):
                 paths = [source] + [Path(str(source) + suffix) for suffix in ("-wal", "-shm", "-journal")
@@ -229,13 +561,22 @@ class Copier:
                     p.unlink()
             else:
                 raise Rejected("SQLite did not stabilize; retry when production is quieter")
-            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with sqlite3.connect((stage / source.name).as_uri() + "?mode=ro", uri=True) as src:
-                with sqlite3.connect(destination) as dst:
+            # SQLite opens only a fresh unpredictable name in private staging,
+            # never the possibly replaced destination leaf. Install atomically
+            # without overwriting any existing file/link, then remove the
+            # temporary name so the independent copy has exactly one link.
+            output = stage / (".backup-" + uuid.uuid4().hex + ".sqlite")
+            with closing(sqlite3.connect((stage / source.name).as_uri() + "?mode=ro", uri=True)) as src:
+                with closing(sqlite3.connect(output)) as dst:
                     src.backup(dst)
+                    dst.commit()
                     if dst.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
                         raise Rejected("SQLite backup integrity failure")
-            destination.chmod(0o600)
+                    dst.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            with parent_fd(output) as staged_parent, parent_fd(destination) as parent:
+                os.link(output.name, destination.name, src_dir_fd=staged_parent,
+                        dst_dir_fd=parent, follow_symlinks=False)
+                os.unlink(output.name, dir_fd=staged_parent)
             self.databases.add(destination)
             self.sources.update(before)
         finally:
@@ -267,7 +608,7 @@ class Copier:
         prefix = next((p for p in ("sqlite://", "file://", "file:") if value.startswith(p)), "")
         candidate = value[len(prefix):]
         if candidate.startswith(("/", "~/")) or (value and PATH_KEYS.search(key) and "://" not in value):
-            path = local_path(candidate)
+            path = local_path(candidate, links=True)
             if path.is_relative_to(self.target):
                 return value
             destination = self.mapped(path)
@@ -404,7 +745,7 @@ def export_snapshot(target: Path, ref: str) -> str:
 def install(target: Path) -> None:
     probe(target)
     log = target / "install.log"
-    with log.open("a") as stream:
+    with private_append(log) as stream:
         project = tomllib.loads((target / "code/pyproject.toml").read_text())["project"]
         commands = [
             (["/usr/bin/python3", "-m", "venv", "--copies", "--system-site-packages", str(target / "venv")], False),
@@ -488,6 +829,12 @@ def verify(path: Path, *, initial: bool = False) -> dict:
     changed = [p for p, info in manifest["sources"].items() if not Path(p).exists() or fingerprint(Path(p)) != info]
     if changed:
         raise Rejected(f"Production changed since capture ({len(changed)} files); no unchanged-source proof")
+    for source, expected in manifest.get("source_links", {}).items():
+        if Copier.link_metadata(Path(source)) != {k: v for k, v in expected.items() if k != "target"}:
+            raise Rejected("Source symbolic link changed since capture")
+    for source, expected in manifest.get("source_directories", {}).items():
+        if Copier.directory_state(Path(source)) != expected:
+            raise Rejected("Source directory changed since capture")
     for config in (target / "config/cifereca").glob("*.json"):
         confined_values(json.loads(config.read_text()), target)
     # Freeze the executable boundary; mutable application data are checked for
@@ -522,31 +869,49 @@ def verify(path: Path, *, initial: bool = False) -> dict:
 
 def seal_permissions(target: Path) -> None:
     for path in [target, *target.rglob("*")]:
-        if not path.is_symlink():
-            path.chmod(0o700 if path.is_dir() or path.stat().st_mode & 0o111 else 0o600)
+        with parent_fd(path) as parent:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            info = os.fstat(fd)
+            if (not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
+                    or (stat.S_ISREG(info.st_mode) and info.st_nlink != 1)):
+                raise Rejected("Unsafe destination entry while sealing")
+            os.fchmod(fd, 0o700 if stat.S_ISDIR(info.st_mode) or info.st_mode & 0o111 else 0o600)
+        finally:
+            os.close(fd)
 
 
-def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) -> Path:
+def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool,
+           root: Path | None = None) -> Path:
     if sys.platform != "linux":
         raise Rejected("Recette currently requires Linux")
     os.umask(0o077)
     no_links(config_path)
     config_path = Path(os.path.abspath(config_path))
     original = load_config(config_path)
-    target = target_path(target)
-    target.mkdir(mode=0o700)  # Exclusive: never reuse/overwrite an existing recipe.
-    reservation = (target / "run.lock").open("a")
+    config_source = config_path.absolute()
+    data_source = local_path(str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "cifereca"))
+    library_source = local_path(str(original.get("library", {}).get("directory") or "~/EBooks"))
+    root = approved_root(root)
+    for source in (config_source.parent, data_source, library_source):
+        if root.is_relative_to(source) or source.is_relative_to(root):
+            raise Rejected(f"Recipe root overlaps production source: {source}")
+    target = target_path(target, root=root)
+    root_id = root_identity(root, create=True)
+    check_recipe_filesystem(root)
+    with parent_fd(target) as parent:
+        os.mkdir(target.name, mode=0o700, dir_fd=parent)  # Exclusive, no overwrite.
+    private_directory(target)  # Check effective owner/mode on this filesystem.
+    reservation = private_append(target / "run.lock")
     fcntl.flock(reservation, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    marker = {"format": FORMAT, "id": uuid.uuid4().hex, "target": str(target), "state": "preparing"}
+    marker = {"format": FORMAT, "id": uuid.uuid4().hex, "target": str(target),
+              "recipe_root": str(root), "root_id": root_id, "state": "preparing"}
     try:
         write_json(target / "recipe.json", marker)
         for name in ("home", "config/cifereca", "data/cifereca", "cache", "state", "runtime", "tmp"):
             (target / name).mkdir(parents=True, exist_ok=True, mode=0o700)
         (target / "runtime/machine-id").write_text(marker["id"] + "\n")
         copier = Copier(target)
-        config_source = config_path.absolute()
-        data_source = local_path(str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "cifereca"))
-        library_source = local_path(str(original.get("library", {}).get("directory") or "~/EBooks"))
         copier.register(config_source.parent, target / "config/cifereca")
         copier.register(data_source, target / "data/cifereca")
         copier.register(library_source, target / "library")
@@ -559,9 +924,14 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) 
             if source.exists():
                 copier.capture(source, target / "config/cifereca" / name)
         if data_source.exists():
-            for entry in sorted(data_source.iterdir()):
+            before = copier.directory_state(data_source)
+            for name in copier.directory_entries(data_source):
+                entry = data_source / name
                 if entry.name != "plugins":
                     copier.capture(entry, target / "data/cifereca" / entry.name)
+            if copier.directory_state(data_source) != before:
+                raise Rejected("Source directory changed during copy")
+            copier.directories[str(data_source)] = before
         copier.capture(library_source, target / "library")
         # Disable executable hooks and remote actions before discovering paths.
         original.setdefault("downloads", {}).update(command=[], post_download_command=[])
@@ -612,6 +982,7 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) 
         seal_permissions(target)
         manifest = {**marker, "sha": sha, "requested_ref": ref, "network": "disabled",
                     "sources": copier.sources, "path_map": {str(k): str(v) for k, v in copier.mapping.items()},
+                    "source_links": copier.links, "source_directories": copier.directories,
                     "databases": [str(p.relative_to(target)) for p in sorted(copier.databases)],
                     "excluded_sessions": copier.excluded, "files": inventory(target)}
         write_json(target / "manifest.json", manifest)
@@ -649,7 +1020,7 @@ def runtime_record(target: Path) -> dict | None:
 
 def run(target: Path) -> int:
     target, marker = checked_target(target)
-    with (target / "run.lock").open("a") as lock:
+    with recipe_lock(target, marker) as (lock, _directory):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -665,19 +1036,19 @@ def run(target: Path) -> int:
             (target / "runtime/Xauthority").write_bytes(read_private_source(auth))
         command = sandbox(target, ["/usr/bin/dbus-run-session", "--", str(target / "venv/bin/python"),
                                    "-m", "cifereca", "--no-plugins"], gui=True)
-        with (target / "runtime.log").open("a") as log:
+        with private_append(target / "runtime.log") as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             write_json(target / "process.json", {"pid": process.pid, "starttime": process_identity(process.pid), "id": marker["id"]})
             try:
                 return process.wait()
             finally:
-                (target / "process.json").unlink(missing_ok=True)
-                (target / "runtime/Xauthority").unlink(missing_ok=True)
+                unlink_private(target / "process.json")
+                unlink_private(target / "runtime/Xauthority")
 
 
 def start(target: Path) -> None:
     # A detached supervisor holds run.lock until the entire sandbox exits.
-    with (target / "launcher.log").open("a") as log:
+    with private_append(target / "launcher.log") as log:
         child = subprocess.Popen(["/usr/bin/python3", str(target / "runtime-tool.py"), "_run", str(target)],
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
@@ -704,7 +1075,7 @@ def stop(target: Path) -> None:
         if process_identity(row["pid"]) == row["starttime"]:
             os.killpg(row["pid"], signal.SIGKILL)
     # Synchronize with the supervisor before removal; catches startup races.
-    with (target / "run.lock").open("a") as lock:
+    with recipe_lock(target, marker) as (lock, directory):
         until = time.monotonic() + 1
         while True:
             try:
@@ -714,22 +1085,30 @@ def stop(target: Path) -> None:
                 if time.monotonic() >= until:
                     raise Rejected("Supervisor still running; retry stop/destroy")
                 time.sleep(0.05)
-    (target / "process.json").unlink(missing_ok=True)
+        try:
+            os.unlink("process.json", dir_fd=directory)
+        except FileNotFoundError:
+            pass
 
 
 def destroy(target: Path) -> None:
-    target, _ = checked_target(target)
+    target, marker = checked_target(target)
     stop(target)
     # Never follow symlinks in cleanup; shutil.rmtree uses fd-based traversal
     # on supported Linux, and checked_target forbids aliased root/ancestors.
     if not shutil.rmtree.avoids_symlink_attacks:
         raise Rejected("Safe directory removal unavailable")
-    with (target / "run.lock").open("a") as lock:
+    with recipe_lock(target, marker) as (lock, _directory):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Rejected("A launch raced with destroy; retry")
-        shutil.rmtree(target)
+        with parent_fd(target) as parent:
+            actual = os.stat(target.name, dir_fd=parent, follow_symlinks=False)
+            if (not stat.S_ISDIR(actual.st_mode)
+                    or (actual.st_dev, actual.st_ino) != marker["_checked_directory"]):
+                raise Rejected("Recipe target changed during destruction")
+            shutil.rmtree(target.name, dir_fd=parent)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -738,6 +1117,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("path", nargs="?", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--target", type=Path)
+    parser.add_argument("--recipe-root", type=Path,
+                        help="Approved private recipe root (default: ~/cifereca-recettes)")
     parser.add_argument("--ref", default="main")
     parser.add_argument("--no-start", action="store_true")
     args = parser.parse_args(argv)
@@ -746,6 +1127,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.action:
             if args.path is None:
                 parser.error("action requires PATH")
+            if args.recipe_root is not None:
+                checked_target(args.path, root=args.recipe_root)
             if args.action == "verify":
                 print(json.dumps(verify(args.path), ensure_ascii=False))
             elif args.action == "destroy":
@@ -758,7 +1141,7 @@ def main(argv: list[str] | None = None) -> int:
             config = args.config or Path.home() / ".config/cifereca/config.toml"
             if args.config is None and not config.exists():
                 config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cifereca/config.json"
-            print(create(config, args.target, args.ref, no_start=args.no_start))
+            print(create(config, args.target, args.ref, no_start=args.no_start, root=args.recipe_root))
         return 0
     except (Rejected, OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as exc:
         print(f"Recette refused: {exc}", file=sys.stderr)

@@ -24,6 +24,12 @@ spec.loader.exec_module(recette)
 class RecipeFixture(unittest.TestCase):
     def setUp(self):
         self.previous_umask = os.umask(0o077)
+        # Pure policy tests use synthetic links. Real no-atime readlink mounts
+        # are exercised separately in ActualSandboxTests and mandatory in CI.
+        self.real_readlink_noatime = recette.readlink_noatime
+        self.readlink_patch = patch.object(recette, "readlink_noatime",
+                                           side_effect=lambda fd, name: os.readlink(name, dir_fd=fd))
+        self.readlink_patch.start()
         self.temporary = tempfile.TemporaryDirectory()
         self.base = Path(self.temporary.name)
         self.production = self.base / "production"
@@ -55,6 +61,7 @@ class RecipeFixture(unittest.TestCase):
         self.env_patch.start()
 
     def tearDown(self):
+        self.readlink_patch.stop()
         self.env_patch.stop()
         self.home_patch.stop()
         self.temporary.cleanup()
@@ -69,10 +76,12 @@ class RecipeFixture(unittest.TestCase):
         (target / "venv/bin").mkdir(parents=True)
         (target / "venv/bin/python").write_text("synthetic executable fixture")
 
-    def create_fixture(self):
-        self.target.rmdir()
+    def create_fixture(self, *, root=None, target=None):
+        target = target or self.target
+        if target.exists():
+            target.rmdir()
         with patch.object(recette, "export_snapshot", side_effect=self.fake_snapshot), patch.object(recette, "install", side_effect=self.fake_install):
-            return recette.create(self.config, self.target, "main", no_start=True)
+            return recette.create(self.config, target, "main", no_start=True, root=root)
 
     def test_live_wal_copy_is_coherent_and_never_changes_production(self):
         source = self.data / "library.sqlite3"
@@ -369,6 +378,15 @@ class RecipeFixture(unittest.TestCase):
             self.assertEqual((self.target / "code/snapshot.txt").read_text(), "first commit")
             self.assertFalse((self.target / "snapshot.git").exists())
         (repository / "snapshot.txt").write_text("second commit")
+        git("add", ".")
+        git("commit", "-m", "synthetic newer remote main")
+        latest = git("rev-parse", "HEAD")
+        fresh_target = self.root / "fresh-main"
+        fresh_target.mkdir(mode=0o700)
+        with patch("subprocess.run", side_effect=network_run), patch("subprocess.check_output", side_effect=output):
+            self.assertEqual(recette.export_snapshot(fresh_target, "main"), latest)
+            self.assertNotEqual(latest, first)
+            self.assertEqual((fresh_target / "code/snapshot.txt").read_text(), "second commit")
         (repository / "alias").symlink_to(self.config)
         git("add", ".")
         git("commit", "-m", "synthetic unsafe snapshot")
@@ -400,6 +418,267 @@ class RecipeFixture(unittest.TestCase):
             with self.assertRaisesRegex(recette.Rejected, "Supervisor still running"):
                 recette.destroy(self.target)
         self.assertTrue(self.target.exists())
+
+
+    def test_alternative_private_root_nested_target_and_recorded_cli_actions(self):
+        root = self.base / "mounted volume" / "private-recettes"
+        target = self.create_fixture(root=root, target=root / "suite" / "T1")
+        marker = json.loads((target / "recipe.json").read_text())
+        self.assertEqual(marker["recipe_root"], str(root))
+        self.assertEqual(recette.checked_target(target)[0], target)
+        with patch.object(recette, "recipe_root", side_effect=AssertionError("default root must not be consulted")):
+            self.assertTrue(recette.verify(target)["ok"])
+            self.assertEqual(recette.main(["verify", str(target), "--recipe-root", str(root)]), 0)
+            recette.stop(target)
+            recette.destroy(target)
+        self.assertFalse(target.exists())
+        self.assertTrue(self.book.is_file())
+
+    def test_alternative_root_cli_create_verify_and_destroy(self):
+        root = self.base / "mounted" / "approved"
+        target = root / "T1"
+        with patch.object(recette, "export_snapshot", side_effect=self.fake_snapshot), patch.object(recette, "install", side_effect=self.fake_install):
+            self.assertEqual(recette.main(["--config", str(self.config), "--recipe-root", str(root),
+                                           "--target", str(target), "--ref", "main", "--no-start"]), 0)
+        self.assertEqual(recette.main(["verify", str(target)]), 0)
+        self.assertEqual(recette.main(["destroy", str(target), "--recipe-root", str(root)]), 0)
+        self.assertFalse(target.exists())
+
+    def test_root_permissions_traversal_mismatch_and_production_overlap_refused(self):
+        for mode in (0o755, 0o777):
+            root = self.base / ("permissions-" + oct(mode))
+            root.mkdir(mode=mode)
+            root.chmod(mode)
+            with self.assertRaises(recette.Rejected):
+                recette.target_path(root / "T1", root=root)
+            self.assertEqual(root.stat().st_mode & 0o777, mode)
+        root = self.base / "approved"
+        for target in (self.base / "outside", root, root / "nested" / ".." / "escape"):
+            with self.assertRaises(recette.Rejected):
+                recette.target_path(target, root=root)
+        for overlapping in (self.books / "recipes", self.production):
+            with self.assertRaisesRegex(recette.Rejected, "overlaps"):
+                recette.create(self.config, overlapping / "T1", "main", root=overlapping, no_start=True)
+        self.assertFalse((self.books / "recipes").exists())
+        self.assertFalse((self.production / ".cifereca-recipe-root.json").exists())
+        target = self.create_fixture(root=root, target=root / "T1")
+        with self.assertRaisesRegex(recette.Rejected, "does not match"):
+            recette.checked_target(target, root=self.base / "foreign")
+        recette.destroy(target)
+
+    def test_noexec_or_unsupported_filesystem_refused_before_production_copy(self):
+        root = self.base / "noexec"
+        before = recette.fingerprint(self.config)
+        with patch.object(recette.subprocess, "run", side_effect=PermissionError("synthetic noexec")):
+            with self.assertRaisesRegex(recette.Rejected, "filesystem must support"):
+                recette.create(self.config, root / "T1", "main", root=root, no_start=True)
+        self.assertFalse((root / "T1").exists())
+        self.assertEqual(recette.fingerprint(self.config), before)
+
+    def test_internal_absolute_relative_runtime_current_are_materialized_and_rewritten(self):
+        for absolute in (False, True):
+            with self.subTest(absolute=absolute):
+                runtime = self.data / ("runtime-absolute" if absolute else "runtime")
+                version = runtime / "versions" / "release"
+                version.mkdir(parents=True)
+                binary = version / "engine"
+                binary.write_bytes(b"synthetic local runtime")
+                alias = runtime / "current"
+                alias.symlink_to(version if absolute else Path("versions/release"), target_is_directory=True)
+                config = json.loads(self.config.read_text())
+                config["native_tool"] = {"path": str(alias / "engine")}
+                self.config.write_text(json.dumps(config))
+                before = recette.fingerprint(binary)
+                link_before = recette.Copier.link_state(alias)
+                target = self.create_fixture()
+                copied = target / "data/cifereca" / runtime.name / "current/engine"
+                self.assertTrue(copied.is_file())
+                self.assertFalse(copied.parent.is_symlink())
+                self.assertEqual(copied.read_bytes(), b"synthetic local runtime")
+                self.assertNotEqual(copied.stat().st_ino, binary.stat().st_ino)
+                self.assertEqual(recette.fingerprint(binary), before)
+                self.assertEqual(recette.Copier.link_state(alias), link_before)
+                rewritten = json.loads((target / "config/cifereca/config.json").read_text())
+                self.assertEqual(rewritten["native_tool"]["path"], str(copied))
+                manifest = json.loads((target / "manifest.json").read_text())
+                self.assertEqual(manifest["source_links"][str(alias)], link_before)
+                self.assertTrue(recette.verify(target)["ok"])
+                recette.destroy(target)
+
+    def test_links_outside_roots_broken_cyclic_traversal_and_sessions_are_refused(self):
+        external = self.production / "outside-secret"
+        external.write_bytes(b"must not be copied")
+        excluded = self.books / "browser"
+        excluded.mkdir()
+        (excluded / "cookies.json").write_text("not copied")
+        alias = self.books / "0-alias"
+        cases = [external, self.books / "missing", alias, Path("../books/a.epub"),
+                 excluded / "cookies.json", self.books]
+        for number, link in enumerate(cases):
+            with self.subTest(link=str(link)):
+                alias.symlink_to(link)
+                copier = recette.Copier(self.target)
+                copier.register(self.books, self.target / str(number))
+                with self.assertRaises(recette.Rejected):
+                    copier.capture(self.books, self.target / str(number))
+                alias.unlink()
+        self.assertEqual(external.read_bytes(), b"must not be copied")
+
+    def test_link_between_two_explicit_roots_is_materialized_independently(self):
+        other = self.data / "local-dependency"
+        other.write_bytes(b"dependency")
+        alias = self.books / "dependency"
+        alias.symlink_to(other)
+        self.copier.register(self.books, self.target / "library")
+        self.copier.register(self.data, self.target / "data")
+        self.copier.capture(self.books, self.target / "library")
+        self.assertEqual((self.target / "library/dependency").read_bytes(), b"dependency")
+        self.assertFalse((self.target / "library/dependency").is_symlink())
+
+    def test_symlink_change_during_copy_or_after_preparation_blocks_admission(self):
+        alias = self.books / "alias.epub"
+        alias.symlink_to(self.book)
+        other = self.books / "other.epub"
+        other.write_bytes(b"other bytes")
+        self.copier.register(self.books, self.target / "library")
+        copy = recette.copy_private_source
+        def changed(source, destination):
+            result = copy(source, destination)
+            alias.unlink()
+            alias.symlink_to(other)
+            return result
+        with patch.object(recette, "copy_private_source", side_effect=changed):
+            with self.assertRaisesRegex(recette.Rejected, "symbolic link changed"):
+                self.copier.capture(alias, self.target / "library/alias.epub")
+        # New independent recipe records the new link; subsequent drift is
+        # detected before execution, even when both targets are internal.
+        target = self.create_fixture(target=self.root / "prepared")
+        alias.unlink()
+        alias.symlink_to(self.book)
+        with self.assertRaisesRegex(recette.Rejected, "symbolic link changed"):
+            recette.verify(target)
+        recette.destroy(target)
+
+    def test_excluded_session_symlink_never_resolves_its_external_target(self):
+        alias = self.data / "sessions"
+        alias.symlink_to(self.production / "nonexistent-secret-directory")
+        target = self.create_fixture()
+        manifest = json.loads((target / "manifest.json").read_text())
+        self.assertIn(str(alias), manifest["excluded_sessions"])
+        self.assertFalse((target / "data/cifereca/sessions").exists())
+        self.assertNotIn(str(alias), manifest["source_links"])
+        recette.destroy(target)
+
+    def test_destination_symlinks_and_hardlinks_never_modify_source(self):
+        before = self.book.stat()
+        alias = self.target / "alias"
+        alias.symlink_to(self.book)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.copy_private_source(self.config, alias)
+        alias.unlink()
+        os.link(self.book, alias)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.copy_private_source(self.config, alias)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.seal_permissions(self.target)
+        alias.unlink()
+        parent = self.target / "parent"
+        parent.symlink_to(self.production, target_is_directory=True)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.copy_private_source(self.book, parent / "overwrite")
+        self.assertEqual(self.book.read_bytes(), b"synthetic ebook bytes")
+        self.assertEqual(self.book.stat().st_mode, before.st_mode)
+        self.assertFalse((self.production / "overwrite").exists())
+
+    def test_destroy_unlinks_internal_hostile_link_without_following_it(self):
+        target = self.create_fixture()
+        (target / "hostile").symlink_to(self.production, target_is_directory=True)
+        recette.destroy(target)
+        self.assertFalse(target.exists())
+        self.assertTrue(self.config.exists())
+        self.assertTrue(self.book.exists())
+
+    def test_source_ancestor_symlink_swap_is_refused_by_descriptor_walk(self):
+        saved = self.production / "saved-books"
+        outside = self.production / "foreign"
+        outside.mkdir()
+        foreign = outside / self.book.name
+        foreign.write_bytes(b"outside")
+        before = foreign.stat()
+        check = recette.no_links
+        swapped = False
+        def swap(path):
+            nonlocal swapped
+            check(path)
+            if path == self.book and not swapped:
+                swapped = True
+                self.books.rename(saved)
+                self.books.symlink_to(outside, target_is_directory=True)
+        try:
+            with patch.object(recette, "no_links", side_effect=swap):
+                with self.assertRaises((recette.Rejected, OSError)):
+                    recette.read_private_source(self.book)
+            self.assertEqual(foreign.stat().st_atime_ns, before.st_atime_ns)
+        finally:
+            if swapped:
+                self.books.unlink()
+                saved.rename(self.books)
+
+    def test_sqlite_destination_link_cannot_overwrite_production(self):
+        source = self.data / "source.sqlite"
+        with sqlite3.connect(source) as db:
+            db.execute("CREATE TABLE original (value TEXT)")
+            db.execute("INSERT INTO original VALUES ('source')")
+        other = self.data / "untouched.sqlite"
+        with sqlite3.connect(other) as db:
+            db.execute("CREATE TABLE sentinel (value TEXT)")
+        before = recette.fingerprint(other)
+        destination = self.target / "copy.sqlite"
+        destination.symlink_to(other)
+        with self.assertRaises((recette.Rejected, OSError)):
+            self.copier.backup(source, destination)
+        self.assertEqual(recette.fingerprint(other), before)
+        destination.unlink()
+        os.link(other, destination)
+        with self.assertRaises((recette.Rejected, OSError)):
+            self.copier.backup(source, destination)
+        self.assertEqual(recette.fingerprint(other)["sha256"], before["sha256"])
+
+    def test_recipe_root_approval_and_target_identity_cannot_be_substituted(self):
+        target = self.create_fixture()
+        marker = json.loads((target / "recipe.json").read_text())
+        marker["root_id"] = "f" * 32
+        recette.write_json(target / "recipe.json", marker)
+        with self.assertRaisesRegex(recette.Rejected, "approved recipe root"):
+            recette.checked_target(target)
+        marker["root_id"] = json.loads((self.root / ".cifereca-recipe-root.json").read_text())["id"]
+        recette.write_json(target / "recipe.json", marker)
+        foreign = self.production / "foreign-safe"
+        foreign.mkdir()
+        (foreign / "sentinel").write_text("unchanged")
+        moved = self.root / "moved"
+        def replaced(_target):
+            target.rename(moved)
+            target.symlink_to(foreign, target_is_directory=True)
+        with patch.object(recette, "stop", side_effect=replaced):
+            with self.assertRaises((recette.Rejected, OSError)):
+                recette.destroy(target)
+        self.assertTrue(moved.is_dir())
+        self.assertEqual((foreign / "sentinel").read_text(), "unchanged")
+        self.assertFalse((foreign / "run.lock").exists())
+        target.unlink()
+
+    def test_log_and_lock_symlinks_or_fifos_never_write_or_block(self):
+        before = recette.fingerprint(self.config)
+        log = self.target / "launcher.log"
+        log.symlink_to(self.config)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.private_append(log)
+        log.unlink()
+        os.mkfifo(log)
+        with self.assertRaises((recette.Rejected, OSError)):
+            recette.private_append(log)
+        self.assertEqual(recette.fingerprint(self.config), before)
 
 
 class ActualSandboxTests(unittest.TestCase):
@@ -465,7 +744,7 @@ class Storage:
         self.assertTrue((self.target / "requirements-installed.txt").exists())
         self.assertFalse((self.target / "venv/lib64").is_symlink())
 
-    def test_actual_launch_stop_crash_restart_and_destroy(self):
+    def _exercise_actual_lifecycle(self, *, alternate=False):
         self.require_sandbox()
         if not shutil.which("Xvfb") or not shutil.which("dbus-run-session"):
             if os.environ.get("CIFERECA_REQUIRE_SANDBOX_TESTS") == "1":
@@ -479,7 +758,8 @@ class Storage:
                 self.assertTrue(select.select([read_fd], [], [], 10)[0], "Xvfb did not start")
                 number = os.read(read_fd, 100).decode().strip()
                 os.close(read_fd)
-                target = self.create_fixture()
+                root = self.base / "mounted-volume" / "recipes" if alternate else None
+                target = self.create_fixture(root=root, target=(root / "nested/T1") if root else None)
                 with patch.dict(os.environ, {"DISPLAY": ":" + number, "HOME": str(self.base), "XAUTHORITY": str(self.base / "no-auth")}):
                     for attempt in range(2):
                         recette.start(target)
@@ -501,6 +781,82 @@ class Storage:
                 self.assertTrue(self.book.exists())
             finally:
                 display.terminate()
+    def test_actual_launch_stop_crash_restart_and_destroy(self):
+        self._exercise_actual_lifecycle()
+
+    def test_actual_alternative_root_launch_stop_crash_restart_and_destroy(self):
+        self._exercise_actual_lifecycle(alternate=True)
+
+    def test_actual_internal_link_copy_preserves_link_atime(self):
+        self.require_sandbox()
+        alias = self.books / "alias.epub"
+        alias.symlink_to(self.book)
+        os.utime(alias, ns=(1, 1), follow_symlinks=False)
+        before = alias.lstat()
+        with patch.object(recette, "readlink_noatime", self.real_readlink_noatime):
+            self.copier = recette.Copier(self.target)
+            self.copier.register(self.books, self.target / "library")
+            self.copier.capture(self.books, self.target / "library")
+        after = alias.lstat()
+        self.assertEqual((before.st_atime_ns, before.st_mtime_ns, before.st_ctime_ns, before.st_ino),
+                         (after.st_atime_ns, after.st_mtime_ns, after.st_ctime_ns, after.st_ino))
+        self.assertEqual((self.target / "library/alias.epub").read_bytes(), b"synthetic ebook bytes")
+
+    def test_real_mounted_alternative_root_create_verify_confine_destroy(self):
+        self.require_sandbox()
+        volume = self.base / "volume"
+        volume.mkdir(mode=0o700)
+        version = self.data / "runtime/versions/v1"
+        version.mkdir(parents=True)
+        (version / "engine").write_bytes(b"synthetic runtime")
+        current = self.data / "runtime/current"
+        current.symlink_to("versions/v1", target_is_directory=True)
+        os.utime(current, ns=(1, 1), follow_symlinks=False)
+        link_before = current.lstat()
+        database = self.data / "library.sqlite3"
+        with sqlite3.connect(database) as db:
+            db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, local_path TEXT)")
+            db.execute("INSERT INTO books VALUES (1, ?)", (str(self.book),))
+        database_before = recette.fingerprint(database)
+        program = r"""
+import importlib.util, json, os, pathlib, subprocess, sys
+spec = importlib.util.spec_from_file_location('recette', sys.argv[1])
+r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
+def snapshot(target, ref):
+    (target / 'code/src/plugins').mkdir(parents=True)
+    return 'a' * 40
+def install(target):
+    (target / 'venv/bin').mkdir(parents=True)
+    (target / 'venv/bin/python').write_text('fixture')
+r.export_snapshot = snapshot; r.install = install
+root = pathlib.Path('/media/fixture/KDATAS/cifereca-tests')
+target = r.create(pathlib.Path(sys.argv[2]), root / 'T1', 'main', root=root, no_start=True)
+assert r.verify(target)['ok']
+assert (target / 'data/cifereca/runtime/current/engine').read_bytes() == b'synthetic runtime'
+assert not (target / 'data/cifereca/runtime/current').is_symlink()
+import sqlite3
+with sqlite3.connect(target / 'data/cifereca/library.sqlite3') as db:
+    assert db.execute('SELECT local_path FROM books').fetchone()[0] == str(target / 'library/a.epub')
+r.probe(target)
+subprocess.run(r.sandbox(target, ['/usr/bin/python3', '-c',
+    'import pathlib,sys; assert not pathlib.Path(sys.argv[1]).exists(); '
+    'pathlib.Path(sys.argv[2]).write_text("inside")', sys.argv[2], str(target / 'home/allowed')]), check=True)
+assert (target / 'home/allowed').read_text() == 'inside'
+r.destroy(target)
+assert not target.exists()
+"""
+        before = recette.fingerprint(self.config)
+        command = [shutil.which("bwrap"), "--unshare-all", "--die-with-parent",
+                   "--ro-bind", "/", "/", "--proc", "/proc", "--tmpfs", "/tmp",
+                   "--ro-bind", str(self.production), str(self.production), "--tmpfs", "/media",
+                   "--dir", "/media/fixture", "--bind", str(volume), "/media/fixture/KDATAS",
+                   "--", "/usr/bin/python3", "-c", program, str(SCRIPT), str(self.config)]
+        subprocess.run(command, check=True, env=dict(os.environ, XDG_DATA_HOME=str(self.production / "data")), timeout=60)
+        self.assertFalse((volume / "cifereca-tests/T1").exists())
+        self.assertEqual(recette.fingerprint(self.config), before)
+        self.assertEqual(recette.fingerprint(database), database_before)
+        self.assertEqual(current.lstat().st_atime_ns, link_before.st_atime_ns)
+
     def test_subprocess_network_writes_and_host_sockets_are_confined(self):
         self.require_sandbox()
         for name in ("home", "config", "data", "state", "cache", "runtime", "tmp", "library", "imports", "code"):
