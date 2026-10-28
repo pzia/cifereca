@@ -6,7 +6,9 @@ persisté. Il ne comparait pas **le compte upstream actuellement exposé par la
 session connectée** avec le SourceKey de l'offre. Une session peut changer de
 compte sans changer d'objet Python ni incrémenter l'époque du Core.
 
-`convergence_execution.current_memory()` exige maintenant exactement un
+`canonical_selected_offers.current()` refuse déjà une lecture privée de
+l'offre si le compte upstream exposé par la session est délié ou ambigu.
+`convergence_execution.current_memory()` exige également exactement un
 `Account` correspondant à (identité, fournisseur, credential, compte)
 dans `session.accounts`. Un compte absent, changé, dupliqué ou une collection
 malformée invalide le bail. Le contrôle est réexécuté avant GET, après GET
@@ -18,6 +20,9 @@ Artifact / Placement / SourceReference / OriginLink.
 - `tests/test_core_p0_3171_convergence_execution.py` : quatre refus avant
   GET (emprunteur remplacé, absent, doublonné, réponse malformée) ;
   remplacement **pendant** GET -> aucun lien ni Placement canonique publié.
+- `tests/test_core_p0_3171_selected_offer_core_sync.py` : trois refus de
+  consultation privée de l'offre (compte étranger, doublon, liste invalide)
+  et un changement pendant le preflight -> aucun GET candidat.
 - Les fixtures de Sync et de reprise de réception terminée portent
   explicitement les comptes de session et restent compatibles avec deux
   providers ayant des droits distincts sur le même SHA.
