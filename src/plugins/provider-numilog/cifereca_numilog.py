@@ -340,6 +340,31 @@ class NumilogSession(ProviderSession):
         if not self.connected:
             self._session_event('not_connected')
             raise ProviderError('Numilog : connecter le compte avant cette opération')
+        # A Core owner may be rebound while MesLivres pagination is in
+        # flight. The final rights snapshot already refuses stale evidence,
+        # but must not issue page 2's private GET *after* page 1 revoked the
+        # owner. Bind the live account and Core broker for this strict route.
+        rights_owner = self._inventory_owner_or_none() if rights_observation else None
+        rights_account = (
+            self._legacy_inventory_account_binding() if rights_observation else None
+        )
+
+        def rights_scope_current():
+            return (not rights_observation or (
+                self.connected is True
+                and self._inventory_owner_or_none() == rights_owner
+                and self._legacy_inventory_account_binding() == rights_account
+            ))
+
+        if rights_observation and (
+            type(rights_owner) is not tuple or len(rights_owner) != 3
+            or rights_owner[0] != 'broker'
+            or type(rights_owner[2]) is not tuple or len(rights_owner[2]) != 1
+            or not rights_owner[2][0] or rights_account is None
+        ):
+            raise ProviderCapabilityError(
+                'Numilog : propriétaire unique non attesté pour les achats'
+            )
         try:
             url = self.library_url
             rows = []
@@ -347,12 +372,20 @@ class NumilogSession(ProviderSession):
             seen_items = set()
             ambiguous_rights = set()
             for page_index in range(100):
+                if not rights_scope_current():
+                    raise ProviderCapabilityError(
+                        'Numilog : identité propriétaire modifiée ; observations arrêtées'
+                    )
                 if url in seen_pages:
                     raise ProviderError('Numilog : boucle de pagination de bibliothèque')
                 seen_pages.add(url)
                 final_url,text = self._page(
                     url, private_library_origin=url_origin(self.library_url),
                 )
+                if not rights_scope_current():
+                    raise ProviderCapabilityError(
+                        'Numilog : identité propriétaire modifiée ; observations arrêtées'
+                    )
                 if (url_origin(final_url) != url_origin(self.library_url)
                         or urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx'):
                     self.connected = False
