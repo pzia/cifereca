@@ -1049,7 +1049,8 @@ class Storage:
                         updated_at INTEGER NOT NULL,
                         CHECK (
                             origin_kind != 'provider'
-                            OR source_reference_id IS NOT NULL
+                            OR (source_reference_id IS NOT NULL
+                                AND evidence_ref <> '')
                         ),
                         CHECK (
                             origin_kind != 'derived'
@@ -1074,6 +1075,53 @@ class Storage:
                 db.execute("""
                     CREATE INDEX IF NOT EXISTS idx_origin_links_source
                     ON origin_links(source_reference_id,origin_kind)
+                """)
+                # The same SHA can belong to another identity's independent
+                # purchase, but a 'provider' origin may not borrow that right.
+                # Enforce even for direct SQL writers; a future broker MUST
+                # still revalidate file bytes and exact account/session.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_origin_scope_insert
+                    BEFORE INSERT ON origin_links
+                    WHEN NEW.origin_kind='provider' AND NOT EXISTS (
+                        SELECT 1 FROM source_references AS s
+                        WHERE s.source_reference_id=NEW.source_reference_id
+                        AND s.identity_id=NEW.identity_id
+                        AND s.reference_kind IN ('purchase','loan')
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'provider_origin_scope_mismatch');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_origin_scope_update
+                    BEFORE UPDATE OF origin_kind,identity_id,source_reference_id
+                    ON origin_links
+                    WHEN NEW.origin_kind='provider' AND NOT EXISTS (
+                        SELECT 1 FROM source_references AS s
+                        WHERE s.source_reference_id=NEW.source_reference_id
+                        AND s.identity_id=NEW.identity_id
+                        AND s.reference_kind IN ('purchase','loan')
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'provider_origin_scope_mismatch');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_origin_scope_update
+                    BEFORE UPDATE OF identity_id,reference_kind,source_reference_id
+                    ON source_references
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links AS o
+                        WHERE o.source_reference_id=OLD.source_reference_id
+                        AND o.origin_kind='provider'
+                        AND (NEW.identity_id<>o.identity_id
+                             OR NEW.reference_kind NOT IN ('purchase','loan')
+                             OR NEW.source_reference_id<>OLD.source_reference_id)
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'provider_origin_source_immutable');
+                    END
                 """)
                 cls._write_schema_version(db, 14)
                 db.execute("RELEASE SAVEPOINT migration_v14")
