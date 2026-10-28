@@ -172,10 +172,13 @@ class LocalCatalog:
                         identity_id = owner
             except Exception:
                 pass
-            # A folder name is not proof of a declared identity.
-            return identity_id, parts[1]
-        if len(parts) >= 2:
-            return None, parts[0]
+            # The registered directory can identify the local library, but
+            # its second component is ONLY a physical folder label. A path
+            # like <identity>/manual/, /other/, or even /numilog/ does not
+            # attest an acquisition provider. Only an explicit caller scope,
+            # exact historical receipt or existing placement can supply that.
+            return identity_id, None
+        # Likewise a top-level directory is not a supplier declaration.
         return None, None
 
     def _legacy_provenance(self, path: Path) -> dict[str, Any] | None:
@@ -365,10 +368,17 @@ class LocalCatalog:
         existing = self.storage.placement_for_path(Path(path_text))
         placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
         identity_hint, provider_hint = self._path_hints(path)
+        identity_hint = identity_id or identity_hint
         legacy = self._legacy_provenance(path)
+        # The ordinary scan already rejects cross-identity legacy receipts.
+        # Targeted indexing must apply the SAME rule: a historical backup
+        # mentioning this path is not provenance for a different library.
+        if legacy and (
+            not identity_hint or legacy.get("identity_id") != identity_hint
+        ):
+            legacy = None
         if legacy:
             provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
-        identity_hint = identity_id or identity_hint
         provider_hint = provider_id or provider_hint
         proposed_item = item_id or (legacy.get("item_id") if legacy else None)
         if existing and any((

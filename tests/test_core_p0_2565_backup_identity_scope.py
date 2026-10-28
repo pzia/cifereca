@@ -11,8 +11,8 @@ from cifereca.storage import Storage
 
 
 @pytest.mark.parametrize(("backup_owner", "expected_provider", "expected_item"), [
-    ("profile-a", "local", None),
-    (None, "local", None),
+    ("profile-a", None, None),
+    (None, None, None),
     ("profile-b", "numilog", "edition-b"),
 ])
 def test_only_exact_identity_backup_can_supply_legacy_local_provenance(

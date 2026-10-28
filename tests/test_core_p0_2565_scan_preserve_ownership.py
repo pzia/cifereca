@@ -62,17 +62,14 @@ def test_provider_directory_without_identity_preserves_owner_and_edition(tmp_pat
     assert path.is_file()
 
 
-def test_conflicting_provider_hint_does_not_transfer_existing_provenance(tmp_path):
+def test_unrelated_folder_name_does_not_override_existing_supplier_provenance(tmp_path):
     storage, root, path, placement_id = _case(
         tmp_path, "other-provider", "book.pdf",
     )
-    result = LocalCatalog(storage, root).scan()
-    assert result.invalid == 1
-    placement = storage.placement_get(placement_id)
-    assert placement["state"] == "invalid"
-    assert placement["identity_id"] == "buyer-a"
-    assert placement["provider_id"] == "kobo"
-    assert placement["source_item_id"] == "edition-123"
+    for _ in range(2):
+        result = LocalCatalog(storage, root).scan()
+        assert result.invalid == 0 and result.cataloged == 1
+        _assert_scoped(storage, placement_id)
     assert path.is_file()
 
 

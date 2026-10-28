@@ -63,7 +63,9 @@ def test_cross_provider_shared_backup_path_has_no_legacy_provenance(tmp_path):
     assert result.cataloged == 1 and result.invalid == 0
     placement = storage.placements()[0]
     assert placement["identity_id"] == "profile"
-    assert placement["provider_id"] == "local"
+    # Two conflicting historical receipts do not prove any provider; a
+    # directory named 'local' cannot fill that gap.
+    assert placement["provider_id"] is None
     assert placement["source_item_id"] is None
     entries = [
         row for row in storage.catalog_entries()
