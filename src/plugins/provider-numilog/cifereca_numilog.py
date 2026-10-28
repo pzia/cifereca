@@ -1660,7 +1660,7 @@ class NumilogSession(ProviderSession):
                             # The selected route is part of the attested offer.
                             # An EPUB-direct offer cannot silently deliver an
                             # Adobe fulfillment token instead.
-                            if stage_acsm_only and selected_kind != 'acsm':
+                            if stage_acsm_only and selected_link is not None and selected_kind != 'acsm':
                                 raise ProviderCapabilityError(
                                     'numilog_candidate_format_changed'
                                 )
@@ -1706,7 +1706,7 @@ class NumilogSession(ProviderSession):
                             # A selected EPUB is a Core candidate, never a
                             # published book from the legacy delivery path.
                             # Never let an ACSM-selected route change format.
-                            if selected_kind != 'epub_direct':
+                            if selected_link is not None and selected_kind != 'epub_direct':
                                 raise ProviderCapabilityError(
                                     'numilog_candidate_format_changed'
                                 )
