@@ -846,6 +846,102 @@ class ParisProviderSession(ProviderSession):
         return state
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:
+        """Existing-loan delivery only: exact live Paris borrower and loan.
+
+        Core decides acquisition permission; this provider still must never
+        consume a DILICOM PNB URL for a different live account or credential.
+        The same lock protects the full private GET/staging against reconnect,
+        and mutable objects/broker ownership are fenced after network I/O.
+        """
+        with self._loan_inventory_lock:
+            if (not self.connected or type(account) is not Account
+                    or type(loan) is not Loan
+                    or account.provider_id != self.provider_id
+                    or account.credential_id != self.credential_id
+                    or loan.provider != "DILICOM" or loan.medium != "digital"
+                    or loan.source_provider != self.provider_id
+                    or loan.source_credential != self.credential_id
+                    or loan.source_account_id != (account.unique_id or "primary")
+                    or (loan.identity_id is not None
+                        and loan.identity_id != account.identity_id)
+                    or not loan.id or not loan.record_id):
+                raise ProviderConfigurationError("paris_download_scope_mismatch")
+
+            scope = (account.unique_id, account.identity_id,
+                     account.provider_id, account.credential_id)
+            loan_scope = (
+                loan.id, loan.record_id, loan.provider, loan.medium,
+                loan.source_provider, loan.source_credential,
+                loan.source_account_id, loan.identity_id,
+                loan.ebook_url, loan.title,
+            )
+            live = [
+                active for active in self._accounts
+                if type(active) is Account
+                and (active.unique_id, active.identity_id,
+                     active.provider_id, active.credential_id) == scope
+            ]
+            if len(live) != 1:
+                raise ProviderConfigurationError("paris_download_scope_mismatch")
+            bound = live[0]
+            broker = self.identity_broker
+
+            def broker_binding():
+                if broker is None:
+                    return None
+                try:
+                    refs = broker.accounts()
+                    if type(refs) not in (tuple, list):
+                        return None
+                    key = (scope[0] if scope[0] else
+                           f"{self.provider_id}:{self.credential_id}:primary")
+                    matches = [
+                        ref.identity_id if type(ref.identity_id) is str else ""
+                        for ref in refs if getattr(ref, "provider_id", None) == self.provider_id
+                        and getattr(ref, "account_id", None) == key
+                    ]
+                    return (id(broker), tuple(sorted(matches)))
+                except Exception:
+                    return None
+
+            owner = broker_binding()
+            if broker is not None and (owner is None or owner[1] != (scope[1],)):
+                raise ProviderConfigurationError("paris_download_scope_mismatch")
+
+            def scope_current():
+                return (
+                    self.connected is True
+                    and (account.unique_id, account.identity_id,
+                         account.provider_id, account.credential_id) == scope
+                    and (bound.unique_id, bound.identity_id,
+                         bound.provider_id, bound.credential_id) == scope
+                    and len(self._accounts) >= 1
+                    and len(current := [
+                        x for x in self._accounts if type(x) is Account
+                        and (x.unique_id, x.identity_id,
+                             x.provider_id, x.credential_id) == scope
+                    ]) == 1 and current[0] is bound
+                    and (loan.id, loan.record_id, loan.provider, loan.medium,
+                         loan.source_provider, loan.source_credential,
+                         loan.source_account_id, loan.identity_id,
+                         loan.ebook_url, loan.title) == loan_scope
+                    and self.identity_broker is broker
+                    and (broker is None or broker_binding() == owner)
+                )
+
+            if not scope_current():
+                raise ProviderConfigurationError("paris_download_scope_mismatch")
+            return self._download_digital_scoped_impl(
+                loan, account, target_dir, scope_guard=scope_current,
+            )
+
+    def _download_digital_scoped_impl(self, loan: Loan, account: Account,
+                                      target_dir: Path, *, scope_guard=None) -> tuple[Path, str]:
+        """Network + validated staging, guarded by download_digital in service."""
+        def ensure_scope():
+            if scope_guard is not None and not scope_guard():
+                raise ProviderConfigurationError("paris_download_scope_mismatch")
+
         started = time.monotonic()
         # Book metadata may be included only when the catalogue identifier is
         # an exact public 13-digit EAN. Borrower and loan identifiers stay private.
@@ -875,7 +971,9 @@ class ParisProviderSession(ProviderSession):
                 "TRACE download paris prefs begin book_id=%s upstream_uid_present=%s",
                 book_id, bool(account.unique_id),
             )
+            ensure_scope()
             prefs = self.client.pnb_preferences()
+            ensure_scope()
             _TRACE_LOG.info(
                 "TRACE download paris prefs end book_id=%s reader_id_present=%s passphrase_present=%s hint_present=%s duration_ms=%s",
                 book_id, bool(prefs.get("ReaderId")), bool(prefs.get("PassPhrase")),
@@ -886,7 +984,9 @@ class ParisProviderSession(ProviderSession):
                 "TRACE download paris acquisition-url begin book_id=%s site=%s upstream_uid_present=%s",
                 book_id, public_site(self.client.base_url), bool(account.unique_id),
             )
+            ensure_scope()
             url = self.client.download_digital_document(loan, "" if account.is_primary else account.unique_id, prefs)
+            ensure_scope()
             _TRACE_LOG.info(
                 "TRACE download paris acquisition-url end book_id=%s url_returned=%s duration_ms=%s",
                 book_id, bool(url), int((time.monotonic()-endpoint_started)*1000),
@@ -900,9 +1000,11 @@ class ParisProviderSession(ProviderSession):
         )
         current = url
         for hop in range(12):
+            ensure_scope()
             self.client._validate_pnb_redirect_url(current)
             hop_started = time.monotonic()
             response = self.client._get_pnb_response(current)
+            ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             if response.status_code not in {301,302,303,307,308}: break
             location = response.headers.get('location')
@@ -921,6 +1023,7 @@ class ParisProviderSession(ProviderSession):
         content_type = response.headers.get("content-type", "")
         fmt = 'pdf' if content.startswith(b'%PDF-') else ('epub' if content.startswith(b'PK') else 'acsm')
         inspected = inspect_artifact_content(content, fmt, strict_structure=True)
+        ensure_scope()
         if not inspected.valid:
             labels = {
                 "pdf": "PDF invalide ou tronqué",
@@ -931,7 +1034,9 @@ class ParisProviderSession(ProviderSession):
         _TRACE_LOG.info("TRACE download paris document-validated book_id=%s kind=%s bytes=%s", book_id, fmt, len(content))
         name = sanitize_filename_component(str(loan.title), "download")
         path = target_dir / (name[:160] + '.' + fmt)
+        ensure_scope()
         publish_artifact_content(path, content)
+        ensure_scope()
         _TRACE_LOG.info(
             "TRACE download paris acsm-write book_id=%s bytes=%s detected_acsm=%s duration_ms=%s",
             book_id, len(content), path.suffix.casefold() == ".acsm",
