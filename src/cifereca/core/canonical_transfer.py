@@ -173,7 +173,7 @@ def publish_completed_local_transfer(
             raise ValueError("canonical_transfer_reference_collision")
 
         existing_placement = db.execute(
-            "SELECT placement_id,identity_id,artifact_id FROM placements "
+            "SELECT placement_id,identity_id,artifact_id,state FROM placements "
             "WHERE path=?", (str(received),),
         ).fetchone()
         if existing_placement is None:
@@ -190,7 +190,8 @@ def publish_completed_local_transfer(
             if (existing_placement[1] not in (None, to_identity_id)
                     or existing_placement[2] not in (None, artifact_id)):
                 raise ValueError("canonical_transfer_placement_conflict")
-            if existing_placement[1] is None or existing_placement[2] is None:
+            if (existing_placement[1] is None or existing_placement[2] is None
+                    or existing_placement[3] != "present"):
                 db.execute(
                     "UPDATE placements SET identity_id=?,artifact_id=?,"
                     "state='present',last_seen_at=?,updated_at=? "
