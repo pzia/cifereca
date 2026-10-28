@@ -39,3 +39,40 @@ def test_selected_kobo_wrong_key_has_no_network(changes):
         assert vault.calls == 0 and not posts
     finally:
         session.close()
+
+def test_kobo_missing_selected_purchase_cannot_start_post():
+    session, vault, broker, account, posts = setup()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="right_unobserved"):
+            session.rights_selected_delivery_offer_snapshot(
+                account, **select(edition_id="unowned", right_id="unowned"),
+            )
+        assert vault.calls == 1 and not posts
+    finally:
+        session.close()
+
+@pytest.mark.parametrize("change", ["identity", "broker", "account"])
+def test_kobo_rebind_after_offer_projection_discarded(change):
+    from dataclasses import replace
+    from tests.test_p1_3252_rights_observation_snapshot import OwnerBroker
+
+    session, vault, broker, account, posts = setup()
+    original = session.rights_delivery_offer_snapshot
+    def during_projection(*args, **kwargs):
+        offer = original(*args, **kwargs)
+        if change == "identity":
+            broker.identities = ("identity-B",)
+        elif change == "broker":
+            session.identity_broker = OwnerBroker()
+        else:
+            session._accounts = [replace(session._accounts[0])]
+        return offer
+    session.rights_delivery_offer_snapshot = during_projection
+    try:
+        with pytest.raises(ProviderCapabilityError, match="owner_changed"):
+            session.rights_selected_delivery_offer_snapshot(
+                account, **select(),
+            )
+        assert len(posts) == 1
+    finally:
+        session.close()
