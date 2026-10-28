@@ -207,7 +207,7 @@ def publish_completed_acquisition(
             raise ValueError("canonical_final_file_changed")
 
         artifact = db.execute(
-            "SELECT sha256,size,media_format FROM artifacts WHERE artifact_id=?",
+            "SELECT sha256,size,media_format,metadata_json FROM artifacts WHERE artifact_id=?",
             (artifact_id,),
         ).fetchone()
         if artifact is None:
@@ -224,10 +224,42 @@ def publish_completed_acquisition(
             artifact[0] == final_sha256 and artifact[1] == before.st_size
             and (artifact[2] == fmt or {artifact[2], fmt} <= {"epub", "kepub"})
         ):
-            # KEPUB and EPUB are both ZIP-based EPUB bytes. When an already
-            # indexed identical file has another extension, preserve its
-            # immutable SHA record instead of creating an artificial clash.
-            raise ValueError("canonical_artifact_collision")
+            # The legacy 0.7 mirror may have pre-created a SHA row with an
+            # unverified size/format. A validated final delivery is stronger
+            # evidence, but ONLY an untouched, explicitly legacy placeholder
+            # may be corrected. Never rewrite an Artifact linked to present
+            # bytes, an OriginLink or an independent variant.
+            try:
+                legacy_only = json.loads(artifact[3]) == {"imported_from": "backup_items"}
+            except (TypeError, ValueError):
+                legacy_only = False
+            if (artifact[0] != final_sha256 or not legacy_only
+                    or db.execute(
+                        "SELECT 1 FROM placements WHERE artifact_id=? "
+                        "AND state!='unverified' LIMIT 1", (artifact_id,),
+                    ).fetchone()
+                    or db.execute(
+                        "SELECT 1 FROM origin_links WHERE artifact_id=? "
+                        "OR parent_artifact_id=? LIMIT 1",
+                        (artifact_id, artifact_id),
+                    ).fetchone()
+                    or db.execute(
+                        "SELECT 1 FROM artifact_variants WHERE artifact_id=? "
+                        "OR parent_artifact_id=? LIMIT 1",
+                        (artifact_id, artifact_id),
+                    ).fetchone()):
+                raise ValueError("canonical_artifact_collision")
+            updated = db.execute(
+                "UPDATE artifacts SET size=?,media_format=?,mime_type=?,"
+                "metadata_json='{}',updated_at=? "
+                "WHERE artifact_id=? AND metadata_json=?",
+                (before.st_size, fmt,
+                 "application/pdf" if fmt == "pdf" else "application/epub+zip",
+                 now, artifact_id, artifact[3]),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("canonical_artifact_collision")
+            changed = True
 
         coordinates = (
             scope.identity_id, scope.provider_id, scope.credential_id,
