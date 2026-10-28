@@ -74,14 +74,19 @@ def rig(tmp_path, monkeypatch):
         storage.close()
 
 
-def run(service, account, snapshot, root, lock_path, consent, deliver):
+def run(service, account, snapshot, root, lock_path, consent, deliver,
+        consent_still_current=None):
     with InterProcessLock(lock_path) as lease:
         return execute_admitted_convergence(
             service, account, service._sessions[(
                 account.provider_id, account.credential_id,
             )], snapshot, admitted_epoch=service._account_context_epoch,
             shared_lock=lease, library_root=root,
-            persisted_consent=frozenset(consent), deliver=deliver,
+            persisted_consent=frozenset(consent),
+            consent_still_current=consent_still_current or (
+                lambda key: key in consent
+            ),
+            deliver=deliver,
         )
 
 
@@ -94,7 +99,8 @@ def fake_delivery(service, root, profile="A", *, on_get=None):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(BYTES)
         return CompletedDelivery(
-            path, SHA, "synthetic-completed-delivery-" + source.right_id,
+            source, observed_right.delivery_offer_id, path, SHA,
+            "synthetic-completed-delivery-" + source.right_id,
         )
     return getter
 
@@ -166,6 +172,7 @@ def test_core_epoch_changed_between_account_read_and_dispatch_denies_get(rig):
                 service, account, service._sessions[("seller-a", "card-A")],
                 snapshot, admitted_epoch=1, shared_lock=lease, library_root=root,
                 persisted_consent=frozenset({source}),
+                consent_still_current=lambda _: True,
                 deliver=lambda *_: pytest.fail("old epoch must not GET"),
             )
     assert rows(service.storage) == (0, 0, 0, 0)
@@ -179,6 +186,7 @@ def test_without_shared_core_lock_no_get_possible(rig):
             service, account, service._sessions[("seller-a", "card-A")],
             snapshot, admitted_epoch=1, shared_lock=lease, library_root=root,
             persisted_consent=frozenset({source}),
+            consent_still_current=lambda _: True,
             deliver=lambda *_: pytest.fail("never GET without lock"),
         )
 
@@ -215,3 +223,44 @@ def test_two_interchangeable_provider_adapters_share_sha_not_profile_rights(rig)
         lambda *_: pytest.fail("B already physically attested"),
     )[0].status == "present_attested"
     assert service.storage.entitlements() == []
+
+
+@pytest.mark.parametrize("mismatch", ["foreign_source", "other_offer"])
+def test_completed_delivery_foreign_right_or_offer_cannot_publish(rig, mismatch):
+    service, account, source, snapshot, root, lock_path = rig
+
+    def wrong(key, row):
+        service.calls += 1
+        path = root / "A" / "book.pdf"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(BYTES)
+        foreign, _ = new_source(
+            "A", provider="seller-a", credential="other-card",
+            account="buyer-A",
+        )
+        return CompletedDelivery(
+            foreign if mismatch == "foreign_source" else key,
+            "other-offer" if mismatch == "other_offer" else row.delivery_offer_id,
+            path, SHA, "unrelated-completed-receipt",
+        )
+    result = run(service, account, snapshot, root, lock_path, {source}, wrong)
+    assert service.calls == 1
+    assert result[0].status == "failed"
+    assert rows(service.storage) == (0, 0, 0, 0)
+
+
+def test_consent_revoked_during_get_blocks_canonical_persistence(rig):
+    service, account, source, snapshot, root, lock_path = rig
+    allowed = {source}
+    def revoke(_key):
+        allowed.clear()
+    result = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root, on_get=revoke),
+        consent_still_current=lambda key: key in allowed,
+    )
+    assert service.calls == 1
+    assert result[0].status == "blocked"
+    assert result[0].reason == "consent_revoked_after_get"
+    assert rows(service.storage) == (0, 0, 0, 0)
+    assert (root / "A" / "book.pdf").read_bytes() == BYTES
