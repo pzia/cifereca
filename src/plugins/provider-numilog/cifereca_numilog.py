@@ -885,7 +885,7 @@ class NumilogSession(ProviderSession):
             # private candidate before it can be admitted by Core.
             if not selected_owner_still_bound():
                 if (type(staged) is tuple and len(staged) == 2
-                        and type(staged[0]) is Path
+                        and isinstance(staged[0], Path)
                         and staged[0].parent == target):
                     staged[0].unlink(missing_ok=True)
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
