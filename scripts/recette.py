@@ -147,6 +147,7 @@ class Copier:
         self.databases: set[Path] = set()
         self.copied: set[Path] = set()
         self.excluded: list[str] = []
+        self.content_roots: set[Path] = set()
 
     def register(self, source: Path, destination: Path) -> None:
         source = source.absolute()
@@ -170,7 +171,9 @@ class Copier:
             raise Rejected("Copy destination outside recipe")
         if source in self.copied or not source.exists():
             return
-        if any(part.lower() in SESSION_PARTS or part.lower().startswith(("cookies.", "session.", "storage_state.")) for part in source.parts):
+        name = source.name.lower()
+        is_content = any(source.is_relative_to(root) for root in self.content_roots)
+        if not is_content and (name in SESSION_PARTS or name.startswith(("cookies.", "session.", "storage_state."))):
             self.excluded.append(str(source))
             return
         if source.is_dir():
@@ -520,6 +523,7 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool) 
         copier.register(config_source.parent, target / "config/cifereca")
         copier.register(data_source, target / "data/cifereca")
         copier.register(library_source, target / "library")
+        copier.content_roots.add(library_source)
         # Runtime caches, browser profiles and installed old plugin code are
         # never copied. Packages come from the frozen source tree instead.
         copier.sources[str(config_source)] = fingerprint(config_source)
