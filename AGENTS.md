@@ -2,7 +2,7 @@
 
 ## Architecture canonique (28/10/2026)
 
-**Toute évolution Core/Plugins/UX de synchronisation doit suivre [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) et la décision [#3171](https://github.com/pzia/cifereca/issues/3171).** Une seule Sync automatique inventorie les droits exacts A, vérifie OriginLink→SHA→Placement dans le profil B, puis acquiert les fichiers non satisfaits selon droits/consentements existants ; Notice C reste descriptive. Le rattrapage manuel #2797 est une exception, jamais une deuxième boucle obligatoire. La documentation cible **ne signifie pas que le moteur soit livré** ; les PR #3523/#3528 sont de lecture seule, les migrations #3196/#3275 restent nécessaires. Les consignes de journal brut et de credentials ci-dessous **prévalent** pour leur périmètre.
+**Toute évolution Core/Plugins/UX de synchronisation doit suivre [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) et la décision [#3171](https://github.com/pzia/cifereca/issues/3171).** Une seule Sync automatique inventorie les droits exacts A, vérifie OriginLink→SHA→Placement dans le profil B, puis acquiert les fichiers non satisfaits selon droits/consentements existants ; Notice C reste descriptive. Le rattrapage manuel #2797 est une exception, jamais une deuxième boucle obligatoire. La documentation cible **ne signifie pas que le moteur soit livré** ; #3528 est un lecteur Core **fusionné**, #3523 un plan en mémoire **ouvert** ; les migrations #3196/#3275 restent nécessaires. Les consignes de journal brut et de credentials ci-dessous **prévalent** pour leur périmètre.
 
 
 ## Consigne supérieure Diagnostics (25/10/2026, #3132)
