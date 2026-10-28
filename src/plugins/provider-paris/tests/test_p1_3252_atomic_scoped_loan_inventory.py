@@ -61,23 +61,22 @@ def fixture():
 
 def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
     session, a, b = fixture()
-    # Freeze A after loans(a) has written last_loan_errors but BEFORE its
-    # snapshot computes per-branch coverage. The B thread attempts to
-    # overwrite the same v1 mutable facade by calling legacy loans(b).
+    # Freeze A after its private branch read but BEFORE its typed envelope.
+    # A concurrent legacy loans(B) must not corrupt A's typed evidence.
     read_a_complete, unblock_a, read_b_started, read_b_complete = (
         Event(), Event(), Event(), Event()
     )
-    legacy_loans = session.loans
+    private_read = session._read_loans_for_account
 
-    def frozen_loans(account):
-        rows = legacy_loans(account)
+    def frozen_loans(account, *, publish_legacy_errors=True):
+        rows = private_read(account, publish_legacy_errors=publish_legacy_errors)
         if account.unique_id == a.unique_id:
             read_a_complete.set()
             if not unblock_a.wait(10):
                 raise AssertionError("Synthetic read A timed out")
         return rows
 
-    session.loans = frozen_loans
+    session._read_loans_for_account = frozen_loans
 
     def run_b():
         read_b_started.set()
@@ -92,8 +91,8 @@ def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
             task_b = pool.submit(run_b)
             assert read_b_started.wait(10)
             try:
-                # The snapshot must protect BOTH the upstream read and its
-                # interpretation of the mutable v1 last_loan_errors.
+                # The typed reader holds the same lock as the legacy facade
+                # and derives its status from per-read branch evidence.
                 assert not read_b_complete.wait(0.15)
             finally:
                 unblock_a.set()
@@ -137,17 +136,14 @@ def test_same_account_snapshot_is_one_read_per_branch_without_claiming_absence()
 
 def test_typed_branch_failure_survives_legacy_side_channel_cleared():
     session, a, _ = fixture()
-    original = session.loans
-
-    def clear_v1_after_read(account):
-        rows = original(account)
-        session.last_loan_errors.clear()
-        return rows
-
-    session.loans = clear_v1_after_read
+    session.last_loan_errors = [{"upstream": "SYRACUSE", "code": "stale"}]
     try:
         snapshot = session.loan_inventory_snapshot(a)
-        assert session.last_loan_errors == []
+        # The typed reader must neither depend on nor overwrite this
+        # compatibility-only v1 channel.
+        assert session.last_loan_errors == [
+            {"upstream": "SYRACUSE", "code": "stale"},
+        ]
         assert snapshot.status == "partial"
         assert snapshot.reason_code == "branch_unavailable"
         assert {(branch.upstream, branch.completeness)
@@ -164,16 +160,12 @@ def test_typed_branch_failure_survives_legacy_side_channel_cleared():
 
 def test_typed_success_ignores_stale_legacy_failure_from_another_read():
     session, _a, b = fixture()
-    original = session.loans
-
-    def inject_v1_error_after_read(account):
-        rows = original(account)
-        session.last_loan_errors = [{"upstream": "DILICOM", "code": "stale"}]
-        return rows
-
-    session.loans = inject_v1_error_after_read
+    session.last_loan_errors = [{"upstream": "DILICOM", "code": "stale"}]
     try:
         snapshot = session.loan_inventory_snapshot(b)
+        assert session.last_loan_errors == [
+            {"upstream": "DILICOM", "code": "stale"},
+        ]
         assert snapshot.status == "success"
         assert snapshot.reason_code is None
         assert len(snapshot.loans) == 2
@@ -187,7 +179,9 @@ def test_typed_success_ignores_stale_legacy_failure_from_another_read():
 
 def test_typed_reader_without_scoped_branch_evidence_fails_closed():
     session, a, _ = fixture()
-    session.loans = lambda _account: []  # Bad v1 shim: no branch GET/evidence.
+    session._read_loans_for_account = (
+        lambda _account, *, publish_legacy_errors=True: []
+    )  # A broken *typed* backend cannot fabricate branch coverage.
     try:
         with pytest.raises(ProviderConfigurationError, match="loan_inventory_evidence_missing"):
             session.loan_inventory_snapshot(a)
