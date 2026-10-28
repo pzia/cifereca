@@ -422,12 +422,29 @@ class KoboSession(ProviderSession):
             (bound_account, binding_generation)
             if account_id is not None and scope != "catalog" else None
         )
-        if personal_binding is not None:
-            # Detect a rebind between the initial account check and the
-            # network request, not only after its result is projected.
+        bound_identity_id = bound_account.identity_id if personal_binding else None
+        broker = self.identity_broker if personal_binding else None
+        owner = (
+            self._rights_owner_snapshot(account_id)
+            if personal_binding and broker is not None else None
+        )
+
+        def private_guard() -> None:
+            if personal_binding is None:
+                return
             self._ensure_personal_binding(
                 *personal_binding, expected_account_id=account_id,
+                expected_identity_id=bound_identity_id,
             )
+            if (self.identity_broker is not broker
+                    or (broker is not None
+                        and self._rights_owner_snapshot(account_id) != owner)):
+                raise ProviderError(
+                    "Kobo-Vault : propriétaire modifié avant lecture privée"
+                )
+
+        if personal_binding is not None:
+            private_guard()
         # Input validation above accepts harmless casing/outer whitespace,
         # but the Vault API must always receive the *declared* canonical
         # general-search value. Passing " ALL " to Vault would be a different
@@ -439,8 +456,22 @@ class KoboSession(ProviderSession):
         # fallback from a complete authenticated catalogue/library search.
         # Reset is done before input validation, so even rejected attempts
         # cannot leave a previous personal-denial warning visible.
+        # The actual Vault client performs a public catalogue GET before a
+        # private /library/search GET. Fence BETWEEN them. Third-party
+        # injected catalogue adapters keep their old search() signature.
+        real_catalogue = (
+            personal_binding is not None
+            and isinstance(self.client, KoboVaultClient)
+            and isinstance(self.catalog, KoboCatalogService)
+            and self.catalog.client is self.client
+            and getattr(self.catalog.search, "__func__", None)
+            is KoboCatalogService.search
+        )
         try:
-            rows = self.catalog.search(query, **options)
+            rows = self.catalog.search(
+                query, **options,
+                **({"private_guard": private_guard} if real_catalogue else {}),
+            )
         except KoboVaultError as exc:
             # The public Core fallback accepts only the exact search_* code
             # vocabulary. Keep the KoboVaultError *type* and verified HTTP
@@ -546,9 +577,7 @@ class KoboSession(ProviderSession):
         if personal_binding is not None:
             # A close/rebind inside catalogue HTTP or local row projection
             # must not present stale purchased items as current search hits.
-            self._ensure_personal_binding(
-                *personal_binding, expected_account_id=account_id,
-            )
+            private_guard()
         return accepted
 
     def _ensure_personal_binding(
