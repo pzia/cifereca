@@ -124,13 +124,40 @@ Les sécurités de #3595 (propriétaire après projection) et #3602
 `available` ou `unknown` suivant les preuves du descripteur ; pas
 de déduction d'acquisition depuis `downloadable` ni depuis une archive.
 
-**Limite :** Kobo n'implémente pas ici
-`rights_selected_delivery_candidate`. `resolve_acquisition` produit
-un **descripteur privé**, pas des octets vérifiés : son URL ne doit jamais
-devenir un reçu Core. Le GET de contenu, la validation du format/DRM et
-le reçu indépendant demeurent à raccorder sous le contrôle de A/#3171.
-Paris reste `state=unknown`, donc pas de promotion en droit actif
-pour une Sync automatique.
+## Kobo — exécution ciblée sous staging Core
+
+La session Kobo expose désormais **également**
+`rights_selected_delivery_candidate(account, *, edition_id, right_id, kind,
+branch, delivery_offer_id, target_dir, explicit_user_action)` pour les
+achats exacts `personal_manifest`. Ce chemin n'est pas une acquisition
+automatique : Core doit d'abord avoir admis le droit et relu le
+**consentement SQLite exact**, puis choisi un staging de profil neuf.
+
+La facette relit le manifeste positif de **l'édition sélectionnée**,
+fait un nouveau POST `descriptor` sous identité/credential/compte actuels
+avec `expected_offer_id`, et refuse tout candidat contradictoire,
+ambigu, expiré ou dont la route a changé. La rotation de l'URL signée
+est acceptée uniquement si l'offre opaque exacte demeure identique.
+Elle utilise exclusivement le client public HTTPX de
+`cifereca.plugin_api.HTTPX_TRANSPORT.public_client` : transport réseau
+avec résolution/connexion épinglée aux **IP globales**, aucun proxy ou
+cookie Vault, aucun suivi de redirection (302/307/308 refusés),
+réponse HTTP 200 uniquement, streaming limité à 128 Mio.
+Le contenu doit être compatible avec la forme annoncée : PDF, EPUB/KEPUB
+zip ou ACSM XML (max. 2 Mio pour ACSM).
+
+Le résultat est exclusivement `(staging_path, "")` : aucune URL signée
+ou en-tête d'autorisation ne franchit cette surface. Les contrôles
+broker A→A/A→B, epoch, objet de session, credential et compte sont répétés
+**avant le manifeste, après POST, pendant le streaming et avant retour**.
+Toute erreur supprime le fichier partiel. Le plugin ne fournit **aucun**
+`CompletedDelivery`, hash canonique, reçu indépendant ou publication.
+
+Core #3171 reste seul responsable de l'inspection structurelle définitive,
+du traitement ADEPT d'un ACSM, de la preuve finale, du rehash du Placement,
+de l'`OriginLink` et de la seconde Sync sans nouveau GET. Les chemins
+KDRM/non HTTP restent **refusés**. Paris reste `state=unknown` tant
+qu'un prêt actif n'est pas prouvé ; aucune promotion automatique.
 
 ### Pourquoi différer l'ADEPT Numilog dans la voie canonique
 
