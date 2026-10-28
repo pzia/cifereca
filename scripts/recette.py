@@ -241,14 +241,15 @@ class Copier:
         finally:
             shutil.rmtree(stage)
 
-    def rewrite(self, value, key: str = ""):
+    def rewrite(self, value, key: str = "", *, credential: bool = False):
+        credential = credential or key.lower() in {"credentials", "credentials_json"}
         if isinstance(value, dict):
-            return {k: self.rewrite(v, k) for k, v in value.items() if not SESSION_KEYS.search(k)}
+            return {k: self.rewrite(v, k, credential=credential) for k, v in value.items() if not SESSION_KEYS.search(k)}
         if isinstance(value, list):
-            return [self.rewrite(v, key) for v in value]
+            return [self.rewrite(v, key, credential=credential) for v in value]
         if not isinstance(value, str):
             return value
-        if opaque_field(key):
+        if opaque_field(key) or (credential and not PATH_KEYS.search(key)):
             # Secrets and provider identifiers may legitimately start with /
             # or contain a source directory. They are not filesystem paths.
             return value
@@ -260,7 +261,7 @@ class Copier:
             return value
         if value[:1] in {"{", "["}:
             try:
-                return json.dumps(self.rewrite(json.loads(value)), ensure_ascii=False)
+                return json.dumps(self.rewrite(json.loads(value), credential=credential), ensure_ascii=False)
             except json.JSONDecodeError:
                 pass
         prefix = next((p for p in ("sqlite://", "file://", "file:") if value.startswith(p)), "")
@@ -446,16 +447,17 @@ def inventory(target: Path) -> dict:
     return files
 
 
-def confined_values(value, target: Path, key: str = "", *, forbidden_roots=()) -> None:
+def confined_values(value, target: Path, key: str = "", *, forbidden_roots=(), credential: bool = False) -> None:
     """Verify path-bearing values without copying, rewriting or executing."""
+    credential = credential or key.lower() in {"credentials", "credentials_json"}
     if isinstance(value, dict):
         for name, item in value.items():
-            confined_values(item, target, name, forbidden_roots=forbidden_roots)
+            confined_values(item, target, name, forbidden_roots=forbidden_roots, credential=credential)
     elif isinstance(value, list):
         for item in value:
-            confined_values(item, target, key, forbidden_roots=forbidden_roots)
+            confined_values(item, target, key, forbidden_roots=forbidden_roots, credential=credential)
     elif isinstance(value, str):
-        if opaque_field(key):
+        if opaque_field(key) or (credential and not PATH_KEYS.search(key)):
             return
         if key == "relative_path":
             if Path(value).is_absolute() or ".." in Path(value).parts:
@@ -463,7 +465,7 @@ def confined_values(value, target: Path, key: str = "", *, forbidden_roots=()) -
             return
         if value[:1] in {"{", "["}:
             try:
-                confined_values(json.loads(value), target, forbidden_roots=forbidden_roots)
+                confined_values(json.loads(value), target, forbidden_roots=forbidden_roots, credential=credential)
                 return
             except json.JSONDecodeError:
                 pass
