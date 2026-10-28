@@ -197,3 +197,46 @@ def test_failed_migration_does_not_leave_partly_created_authority(tmp_path, monk
         assert recovered.schema_version() == 14
     finally:
         recovered.close()
+
+
+def test_provider_origin_must_have_matching_profile_and_source_type(tmp_path):
+    storage = Storage(tmp_path / "provider-scope.sqlite")
+    try:
+        storage.artifact_put({
+            "artifact_id": "sha256:" + SHA, "sha256": SHA,
+            "size": 1234, "media_format": "epub",
+        })
+        with storage._lock, storage._connect() as db:
+            _ref(db, "purchase-A")
+            _ref(db, "purchase-B", identity="B", provider="seller-B",
+                 credential="card-B", account="buyer-B")
+            _ref(db, "transferred-C", identity="C", provider="cifereca",
+                 credential="local", account="C", kind="internal")
+            _link(db, "A-provider", "provider", "A", source="purchase-A")
+            _link(db, "B-provider", "provider", "B", source="purchase-B")
+            with pytest.raises(sqlite3.IntegrityError, match="provider_origin_scope_mismatch"):
+                _link(db, "foreign", "provider", "B", source="purchase-A")
+            with pytest.raises(sqlite3.IntegrityError, match="provider_origin_scope_mismatch"):
+                _link(db, "internal-is-not-a-purchase", "provider", "C",
+                      source="transferred-C")
+            with pytest.raises(sqlite3.IntegrityError, match="provider_origin_scope_mismatch"):
+                db.execute(
+                    "UPDATE origin_links SET identity_id='C' WHERE origin_link_id='A-provider'"
+                )
+            with pytest.raises(sqlite3.IntegrityError, match="provider_origin_source_immutable"):
+                db.execute(
+                    "UPDATE source_references SET identity_id='C' "
+                    "WHERE source_reference_id='purchase-A'"
+                )
+            assert db.execute("SELECT count(*) FROM origin_links").fetchone()[0] == 2
+            assert db.execute(
+                "SELECT identity_id FROM source_references "
+                "WHERE source_reference_id='purchase-A'"
+            ).fetchone()[0] == "A"
+            # A per-profile purchase right is still independent at the same SHA.
+            assert db.execute(
+                "SELECT count(DISTINCT identity_id) FROM origin_links "
+                "WHERE origin_kind='provider'"
+            ).fetchone()[0] == 2
+    finally:
+        storage.close()
