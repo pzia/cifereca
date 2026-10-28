@@ -47,6 +47,7 @@ jobs:
               echo "bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select --full)"
               echo "lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select --full)"
               echo "branch_cleanup=$(test -f scripts/nettoyer_branches_git_stream.py && echo true || echo false)"
+              echo "recette=$(test -f scripts/recette.py && echo true || echo false)"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -75,6 +76,7 @@ jobs:
           install=false
           dataset=false
           branch_cleanup=false
+          recette=false
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
           lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
@@ -111,6 +113,13 @@ jobs:
           # script or tests change; they live outside the usual tests/ tree.
           if matches '^scripts/(nettoyer_branches_git_stream\.py|test_nettoyer_branches_git_stream\.py)$'; then
             branch_cleanup=true
+          fi
+
+          # #3607: mandatory OS confinement and lifecycle proof, synthetic only.
+          # Also exercise this route when changing the workflow itself.
+          if matches '^(scripts/recette\.py$|tests/test_recette\.py$|\.github/workflows/pr-ci\.yml$)' && \
+             [[ -f scripts/recette.py && -f tests/test_recette.py ]]; then
+            recette=true
           fi
 
           # Gate script changes exercise packaging and installed-Core validation.
@@ -161,6 +170,7 @@ jobs:
             echo "bnf_reader=$bnf_reader"
             echo "lending_conformance=$lending_conformance"
             echo "branch_cleanup=$branch_cleanup"
+            echo "recette=$recette"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check production plugins use Core HTTPX service
@@ -172,6 +182,18 @@ jobs:
           test -f scripts/nettoyer_branches_git_stream.py
           test -f scripts/test_nettoyer_branches_git_stream.py
           python3 -m unittest -v scripts.test_nettoyer_branches_git_stream
+
+      - name: Disposable recipe acceptance (real Linux confinement, synthetic data)
+        if: steps.scope.outputs.recette == 'true'
+        env:
+          CIFERECA_REQUIRE_SANDBOX_TESTS: "1"
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap dbus-x11 xvfb python3-venv
+          # Ephemeral runner only: permit bwrap's unprivileged user namespace.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          python3 -m unittest discover -s tests -p test_recette.py -v
 
       - uses: actions/setup-python@v6
         if: steps.scope.outputs.python == 'true'
