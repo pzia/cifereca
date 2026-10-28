@@ -711,6 +711,12 @@ class AccountRef:
     label: str
     connected: bool = True
     capabilities: tuple[str, ...] = ()
+    # Scope v2 is additive: old plugin fixtures retain the v1 defaults.
+    # credential_id is the Core account binding ID, not an authentication
+    # secret. Its presence is NOT authorization to download or alter rights.
+    # Consumers must revalidate the same Core owner/session after provider I/O.
+    credential_id: str = ""
+    scope_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)
