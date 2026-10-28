@@ -7,7 +7,50 @@ from dataclasses import replace
 import pytest
 
 from cifereca.plugin_api import ProviderConfigurationError
-from tests.test_p1_3252_rights_observation_snapshot import fixture, activity
+from cifereca_bnf_pret import BnfProviderSession
+
+
+def activity(*pairs):
+    return ('<section class="active-loans">'
+            + ''.join(
+                f'<div class="js-loan"><a href="/resources/{edition}">Book</a>'
+                f'<a href="/loans/{right}">Loan</a></div>'
+                for edition, right in pairs
+            )
+            + '</section>')
+
+
+class Client:
+    def __init__(self, html):
+        self.html = html
+        self.calls = []
+
+    def login(self, username, password):
+        self.calls.append("login")
+        return activity()
+
+    def activity(self):
+        self.calls.append("activity")
+        return self.html
+
+    def clear(self):
+        self.calls.append("clear")
+
+    def close(self):
+        self.calls.append("close")
+
+
+def fixture(html):
+    client = Client(html)
+    session = BnfProviderSession(
+        client=client, credential_id="credential-A",
+        label="Synthetic BnF",
+        credentials={"username": "synthetic", "password": "synthetic"},
+        options={},
+    )
+    (account,) = session.connect()
+    account.identity_id = "identity-A"
+    return session, account, client
 
 
 @pytest.mark.parametrize("race", [
