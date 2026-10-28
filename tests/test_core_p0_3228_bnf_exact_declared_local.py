@@ -120,12 +120,17 @@ def test_stale_declared_loan_blocks_get_without_mutating_old_file(
     assert service.storage.acquisitions(provider_id="manual") == []
 
 
-def test_revoked_declaration_is_not_reused_as_local_delivery(
+def test_revoked_declaration_does_not_veto_independent_opted_in_delivery(
     connected_core, tmp_path, monkeypatch,
 ):
     service, session, account, loan, downloaded, broker, sid, book, scope = prepared(
         connected_core, tmp_path, monkeypatch,
     )
+    attempted = []
+    def synthetic_stop(*_a, **_kw):
+        attempted.append(True)
+        raise RuntimeError("synthetic stop before signed GET")
+    monkeypatch.setattr(session, "download_digital", synthetic_stop)
     original = book.read_bytes()
     from tests.test_library_declared_links import records
     record, = [r for r in records(service) if r["scope"] == scope]
@@ -146,6 +151,7 @@ def test_revoked_declaration_is_not_reused_as_local_delivery(
     outcome = materialize(service, account, loan)
     assert outcome == {
         "status": "attention_required",
-        "code": "bnf_local_candidate_reconciliation_required",
+        "code": "bnf_auto_acquisition_failed",
     }
-    assert not downloaded and book.read_bytes() == original
+    assert attempted == [True] and not downloaded
+    assert book.read_bytes() == original

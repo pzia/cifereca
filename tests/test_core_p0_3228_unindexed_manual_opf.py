@@ -79,7 +79,7 @@ def test_invalid_epub_makes_scan_inconclusive_without_permission_to_download(tmp
 
 
 @pytest.mark.parametrize('directory', ['manual', 'acsm-import'])
-def test_unindexed_same_opf_title_blocks_second_get_and_adept(
+def test_unindexed_same_opf_title_is_a_hint_not_an_automatic_get_veto(
     connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = active(connected_core)
@@ -92,9 +92,9 @@ def test_unindexed_same_opf_title_blocks_second_get_and_adept(
     for _ in range(2):
         assert materialize(service, account, loan) == {
             'status': 'attention_required',
-            'code': 'bnf_local_candidate_reconciliation_required',
+            'code': 'bnf_auto_acquisition_failed',
         }
-    assert invoked == downloaded == []
+    assert invoked == [True, True] and downloaded == []
     assert path.read_bytes() == before_bytes
     assert service.storage.acquisitions(provider_id='manual') == before_receipts
     assert service.storage.entitlements() == before_rights
@@ -128,9 +128,9 @@ def test_second_unrelated_loan_remains_eligible_without_false_reconciliation(
     monkeypatch.setattr(session, 'download_digital', no_network)
     other = replace(loan, title='Another distinct book')
     cache = {}
-    assert materialize(service, account, loan, physical_scan_cache=cache)['code'] == 'bnf_local_candidate_reconciliation_required'
+    assert materialize(service, account, loan, physical_scan_cache=cache)['code'] == 'bnf_auto_acquisition_failed'
     assert materialize(service, account, other, physical_scan_cache=cache)['code'] == 'bnf_auto_acquisition_failed'
-    assert len(cache) == 1 and invoked == [True] and not downloaded
+    assert len(cache) == 1 and invoked == [True, True] and not downloaded
     assert first.is_file()
 
 
@@ -152,16 +152,24 @@ def test_unindexed_symlinked_root_never_triggers_signed_get(
     assert (outside / 'book.epub').exists()
 
 
-def test_source_sync_reports_unindexed_review_without_download(
-    connected_core, tmp_path,
+def test_source_sync_unindexed_title_hint_no_longer_requires_manual_review(
+    connected_core, tmp_path, monkeypatch,
 ):
-    service, _session, account, loan, downloaded = active(connected_core)
+    service, session, account, loan, downloaded = active(connected_core)
     path = manual_epub(tmp_path, loan.title)
     before = path.read_bytes()
+    attempted = []
+
+    def stop_before_signed_get(*_a, **_kw):
+        attempted.append(True)
+        raise RuntimeError("synthetic stop before HTTP/ACSM/ADEPT")
+
+    monkeypatch.setattr(session, 'download_digital', stop_before_signed_get)
     result = SynchronizationBrokerImpl(service).synchronize_source(
         SynchronizationBrokerImpl._source_id(account),
     )
     assert result.facts['status'] == 'partial'
-    assert result.facts['files_reconciliation_required'] == 1
-    assert not downloaded
+    assert result.facts['files_reconciliation_required'] == 0
+    assert attempted == [True] and not downloaded
     assert path.read_bytes() == before
+    assert not service.storage.acquisitions(provider_id='manual')
