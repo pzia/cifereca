@@ -75,6 +75,7 @@ def test_paris_download_valid_exact_core_account_copy_stages_only_own_loan(tmp_p
     "foreign_identity", "foreign_credential", "foreign_account",
     "foreign_loan_account", "foreign_loan_credential", "physical_loan",
     "unlinked_broker", "ambiguous_broker", "replaced_account",
+    "primary_flag_inconsistent",
 ])
 def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monkeypatch, change):
     session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
@@ -95,6 +96,8 @@ def test_paris_foreign_loan_or_borrower_refused_before_signed_get(tmp_path, monk
             session.identity_broker.identities = ("identity-B",)
         elif change == "ambiguous_broker":
             session.identity_broker.identities = ("identity-A", "identity-A")
+        elif change == "primary_flag_inconsistent":
+            account.is_primary = True
         else:
             session._accounts = [replace(account)]
         with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
@@ -154,6 +157,63 @@ def test_paris_disconnect_during_pnb_response_never_stages_file(tmp_path, monkey
         with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
             session.download_digital(loan, account, tmp_path)
         assert requested == [SIGNED]
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
+
+
+def test_paris_fallback_pnb_post_uses_pinned_loan_edition_and_borrower(tmp_path, monkeypatch):
+    session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
+    loan.ebook_url = None
+    captured = []
+
+    def preferences():
+        return {"ReaderId": "fictional-reader", "PassPhrase": "", "Hint": ""}
+
+    def endpoint(source_loan, uid, prefs):
+        captured.append((source_loan, uid, prefs))
+        # Mutation of the caller while the network request is underway
+        # cannot change the submitted provider/edition/reader reference.
+        loan.record_id = "foreign-edition"
+        account.unique_id = "foreign-reader"
+        return SIGNED
+
+    client.pnb_preferences = preferences
+    client.download_digital_document = endpoint
+    try:
+        with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
+            session.download_digital(loan, account, tmp_path)
+        assert len(captured) == 1
+        source_loan, uid, prefs = captured[0]
+        assert source_loan is not loan
+        assert source_loan.record_id == "edition-1"
+        assert source_loan.provider == "DILICOM"
+        assert uid == "reader-A"
+        assert prefs["ReaderId"] == "fictional-reader"
+        assert requested == []  # no signed GET after rebind
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
+
+
+def test_paris_fallback_pnb_preferences_rebind_blocks_endpoint_before_post(
+    tmp_path, monkeypatch,
+):
+    session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
+    loan.ebook_url = None
+    endpoint_calls = []
+
+    def preferences():
+        session.identity_broker.identities = ("identity-B",)
+        return {"ReaderId": "fictional-reader"}
+
+    client.pnb_preferences = preferences
+    client.download_digital_document = lambda *_args: endpoint_calls.append("POST")
+    try:
+        with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
+            session.download_digital(loan, account, tmp_path)
+        assert endpoint_calls == []
+        assert requested == []
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
