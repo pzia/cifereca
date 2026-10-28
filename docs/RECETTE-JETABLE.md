@@ -46,6 +46,9 @@ ou en échec reste supprimable ; une recette lancée est arrêtée automatiqueme
   objets JSON réécrites, y compris les références externes découvertes. Les
   profils/identités et leurs identifiants métier sont conservés pour tester
   les données multicomptes ; ils ne sont pas rebaptisés arbitrairement.
+  Identifiants et credentials restent des valeurs opaques, même lorsqu'ils
+  commencent par `/` ou ressemblent à un chemin ; ils ne sont pas copiés comme
+  fichiers ni ajoutés au mapping du manifeste.
 - Lecture des sources avec `O_NOATIME`, sans changement de permissions ; liens
   symboliques et fichiers spéciaux refusés. Une source inaccessible sans
   modifier son atime provoque un refus, notamment un fichier appartenant à un

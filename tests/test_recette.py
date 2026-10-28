@@ -47,8 +47,8 @@ class RecipeFixture(unittest.TestCase):
         self.config.write_text(json.dumps({
             "library": {"directory": str(self.books)},
             "identities": [{"id": "alice", "adept_profile": "adept-alice"}, {"id": "bob"}],
-            "providers": {"accounts": [{"id": "a", "identity_id": "alice", "enabled": True,
-                                        "credentials": {"password": "synthetic-password", "access_token": "synthetic-session"}}]},
+            "providers": {"accounts": [{"id": "a", "identity_id": "alice", "account_id": "/opaque-account", "enabled": True,
+                                        "credentials": {"password": "/synthetic-password", "access_token": "synthetic-session"}}]},
             "downloads": {"directory": str(self.books / "downloads"), "command": ["dangerous-hook"]},
         }))
         self.env_patch = patch.dict(os.environ, {"XDG_DATA_HOME": str(self.production / "data")})
@@ -172,7 +172,8 @@ class RecipeFixture(unittest.TestCase):
         config = json.loads((target / "config/cifereca/config.json").read_text())
         account = config["providers"]["accounts"][0]
         self.assertFalse(account["enabled"])
-        self.assertEqual(account["credentials"], {"password": "synthetic-password"})
+        self.assertEqual(account["credentials"], {"password": "/synthetic-password"})
+        self.assertEqual(account["account_id"], "/opaque-account")
         self.assertEqual(config["downloads"]["command"], [])
         self.assertFalse(config["kobo_backup"]["enabled"])
         self.assertFalse(config["llm"]["enabled"])
@@ -180,6 +181,7 @@ class RecipeFixture(unittest.TestCase):
         self.assertEqual(recette.fingerprint(self.config), before)
         manifest_text = (target / "manifest.json").read_text()
         self.assertNotIn("synthetic-password", manifest_text)
+        self.assertNotIn("/opaque-account", json.loads(manifest_text)["path_map"])
         self.assertEqual(json.loads(manifest_text)["sha"], "a" * 40)
         self.assertTrue(recette.verify(target)["ok"])
         self.assertTrue(recette.verify(target)["ok"])
@@ -213,6 +215,29 @@ class RecipeFixture(unittest.TestCase):
         recette.write_json(path, config)
         with self.assertRaisesRegex(recette.Rejected, "Runtime path outside"):
             recette.verify(target)
+
+    def test_sql_identifiers_and_credentials_resembling_paths_stay_opaque(self):
+        source = self.data / "library.sqlite3"
+        identity = str(self.books / "opaque-identity")
+        secret = str(self.books / "opaque-password")
+        credential = str(self.books / "opaque-credential")
+        with sqlite3.connect(source) as db:
+            db.execute("CREATE TABLE fixture_identity (identity_id TEXT, metadata_json TEXT)")
+            db.execute("INSERT INTO fixture_identity VALUES (?, ?)", (identity, json.dumps({
+                "password": secret, "credential_id": credential, "local_path": str(self.book),
+            })))
+        target = self.create_fixture()
+        with sqlite3.connect(target / "data/cifereca/library.sqlite3") as db:
+            row = db.execute("SELECT * FROM fixture_identity").fetchone()
+        self.assertEqual(row[0], identity)
+        metadata = json.loads(row[1])
+        self.assertEqual(metadata["password"], secret)
+        self.assertEqual(metadata["credential_id"], credential)
+        self.assertEqual(metadata["local_path"], str(target / "library/a.epub"))
+        self.assertTrue(recette.verify(target)["ok"])
+        manifest = (target / "manifest.json").read_text()
+        self.assertNotIn("opaque-password", manifest)
+        self.assertNotIn("opaque-credential", manifest)
 
     def test_destroy_refuses_root_outside_symlink_and_forged_marker(self):
         for path in (self.root, self.production, self.base):

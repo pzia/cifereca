@@ -37,6 +37,12 @@ SESSION_PARTS = {"sessions", "session", "cookies", "browser", "browser-profiles"
                  "chromium", "firefox", "playwright", "__pycache__"}
 SESSION_KEYS = re.compile(r"(^|_)(session|cookie|cookies|token|refresh_token|access_token)($|_)", re.I)
 PATH_KEYS = re.compile(r"(?:^|_)(path|directory|folder|root|file|socket|profile_dir|database|db)$", re.I)
+OPAQUE_KEYS = {"id", "adept_profile", "password", "passwd", "pwd", "passphrase",
+               "username", "login", "api_key", "apikey", "private_key", "secret", "client_secret"}
+
+
+def opaque_field(key: str) -> bool:
+    return key.lower() in OPAQUE_KEYS or key.lower().endswith("_id")
 
 
 def recipe_root() -> Path:
@@ -242,6 +248,10 @@ class Copier:
             return [self.rewrite(v, key) for v in value]
         if not isinstance(value, str):
             return value
+        if opaque_field(key):
+            # Secrets and provider identifiers may legitimately start with /
+            # or contain a source directory. They are not filesystem paths.
+            return value
         if key == "relative_path":
             # Catalog metadata relative to its (already relocated) library
             # root is descriptive; resolving it against HOME loses the file.
@@ -436,25 +446,29 @@ def inventory(target: Path) -> dict:
     return files
 
 
-def confined_values(value, target: Path, key: str = "") -> None:
+def confined_values(value, target: Path, key: str = "", *, forbidden_roots=()) -> None:
     """Verify path-bearing values without copying, rewriting or executing."""
     if isinstance(value, dict):
         for name, item in value.items():
-            confined_values(item, target, name)
+            confined_values(item, target, name, forbidden_roots=forbidden_roots)
     elif isinstance(value, list):
         for item in value:
-            confined_values(item, target, key)
+            confined_values(item, target, key, forbidden_roots=forbidden_roots)
     elif isinstance(value, str):
+        if opaque_field(key):
+            return
         if key == "relative_path":
             if Path(value).is_absolute() or ".." in Path(value).parts:
                 raise Rejected("Invalid catalog relative path")
             return
         if value[:1] in {"{", "["}:
             try:
-                confined_values(json.loads(value), target)
+                confined_values(json.loads(value), target, forbidden_roots=forbidden_roots)
                 return
             except json.JSONDecodeError:
                 pass
+        if any(old in value for old in forbidden_roots):
+            raise Rejected("Production reference remains in database")
         prefix = next((p for p in ("sqlite://", "file://", "file:") if value.startswith(p)), "")
         candidate = value[len(prefix):]
         if candidate.startswith(("/", "~/")) or (value and PATH_KEYS.search(key) and "://" not in value):
@@ -491,11 +505,11 @@ def verify(path: Path, *, initial: bool = False) -> dict:
             # original root references. A residual reference blocks startup.
             for (table,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"):
                 quoted = '"' + table.replace('"', '""') + '"'
-                for row in db.execute(f"SELECT * FROM {quoted}"):
-                    for value in row:
-                        if isinstance(value, str) and any(old in value for old in manifest["path_map"]):
-                            raise Rejected("Production reference remains in database")
-                        confined_values(value, target)
+                rows = db.execute(f"SELECT * FROM {quoted}")
+                columns = [column[0] for column in rows.description]
+                for row in rows:
+                    for column, value in zip(columns, row):
+                        confined_values(value, target, column, forbidden_roots=manifest["path_map"])
     report = {"format": FORMAT, "id": marker["id"], "sha": manifest["sha"],
               "ok": True, "source_files_unchanged": len(manifest["sources"]),
               "files_checked": len(files), "network": "disabled", "sandbox": "required",
