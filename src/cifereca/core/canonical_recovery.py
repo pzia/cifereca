@@ -9,7 +9,6 @@ No blob is inferred from a matching filename, SHA or old backup_items row.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -152,15 +151,17 @@ def record_completed_delivery_for_recovery(
             )
         elif row[:5] != coords:
             raise ValueError("canonical_intake_record_collision")
-        elif row[5] == "complete":
-            # A replayed current delivery must not alter a committed receipt.
-            if row[6] != data:
-                raise ValueError("canonical_intake_completed_record_immutable")
-        elif row[5] == "acquiring":
-            db.execute(
-                "UPDATE acquisition_ledger SET metadata_json=?,updated_at=? "
-                "WHERE acquisition_id=?", (data, now, record_id),
-            )
+        elif row[5] in ("complete", "acquiring"):
+            # The same supplier offer may be legally reissued after the
+            # original file was removed. A NEW completed GET and its new
+            # receipt replace only this *non-authoritative* retry checkpoint,
+            # never the provider/ADEPT historical OriginLinks.
+            if row[6] != data or row[5] != "acquiring":
+                db.execute(
+                    "UPDATE acquisition_ledger SET status='acquiring',"
+                    "metadata_json=?,artifact_id=NULL,updated_at=? "
+                    "WHERE acquisition_id=?", (data, now, record_id),
+                )
         else:
             raise ValueError("canonical_intake_record_state_conflict")
     return record_id
