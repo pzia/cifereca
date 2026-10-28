@@ -805,12 +805,28 @@ class NumilogSession(ProviderSession):
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('numilog_selected_delivery_scope_mismatch')
 
+        # Core owns and pre-creates a private staging directory. Do not
+        # perform any private MesLivres GET or create filesystem paths if
+        # the selected destination is missing, redirected or unsafe.
+        try:
+            target = Path(target_dir)
+            target_valid = (
+                target.is_dir() and not target.is_symlink()
+                and target.resolve(strict=True).is_dir()
+            )
+        except (OSError, TypeError, ValueError, RuntimeError):
+            target_valid = False
+        if not target_valid:
+            raise ProviderCapabilityError('numilog_selected_staging_invalid')
+
         with self.lock:
             accounts = self._accounts
             live = accounts[0] if len(accounts) == 1 else None
             pinned = (account.identity_id, account.provider_id,
                       account.credential_id, account.unique_id)
             owner = self._inventory_owner_or_none()
+            broker, client = self.identity_broker, self.client
+            session_scope = (self.provider_id, self.credential_id)
             # The session's Account may be an older provider-created object
             # with no Core identity yet (legacy 'default'), while Core supplies a
             # Account copy. Only the unique broker owner attests Core identity.
@@ -829,14 +845,23 @@ class NumilogSession(ProviderSession):
             # library() is the existing scoped positive listing. A stale or
             # ambiguous item cannot select an alternative book by title.
             listed = self.library()
-            if (self._accounts is not accounts
-                    or len(self._accounts) != 1
-                    or self._accounts[0] is not live
-                    or (account.identity_id, account.provider_id,
-                        account.credential_id, account.unique_id) != pinned
-                    or (live.identity_id, live.provider_id,
-                        live.credential_id, live.unique_id) != live_scope
-                    or self._inventory_owner_or_none() != owner):
+            def selected_owner_still_bound():
+                return (
+                    self.connected is True
+                    and self._accounts is accounts
+                    and len(self._accounts) == 1
+                    and self._accounts[0] is live
+                    and self.client is client
+                    and self.identity_broker is broker
+                    and (self.provider_id, self.credential_id) == session_scope
+                    and (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id) == pinned
+                    and (live.identity_id, live.provider_id,
+                         live.credential_id, live.unique_id) == live_scope
+                    and self._inventory_owner_or_none() == owner
+                )
+
+            if not selected_owner_still_bound():
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
             matches = [
                 item for item in listed
@@ -849,12 +874,22 @@ class NumilogSession(ProviderSession):
             # This existing path fetches the fresh exact signed card again,
             # rejects changed offer/owner before the delivery GET and stages
             # a candidate. A returned Path is NOT a canonical Core receipt.
-            return self.download_direct(
+            staged = self.download_direct(
                 matches[0], target_dir,
                 expected_offer_id=delivery_offer_id,
                 expected_identity_id=pinned[0],
                 stage_acsm_only=True,
             )
+            # A broker rebind, disconnected session or even A→A replacement
+            # after the last signed GET is not a Core receipt. Withdraw the
+            # private candidate before it can be admitted by Core.
+            if not selected_owner_still_bound():
+                if (type(staged) is tuple and len(staged) == 2
+                        and isinstance(staged[0], Path)
+                        and staged[0].parent == target):
+                    staged[0].unlink(missing_ok=True)
+                raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+            return staged
 
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
@@ -1386,6 +1421,13 @@ class NumilogSession(ProviderSession):
                         cookie_header_present=bool(r.request.headers.get('cookie')))
                     trace.fail(public_http_code(r.status_code))
                     if r.status_code in REDIRECTS:
+                        if stage_acsm_only and attested_hop:
+                            # A Core-selected signed action is a one-GET
+                            # candidate route, not permission to navigate to
+                            # another supplier URL or a login/renewal flow.
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_redirect_unexpected'
+                            )
                         # The P0 pre-normalization guard can reject this hop
                         # before another GET. Attribute that failure safely.
                         trace.fail('origin_rejected')
@@ -1409,6 +1451,10 @@ class NumilogSession(ProviderSession):
                     trace.fail('mime_unexpected')
                     mime = r.headers.get('content-type','').split(';')[0].lower().strip()
                     if mime == 'text/html':
+                        if stage_acsm_only and attested_hop:
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_html_unexpected'
+                            )
                         trace.fail('html_oversize')
                         html = self._small(r).decode('utf-8-sig',errors='replace')
                         try:
@@ -1611,6 +1657,13 @@ class NumilogSession(ProviderSession):
                             self._validate_download_owner(owner, owner_scope=owner_scope)
                         trace.fail('artifact_invalid')
                         if inspect_artifact(part, 'acsm').valid:
+                            # The selected route is part of the attested offer.
+                            # An EPUB-direct offer cannot silently deliver an
+                            # Adobe fulfillment token instead.
+                            if stage_acsm_only and selected_link is not None and selected_kind != 'acsm':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
                             acsm = part.with_suffix('.acsm')
                             os.replace(part, acsm)
                             if stage_acsm_only:
@@ -1649,6 +1702,30 @@ class NumilogSession(ProviderSession):
                         trace.fail('adept_unconfirmed')
                         if owner is not None:
                             self._validate_download_owner(owner, owner_scope=owner_scope)
+                        if stage_acsm_only:
+                            # A selected EPUB is a Core candidate, never a
+                            # published book from the legacy delivery path.
+                            # Never let an ACSM-selected route change format.
+                            if selected_link is not None and selected_kind != 'epub_direct':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
+                            candidate = part.with_suffix('.epub')
+                            os.replace(part, candidate)
+                            try:
+                                if owner is not None:
+                                    self._validate_download_owner(
+                                        owner, owner_scope=owner_scope,
+                                    )
+                                trace.success('epub_candidate')
+                                trace.event(
+                                    'artifact_validation', 'epub_candidate',
+                                    hops=hop+1,
+                                )
+                                return candidate, self.library_url
+                            except BaseException:
+                                candidate.unlink(missing_ok=True)
+                                raise
                         if title:
                             destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
                         else:

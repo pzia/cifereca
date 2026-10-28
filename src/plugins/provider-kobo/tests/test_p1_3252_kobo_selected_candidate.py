@@ -259,3 +259,59 @@ def test_live_account_with_other_core_identity_fails_before_private_read(
         assert vault.calls == 0 and posts == [] and clients == []
     finally:
         session.close()
+
+
+def test_same_kobo_book_different_core_owner_cannot_reuse_offer(
+    tmp_path, monkeypatch,
+):
+    first, _v1, _b1, a, _posts1 = setup()
+    second, vault, broker, b, posts = setup()
+    clients = []
+    fake_public_client(monkeypatch, lambda _: pytest.fail(
+        "foreign account offer must never cause a content GET",
+    ), clients)
+    try:
+        offer_a = admitted(first, a)
+        broker.identities = ("identity-B",)
+        b.identity_id = "identity-B"
+        # Same product, credential and provider; different Core owner must
+        # derive a different signed-link-independent selected offer ID.
+        offer_b = admitted(second, b)
+        assert offer_a != offer_b
+        with pytest.raises((ProviderCapabilityError, ProviderError)):
+            execute(second, b, offer_a, tmp_path)
+        assert clients == [] and not list(tmp_path.iterdir())
+        assert all(x[0] == "book-1" for x in posts)
+        # Original owner's selection remains qualified independently.
+        assert offer_a.startswith("kobo.descriptor:")
+    finally:
+        first.close()
+        second.close()
+
+
+@pytest.mark.parametrize("expiry", [
+    "2001-01-01T00:00:00+00:00",
+    "not-an-instant",
+    "2099-01-01T00:00:00",
+])
+def test_expired_or_invalid_fresh_kobo_descriptor_refused_before_get(
+    tmp_path, monkeypatch, expiry,
+):
+    session, vault, broker, account, posts = setup()
+    clients = []
+    fake_public_client(monkeypatch, lambda _: pytest.fail(
+        "invalid fresh expiry must never authorize a content GET",
+    ), clients)
+    try:
+        offer = admitted(session, account)
+        def changed_descriptor(product_id, **kwargs):
+            posts.append((product_id, kwargs))
+            result = descriptor()
+            result["acquisition"]["validity"] = {"expires_at": expiry}
+            return result
+        vault.acquisition = changed_descriptor
+        with pytest.raises((ProviderCapabilityError, ProviderError)):
+            execute(session, account, offer, tmp_path)
+        assert clients == [] and not list(tmp_path.iterdir())
+    finally:
+        session.close()
