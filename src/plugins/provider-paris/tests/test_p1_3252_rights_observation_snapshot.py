@@ -301,3 +301,56 @@ def test_paris_plugin_lifecycle_injects_the_public_core_identity_broker():
         assert session.identity_broker is broker
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("duplicate_records", [
+    # Identical repeated page card and contradictory edition for one loan ID:
+    # neither case is proof of two independent rights.
+    (upstream("loan-repeated", "edition-A"),
+     upstream("loan-repeated", "edition-A")),
+    (upstream("loan-repeated", "edition-A"),
+     upstream("loan-repeated", "edition-B")),
+])
+def test_paris_duplicate_loan_id_quarantines_both_copies_not_other_loans(
+    duplicate_records,
+):
+    session, account, client = fixture(digital=(
+        upstream("loan-unique-1", "edition-1"),
+        duplicate_records[0],
+        upstream("loan-unique-2", "edition-2"),
+        duplicate_records[1],
+        duplicate_records[0],  # repeated a third time remains quarantined
+    ))
+    try:
+        snapshot = session.rights_observation_snapshot(account)
+        assert [(right.right_id, right.edition_id) for right in snapshot.rights] == [
+            ("loan-unique-1", "edition-1"),
+            ("loan-unique-2", "edition-2"),
+        ]
+        assert snapshot.exact("edition-A", "loan-repeated", "loan") is None
+        assert snapshot.exact("edition-B", "loan-repeated", "loan") is None
+        assert snapshot.status == snapshot.coverage == "partial"
+        assert snapshot.pagination_complete is False
+        assert not snapshot.authorizes_negative_reconciliation
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
+def test_paris_two_distinct_loans_for_one_edition_are_not_duplicate_rights():
+    session, account, client = fixture(digital=(
+        upstream("loan-1", "same-edition"),
+        upstream("loan-2", "same-edition"),
+    ))
+    try:
+        snapshot = session.rights_observation_snapshot(account)
+        assert [(right.right_id, right.edition_id) for right in snapshot.rights] == [
+            ("loan-1", "same-edition"), ("loan-2", "same-edition"),
+        ]
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
