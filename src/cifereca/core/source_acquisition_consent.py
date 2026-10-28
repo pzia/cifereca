@@ -123,6 +123,30 @@ def set_source_acquisition_consent(service, account: Account, source: SourceKey,
             raise ValueError("acquisition_consent_scope_changed")
 
 
+def consent_current_in_transaction(db, source: SourceKey) -> bool:
+    """Recheck the durable exact permission under publication's SQL lock.
+
+    No Storage calls, commits, network or filesystem work. BEGIN IMMEDIATE
+    serializes a concurrent external revocation with canonical publication.
+    """
+    if type(source) is not SourceKey:
+        return False
+    record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
+    return record is not None and _payload_allowed(record[0], source)
+
+
+def _payload_allowed(raw, source):
+    if type(raw) is not str or len(raw) > 65_536:
+        return False
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        return False
+    return (type(payload) is dict and payload.get("schema") == _SCHEMA
+            and payload.get("source") == list(_coordinates(source))
+            and payload.get("allowed") is True)
+
+
 def read_source_acquisition_consent(service, account: Account) -> frozenset[SourceKey]:
     """Read fresh persisted permission for current positive exact references.
 
@@ -154,14 +178,6 @@ def read_source_acquisition_consent(service, account: Account) -> frozenset[Sour
             if not _attested(source, evidence_ref, observed_at):
                 continue
             record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
-            if record is None or type(record[0]) is not str or len(record[0]) > 65_536:
-                continue
-            try:
-                payload = json.loads(record[0])
-            except (ValueError, TypeError, RecursionError):
-                continue
-            if (type(payload) is dict and payload.get("schema") == _SCHEMA
-                    and payload.get("source") == list(_coordinates(source))
-                    and payload.get("allowed") is True):
+            if record is not None and _payload_allowed(record[0], source):
                 admitted.add(source)
         return frozenset(admitted) if current() else frozenset()

@@ -537,6 +537,11 @@ class LibraryService:
         from .core.source_acquisition_consent import read_source_acquisition_consent
         return read_source_acquisition_consent(self, account)
 
+    def _canonical_publication_consent_current(self, connection, source) -> bool:
+        """Lock-safe check on the publisher's own SQLite transaction."""
+        from .core.source_acquisition_consent import consent_current_in_transaction
+        return consent_current_in_transaction(connection, source)
+
     def sync_source_enabled(self, account: Account) -> bool:
         """Same fail-closed toggle as the public Sync broker.
 

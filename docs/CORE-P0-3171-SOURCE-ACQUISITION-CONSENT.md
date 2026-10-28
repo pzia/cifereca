@@ -31,3 +31,9 @@ préflight privé/POST/GET, le routage réel doit utiliser cette permission et
 vérifier offre actuelle, session, droit et résultat final. Les tests utilisent
 SQLite et le vrai orchestrateur Sync avec livraison synthétique ; aucune
 recette réseau/ADEPT réelle n'est revendiquée. #3171 et #3252 restent ouverts.
+
+Le publisher reçoit aussi une garde Core exécutée sur **sa propre connexion
+SQLite**, après le hash final et juste avant le commit. Elle relit uniquement
+la permission exacte ; aucun appel Storage imbriqué ne peut bloquer le verrou
+non récursif. Une révocation pendant le hash empêche donc le commit ; une
+révocation externe concurrente à `BEGIN IMMEDIATE` est sérialisée par SQLite.

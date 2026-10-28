@@ -350,6 +350,9 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                             persisted_consent=consent,
                             consent_still_current=current_consent,
                             deliver=delivery, cancelled=cancelled_for_rights,
+                            publication_guard=getattr(
+                                self, "_canonical_publication_consent_current", None,
+                            ),
                         )
                         counts = {
                             status: sum(row.status == status for row in outcomes)

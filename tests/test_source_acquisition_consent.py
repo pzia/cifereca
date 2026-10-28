@@ -198,3 +198,61 @@ def test_ambiguous_account_registry_and_budget_overflow_never_grant(rig, monkeyp
     service.accounts.pop()
     monkeypatch.setattr("cifereca.core.source_acquisition_consent._LIMIT", 0)
     assert read_source_acquisition_consent(service, service.account) == frozenset()
+
+
+def test_revocation_during_final_hash_prevents_atomic_publication(rig, monkeypatch):
+    service, db, root = rig
+    grant(service)
+    service._canonical_persisted_consent = lambda account: LibraryService._canonical_persisted_consent(service, account)
+    service._canonical_publication_consent_current = lambda connection, source: LibraryService._canonical_publication_consent_current(service, connection, source)
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], delivery="available", delivery_offer_id="exact-offer",
+    ),))
+    def deliver(key, offer):
+        path = root / "A" / "delivered.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(key, offer.delivery_offer_id, path, SHA, "completed-receipt")
+    service._canonical_right_delivery = deliver
+    from cifereca.core import canonical_publication
+    real_publish = canonical_publication.publish_completed_acquisition
+    def revoke_while_hashing(*args, **kwargs):
+        from cifereca.catalog import LocalCatalog
+        original_hash = LocalCatalog.sha256
+        def hashing(path):
+            digest = original_hash(path)
+            set_source_acquisition_consent(service, service.account, service.source, allowed=False)
+            return digest
+        with monkeypatch.context() as patch:
+            patch.setattr(LocalCatalog, "sha256", staticmethod(hashing))
+            return real_publish(*args, **kwargs)
+    monkeypatch.setattr("cifereca.core.convergence_execution.publish_completed_acquisition", revoke_while_hashing)
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["failed"] == 1
+    assert refs(db)[1] == 0 and db.placements() == []
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+
+
+def test_final_transaction_guard_rolls_back_all_publication_rows(rig):
+    service, db, root = rig
+    grant(service)
+    path = root / "A" / "delivered.pdf"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(BYTES)
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+    checks = []
+    def policy_guard(connection):
+        checks.append(connection)
+        return len(checks) == 1
+    with pytest.raises(ValueError, match="canonical_publication_policy_changed"):
+        publish_completed_acquisition(
+            db, library_root=root, path=path, source=service.source,
+            snapshot=service.snapshot, final_sha256=SHA,
+            delivery_receipt_ref="completed-receipt", transaction_guard=policy_guard,
+        )
+    assert len(checks) == 2 and checks[0] is checks[1]
+    assert refs(db)[1] == 0 and db.placements() == []
+    with db._lock, db._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 0
+    assert path.read_bytes() == BYTES
