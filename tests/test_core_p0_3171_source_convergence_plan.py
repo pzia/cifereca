@@ -221,6 +221,7 @@ def test_zero_mutation_deterministic_second_plan():
     second = plan(snap, **inputs)
     assert first == second
     assert first.decisions[0].state == "present_attested"
+    assert first.decisions[0].provider_satisfied
 
 def test_origin_link_requires_exact_context_and_proof_without_granting_right():
     snap, key = source()
@@ -284,6 +285,7 @@ def test_fresh_user_declaration_is_present_but_not_attested_or_acquired(provider
     expected = plan(snap, scans=(scan("A"),), declarations=(record,),
                     consent=(key,))
     assert expected.decisions[0].state == "present_declared"
+    assert not expected.decisions[0].provider_satisfied
     assert expected.decisions[0].reason == "declared_current_independent_admission_required"
     assert expected.decisions[0].independent_acquisition_review_possible
     assert expected.decisions[0].placement_ids == ("file-1",)
@@ -448,6 +450,7 @@ def test_declared_copy_cannot_veto_pre_authorized_acquisition(right_kind):
     action = plan(snap, declarations=(declaration,), scans=(scan("A"),),
                   consent=(key,)).decisions[0]
     assert action.state == "present_declared"
+    assert not action.provider_satisfied
     assert action.placement_ids == ("candidate-file",)
     assert action.independent_acquisition_review_possible
     assert not action.acquisition_authorized
