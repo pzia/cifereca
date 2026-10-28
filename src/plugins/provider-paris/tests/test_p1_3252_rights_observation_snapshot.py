@@ -469,3 +469,49 @@ def test_paris_malformed_dilicom_right_identifiers_do_not_drop_valid_siblings():
         assert len(client.calls) == 2
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("foreign_identity", ["identity-A", "identity-B"])
+def test_paris_rights_core_v2_same_upstream_id_different_credentials_are_isolated(
+    foreign_identity,
+):
+    session, account, client = fixture(digital=(upstream("loan-A", "edition-A"),))
+    # Core #3559 v2 returns both credentials. The other credential's row
+    # cannot make one legitimate reader look like two ambiguous owners.
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="reader-A", identity_id="identity-A",
+           credential_id="card-A", scope_version=2),
+        NS(provider_id="paris", account_id="reader-A",
+           identity_id=foreign_identity, credential_id="card-B", scope_version=2),
+    ]
+    try:
+        snap = session.rights_observation_snapshot(account)
+        assert [(x.right_id, x.edition_id) for x in snap.rights] == [
+            ("loan-A", "edition-A"),
+        ]
+        assert snap.scope.credential_id == "card-A"
+        assert client.calls == [("DILICOM", "reader-A"), ("SYRACUSE", "reader-A")]
+        assert not snap.authorizes_negative_reconciliation
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("refs", [
+    [NS(provider_id="paris", account_id="reader-A",
+        identity_id="identity-A", credential_id="card-B", scope_version=2)],
+    [NS(provider_id="paris", account_id="reader-A",
+        identity_id="identity-A", credential_id="", scope_version=2)],
+    [NS(provider_id="paris", account_id="reader-A",
+        identity_id="identity-A", credential_id="card-A", scope_version=2),
+     NS(provider_id="paris", account_id="reader-A",
+        identity_id="identity-A")],  # A mixed, unqualified v1 account is ambiguous.
+])
+def test_paris_rights_wrong_credential_or_mixed_v1_v2_refuses_before_get(refs):
+    session, account, client = fixture(digital=(upstream("loan-A", "edition-A"),))
+    session.identity_broker.accounts = lambda: refs
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
+            session.rights_observation_snapshot(account)
+        assert client.calls == []
+    finally:
+        session.close()
