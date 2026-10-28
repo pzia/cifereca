@@ -825,6 +825,8 @@ class NumilogSession(ProviderSession):
             pinned = (account.identity_id, account.provider_id,
                       account.credential_id, account.unique_id)
             owner = self._inventory_owner_or_none()
+            broker, client = self.identity_broker, self.client
+            session_scope = (self.provider_id, self.credential_id)
             # The session's Account may be an older provider-created object
             # with no Core identity yet (legacy 'default'), while Core supplies a
             # Account copy. Only the unique broker owner attests Core identity.
@@ -843,14 +845,23 @@ class NumilogSession(ProviderSession):
             # library() is the existing scoped positive listing. A stale or
             # ambiguous item cannot select an alternative book by title.
             listed = self.library()
-            if (self._accounts is not accounts
-                    or len(self._accounts) != 1
-                    or self._accounts[0] is not live
-                    or (account.identity_id, account.provider_id,
-                        account.credential_id, account.unique_id) != pinned
-                    or (live.identity_id, live.provider_id,
-                        live.credential_id, live.unique_id) != live_scope
-                    or self._inventory_owner_or_none() != owner):
+            def selected_owner_still_bound():
+                return (
+                    self.connected is True
+                    and self._accounts is accounts
+                    and len(self._accounts) == 1
+                    and self._accounts[0] is live
+                    and self.client is client
+                    and self.identity_broker is broker
+                    and (self.provider_id, self.credential_id) == session_scope
+                    and (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id) == pinned
+                    and (live.identity_id, live.provider_id,
+                         live.credential_id, live.unique_id) == live_scope
+                    and self._inventory_owner_or_none() == owner
+                )
+
+            if not selected_owner_still_bound():
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
             matches = [
                 item for item in listed
@@ -863,12 +874,22 @@ class NumilogSession(ProviderSession):
             # This existing path fetches the fresh exact signed card again,
             # rejects changed offer/owner before the delivery GET and stages
             # a candidate. A returned Path is NOT a canonical Core receipt.
-            return self.download_direct(
+            staged = self.download_direct(
                 matches[0], target_dir,
                 expected_offer_id=delivery_offer_id,
                 expected_identity_id=pinned[0],
                 stage_acsm_only=True,
             )
+            # A broker rebind, disconnected session or even A→A replacement
+            # after the last signed GET is not a Core receipt. Withdraw the
+            # private candidate before it can be admitted by Core.
+            if not selected_owner_still_bound():
+                if (type(staged) is tuple and len(staged) == 2
+                        and type(staged[0]) is Path
+                        and staged[0].parent == target):
+                    staged[0].unlink(missing_ok=True)
+                raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+            return staged
 
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
