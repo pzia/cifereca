@@ -321,7 +321,7 @@ def test_same_final_sha_two_providers_never_borrow_another_profile_receipt(
     service.accounts.append(b)
     service._sessions[("seller-b", "card-B")] = NS(
         provider_id="seller-b", credential_id="card-B",
-        connected=True, _closed=False,
+        connected=True, _closed=False, accounts=[b],
     )
     right_b, snap_b = new_source(
         "B", provider="seller-b", credential="card-B", account="buyer-B",
