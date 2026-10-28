@@ -45,7 +45,7 @@ class RecipeFixture(unittest.TestCase):
         self.config = self.configdir / "config.json"
         self.config.write_text(json.dumps({
             "library": {"directory": str(self.books)},
-            "identities": [{"id": "alice"}, {"id": "bob"}],
+            "identities": [{"id": "alice", "adept_profile": "adept-alice"}, {"id": "bob"}],
             "providers": {"accounts": [{"id": "a", "identity_id": "alice", "enabled": True,
                                         "credentials": {"password": "synthetic-password", "access_token": "synthetic-session"}}]},
             "downloads": {"directory": str(self.books / "downloads"), "command": ["dangerous-hook"]},
@@ -97,7 +97,7 @@ class RecipeFixture(unittest.TestCase):
         with sqlite3.connect(source) as db:
             db.execute("CREATE TABLE placement (identity TEXT PRIMARY KEY, local_path TEXT, metadata TEXT) WITHOUT ROWID")
             db.executemany("INSERT INTO placement VALUES (?, ?, ?)", [
-                ("alice", str(self.book), json.dumps({"file": str(outside)})),
+                ("alice", str(self.book), json.dumps({"file": str(outside), "relative_path": "a.epub"})),
                 ("bob", "file://" + str(self.book), json.dumps({"local_path": "~/missing-fixture.epub"})),
             ])
         self.copier.register(self.books, self.target / "books")
@@ -112,6 +112,7 @@ class RecipeFixture(unittest.TestCase):
         copied_outside = Path(json.loads(rows[0][2])["file"])
         self.assertTrue(copied_outside.is_relative_to(self.target))
         self.assertEqual(copied_outside.read_bytes(), outside.read_bytes())
+        self.assertEqual(json.loads(rows[0][2])["relative_path"], "a.epub")
         self.assertNotEqual(copied_outside.stat().st_ino, outside.stat().st_ino)
         self.assertEqual([r[0] for r in rows], ["alice", "bob"])
 
@@ -173,7 +174,7 @@ class RecipeFixture(unittest.TestCase):
         self.assertEqual(config["downloads"]["command"], [])
         self.assertFalse(config["kobo_backup"]["enabled"])
         self.assertFalse(config["llm"]["enabled"])
-        self.assertEqual(config["identities"], [{"id": "alice"}, {"id": "bob"}])
+        self.assertEqual(config["identities"], [{"id": "alice", "adept_profile": "adept-alice"}, {"id": "bob"}])
         self.assertEqual(recette.fingerprint(self.config), before)
         manifest_text = (target / "manifest.json").read_text()
         self.assertNotIn("synthetic-password", manifest_text)
@@ -288,6 +289,49 @@ class RecipeFixture(unittest.TestCase):
         self.assertEqual(result.read_bytes(), b"outside library")
         with self.assertRaisesRegex(recette.Rejected, "destination outside"):
             self.copier.capture(self.config, self.target / "../escape")
+
+    def test_real_git_snapshot_is_pinned_and_symlink_archives_are_refused(self):
+        repository = self.production / "git-fixture"
+        subprocess.run(["git", "init", "-b", "main", str(repository)], check=True, stdout=subprocess.DEVNULL)
+        def git(*arguments):
+            return subprocess.check_output(["git", "-C", str(repository), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *arguments], text=True).strip()
+        (repository / "snapshot.txt").write_text("first commit")
+        git("add", ".")
+        git("commit", "-m", "synthetic first snapshot")
+        first = git("rev-parse", "HEAD")
+        actual_run, actual_output = subprocess.run, subprocess.check_output
+        def network_run(command, **kwargs):
+            command = list(command)
+            if "fetch" in command:
+                command[command.index("https://fixture.invalid/repo.git")] = str(repository)
+            return actual_run(command, **kwargs)
+        def output(command, **kwargs):
+            if command[-3:] == ["remote", "get-url", "origin"]:
+                return "https://fixture.invalid/repo.git\n"
+            return actual_output(command, **kwargs)
+        # Only transport routing is replaced; Git fetch/rev-parse/archive and
+        # archive extraction execute for real against an isolated fixture.
+        with patch("subprocess.run", side_effect=network_run), patch("subprocess.check_output", side_effect=output):
+            sha = recette.export_snapshot(self.target, "main")
+            self.assertEqual(sha, first)
+            self.assertEqual((self.target / "code/snapshot.txt").read_text(), "first commit")
+            self.assertFalse((self.target / "snapshot.git").exists())
+        (repository / "snapshot.txt").write_text("second commit")
+        (repository / "alias").symlink_to(self.config)
+        git("add", ".")
+        git("commit", "-m", "synthetic unsafe snapshot")
+        second_target = self.root / "second"
+        second_target.mkdir(mode=0o700)
+        with patch("subprocess.run", side_effect=network_run), patch("subprocess.check_output", side_effect=output):
+            self.assertEqual(recette.export_snapshot(second_target, first), first)
+            self.assertEqual((second_target / "code/snapshot.txt").read_text(), "first commit")
+            unsafe_target = self.root / "unsafe"
+            unsafe_target.mkdir(mode=0o700)
+            with self.assertRaisesRegex(recette.Rejected, "Unsafe snapshot"):
+                recette.export_snapshot(unsafe_target, "main")
+        self.assertTrue(self.config.exists())
+        with self.assertRaisesRegex(recette.Rejected, "full commit SHA"):
+            recette.export_snapshot(self.target, "main; touch escaped")
 
     def test_stale_pid_is_never_signalled(self):
         recette.write_json(self.target / "recipe.json", {"format": recette.FORMAT, "id": "fixture", "target": str(self.target)})
