@@ -7,6 +7,7 @@ import logging
 import re
 from uuid import uuid4
 import time
+import traceback
 from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
@@ -129,7 +130,14 @@ class ReaderHTTPClient:
             code = (str(exc) if isinstance(exc, ReaderHTTPError) else
                     'transport_unavailable' if isinstance(exc, (httpx.HTTPError, UnicodeError))
                     else 'unexpected_failure')
-            self._observe(dict(detail, event='terminal', code=code), 'failed', started)
+            # Keep the compatibility error code but never replace the raw
+            # technical cause in the one canonical diagnostic event. This is
+            # the exception already observed, not a new HTTP capture.
+            self._observe(dict(
+                detail, event='terminal', code=code,
+                error_type=type(exc).__name__, error_message=str(exc),
+                error_traceback=traceback.format_exc(),
+            ), 'failed', started)
             raise
         else:
             # This says only that the bounded HTTP read completed, not that
