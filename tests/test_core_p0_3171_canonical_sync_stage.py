@@ -342,3 +342,28 @@ def test_disabled_source_before_typed_read_never_invokes_provider(rig):
         observe_canonical_rights_in_sync(service, service.account)
     assert service.read_calls == 0
     assert refs(db) == ([], 0)
+
+
+def test_connection_disabled_in_sql_during_read_refuses_A_publication(rig):
+    service, db, root = rig
+    def disabled(_account):
+        with db._lock, db._connect() as conn:
+            conn.execute(
+                "UPDATE provider_connections SET enabled=0 "
+                "WHERE provider_id='seller-a' AND credential_id='card-a'"
+            )
+        return service.snapshot
+    service.session.rights_observation_snapshot = disabled
+    with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+        synchronize_account_source(service, service.account)
+    assert refs(db) == ([], 0)
+    assert db.placements() == []
+
+
+def test_removed_profile_cannot_receive_new_A_through_stale_connection(rig):
+    service, db, root = rig
+    with db._lock, db._connect() as conn:
+        conn.execute("DELETE FROM identities WHERE identity_id='A'")
+    with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+        synchronize_account_source(service, service.account)
+    assert refs(db) == ([], 0)
