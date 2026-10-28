@@ -157,6 +157,28 @@ def validate_epub(path):
     except (KeyError,OSError,zipfile.BadZipFile,ET.ParseError,RuntimeError,NotImplementedError):
         raise ProviderError('Numilog : le fichier reçu n’est pas un EPUB valide') from None
 
+def _numilog_card_offer_id(credential_id, account_id, right_id, evidence):
+    """Opaque exact scoped offer from a real signed MesLivres owned card.
+
+    ProductId and IndexExemplaire come from the DOM-bound provider action.
+    Neither is equated to lid. Signed URLs are never exported or hashed:
+    refreshed signatures may rotate while the same card remains offered.
+    """
+    if (type(evidence) is not OwnedDelivery
+            or evidence.delivery_kind not in {'acsm', 'epub_direct'}
+            or not _attested_public_https(evidence.url)):
+        return ''
+    coords = (credential_id, account_id, right_id,
+              evidence.product_id, evidence.copy_index, evidence.delivery_kind)
+    if (not all(type(x) is str and 0 < len(x) <= 256 for x in coords)
+            or not evidence.product_id.isdecimal()
+            or not evidence.copy_index.isdecimal()):
+        return ''
+    return 'numilog.card:' + hashlib.sha256(
+        '\x00'.join(coords).encode('utf-8')
+    ).hexdigest()
+
+
 class NumilogSession(ProviderSession):
     def __init__(self, *, config, diagnostics, acquisition_broker=None, identity_broker=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR,**kwargs)
@@ -644,6 +666,73 @@ class NumilogSession(ProviderSession):
                 pagination_complete=False, branch='meslivres',
                 observed_at=observed, snapshot_ref='numilog.meslivres',
             )
+
+    def rights_delivery_offer_snapshot(self, account, right_id):
+        """Explicit, selected #3252 offer preflight; NEVER a delivery GET.
+
+        This is an opt-in provider method for a future Core-admitted source,
+        not called by ordinary library/rights sync. The initial rights read
+        establishes one exact positive purchase before parsing any signed
+        card; a second, targeted MesLivres read qualifies only this card's
+        actual JS delivery action. No signed URL, receipt or file is returned.
+        Core must independently persist consent and decide when to deliver.
+        """
+        from dataclasses import replace
+
+        with self.lock:
+            if (type(right_id) is not str or not right_id
+                    or len(right_id) > 256
+                    or not right_id.startswith('numilog:' + self.scope + ':')):
+                raise ProviderCapabilityError('numilog_offer_unobserved')
+            base = self.rights_observation_snapshot(account)
+            original = base.exact(right_id, right_id, 'purchase')
+            if original is None or not original.provider_attested:
+                raise ProviderCapabilityError('numilog_offer_unobserved')
+
+            owner = self._inventory_owner_or_none()
+            live = self._accounts[0]
+            live_list = self._accounts
+            scope = (
+                account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id,
+            )
+            bound = (
+                live.unique_id, live.identity_id,
+                live.provider_id, live.credential_id,
+            )
+            rows = self._rows(
+                include_delivery=True, delivery_record_id=right_id,
+            )
+            if (not self.connected or self._inventory_owner_or_none() != owner
+                    or self._accounts is not live_list
+                    or len(self._accounts) != 1 or self._accounts[0] is not live
+                    or (live.unique_id, live.identity_id,
+                        live.provider_id, live.credential_id) != bound
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != scope):
+                raise ProviderCapabilityError('numilog_offer_owner_changed')
+
+            selected = []
+            for row in rows:
+                try:
+                    if type(row) is dict and self._id(row) == right_id:
+                        selected.append(row)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    continue
+            if len(selected) != 1:
+                # A page failure or missing edition cannot revoke earlier
+                # ownership, but it cannot claim any executable offer.
+                return replace(base, rights=(original,))
+            offer_id = _numilog_card_offer_id(
+                account.credential_id, account.unique_id,
+                right_id, selected[0].get('delivery'),
+            )
+            qualified = replace(
+                original,
+                delivery='available' if offer_id else 'unknown',
+                delivery_offer_id=offer_id,
+            )
+            return replace(base, rights=(qualified,))
 
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
@@ -1437,8 +1526,16 @@ class NumilogSession(ProviderSession):
             trace.fail('redirect_limit')
             raise ProviderError('Numilog : trop de redirections ou pages intermédiaires')
 
-    def download_direct(self,item,target_dir):
+    def download_direct(self,item,target_dir,*,expected_offer_id=None):
         with self.lock:
+            # An optional Core-admitted offer can only narrow the legacy
+            # explicit selection; it never grants an automatic acquisition.
+            if expected_offer_id is not None and (
+                type(expected_offer_id) is not str
+                or not expected_offer_id.startswith('numilog.card:')
+                or len(expected_offer_id) != len('numilog.card:') + 64
+            ):
+                raise ProviderCapabilityError('numilog_offer_unobserved')
             self._canonical_item(item)
             owner = self._identity_id() if self.identity_broker is not None else None
             owner_scope = self._inventory_owner_or_none() if owner is not None else None
@@ -1453,6 +1550,15 @@ class NumilogSession(ProviderSession):
             row = next((row for row in rows if self._id(row) == item.record_id),None)
             if row is None:
                 raise ProviderError('Numilog : livre absent de la bibliothèque actuelle')
+            if expected_offer_id is not None:
+                # No readBook fallback, confirmation navigation or signed GET
+                # may silently replace the exact action admitted by Core.
+                current_offer = _numilog_card_offer_id(
+                    self.credential_id, 'numilog:' + self.scope,
+                    item.record_id, row.get('delivery'),
+                )
+                if current_offer != expected_offer_id:
+                    raise ProviderCapabilityError('numilog_offer_changed')
             directory = Path(target_dir)
             directory.mkdir(parents=True,exist_ok=True)
             name = 'numilog-'+hashlib.sha256(self._id(row).encode()).hexdigest()[:32]+'.epub'
