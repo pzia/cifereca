@@ -116,3 +116,115 @@ def test_unverified_broker_cannot_trigger_any_typed_private_page_get(monkeypatch
         assert calls == []
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("phase", ["response", "parse"])
+@pytest.mark.parametrize("race", [
+    "owner_B", "owner_missing", "broker_ABA", "same_owner_duplicate",
+    "live_account_ABA", "live_account_credential",
+])
+def test_targeted_numilog_delivery_card_never_gets_next_page_after_rebind(
+    monkeypatch, phase, race,
+):
+    """Explicit selected-card delivery must not read page two under new owner."""
+    s, broker = session()
+    seen = []
+    next_url = s.library_url + "?page=2"
+    selected_id = s._id(owned_row())
+
+    def rebind():
+        if race == "owner_B":
+            broker.owner = "identity-B"
+        elif race == "owner_missing":
+            broker.owner = None
+        elif race == "broker_ABA":
+            new_broker = type(broker)()
+            new_broker.account_id = broker.account_id
+            s.identity_broker = new_broker
+        elif race == "same_owner_duplicate":
+            broker.accounts = lambda: [
+                SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
+                                identity_id="identity-A"),
+                SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
+                                identity_id="identity-A"),
+            ]
+        elif race == "live_account_ABA":
+            s._accounts = [replace(s._accounts[0])]
+        else:
+            s._accounts[0].credential_id = "different-credential"
+
+    def page(url, **_):
+        seen.append(url)
+        if url == s.library_url and phase == "response":
+            rebind()
+        return url, "PAGE1" if url == s.library_url else "PAGE2"
+
+    def parse_page(html, _url, **_):
+        if html == "PAGE1":
+            if phase == "parse":
+                rebind()
+            return [owned_row()], next_url
+        return [{**owned_row(), "lid": "43"}], None
+
+    s._page = page
+    monkeypatch.setattr(provider, "parse_library_page", parse_page)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="livraison arrêtée"):
+            s._rows(include_delivery=True, delivery_record_id=selected_id)
+        assert seen == [s.library_url]
+    finally:
+        s.close()
+
+
+def test_targeted_numilog_delivery_with_stable_owner_paginates_normally(monkeypatch):
+    s, _ = session()
+    seen = []
+    next_url = s.library_url + "?page=2"
+    s._page = lambda url, **_: (seen.append(url) or
+                               (url, "PAGE1" if url == s.library_url else "PAGE2"))
+    monkeypatch.setattr(
+        provider, "parse_library_page",
+        lambda page, _url, **_: (
+            [owned_row()] if page == "PAGE1" else
+            [{**owned_row(), "lid": "43"}],
+            next_url if page == "PAGE1" else None,
+        ),
+    )
+    try:
+        rows = s._rows(
+            include_delivery=True, delivery_record_id=s._id(owned_row()),
+        )
+        assert len(rows) == 2
+        assert seen == [s.library_url, next_url]
+    finally:
+        s.close()
+
+
+def test_targeted_delivery_with_unverified_broker_refuses_first_get(monkeypatch):
+    s, broker = session()
+    broker.owner = None
+    seen = []
+    s._page = lambda url, **_: seen.append(url)
+    monkeypatch.setattr(provider, "parse_library_page",
+                        lambda *_a, **_k: ([], None))
+    try:
+        with pytest.raises(ProviderCapabilityError, match="propriétaire unique"):
+            s._rows(include_delivery=True, delivery_record_id=s._id(owned_row()))
+        assert seen == []
+    finally:
+        s.close()
+
+
+def test_brokerless_legacy_targeted_delivery_remains_readable(monkeypatch):
+    s, _ = session(with_broker=False)
+    seen = []
+    s._page = lambda url, **_: (seen.append(url) or (url, "PAGE"))
+    monkeypatch.setattr(provider, "parse_library_page",
+                        lambda *_a, **_k: ([owned_row()], None))
+    try:
+        assert s._rows(
+            include_delivery=True, delivery_record_id=s._id(owned_row()),
+        ) == [owned_row()]
+        assert seen == [s.library_url]
+    finally:
+        s.close()
