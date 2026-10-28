@@ -1,0 +1,213 @@
+"""#3171: explicit scoped Core admission of optional provider rights snapshots."""
+from types import SimpleNamespace
+from dataclasses import replace
+
+import pytest
+
+from cifereca.models import Account
+from cifereca.plugin_api.errors import Cancelled
+from cifereca.plugin_api.provider_rights_observation import (
+    ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
+)
+from cifereca.core.rights_snapshot_read import read_account_rights_snapshot
+
+
+STAMP = "2026-10-28T08:00:00+00:00"
+
+
+class FakeStorage:
+    def __init__(self, owners):
+        self.owners = owners
+
+    def identity_for_connection(self, provider, credential):
+        return self.owners.get((provider, credential))
+
+
+class ProviderSession:
+    def __init__(self, provider, credential, reader=None):
+        self.provider_id = provider
+        self.credential_id = credential
+        self.connected = True
+        self._closed = False
+        self.calls = 0
+        self.reader = reader
+
+    def rights_observation_snapshot(self, account):
+        self.calls += 1
+        if self.reader is not None:
+            return self.reader(account)
+        scope = ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+        return ProviderRightsSnapshot(
+            scope, (
+                ProviderRightObservation(
+                    "edition-1", "owned-1", "purchase", "active",
+                    "provider_response", "synthetic-provider-proof",
+                    STAMP, "unknown",
+                ),
+            ),
+            status="partial", coverage="partial", branch="purchases",
+        )
+
+
+def rig(provider="provider-alpha", *, owner="A", credential="cred-A",
+        buyer="buyer-A", reader=None):
+    account = Account(
+        identity_id=owner, provider_id=provider,
+        credential_id=credential, unique_id=buyer,
+    )
+    session = ProviderSession(provider, credential, reader)
+    service = SimpleNamespace(
+        _account_context_epoch=1,
+        accounts=[account],
+        _sessions={(provider, credential): session},
+        storage=FakeStorage({(provider, credential): owner}),
+    )
+    return service, account, session
+
+
+@pytest.mark.parametrize("provider", ["provider-alpha", "provider-beta"])
+def test_two_independent_provider_adapters_one_read_exact_scope(provider):
+    service, account, session = rig(provider)
+    report = read_account_rights_snapshot(service, account)
+    assert session.calls == 1
+    assert report.status == "partial"
+    assert len(report.rights) == 1
+    assert report.scope == ProviderRightsScope("A", provider, "cred-A", "buyer-A")
+    assert report.rights[0].edition_id == "edition-1"
+    assert not report.authorizes_mutation
+    assert not report.authorizes_negative_reconciliation
+
+
+def test_missing_optional_method_cannot_fallback_to_entitlements_or_library():
+    service, account, session = rig()
+    session.rights_observation_snapshot = None
+    session.library = lambda: pytest.fail("legacy library must not be read")
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("alter", [
+    "account_id", "account_identity", "account_credential",
+    "connection_owner", "session_rebind", "account_epoch", "disconnect",
+    "close", "replace_account", "replace_session",
+])
+def test_snapshot_from_changed_source_discarded_in_full(alter):
+    service, account, session = rig()
+    def read(selected):
+        raw = ProviderSession(session.provider_id, session.credential_id)
+        report = raw.rights_observation_snapshot(selected)
+        if alter == "account_id":
+            account.unique_id = "borrower-other"
+        if alter == "account_identity":
+            account.identity_id = "B"
+        if alter == "account_credential":
+            account.credential_id = "other"
+        if alter == "connection_owner":
+            service.storage.owners[("provider-alpha", "cred-A")] = "B"
+        if alter == "session_rebind":
+            session.credential_id = "other"
+        if alter == "account_epoch":
+            service._account_context_epoch += 1
+        if alter == "disconnect":
+            session.connected = False
+        if alter == "close":
+            session._closed = True
+        if alter == "replace_account":
+            service.accounts = [replace(account)]
+        if alter == "replace_session":
+            service._sessions = {("provider-alpha", "cred-A"): ProviderSession("provider-alpha", "cred-A")}
+        return report
+    session.reader = read
+    result = read_account_rights_snapshot(service, account)
+    assert session.calls == 1
+    assert result.status == "failed" and result.rights == ()
+    assert not result.authorizes_mutation
+
+
+def test_duplicate_registered_accounts_or_sessions_rejected_before_any_read():
+    service, account, session = rig()
+    service.accounts.append(replace(account))
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and session.calls == 0
+    service.accounts.pop()
+    service._sessions["duplicate"] = ProviderSession("provider-alpha", "cred-A")
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and session.calls == 0
+
+
+def test_foreign_or_unregistered_account_never_selected():
+    service, account, session = rig()
+    other = replace(account, unique_id="buyer-B")
+    result = read_account_rights_snapshot(service, other)
+    assert result.status == "failed" and session.calls == 0
+
+
+def test_wrong_scope_snapshot_rejected_without_leaking_foreign_rights():
+    service, account, session = rig()
+    def wrong(_account):
+        foreign = replace(account, unique_id="buyer-foreign")
+        return ProviderSession("provider-alpha", "cred-A").rights_observation_snapshot(foreign)
+    session.reader = wrong
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+
+
+def test_cancelled_before_and_after_read_discards_positive_rows():
+    service, account, session = rig()
+    result = read_account_rights_snapshot(service, account, cancelled=lambda: True)
+    assert result.status == "cancelled" and session.calls == 0
+    stop = [False]
+    def read(selected):
+        stop[0] = True
+        return ProviderSession("provider-alpha", "cred-A").rights_observation_snapshot(selected)
+    session.reader = read
+    result = read_account_rights_snapshot(service, account, cancelled=lambda: stop[0])
+    assert result.status == "cancelled" and result.rights == ()
+    assert session.calls == 1
+
+
+def test_provider_cancelled_exception_is_distinct_from_provider_failure(caplog):
+    service, account, session = rig()
+    session.reader = lambda _: (_ for _ in ()).throw(Cancelled("synthetic-user-cancel"))
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "cancelled" and result.rights == ()
+    assert "rights snapshot read failed" not in caplog.text
+
+
+def test_raw_original_failure_is_logged_and_status_is_closed(caplog):
+    service, account, session = rig()
+    session.reader = lambda _: (_ for _ in ()).throw(
+        ValueError("synthetic-provider-error?url=/exact-route&status=403")
+    )
+    with caplog.at_level("WARNING", logger="cifereca"):
+        result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert "synthetic-provider-error?url=/exact-route&status=403" in caplog.text
+    assert "account_id=buyer-A" in caplog.text
+    assert session.calls == 1
+
+
+def test_bounded_positive_cardinality_zero_and_n():
+    service, account, session = rig()
+    for count in (0, 3):
+        def read(a, n=count):
+            scope = ProviderRightsScope(
+                a.identity_id, a.provider_id, a.credential_id, a.unique_id,
+            )
+            return ProviderRightsSnapshot(
+                scope, tuple(
+                    ProviderRightObservation(
+                        f"edition-{i}", f"purchase-{i}", "purchase",
+                        "active", "provider_response", f"proof-{i}", STAMP,
+                    )
+                    for i in range(n)
+                ), status="partial", branch="owned",
+            )
+        session.reader = read
+        snapshot = read_account_rights_snapshot(service, account)
+        assert snapshot.status == "partial" and len(snapshot.rights) == count
+        assert not snapshot.claims_complete_branch
