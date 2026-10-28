@@ -59,20 +59,64 @@ def exact_kobo_offer_id(
     if (not all(type(x) is str and 0 < len(x) <= 256 for x in coordinates)
             or type(payload) is not dict):
         return ""
+    # Vault descriptor metadata is provider-controlled, not an extension of
+    # Core's attested owner. An explicit conflicting scope anywhere in this
+    # response invalidates the WHOLE offer, rather than letting a matching
+    # candidate in the same envelope win. Missing optional fields retain
+    # backwards compatibility with older Vault descriptors.
+    for key, expected in (
+        ("provider", "kobo"),
+        ("source_provider", "kobo"),
+        ("product_id", product_id),
+        ("account_id", account_id),
+        ("credential_id", credential_id),
+        ("identity_id", identity_id),
+    ):
+        if key in payload and (
+            type(payload[key]) is not str or payload[key] != expected
+        ):
+            return ""
     acquisition = payload.get("acquisition")
     if type(acquisition) is not dict:
         return ""
     if (type(acquisition.get("product_id")) is not str
-            or acquisition["product_id"] != product_id
-            or ("account_id" in acquisition
-                and acquisition["account_id"] != account_id)):
+            or acquisition["product_id"] != product_id):
         return ""
+    for key, expected in (
+        ("provider", "kobo"),
+        ("source_provider", "kobo"),
+        ("account_id", account_id),
+        ("credential_id", credential_id),
+        ("identity_id", identity_id),
+        ("mode", "descriptor"),
+    ):
+        if key in acquisition and (
+            type(acquisition[key]) is not str or acquisition[key] != expected
+        ):
+            return ""
     candidates = acquisition.get("candidates")
     if type(candidates) is not list or not 1 <= len(candidates) <= 50:
         return ""
     eligible: list[tuple[str, str, str, str]] = []
     for candidate in candidates:
-        if type(candidate) is not dict or not _safe_https_get(candidate):
+        if type(candidate) is not dict:
+            continue
+        # A foreign candidate taints the complete upstream descriptor even
+        # when another sibling advertises a valid HTTPS GET. Never choose
+        # "the one usable" entry while discarding contradictory owner facts.
+        for key, expected in (
+            ("provider", "kobo"),
+            ("source_provider", "kobo"),
+            ("product_id", product_id),
+            ("account_id", account_id),
+            ("credential_id", credential_id),
+            ("identity_id", identity_id),
+        ):
+            if key in candidate and (
+                type(candidate[key]) is not str or candidate[key] != expected
+            ):
+                return ""
+        if not _safe_https_get(candidate):
             continue
         kind, handling = candidate.get("kind"), candidate.get("handling")
         drm = candidate.get("drm")
