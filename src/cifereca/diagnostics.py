@@ -675,11 +675,15 @@ class Diagnostics:
         status = fields["status"]
         if self.level == "errors" and status == "complete":
             return
+        reference = diagnostic_task_reference()
+        if reference:
+            fields["task_ref"] = reference
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             category="LIBRARY", operation="library_reconciliation_audit",
             status="ok" if status == "complete" else status,
             duration_ms=fields.get("duration_ms"), detail=fields,
+            task_ref=fields.get("task_ref"),
             verified_reconciliation=True,
         )
         with self._lock:

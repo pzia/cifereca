@@ -5,6 +5,8 @@ accepted. Missing measurements stay absent rather than being treated as zero.
 """
 from __future__ import annotations
 
+import re
+
 OPERATION = "library_reconciliation_audit"
 _REASONS = frozenset({
     "audit_cancelled", "cancelled", "snapshot_cancelled",
@@ -59,6 +61,76 @@ _PHASES = frozenset({
 })
 _INVENTORY_PHASES = frozenset({"sha256", "epub_opf", "structure", "pdf_signature"})
 _STATUSES = frozenset({"complete", "partial", "failed", "cancelled"})
+_PATH_COUNTS = frozenset({
+    "stored_path_present", "stored_path_missing", "stored_path_unavailable",
+    "stored_path_out_of_scope",
+})
+_PATH_CONTEXT = frozenset({
+    "sqlite_present", "sqlite_missing", "sqlite_other", "distinct_paths",
+    "distinct_artifacts_with_id", "distinct_placements_with_id",
+})
+_SCOPE_INVALID = frozenset({
+    "reconciliation_scope_changed", "reconciliation_identity_not_active",
+    "reconciliation_identity_root_collision", "unknown_reconciliation_identity",
+    "invalid_reconciliation_identity_scope", "invalid_reconciliation_root_configuration",
+})
+
+
+def _coverage(section: dict) -> str:
+    status = section.get("status")
+    reasons = section.get("reasons")
+    if type(status) is not str:
+        return "unverified"
+    if status == "complete" and type(reasons) is list and not reasons:
+        return "complete"
+    if status in {"complete", "incomplete_scan"}:
+        return "partial"
+    return "unverified"
+
+
+def _measurements(value: object, keys: frozenset) -> dict:
+    return {key: item for key in sorted(keys)
+            if type(value) is dict and (item := _number(value.get(key))) is not None}
+
+
+def _path_summary(report: dict, reasons: set[str]) -> dict:
+    """Project measurements already supplied by Core; never probe a path."""
+    stored = _section(report, "stored_paths")
+    raw_reasons = stored.get("reasons")
+    codes = {item if type(item) is str and item in _REASONS else "unclassified_limit"
+             for item in raw_reasons} if type(raw_reasons) is list and len(raw_reasons) <= 64 else {"unclassified_limit"}
+    coverage = _coverage(stored)
+    if codes and coverage == "complete":
+        coverage = "partial"
+    return {
+        "observation_source": "core_stored_paths",
+        "coverage": coverage,
+        "inventory_coverage": _coverage(_section(report, "inventory")),
+        "scope": "invalidated" if (reasons | codes) & _SCOPE_INVALID else "not_supplied",
+        "reasons": sorted(codes),
+        "counts": _measurements(stored.get("counts"), _PATH_COUNTS),
+        "missing_path_context": _measurements(stored.get("missing_path_context"), _PATH_CONTEXT),
+    }
+
+
+def _public_path_summary(value: object) -> dict:
+    if (type(value) is not dict or value.get("observation_source") != "core_stored_paths"
+            or type(value.get("coverage")) is not str or value["coverage"] not in {"complete", "partial", "unverified"}
+            or type(value.get("inventory_coverage")) is not str or value["inventory_coverage"] not in {"complete", "partial", "unverified"}
+            or type(value.get("scope")) is not str or value["scope"] not in {"invalidated", "not_supplied"}):
+        return {}
+    codes = value.get("reasons")
+    if (type(codes) is not list or len(codes) > 64
+            or any(type(code) is not str or code not in _REASONS for code in codes)
+            or value["coverage"] == "complete" and codes):
+        return {}
+    return {
+        "observation_source": "core_stored_paths", "coverage": value["coverage"],
+        "inventory_coverage": value["inventory_coverage"], "scope": value["scope"],
+        "reasons": sorted(set(codes)),
+        "counts": _measurements(value.get("counts"), _PATH_COUNTS),
+        "missing_path_context": _measurements(value.get("missing_path_context"), _PATH_CONTEXT),
+    }
 
 
 def known_reason_code(value: object) -> bool:
@@ -150,6 +222,8 @@ def from_audit_result(report: object, duration_ms: object = None) -> dict:
         times["stored_paths"] = stored
     fields["phase_ms"] = times
     fields["phase_calls"] = calls
+    if "stored_paths" in value:
+        fields["stored_paths"] = _path_summary(value, reasons)
     return fields
 
 
@@ -197,12 +271,22 @@ def public_fields(value: object) -> dict:
         key: metric for key in _INVENTORY_PHASES
         if type(raw_calls) is dict and (metric := _number(raw_calls.get(key))) is not None
     }
+    if "stored_paths" in value:
+        stored = _public_path_summary(value["stored_paths"])
+        if not stored:
+            return {}
+        output["stored_paths"] = stored
+    if "task_ref" in value:
+        reference = value["task_ref"]
+        if type(reference) is not str or re.fullmatch(r"[0-9a-f]{12}", reference) is None:
+            return {}
+        output["task_ref"] = reference
     return output
 
 # Durable channel for completed offline audits only. Serialize exclusively
 # the validated Core projection, never private raw inspection evidence.
 _RECONCILIATION_LOG_PREFIX = "EVENT reconciliation audit "
-_MAX_RECONCILIATION_LOG = 3072
+_MAX_RECONCILIATION_LOG = 16384
 
 
 def public_reconciliation_log_message(value: object) -> str | None:
