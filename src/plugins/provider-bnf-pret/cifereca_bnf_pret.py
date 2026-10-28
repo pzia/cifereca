@@ -447,6 +447,45 @@ class BnfProviderSession(ProviderSession):
                 observed_at=observed, snapshot_ref='bnf_html.active_loans',
             )
 
+    def rights_selected_delivery_offer_snapshot(
+        self, account, *, edition_id, right_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        """Provider-neutral selected-right entrypoint for Core #3171.
+
+        Reuses the attested active-loans HTML read (one activity GET); the
+        opaque ACS4 offer is an action, not a final EPUB or an ADEPT receipt.
+        The Core remains responsible for consent and delivery admission.
+        """
+        if (explicit_user_action is not True
+                or kind != 'loan' or branch != 'bnf_html'
+                or type(edition_id) is not str or not edition_id
+                or type(right_id) is not str or not right_id
+                or type(account) is not Account
+                or account.provider_id != self.provider_id
+                or account.credential_id != self.credential_id):
+            raise ProviderCapabilityError('bnf_selected_offer_scope_mismatch')
+        from dataclasses import replace
+
+        with self._lock:
+            pinned = (account.identity_id, account.provider_id,
+                      account.credential_id, account.unique_id)
+            selected = self.rights_observation_snapshot(account)
+            observed_scope = (
+                selected.scope.identity_id, selected.scope.provider_id,
+                selected.scope.credential_id, selected.scope.account_id,
+            )
+            right = selected.exact(edition_id, right_id, kind)
+            if (selected.branch != branch or observed_scope != pinned
+                    or right is None or not right.provider_attested
+                    or right.state != 'active'
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != pinned):
+                raise ProviderCapabilityError('bnf_selected_offer_scope_changed')
+            # No other loan from the same activity page is promoted into
+            # this explicit selection; unknown delivery stays unknown.
+            return replace(selected, rights=(right,))
+
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
                          *, explicit_user_action: bool = False,
                          expected_offer_id: str | None = None):
