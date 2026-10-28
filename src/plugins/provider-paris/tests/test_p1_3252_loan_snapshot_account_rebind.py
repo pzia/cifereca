@@ -16,11 +16,11 @@ from tests.test_p1_3252_loan_snapshot_connect_close_serialization import fixture
 ])
 def test_snapshot_refuses_borrower_rebind_even_with_same_account_values(change):
     session, account, client = fixture()
-    original = session.loans
+    original = session._read_loans_for_account
     invoked = []
 
-    def changed_during_read(borrower):
-        rows = original(borrower)
+    def changed_during_read(borrower, *, publish_legacy_status=True):
+        rows = original(borrower, publish_legacy_status=publish_legacy_status)
         invoked.append("read")
         if change in {"replace_same_scope", "replace_different_identity"}:
             new_account = replace(account)
@@ -37,7 +37,7 @@ def test_snapshot_refuses_borrower_rebind_even_with_same_account_values(change):
             session._accounts[0].identity_id = "other-identity"
         return rows
 
-    session.loans = changed_during_read
+    session._read_loans_for_account = changed_during_read
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.loan_inventory_snapshot(account)
