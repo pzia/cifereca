@@ -266,12 +266,27 @@ class BnfProviderSession(ProviderSession):
             refs = broker.accounts()
             if type(refs) not in (tuple, list):
                 return None
-            owners = [
-                ref.identity_id if type(ref.identity_id) is str else ""
-                for ref in refs
-                if (getattr(ref, "provider_id", None) == self.provider_id
-                    and getattr(ref, "account_id", None) == account_id)
-            ]
+            owners = []
+            for ref in refs:
+                if (getattr(ref, "provider_id", None) != self.provider_id
+                        or getattr(ref, "account_id", None) != account_id):
+                    continue
+                # #3171 Core AccountRef v2 adds exact credential proof.
+                # Never mix another credential's identical upstream ID into
+                # this user's rights or the explicitly requested token GET.
+                # Keep credential-less v1 refs as unresolved candidates:
+                # mixed v1/v2 must NOT silently adopt another credential.
+                version = getattr(ref, "scope_version", 1)
+                if type(version) is not int or version not in (1, 2):
+                    return None
+                if version == 2:
+                    credential = getattr(ref, "credential_id", None)
+                    if type(credential) is not str or not credential:
+                        return None
+                    if credential != self.credential_id:
+                        continue
+                identity = getattr(ref, "identity_id", None)
+                owners.append(identity if type(identity) is str else "")
             return (id(broker), tuple(sorted(owners)))
         except Exception:
             return None
