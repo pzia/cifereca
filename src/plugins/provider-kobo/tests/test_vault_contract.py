@@ -1048,3 +1048,76 @@ def test_authenticated_archived_manifest_without_owned_flag_still_projects_right
         assert library[0]["possessions"][0]["account_id"] == "authenticated"
     finally:
         service.close()
+
+
+def test_kobo_all_search_preserves_authenticated_library_only_origin_without_public_right():
+    """#3252: personal-only thin rows do not silently become catalogue notices.
+
+    Search membership, not a public title/ISBN or a forged catalog collection,
+    is the sole basis for the inherited library provenance; no delivery right.
+    """
+    client = KoboVaultClient("https://vault.example", "synthetic-token")
+    public_reads = []
+    personal_reads = []
+
+    def catalog(query, **kwargs):
+        public_reads.append(query)
+        return {"items": [
+            {"product_id": "public-only", "title": "Public",
+             "collection": "library", "owned": True, "downloadable": True},
+            {"product_id": "shared", "title": "Public shared"},
+        ]}
+
+    def personal(query, **kwargs):
+        personal_reads.append(query)
+        return {"items": [
+            {"product_id": "personal-only", "title": "Private only"},
+            {"product_id": "explicit-unowned", "title": "Not owned",
+             "owned": False},
+            {"product_id": "shared", "title": "Private shared"},
+        ]}
+
+    client.search_catalog = catalog
+    client.search_library = personal
+    try:
+        rows = client.search("synthetic", scope="all")["items"]
+        service = KoboCatalogService(client, credential_id="credential-A")
+        normalized = {
+            row["product_id"]: service.normalize_item(row) for row in rows
+        }
+        assert public_reads == personal_reads == ["synthetic"]
+        assert [row["product_id"] for row in rows] == [
+            "public-only", "shared", "personal-only", "explicit-unowned",
+        ]
+        assert rows[2]["collection"] == "library"
+        assert rows[1]["collection"] == "library"
+        assert normalized["personal-only"].owned is True
+        assert normalized["personal-only"].source_collection == "library"
+        assert normalized["shared"].owned is True
+        assert normalized["public-only"].owned is False
+        assert normalized["public-only"].source_collection == "catalog"
+        assert normalized["explicit-unowned"].owned is False
+        assert all(row.download_url is None for row in normalized.values())
+        assert all(row.downloadable is not True for row in normalized.values())
+    finally:
+        client.close()
+
+
+def test_kobo_public_only_search_never_promotes_forged_library_collection():
+    client = KoboVaultClient("https://vault.example", "synthetic-token")
+    client.search_catalog = lambda *_a, **_kw: {"items": [
+        {"product_id": "public", "collection": "library",
+         "owned": True, "downloadable": True},
+    ]}
+    client.search_library = lambda *_a, **_kw: (_ for _ in ()).throw(
+        AssertionError("catalogue-only must not issue personal GET")
+    )
+    try:
+        rows = client.search("synthetic", scope="catalog")["items"]
+        assert len(rows) == 1
+        service = KoboCatalogService(client, credential_id="credential-A")
+        public = service.normalize_item(rows[0])
+        assert public.source_collection == "catalog"
+        assert public.owned is False and public.downloadable is not True
+    finally:
+        client.close()

@@ -490,7 +490,14 @@ class KoboVaultClient:
                             combined[name] = catalog_row[name]
                     merged[key] = combined
                 else:
-                    merged[key] = dict(raw)
+                    # A personal hit with no matching public catalogue card
+                    # still came from authenticated /library/search. Its
+                    # absent collection flag must not be treated as catalogue
+                    # absence. An explicit owned=False is never overridden.
+                    individual = dict(raw)
+                    if source == "library" and individual.get("owned") is None:
+                        individual.setdefault("collection", "library")
+                    merged[key] = individual
         return {
             "items": [merged[key] for key in order],
             "catalog": catalog,
