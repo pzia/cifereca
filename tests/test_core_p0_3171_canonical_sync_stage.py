@@ -12,11 +12,12 @@ import sqlite3
 import pytest
 
 from cifereca.core.sync_coordination import synchronize_account_source
+from cifereca.core.convergence_execution import CompletedDelivery
 from cifereca.core.canonical_sync_stage import observe_canonical_rights_in_sync
 from cifereca.models import Account
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_atomic_publication_v14 import (
-    new_source, register, target, publish,
+    BYTES, SHA, new_source, register, target, publish,
 )
 
 
@@ -68,6 +69,9 @@ class Service:
     def _record_action(self, identity, operation, status, **kwargs):
         self.events.append((identity, operation, status))
 
+    def sync_source_enabled(self, account):
+        return True
+
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
@@ -78,6 +82,10 @@ def rig(tmp_path, monkeypatch):
     service = Service(db, root)
     monkeypatch.setattr(
         "cifereca.core.sync_coordination.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
+    monkeypatch.setattr(
+        "cifereca.core.convergence_execution.acquisition_lock_file",
         lambda: tmp_path / "state" / "acquisition.lock",
     )
     try:
@@ -211,3 +219,104 @@ def test_unverified_historical_receipt_never_promoted_to_canonical_right(rig):
     result = synchronize_account_source(service, service.account)
     assert result["canonical_rights"]["attested_active"] == 0
     assert refs(db) == ([], 0)
+
+
+def test_existing_source_sync_executes_one_authorized_get_then_no_second_get(rig):
+    service, db, root = rig
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], delivery="available",
+        delivery_offer_id="exact-synthetic-offer",
+    ),))
+    consent = {service.source}
+    service._canonical_persisted_consent = lambda _: frozenset(consent)
+    downloads = []
+    def completed(key, offer):
+        downloads.append((key, offer.delivery_offer_id))
+        path = root / "A" / "delivered.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(
+            key, offer.delivery_offer_id, path, SHA,
+            "receipt-for-the-completed-synthetic-delivery",
+        )
+    service._canonical_right_delivery = completed
+
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert first["canonical_execution"]["present_attested"] == 0
+    assert first["files_materialized"] == 1
+    assert len(downloads) == 1
+    assert len(refs(db)[0]) == 1 and refs(db)[1] == 1
+    assert len(db.placements()) == 1
+    assert db.entitlements() == []
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["downloaded"] == 0
+    assert second["canonical_execution"]["present_attested"] == 1
+    assert second.get("files_materialized", 0) == 0
+    assert len(downloads) == 1
+    assert len(refs(db)[0]) == 1 and refs(db)[1] == 1
+
+
+def test_source_sync_stays_read_only_without_core_persisted_consent_route(rig):
+    service, db, root = rig
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], delivery="available",
+        delivery_offer_id="exact-synthetic-offer",
+    ),))
+    service._canonical_right_delivery = lambda *_: pytest.fail(
+        "no persisted consent provider, so no GET",
+    )
+    result = synchronize_account_source(service, service.account)
+    assert "canonical_execution" not in result
+    assert result["canonical_rights"]["attested_active"] == 1
+    assert len(refs(db)[0]) == 1 and refs(db)[1] == 0
+    assert db.placements() == []
+
+
+def test_real_source_sync_consent_revocation_during_get_blocks_origin(rig):
+    service, db, root = rig
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], delivery="available",
+        delivery_offer_id="exact-synthetic-offer",
+    ),))
+    consent = {service.source}
+    service._canonical_persisted_consent = lambda _: frozenset(consent)
+    def completed(key, offer):
+        consent.clear()
+        path = root / "A" / "downloaded-but-no-right.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(
+            key, offer.delivery_offer_id, path, SHA,
+            "synthetic-uncommitted-receipt",
+        )
+    service._canonical_right_delivery = completed
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["blocked"] == 1
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["status"] == "partial"
+    assert len(refs(db)[0]) == 1 and refs(db)[1] == 0
+    assert db.placements() == []
+
+
+def test_core_executor_rejects_mismatch_between_delivered_offer_and_approved_right(rig):
+    service, db, root = rig
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], delivery="available",
+        delivery_offer_id="exact-synthetic-offer",
+    ),))
+    service._canonical_persisted_consent = lambda _: frozenset({service.source})
+    def wrong(_key, _offer):
+        path = root / "A" / "wrong-offer.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(
+            service.source, "unapproved-offer", path, SHA,
+            "synthetic-unapproved-receipt",
+        )
+    service._canonical_right_delivery = wrong
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["failed"] == 1
+    assert result["status"] == "partial"
+    assert len(refs(db)[0]) == 1 and refs(db)[1] == 0
+    assert db.placements() == []
