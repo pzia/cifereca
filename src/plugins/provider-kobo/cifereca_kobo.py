@@ -14,6 +14,7 @@ from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOf
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
+_UNSET_PERSONAL_IDENTITY = object()  # None is a legitimate legacy identity.
 
 # Only protocol metadata with a known public vocabulary may reach diagnostics.
 # The public /status endpoint is still an untrusted HTTP response.
@@ -553,6 +554,7 @@ class KoboSession(ProviderSession):
     def _ensure_personal_binding(
         self, account: Account, generation: int, *,
         expected_account_id: str | None = None,
+        expected_identity_id: Any = _UNSET_PERSONAL_IDENTITY,
     ) -> None:
         """Reject an in-flight Vault snapshot after account/session replacement."""
         if (
@@ -561,11 +563,51 @@ class KoboSession(ProviderSession):
             or self._accounts[0] is not account
             or (expected_account_id is not None
                 and account.unique_id != expected_account_id)
+            or (expected_identity_id is not _UNSET_PERSONAL_IDENTITY
+                and account.identity_id != expected_identity_id)
             or account.provider_id != self.provider_id
             or account.credential_id != self.credential_id
             or not _strict_account_scope(account.unique_id)
         ):
             raise ProviderError("Kobo-Vault : session modifiée pendant lecture")
+
+    def _scoped_personal_manifest(
+        self, bound_account: Account, generation: int, account_id: str,
+    ) -> list[dict[str, Any]]:
+        """Fence every *real* Vault manifest page to one live Core owner.
+
+        Existing injected/test Vault implementations retain their historical
+        zero-argument library_manifest() contract. The real provider client
+        can prevent a second private GET after a Core broker/account rebind.
+        """
+        vault = self.client
+        if not isinstance(vault, KoboVaultClient):
+            return vault.library_manifest()
+        broker = self.identity_broker
+        owner = self._rights_owner_snapshot(account_id) if broker is not None else None
+        bound_scope = (
+            bound_account.unique_id, bound_account.identity_id,
+            bound_account.provider_id, bound_account.credential_id,
+        )
+
+        def check() -> None:
+            self._ensure_personal_binding(
+                bound_account, generation, expected_account_id=account_id,
+                expected_identity_id=bound_scope[1],
+            )
+            if (
+                (bound_account.unique_id, bound_account.identity_id,
+                 bound_account.provider_id, bound_account.credential_id)
+                != bound_scope
+                or self.identity_broker is not broker
+                or (broker is not None
+                    and self._rights_owner_snapshot(account_id) != owner)
+            ):
+                raise ProviderError(
+                    "Kobo-Vault : propriétaire modifié pendant pagination privée"
+                )
+
+        return vault.library_manifest(page_guard=check)
 
     def library(self) -> list[SearchResult]:
         # The rights/inventory view must be tied to a verified connection,
@@ -583,11 +625,15 @@ class KoboSession(ProviderSession):
             })
             return []
         bound_account = self._accounts[0]
+        bound_identity_id = bound_account.identity_id
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
-        items = self.client.library_manifest()
+        items = self._scoped_personal_manifest(
+            bound_account, generation, account_id,
+        )
         self._ensure_personal_binding(
             bound_account, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
         )
         self.last_library_rejections.extend(
             _public_kobo_rejections(
@@ -681,6 +727,7 @@ class KoboSession(ProviderSession):
         # while projecting the provider's raw rows.
         self._ensure_personal_binding(
             bound_account, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
         )
         return rows
 
@@ -741,6 +788,7 @@ class KoboSession(ProviderSession):
                 "Kobo-Vault : portée des observations de droits indisponible"
             )
         bound = self._accounts[0]
+        bound_identity_id = bound.identity_id
         generation = self._personal_binding_generation
         if (account.provider_id != "kobo"
                 or account.credential_id != self.credential_id
@@ -765,10 +813,12 @@ class KoboSession(ProviderSession):
             )
         self._ensure_personal_binding(
             bound, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
         )
         results = self.library()  # ONE existing authenticated Vault GET.
         self._ensure_personal_binding(
             bound, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
         )
         if (self._rights_owner_snapshot(account_id) != owner
                 or bound.unique_id != account_id
@@ -812,6 +862,7 @@ class KoboSession(ProviderSession):
             ))
         self._ensure_personal_binding(
             bound, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
         )
         if (self._rights_owner_snapshot(account_id) != owner
                 or bound.unique_id != account_id
@@ -847,15 +898,19 @@ class KoboSession(ProviderSession):
         ):
             return []
         bound_account = self._accounts[0]
+        bound_identity_id = bound_account.identity_id
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
-        items = self.client.library_manifest()
+        items = self._scoped_personal_manifest(
+            bound_account, generation, account_id,
+        )
         # Unlike an empty manifest, a disconnected/replaced session is not
         # evidence that purchases disappeared. Do not publish rows OR an
         # authoritative empty manifest after this race.
         self._ensure_personal_binding(
-                bound_account, generation, expected_account_id=account_id,
-            )
+            bound_account, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
+        )
         # Keep the complete raw snapshot only inside this provider call so
         # its advisory classification can count foreign-account rows. Such
         # rows must never reach Core's legacy materialization loop.
@@ -971,8 +1026,9 @@ class KoboSession(ProviderSession):
         # fence; a close/reconnect there must not return a stale backup batch.
         try:
             self._ensure_personal_binding(
-                bound_account, generation, expected_account_id=account_id,
-            )
+            bound_account, generation, expected_account_id=account_id,
+            expected_identity_id=bound_identity_id,
+        )
         except ProviderError:
             self.backup_manifest_rejection_count = 0
             raise

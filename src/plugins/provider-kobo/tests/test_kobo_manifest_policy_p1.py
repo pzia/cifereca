@@ -230,7 +230,11 @@ def test_account_scope_and_plugin_code_has_no_core_private_imports():
     assert "from cifereca.storage import" not in policy + provider
     assert "from cifereca.core." not in policy + provider
     assert "classify_personal_manifest(" in provider
-    assert "self.client.library_manifest()" in provider
+    # The real Vault pages now require a scoped callback before/after
+    # every private GET; injected/legacy Vaults retain the zero-arg API.
+    assert "vault.library_manifest(page_guard=check)" in provider
+    assert "return vault.library_manifest()" in provider
+    assert "self._scoped_personal_manifest(" in provider
 
 
 def test_three_accounts_9_522_5_are_isolated_and_403_never_fans_out():
