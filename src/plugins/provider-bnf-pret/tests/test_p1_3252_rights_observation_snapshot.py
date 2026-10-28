@@ -205,3 +205,26 @@ def test_bnf_pre_read_identity_rebind_is_rejected_without_private_activity():
         assert client.calls == ["login"]
     finally:
         session.close()
+
+
+def test_bnf_plugin_activation_injects_core_identity_broker_into_new_sessions():
+    from cifereca_bnf_pret import BnfProviderPlugin
+
+    broker = CoreOwnerBroker()
+    plugin = BnfProviderPlugin()
+    plugin.activate(NS(broker=lambda name: broker if name == "identities" else None))
+    session = plugin.create_session(
+        credential_id="credential-A", label="Synthetic BnF",
+        credentials={"username": "synthetic", "password": "synthetic"},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    try:
+        assert session.identity_broker is broker
+        plugin.deactivate()
+        assert plugin._identity_broker is None
+        # An already created session retains the exact broker instance to
+        # allow an in-flight rights read to detect replacement rather than
+        # silently adopting a newly activated context.
+        assert session.identity_broker is broker
+    finally:
+        session.close()
