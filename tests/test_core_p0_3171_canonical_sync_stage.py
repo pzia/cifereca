@@ -89,6 +89,10 @@ def rig(tmp_path, monkeypatch):
         "cifereca.core.convergence_execution.acquisition_lock_file",
         lambda: tmp_path / "state" / "acquisition.lock",
     )
+    monkeypatch.setattr(
+        "cifereca.core.canonical_recovery.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
     try:
         yield service, db, root
     finally:
