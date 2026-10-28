@@ -78,13 +78,13 @@ def _public_code(error):
     return code if code in _PUBLIC_CODES else 'bnf_reader_failed'
 
 
-def _reader_acs4_offer_id(credential_id, account_id, loan_id, resource_id):
+def _reader_acs4_offer_id(identity_id, credential_id, account_id, loan_id, resource_id):
     """Stable opaque action key; created ONLY after a signed action was seen.
 
     Never hash the signed URL itself: token/nonce/signature are transient and
     must not enter the Core rights ledger, logs, or public provider models.
     """
-    coordinates = (credential_id, account_id, loan_id, resource_id)
+    coordinates = (identity_id, credential_id, account_id, loan_id, resource_id)
     if not all(type(value) is str and 0 < len(value) <= 256
                for value in coordinates):
         return ''
@@ -232,8 +232,8 @@ class BnfProviderSession(ProviderSession):
                              'inventory_exhaustive': False,
                              **({
                                  'reader_acs4_offer_id': _reader_acs4_offer_id(
-                                     self.credential_id, account.unique_id,
-                                     row.loan_id, row.resource_id,
+                                     account.identity_id, self.credential_id,
+                                     account.unique_id, row.loan_id, row.resource_id,
                                  ),
                              } if (row.loan_id, row.resource_id) in offered_pairs
                              else {}),
@@ -413,7 +413,7 @@ class BnfProviderSession(ProviderSession):
                 reported = (loan.raw.get('reader_acs4_offer_id')
                             if type(loan.raw) is dict else None)
                 expected = _reader_acs4_offer_id(
-                    self.credential_id, scope.account_id,
+                    scope.identity_id, self.credential_id, scope.account_id,
                     loan.id, loan.record_id,
                 )
                 offer_id = reported if (type(reported) is str
@@ -480,8 +480,8 @@ class BnfProviderSession(ProviderSession):
             if expected_offer_id is not None and (
                 type(expected_offer_id) is not str
                 or expected_offer_id != _reader_acs4_offer_id(
-                    self.credential_id, account.unique_id,
-                    loan.id, loan.record_id,
+                    account.identity_id, self.credential_id,
+                    account.unique_id, loan.id, loan.record_id,
                 )
             ):
                 raise ProviderConfigurationError('loan_not_observed')
