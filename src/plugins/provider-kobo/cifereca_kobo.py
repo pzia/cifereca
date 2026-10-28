@@ -787,8 +787,10 @@ class KoboSession(ProviderSession):
             observed_rights.append(ProviderRightObservation(
                 edition_id=row.record_id, right_id=row.record_id,
                 kind="purchase",
-                state=("inactive" if archived is True
-                       or row.source_collection == "archived" else "active"),
+                # Archive is a library-management/download state, not a
+                # purchase revocation. This row is still positively owned.
+                # Delivery stays unknown and Core alone decides acquisition.
+                state="active",
                 evidence_kind="provider_response",
                 evidence_ref="kobo.personal_manifest",
                 observed_at=observed, delivery="unknown",
