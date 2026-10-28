@@ -410,8 +410,8 @@ def test_bnf_single_conflicting_right_is_only_partial_not_revoked():
 @pytest.mark.parametrize("bad_coordinate", [
     ("edition-" + "x" * 257, "loan-bad"),
     ("edition-bad", "loan-" + "x" * 257),
-    ("edition-bad", "loan\\nbad"),
-    ("edition\\x00bad", "loan-bad"),
+    ("edition-bad", "loan\nbad"),
+    ("edition\x00bad", "loan-bad"),
 ])
 def test_bnf_invalid_typed_loan_coordinates_keep_valid_sibling(bad_coordinate):
     """A malformed typed row is not allowed to erase independently valid rights.
