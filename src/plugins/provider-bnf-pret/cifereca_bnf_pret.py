@@ -211,6 +211,29 @@ class BnfProviderSession(ProviderSession):
             reason_code='inventory_not_exhaustive',
         )
 
+    def _core_owner_binding(self, account_id):
+        """One unique Core owner reference, or None when not attestable.
+
+        This local broker read does not authenticate to BnF or grant a token;
+        the caller decides whether a missing broker is legacy-compatible.
+        """
+        broker = self.identity_broker
+        if broker is None:
+            return None
+        try:
+            refs = broker.accounts()
+            if type(refs) not in (tuple, list):
+                return None
+            owners = [
+                ref.identity_id if type(ref.identity_id) is str else ""
+                for ref in refs
+                if (getattr(ref, "provider_id", None) == self.provider_id
+                    and getattr(ref, "account_id", None) == account_id)
+            ]
+            return (id(broker), tuple(sorted(owners)))
+        except Exception:
+            return None
+
     def rights_observation_snapshot(self, account):
         """One authenticated BnF activity read -> positive scoped loan claims.
 
@@ -231,22 +254,10 @@ class BnfProviderSession(ProviderSession):
             ) if type(account) is Account else None
 
             def core_binding():
-                broker = self.identity_broker
-                if broker is None or caller_scope is None:
-                    return None
-                try:
-                    refs = broker.accounts()
-                    if type(refs) not in (tuple, list):
-                        return None
-                    owners = [
-                        ref.identity_id if type(ref.identity_id) is str else ""
-                        for ref in refs
-                        if (getattr(ref, "provider_id", None) == self.provider_id
-                            and getattr(ref, "account_id", None) == caller_scope[0])
-                    ]
-                    return (id(broker), tuple(sorted(owners)))
-                except Exception:
-                    return None
+                return (
+                    self._core_owner_binding(caller_scope[0])
+                    if caller_scope is not None else None
+                )
 
             owner_binding = core_binding()
             if (caller_scope is None or caller_scope[2:] !=
@@ -323,6 +334,17 @@ class BnfProviderSession(ProviderSession):
                     or not loan.id or not loan.record_id
                     or self._observed_loans.get(loan.id) != loan.record_id):
                 raise ProviderConfigurationError('loan_not_observed')
+            # A connected identity broker may be rebound independently from
+            # the local Account object. If present, require its one exact owner
+            # before any fresh inventory GET and at every token/publication
+            # fence. Brokerless explicit legacy operation stays unchanged.
+            broker = self.identity_broker
+            owner_binding = self._core_owner_binding(account.unique_id)
+            if broker is not None and (
+                owner_binding is None
+                or owner_binding[1] != (account.identity_id,)
+            ):
+                raise ProviderConfigurationError('loan_not_observed')
             epoch = self._epoch
             # Account and Loan are mutable even while this session lock is held:
             # the Core can rebind them during activity() or loan_token(). Pin
@@ -342,6 +364,9 @@ class BnfProviderSession(ProviderSession):
                          loan.state, loan.source_provider, loan.source_credential,
                          loan.source_account_id, loan.identity_id) == loan_scope
                     and self._observed_loans.get(loan_id) == resource_id
+                    and self.identity_broker is broker
+                    and (broker is None or
+                         self._core_owner_binding(account_scope[2]) == owner_binding)
                 )
 
             try:
