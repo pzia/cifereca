@@ -36,7 +36,7 @@ FORMAT = "cifereca-recette-v1"
 SESSION_PARTS = {"sessions", "session", "cookies", "browser", "browser-profiles",
                  "chromium", "firefox", "playwright", "__pycache__"}
 SESSION_KEYS = re.compile(r"(^|_)(session|cookie|cookies|token|refresh_token|access_token)($|_)", re.I)
-PATH_KEYS = re.compile(r"(path|directory|folder|root|file|socket|profile_dir|database|db)$", re.I)
+PATH_KEYS = re.compile(r"(?:^|_)(path|directory|folder|root|file|socket|profile_dir|database|db)$", re.I)
 
 
 def recipe_root() -> Path:
@@ -239,6 +239,12 @@ class Copier:
             return [self.rewrite(v, key) for v in value]
         if not isinstance(value, str):
             return value
+        if key == "relative_path":
+            # Catalog metadata relative to its (already relocated) library
+            # root is descriptive; resolving it against HOME loses the file.
+            if Path(value).is_absolute() or ".." in Path(value).parts:
+                raise Rejected("Invalid catalog relative path")
+            return value
         if value[:1] in {"{", "["}:
             try:
                 return json.dumps(self.rewrite(json.loads(value)), ensure_ascii=False)
@@ -427,6 +433,10 @@ def confined_values(value, target: Path, key: str = "") -> None:
         for item in value:
             confined_values(item, target, key)
     elif isinstance(value, str):
+        if key == "relative_path":
+            if Path(value).is_absolute() or ".." in Path(value).parts:
+                raise Rejected("Invalid catalog relative path")
+            return
         if value[:1] in {"{", "["}:
             try:
                 confined_values(json.loads(value), target)
