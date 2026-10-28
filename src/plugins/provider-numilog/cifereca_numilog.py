@@ -805,6 +805,20 @@ class NumilogSession(ProviderSession):
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('numilog_selected_delivery_scope_mismatch')
 
+        # Core owns and pre-creates a private staging directory. Do not
+        # perform any private MesLivres GET or create filesystem paths if
+        # the selected destination is missing, redirected or unsafe.
+        try:
+            target = Path(target_dir)
+            target_valid = (
+                target.is_dir() and not target.is_symlink()
+                and target.resolve(strict=True).is_dir()
+            )
+        except (OSError, TypeError, ValueError, RuntimeError):
+            target_valid = False
+        if not target_valid:
+            raise ProviderCapabilityError('numilog_selected_staging_invalid')
+
         with self.lock:
             accounts = self._accounts
             live = accounts[0] if len(accounts) == 1 else None
@@ -1611,6 +1625,13 @@ class NumilogSession(ProviderSession):
                             self._validate_download_owner(owner, owner_scope=owner_scope)
                         trace.fail('artifact_invalid')
                         if inspect_artifact(part, 'acsm').valid:
+                            # The selected route is part of the attested offer.
+                            # An EPUB-direct offer cannot silently deliver an
+                            # Adobe fulfillment token instead.
+                            if stage_acsm_only and selected_kind != 'acsm':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
                             acsm = part.with_suffix('.acsm')
                             os.replace(part, acsm)
                             if stage_acsm_only:
@@ -1649,6 +1670,30 @@ class NumilogSession(ProviderSession):
                         trace.fail('adept_unconfirmed')
                         if owner is not None:
                             self._validate_download_owner(owner, owner_scope=owner_scope)
+                        if stage_acsm_only:
+                            # A selected EPUB is a Core candidate, never a
+                            # published book from the legacy delivery path.
+                            # Never let an ACSM-selected route change format.
+                            if selected_kind != 'epub_direct':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
+                            candidate = part.with_suffix('.epub')
+                            os.replace(part, candidate)
+                            try:
+                                if owner is not None:
+                                    self._validate_download_owner(
+                                        owner, owner_scope=owner_scope,
+                                    )
+                                trace.success('epub_candidate')
+                                trace.event(
+                                    'artifact_validation', 'epub_candidate',
+                                    hops=hop+1,
+                                )
+                                return candidate, self.library_url
+                            except BaseException:
+                                candidate.unlink(missing_ok=True)
+                                raise
                         if title:
                             destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
                         else:
