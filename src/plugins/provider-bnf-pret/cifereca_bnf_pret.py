@@ -362,7 +362,7 @@ class BnfProviderSession(ProviderSession):
                 coordinates = (loan.record_id, loan.id)
                 if not all(
                     type(value) is str and 1 <= len(value) <= 256
-                    and not any(char in value for char in ('\\x00', '\\r', '\\n'))
+                    and not any(char in value for char in ('\x00', '\r', '\n'))
                     for value in coordinates
                 ):
                     continue
