@@ -29,7 +29,13 @@ _LOG = logging.getLogger("cifereca")
 
 @dataclass(frozen=True, slots=True)
 class CompletedDelivery:
-    """Exactly one *completed* download or ADEPT final output, not an ACSM stub."""
+    """Final bytes explicitly bound to the exact admitted right and offer.
+
+    The receipt is issued after completed delivery, not copied from an A
+    observation or reconstructed by finding a same-title local file.
+    """
+    source: SourceKey
+    delivery_offer_id: str
     path: Path
     final_sha256: str
     receipt_ref: str
@@ -59,6 +65,7 @@ def execute_admitted_convergence(
     shared_lock: InterProcessLock,
     library_root: Path,
     persisted_consent: frozenset[SourceKey],
+    consent_still_current: Callable[[SourceKey], bool],
     deliver: Callable[[SourceKey, ProviderRightObservation], CompletedDelivery],
     cancelled: Callable[[], bool] = lambda: False,
 ) -> tuple[ConvergenceOutcome, ...]:
@@ -77,6 +84,7 @@ def execute_admitted_convergence(
         or type(persisted_consent) is not frozenset
         or any(type(key) is not SourceKey for key in persisted_consent)
         or not callable(deliver) or not callable(cancelled)
+        or not callable(consent_still_current)
         or not isinstance(library_root, Path)
         or type(shared_lock) is not InterProcessLock
         or shared_lock._handle is None
@@ -181,14 +189,16 @@ def execute_admitted_convergence(
         if row.delivery != "available":
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
             continue
-        if key not in persisted_consent:
+        if key not in persisted_consent or consent_still_current(key) is not True:
             results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
             continue
 
         try:
             completed = deliver(key, row)
-            if type(completed) is not CompletedDelivery:
-                raise ValueError("invalid_completed_delivery")
+            if (type(completed) is not CompletedDelivery
+                    or completed.source != key
+                    or completed.delivery_offer_id != row.delivery_offer_id):
+                raise ValueError("invalid_completed_delivery_binding")
             # The adapter can have replaced an account, credential, session or
             # switched identity during its GET. Never publish under its old A.
             if cancelled():
@@ -196,6 +206,13 @@ def execute_admitted_convergence(
                 break
             if not current():
                 results.append(ConvergenceOutcome(key, "blocked", "scope_rebound_after_get"))
+                break
+            # Revocation during a remote GET cannot be circumvented by the
+            # earlier in-memory frozen consent snapshot. The Core caller owns
+            # this lookup into its persisted, exact right-level preference.
+            if (key not in persisted_consent or
+                    consent_still_current(key) is not True):
+                results.append(ConvergenceOutcome(key, "blocked", "consent_revoked_after_get"))
                 break
             published = publish_completed_acquisition(
                 initial_storage,
