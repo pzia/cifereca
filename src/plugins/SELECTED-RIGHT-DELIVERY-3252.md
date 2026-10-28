@@ -83,16 +83,19 @@ Cette méthode n'est appelable qu'après le préflight/admission et le
 consentement persistant exact gérés par Core. Elle vérifie les coordonnées
 complètes (compte, credential, identité, type, branche, édition et droit)
 et **rejoue les contrôles fournisseurs existants** : Numilog
-`library() → download_direct(..., expected_offer_id, expected_identity_id)`,
+`library() → download_direct(..., expected_offer_id, expected_identity_id,
+  stage_acsm_only=True)`,
 BnF `loans() → download_digital(..., expected_offer_id,
 explicit_user_action=True)`. Un changement de propriétaire, un droit
 disparu ou une offre signée supprimée/refusée arrête la livraison ;
 aucune autre édition n'est choisie par titre.
 
 **Résultat :** la paire historique `(path, source_url)` est seulement un
-**candidat d'acquisition**, non un `CompletedDelivery` du Core. Pour BnF,
-`path` correspond à un ACSM *à traiter* ; pour Numilog, le chemin peut
-être un EPUB validé par le flux existant ou un résultat de fulfillment.
+**candidat d'acquisition**, non un `CompletedDelivery` du Core. Pour BnF, `path` correspond à un ACSM *à traiter* ; pour Numilog,
+la **voie sélectionnée** renvoie désormais soit un EPUB direct, soit l'ACSM
+brut stocké sous le staging fourni par Core. Elle ne déclenche **aucun**
+`acquisition_broker.import_acsm` historique. Le téléchargement manuel
+`download_direct` sans cette option garde le fonctionnement ADEPT existant.
 La provenance du jeton privé ou la présence d'un path ne remplacent
 pas un reçu indépendant post-GET et le SHA **final** après traitement.
 Il reste obligatoire d'inspecter, rehasher et publier côté Core selon
@@ -128,3 +131,16 @@ devenir un reçu Core. Le GET de contenu, la validation du format/DRM et
 le reçu indépendant demeurent à raccorder sous le contrôle de A/#3171.
 Paris reste `state=unknown`, donc pas de promotion en droit actif
 pour une Sync automatique.
+
+### Pourquoi différer l'ADEPT Numilog dans la voie canonique
+
+Le broker historique `acquisition.import_acsm` peut publier son résultat
+dans la bibliothèque de l'identité, **hors** du staging neuf que Core #3171
+utilise pour établir l'origine et l'atomicité. Une offre explicitement
+sélectionnée ne passe donc plus par cette publication legacy : le plugin
+livre uniquement les octets ACSM validés dans le staging demandé, avec
+offre, identité, compte et broker revalidés **avant et après HTTP**. Core
+vérifie ensuite le profil ADEPT, produit EPUB/PDF, inspecte, rehash et
+valide son reçu sous transaction. Un ACSM non terminé n'est jamais B.
+Le chemin manuel historique reste inchangé. Cette correction ne livre
+pas à elle seule le routeur productif Core en cours #3613.

@@ -853,6 +853,7 @@ class NumilogSession(ProviderSession):
                 matches[0], target_dir,
                 expected_offer_id=delivery_offer_id,
                 expected_identity_id=pinned[0],
+                stage_acsm_only=True,
             )
 
     def public_product_detail(self, product_url):
@@ -1247,7 +1248,8 @@ class NumilogSession(ProviderSession):
         return produced,self.library_url
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
-                  authorized_link=None, authorized_kind=None, expected_owner_scope=None):
+                  authorized_link=None, authorized_kind=None, expected_owner_scope=None,
+                  stage_acsm_only=False):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -1324,7 +1326,7 @@ class NumilogSession(ProviderSession):
                         owner = self._identity_id()
                     else:
                         self._validate_download_owner(owner, owner_scope=owner_scope)
-                    if self.acquisition_broker is None:
+                    if self.acquisition_broker is None and not stage_acsm_only:
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
                         )
@@ -1611,6 +1613,25 @@ class NumilogSession(ProviderSession):
                         if inspect_artifact(part, 'acsm').valid:
                             acsm = part.with_suffix('.acsm')
                             os.replace(part, acsm)
+                            if stage_acsm_only:
+                                # Core #3171 owns ADEPT and final publication.
+                                # A candidate ACSM must stay in Core's newly
+                                # chosen staging path, not be imported through
+                                # the legacy acquisition broker first.
+                                try:
+                                    if owner is not None:
+                                        self._validate_download_owner(
+                                            owner, owner_scope=owner_scope,
+                                        )
+                                    trace.success('acsm_candidate')
+                                    trace.event(
+                                        'artifact_validation', 'acsm_candidate',
+                                        hops=hop+1,
+                                    )
+                                    return acsm, self.library_url
+                                except BaseException:
+                                    acsm.unlink(missing_ok=True)
+                                    raise
                             try:
                                 trace.fail('adept_unconfirmed')
                                 result = self._fulfill_acsm(acsm,title=title,trace=trace,identity_id=owner)
@@ -1647,8 +1668,17 @@ class NumilogSession(ProviderSession):
             trace.fail('redirect_limit')
             raise ProviderError('Numilog : trop de redirections ou pages intermédiaires')
 
-    def download_direct(self,item,target_dir,*,expected_offer_id=None,expected_identity_id=None):
+    def download_direct(self,item,target_dir,*,expected_offer_id=None,expected_identity_id=None,
+                        stage_acsm_only=False):
         with self.lock:
+            # Only an exact, prequalified Core-selected offer may stage the
+            # raw ACSM. Legacy/manual download retains its ADEPT import path.
+            if (type(stage_acsm_only) is not bool
+                    or (stage_acsm_only and
+                        (expected_offer_id is None or
+                         type(expected_identity_id) is not str or
+                         not expected_identity_id))):
+                raise ProviderCapabilityError('numilog_candidate_requires_offer')
             # An optional Core-admitted offer can only narrow the legacy
             # explicit selection; it never grants an automatic acquisition.
             if expected_offer_id is not None and (
@@ -1702,7 +1732,8 @@ class NumilogSession(ProviderSession):
                     # direct EPUB fallback retains its existing contract.
                     self._identity_id()
                     if (evidence.delivery_kind == 'acsm'
-                            and self.acquisition_broker is None):
+                            and self.acquisition_broker is None
+                            and not stage_acsm_only):
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
                         )
@@ -1741,7 +1772,8 @@ class NumilogSession(ProviderSession):
                         and not isinstance(evidence, OwnedDelivery),
                     authorized_link=evidence.url if isinstance(evidence, OwnedDelivery) else None,
                     authorized_kind=evidence.delivery_kind
-                        if isinstance(evidence, OwnedDelivery) else None)
+                        if isinstance(evidence, OwnedDelivery) else None,
+                    stage_acsm_only=stage_acsm_only)
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 
