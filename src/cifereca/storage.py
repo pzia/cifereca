@@ -1276,37 +1276,69 @@ class Storage:
         timestamp = int(row.get("updated_at") or now or time.time())
         entitlement_id = cls._entitlement_id_for(row)
         entitlement_type = str(row.get("entitlement_type") or "owned")
-        entitlement_cursor = db.execute(
-            "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
-            "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,"
-            "state=excluded.state,expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
-            "metadata_json=excluded.metadata_json,"
-            "identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at "
-            "WHERE entitlements.provider_id=excluded.provider_id "
-            "AND entitlements.credential_id=excluded.credential_id "
-            "AND entitlements.account_id IS excluded.account_id "
-            "AND entitlements.item_id=excluded.item_id "
-            "AND entitlements.entitlement_type=excluded.entitlement_type "
-            "AND entitlements.loan_id IS excluded.loan_id "
-            "AND (entitlements.identity_id IS NULL OR excluded.identity_id IS NULL "
-            "OR entitlements.identity_id=excluded.identity_id)",
-            (
-                entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
-                row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"), entitlement_type,
-                "active", row.get("loan_id"), row.get("expires_at"),
-                cls._json_dump({
-                    **({"imported_from": "backup_items"} if migration else {"compatibility_projection": "backup_items"}),
-                    "title": row.get("title"), "author": row.get("author"),
-                    "media_format": str(row.get("format") or "").lower() or None,
-                    "cover_url": row.get("cover_url"),
-                }),
-                timestamp, timestamp, row.get("identity_id"),
-            ),
-        )
-        if entitlement_cursor.rowcount != 1:
-            raise ValueError("backup_entitlement_owner_conflict")
+        # A v0.7 projection must not overwrite a newer, provider-attested
+        # canonical right (state, revision, expires_at, metadata or timestamp).
+        # Preserve the canonical row while still mirroring the historical
+        # receipt. This SELECT is inside the same SQLite write transaction
+        # held by backup_put() / the migration; another writer cannot rebind
+        # the entitlement between the scope check and the receipt handoff.
+        existing_right = db.execute(
+            "SELECT provider_id,credential_id,account_id,item_id,"
+            "entitlement_type,loan_id,identity_id,metadata_json "
+            "FROM entitlements WHERE entitlement_id=?",
+            (entitlement_id,),
+        ).fetchone()
+        if existing_right is not None:
+            expected = (
+                str(row.get("provider_id") or ""),
+                str(row.get("credential_id") or ""),
+                row.get("account_id"), str(row.get("item_id") or ""),
+                entitlement_type, row.get("loan_id"),
+            )
+            old_owner, offered_owner = existing_right[6], row.get("identity_id")
+            if (existing_right[:6] != expected
+                    or (old_owner is not None and offered_owner is not None
+                        and old_owner != offered_owner)):
+                raise ValueError("backup_entitlement_owner_conflict")
+            previous_metadata = cls._json_load(existing_right[7])
+            projection_owned = (
+                previous_metadata.get("compatibility_projection") == "backup_items"
+                or previous_metadata.get("imported_from") == "backup_items"
+            )
+        else:
+            projection_owned = True
+        if projection_owned:
+            entitlement_cursor = db.execute(
+                "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
+                "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,"
+                "state=excluded.state,expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
+                "metadata_json=excluded.metadata_json,"
+                "identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at "
+                "WHERE entitlements.provider_id=excluded.provider_id "
+                "AND entitlements.credential_id=excluded.credential_id "
+                "AND entitlements.account_id IS excluded.account_id "
+                "AND entitlements.item_id=excluded.item_id "
+                "AND entitlements.entitlement_type=excluded.entitlement_type "
+                "AND entitlements.loan_id IS excluded.loan_id "
+                "AND (entitlements.identity_id IS NULL OR excluded.identity_id IS NULL "
+                "OR entitlements.identity_id=excluded.identity_id)",
+                (
+                    entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
+                    row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"), entitlement_type,
+                    "active", row.get("loan_id"), row.get("expires_at"),
+                    cls._json_dump({
+                        **({"imported_from": "backup_items"} if migration else {"compatibility_projection": "backup_items"}),
+                        "title": row.get("title"), "author": row.get("author"),
+                        "media_format": str(row.get("format") or "").lower() or None,
+                        "cover_url": row.get("cover_url"),
+                    }),
+                    timestamp, timestamp, row.get("identity_id"),
+                ),
+            )
+            if entitlement_cursor.rowcount != 1:
+                raise ValueError("backup_entitlement_owner_conflict")
         artifact_id = None
         sha = str(row.get("sha256") or "").strip().lower()
         if sha:
