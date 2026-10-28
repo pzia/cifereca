@@ -1040,7 +1040,12 @@ class KoboSession(ProviderSession):
         live_scope = (live.identity_id, live.provider_id,
                       live.credential_id, live.unique_id)
         owner = self._rights_owner_snapshot(pinned[3])
-        if (pinned != live_scope or not pinned[0] or not pinned[3]
+        # Kobo's live Account may not carry the Core identity yet; the
+        # independent unique broker binding proves the owner. Freeze the
+        # live account's *original* identity, even if empty, across the POST.
+        if ((live_scope[1], live_scope[2], live_scope[3])
+                != (pinned[1], pinned[2], pinned[3])
+                or not pinned[0] or not pinned[3]
                 or owner is None or owner[1] != (pinned[0],)):
             raise ProviderCapabilityError("kobo_selected_offer_owner_changed")
 
