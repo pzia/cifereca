@@ -1,6 +1,7 @@
 """BnF reader provider using the same public provider contract as Paris."""
 from __future__ import annotations
 from pathlib import Path
+import hashlib
 import json
 import logging
 import traceback
@@ -18,7 +19,7 @@ from cifereca.plugin_api import (
 from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
 from cifereca_bnf_pret_catalog import read_search, read_detail, MAX_SEARCH_PAGES, resource_url
-from cifereca_bnf_pret_signed_action import signed_acsm_action
+from cifereca_bnf_pret_signed_action import signed_acsm_action, reader_acs4_offer_pairs
 from cifereca_bnf_pret_download import save_private_loan_token, validate_loan_token
 
 DESCRIPTOR = ProviderDescriptor(
@@ -75,6 +76,20 @@ _PUBLIC_CODES = _PUBLIC_CODES | frozenset('activity_' + code for code in _ACTIVI
 def _public_code(error):
     code = str(error)
     return code if code in _PUBLIC_CODES else 'bnf_reader_failed'
+
+
+def _reader_acs4_offer_id(credential_id, account_id, loan_id, resource_id):
+    """Stable opaque action key; created ONLY after a signed action was seen.
+
+    Never hash the signed URL itself: token/nonce/signature are transient and
+    must not enter the Core rights ledger, logs, or public provider models.
+    """
+    coordinates = (credential_id, account_id, loan_id, resource_id)
+    if not all(type(value) is str and 0 < len(value) <= 256
+               for value in coordinates):
+        return ''
+    payload = '\x00'.join(coordinates).encode('utf-8')
+    return 'bnf.reader_acs4:' + hashlib.sha256(payload).hexdigest()
 
 
 class BnfProviderSession(ProviderSession):
@@ -170,7 +185,8 @@ class BnfProviderSession(ProviderSession):
             ):
                 raise ProviderConfigurationError('account_scope_mismatch')
             try:
-                snapshot = self._snapshot(self.client.activity())
+                activity_html = self.client.activity()
+                snapshot = self._snapshot(activity_html)
             except (ReaderHTTPError, WebParseError) as exc:
                 self.connected = False
                 self.client.clear()
@@ -179,6 +195,22 @@ class BnfProviderSession(ProviderSession):
                 raise ProviderConfigurationError('session_closed')
             if (not self.connected or len(self._accounts) != 1
                     or account is not self._accounts[0]
+                    or (account.unique_id, account.identity_id,
+                        account.provider_id, account.credential_id) != caller_scope
+                    or self.identity_broker is not broker
+                    or (broker is not None and
+                        self._core_owner_binding(caller_scope[0]) != owner)):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            # Presence of one *actual* validated reader ACSM action in the
+            # same authenticated HTML is an offered retrieval route, not an
+            # acquired file. Parse once for all active loans; do not keep or
+            # export signed URLs. No token GET occurs during this observation.
+            offered_pairs = reader_acs4_offer_pairs(
+                activity_html,
+                tuple((row.loan_id, row.resource_id) for row in snapshot.loans),
+            )
+            if (self._closed or epoch != self._epoch or not self.connected
+                    or len(self._accounts) != 1 or account is not self._accounts[0]
                     or (account.unique_id, account.identity_id,
                         account.provider_id, account.credential_id) != caller_scope
                     or self.identity_broker is not broker
@@ -196,7 +228,16 @@ class BnfProviderSession(ProviderSession):
                          source_provider=self.provider_id, source_credential=self.credential_id,
                          source_account_id=account.unique_id, identity_id=account.identity_id,
                          state='active', can_return=False, renewable=False,
-                         raw={'inventory_exhaustive': False}) for row in snapshot.loans]
+                         raw={
+                             'inventory_exhaustive': False,
+                             **({
+                                 'reader_acs4_offer_id': _reader_acs4_offer_id(
+                                     self.credential_id, account.unique_id,
+                                     row.loan_id, row.resource_id,
+                                 ),
+                             } if (row.loan_id, row.resource_id) in offered_pairs
+                             else {}),
+                         }) for row in snapshot.loans]
 
     def loan_inventory_snapshot(self, account):
         # Keep the loan GET, the active account and its typed envelope under
@@ -366,12 +407,25 @@ class BnfProviderSession(ProviderSession):
                     for value in coordinates
                 ):
                     continue
+                # The signed ACSM action is a concrete, account-scoped
+                # retrieval offer observed with THIS active loan. Never infer
+                # the offer from a loan ID, catalogue entry or an old token.
+                reported = (loan.raw.get('reader_acs4_offer_id')
+                            if type(loan.raw) is dict else None)
+                expected = _reader_acs4_offer_id(
+                    self.credential_id, scope.account_id,
+                    loan.id, loan.record_id,
+                )
+                offer_id = reported if (type(reported) is str
+                                        and reported == expected) else ''
                 rights.append(ProviderRightObservation(
                     edition_id=loan.record_id, right_id=loan.id,
                     kind='loan', state='active',
                     evidence_kind='provider_response',
                     evidence_ref='bnf_html.active_loans',
-                    observed_at=observed, delivery='unknown',
+                    observed_at=observed,
+                    delivery='available' if offer_id else 'unknown',
+                    delivery_offer_id=offer_id,
                 ))
             if (not self.connected or self._closed or len(self._accounts) != 1
                     or self._accounts[0] is not bound
