@@ -90,6 +90,10 @@ toute application X11, le serveur d'affichage doit être de confiance.
 
 L'installation pip dispose du réseau dans **un confinement séparé**, sans
 accès aux chemins de production ni environnement d'authentification hérité.
+Les copies déjà préparées (configurations, données, livres, imports, HOME et
+état) sont également masquées par des montages temporaires pendant cette phase :
+un outil d'installation ayant accès au réseau ne peut pas lire leurs credentials
+ou leur contenu. Seuls code, venv et cache de dépendances persistent pour le build.
 L'application et tous ses descendants ont ensuite un namespace réseau isolé.
 Tous les comptes, hooks de téléchargement, sauvegarde automatique Kobo et LLM
 sont désactivés, et le lancement impose `--no-plugins`. Les sessions/cookies

@@ -309,7 +309,7 @@ def sandbox(target: Path, command: list[str], *, network: bool = False, gui: boo
             args += ["--ro-bind", path, path]
     args += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run",
              "--dir", "/etc"]
-    for path in ("/etc/ld.so.cache", "/etc/fonts", "/etc/ssl", "/etc/dbus-1", "/etc/resolv.conf", "/etc/hosts", "/etc/passwd", "/etc/group"):
+    for path in ("/etc/ld.so.cache", "/etc/fonts", "/etc/ssl/certs", "/etc/dbus-1", "/etc/resolv.conf", "/etc/hosts", "/etc/passwd", "/etc/group"):
         if Path(path).exists():
             args += ["--ro-bind", path, path]
     args += ["--bind", str(target), str(target), "--chdir", str(target),
@@ -327,6 +327,12 @@ def sandbox(target: Path, command: list[str], *, network: bool = False, gui: boo
              "--setenv", "PIP_CACHE_DIR", str(target / "cache/pip")]
     if (target / "runtime/machine-id").exists():
         args += ["--ro-bind", str(target / "runtime/machine-id"), "/etc/machine-id"]
+    if network:
+        # Package installation is allowed to fetch wheels, but must not see
+        # the production *copies* either. A writable target bind by itself
+        # would expose passwords/books to network-enabled build subprocesses.
+        for name in ("config", "data", "library", "imports", "home", "state", "runtime", "tmp"):
+            args += ["--tmpfs", str(target / name)]
     if gui:
         display = os.environ.get("DISPLAY", "")
         if not re.fullmatch(r":\d+(\.\d+)?", display):

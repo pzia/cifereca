@@ -451,8 +451,28 @@ class Storage:
                 display.terminate()
     def test_subprocess_network_writes_and_host_sockets_are_confined(self):
         self.require_sandbox()
-        for name in ("home", "config", "data", "state", "cache", "runtime", "tmp"):
+        for name in ("home", "config", "data", "state", "cache", "runtime", "tmp", "library", "imports", "code"):
             (self.target / name).mkdir()
+        for name in ("config", "data", "library", "imports", "home", "state", "runtime", "tmp"):
+            (self.target / name / "synthetic-secret").write_text("synthetic private copy")
+        # This is the network-enabled build boundary, before the runtime
+        # network denial assertions below. Private copies must be hidden even
+        # though the code/venv/cache remain available to the installer.
+        build_code = '''
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+assert not Path('/etc/ssl/private').exists()
+for name in ('config', 'data', 'library', 'imports', 'home', 'state', 'runtime', 'tmp'):
+    assert not (root / name / 'synthetic-secret').exists(), name
+    (root / name / 'temporary-build-file').write_text('ephemeral')
+(root / 'code/build-output').write_text('persistent code output')
+'''
+        subprocess.run(recette.sandbox(self.target, ["/usr/bin/python3", "-c", build_code, str(self.target)], network=True), check=True)
+        self.assertEqual((self.target / "code/build-output").read_text(), "persistent code output")
+        for name in ("config", "data", "library", "imports", "home", "state", "runtime", "tmp"):
+            self.assertEqual((self.target / name / "synthetic-secret").read_text(), "synthetic private copy")
+            self.assertFalse((self.target / name / "temporary-build-file").exists())
         sentinel = self.production / "sentinel"
         sentinel.write_text("unchanged")
         unix_path = self.production / "host.sock"
