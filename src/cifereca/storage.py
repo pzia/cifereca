@@ -1242,6 +1242,54 @@ class Storage:
                         SELECT RAISE(ABORT,'origin_source_still_referenced');
                     END
                 """)
+                # Origin records are persistent provenance, not mutable
+                # snapshots. Changing a linked SourceReference's account,
+                # provider, branch, edition or right would silently grant a
+                # different owner the same historical SHA. Only mutable
+                # observation state/timestamps may evolve; exact coordinates
+                # and the OriginLink's evidence are append-only.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_linked_source_coords_immutable
+                    BEFORE UPDATE OF source_reference_id,identity_id,provider_id,
+                        credential_id,account_id,branch_id,edition_id,
+                        right_id,reference_kind ON source_references
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links AS o
+                        WHERE o.source_reference_id=OLD.source_reference_id
+                    ) AND (
+                        NEW.source_reference_id IS NOT OLD.source_reference_id
+                        OR NEW.identity_id IS NOT OLD.identity_id
+                        OR NEW.provider_id IS NOT OLD.provider_id
+                        OR NEW.credential_id IS NOT OLD.credential_id
+                        OR NEW.account_id IS NOT OLD.account_id
+                        OR NEW.branch_id IS NOT OLD.branch_id
+                        OR NEW.edition_id IS NOT OLD.edition_id
+                        OR NEW.right_id IS NOT OLD.right_id
+                        OR NEW.reference_kind IS NOT OLD.reference_kind
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_source_coords_immutable');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_coords_immutable
+                    BEFORE UPDATE OF origin_link_id,origin_kind,identity_id,
+                        artifact_id,source_reference_id,evidence_ref,
+                        parent_artifact_id,from_identity_id ON origin_links
+                    WHEN (
+                        NEW.origin_link_id IS NOT OLD.origin_link_id
+                        OR NEW.origin_kind IS NOT OLD.origin_kind
+                        OR NEW.identity_id IS NOT OLD.identity_id
+                        OR NEW.artifact_id IS NOT OLD.artifact_id
+                        OR NEW.source_reference_id IS NOT OLD.source_reference_id
+                        OR NEW.evidence_ref IS NOT OLD.evidence_ref
+                        OR NEW.parent_artifact_id IS NOT OLD.parent_artifact_id
+                        OR NEW.from_identity_id IS NOT OLD.from_identity_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_link_coords_immutable');
+                    END
+                """)
                 cls._write_schema_version(db, 14)
                 db.execute("RELEASE SAVEPOINT migration_v14")
             except Exception:
