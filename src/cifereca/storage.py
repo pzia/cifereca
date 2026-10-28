@@ -1123,6 +1123,61 @@ class Storage:
                         SELECT RAISE(ABORT,'provider_origin_source_immutable');
                     END
                 """)
+                # SQLite connections do not all enable PRAGMA foreign_keys;
+                # protect the physical Artifact and both source references
+                # directly so an old maintenance writer cannot erase an
+                # OriginLink's historical coordinates by deleting a parent.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_artifact_insert
+                    BEFORE INSERT ON origin_links
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM artifacts
+                        WHERE artifact_id=NEW.artifact_id
+                    ) OR (NEW.parent_artifact_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM artifacts
+                        WHERE artifact_id=NEW.parent_artifact_id
+                    ))
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_missing');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_artifact_update
+                    BEFORE UPDATE OF artifact_id,parent_artifact_id ON origin_links
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM artifacts
+                        WHERE artifact_id=NEW.artifact_id
+                    ) OR (NEW.parent_artifact_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM artifacts
+                        WHERE artifact_id=NEW.parent_artifact_id
+                    ))
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_missing');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_artifact_parent_delete
+                    BEFORE DELETE ON artifacts
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links
+                        WHERE artifact_id=OLD.artifact_id
+                           OR parent_artifact_id=OLD.artifact_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_artifact_still_referenced');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_origin_source_delete
+                    BEFORE DELETE ON source_references
+                    WHEN EXISTS (
+                        SELECT 1 FROM origin_links
+                        WHERE source_reference_id=OLD.source_reference_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT,'origin_source_still_referenced');
+                    END
+                """)
                 cls._write_schema_version(db, 14)
                 db.execute("RELEASE SAVEPOINT migration_v14")
             except Exception:
