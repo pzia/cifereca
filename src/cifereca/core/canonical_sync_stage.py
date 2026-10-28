@@ -25,6 +25,7 @@ _LOG = logging.getLogger("cifereca")
 
 def persist_attested_source_references(
     storage: Any, snapshot: ProviderRightsSnapshot,
+    *, context_current: Callable[[], bool] | None = None,
 ) -> int:
     """Persist only exact positive A; never infer removal from empty snapshots.
 
@@ -34,6 +35,8 @@ def persist_attested_source_references(
     """
     if type(snapshot) is not ProviderRightsSnapshot:
         raise ValueError("invalid_canonical_rights_snapshot")
+    if context_current is not None and not callable(context_current):
+        raise ValueError("invalid_canonical_context_guard")
     if snapshot.status not in ("success", "partial"):
         return 0
     scope = snapshot.scope
@@ -47,6 +50,8 @@ def persist_attested_source_references(
     written = 0
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        if context_current is not None and context_current() is not True:
+            raise ValueError("canonical_rights_source_rebound")
         binding = db.execute(
             "SELECT identity_id,enabled FROM provider_connections "
             "WHERE provider_id=? AND credential_id=?",
@@ -102,6 +107,12 @@ def persist_attested_source_references(
                     (*updated[1:], now, ref),
                 )
                 written += 1
+        # An account or session may be rebound by another UI task while a
+        # multi-right batch is executing. Keep the full batch uncommitted
+        # until this final in-memory epoch/registry check. The callback MUST
+        # NOT call Storage while storage._lock is held (it is not recursive).
+        if context_current is not None and context_current() is not True:
+            raise ValueError("canonical_rights_source_rebound")
     return written
 
 
@@ -132,10 +143,50 @@ def observe_canonical_rights_in_sync(
     if service.sync_source_enabled(account) is not True:
         raise ValueError("canonical_rights_source_disabled")
     before_epoch = service._account_context_epoch
+    registered_accounts = service.accounts
+    registered_sessions = service._sessions
+    original_storage = service.storage
     snapshot = read_account_rights_snapshot(service, account, cancelled=cancelled)
     if snapshot.status == "cancelled" or cancelled():
         raise Cancelled("canonical_rights_sync_cancelled")
-    if (service._account_context_epoch != before_epoch
+
+    def current_context() -> bool:
+        """Pure in-memory registry check: safe under the SQLite storage lock."""
+        try:
+            scope = snapshot.scope
+            matches = [
+                candidate for candidate in service.accounts
+                if type(candidate) is Account and (
+                    candidate.identity_id, candidate.provider_id,
+                    candidate.credential_id, candidate.unique_id,
+                ) == (
+                    scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id,
+                )
+            ]
+            return (
+                service._account_context_epoch == before_epoch
+                and service.accounts is registered_accounts
+                and service._sessions is registered_sessions
+                and service.storage is original_storage
+                and len(matches) == 1 and matches[0] is account
+                and service._sessions.get(
+                    service._session_key(scope.provider_id, scope.credential_id)
+                ) is session
+                and getattr(session, "connected", None) is True
+                and getattr(session, "_closed", False) is False
+                and (
+                    account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id,
+                ) == (
+                    scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id,
+                )
+            )
+        except (AttributeError, TypeError, ValueError, KeyError):
+            return False
+
+    if (not current_context()
             or service.sync_source_enabled(account) is not True
             or service.storage.identity_for_connection(
                 account.provider_id, account.credential_id,
@@ -160,7 +211,9 @@ def observe_canonical_rights_in_sync(
         for row in snapshot.rights
     )
     try:
-        changed = persist_attested_source_references(service.storage, snapshot)
+        changed = persist_attested_source_references(
+            service.storage, snapshot, context_current=current_context,
+        )
     except ValueError as exc:
         if str(exc) != "canonical_rights_core_binding_changed":
             raise
@@ -181,9 +234,13 @@ def observe_canonical_rights_in_sync(
     # Every physical presence must be freshly hashed in this profile and
     # linked to the exact already committed origin. Missing coverage is
     # deliberately not converted to an absent file or a GET permission.
+    if not current_context():
+        raise ValueError("canonical_rights_source_rebound")
     plan = plan_existing_verified_presence(
         service.storage, snapshot, library_root=Path(service.library_dir()),
     )
+    if not current_context():
+        raise ValueError("canonical_rights_source_rebound")
     if snapshot_sink is not None:
         if not callable(snapshot_sink):
             raise ValueError("invalid_canonical_snapshot_sink")
