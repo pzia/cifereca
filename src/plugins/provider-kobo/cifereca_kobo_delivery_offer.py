@@ -185,10 +185,18 @@ def exact_kobo_offer_id(
             )
         ):
             continue
-        media = candidate.get("media_format") or candidate.get("source_format")
-        if type(media) is not str:
+        # Both claims are independently consumed by provider/DRM paths.
+        # Contradictory or malformed explicit formats cannot be promoted
+        # just because the first truthy field looks like a supported EPUB.
+        declared = [
+            candidate[key] for key in ("media_format", "source_format")
+            if key in candidate and candidate[key] is not None
+        ]
+        if (not declared or any(type(v) is not str or not v.strip()
+                                for v in declared)
+                or len({v.strip().lower() for v in declared}) != 1):
             continue
-        fmt = media.lower().strip()
+        fmt = declared[0].strip().lower()
         # A verified HTTPS acquisition link is not by itself proof of an
         # executable ADEPT/KDRM pipeline. Only conservative known paths.
         if (kind == "acsm" and handling == "adobe_adept"
