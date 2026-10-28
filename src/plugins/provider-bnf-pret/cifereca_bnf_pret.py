@@ -448,7 +448,8 @@ class BnfProviderSession(ProviderSession):
             )
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
-                         *, explicit_user_action: bool = False):
+                         *, explicit_user_action: bool = False,
+                         expected_offer_id: str | None = None):
         """Explicit candidate ACSM fetch; the automatic Core path stays denied.
 
         The public digital_download capability remains false until the Core
@@ -471,6 +472,18 @@ class BnfProviderSession(ProviderSession):
                     or loan.medium != 'digital' or loan.state != 'active'
                     or not loan.id or not loan.record_id
                     or self._observed_loans.get(loan.id) != loan.record_id):
+                raise ProviderConfigurationError('loan_not_observed')
+            # A Core-admitted optional offer must bind the SAME credential,
+            # borrower, loan and edition before any fresh private activity GET.
+            # Supplying an offer never bypasses explicit_user_action or Core
+            # consent. Legacy explicit callers may omit this extra guard.
+            if expected_offer_id is not None and (
+                type(expected_offer_id) is not str
+                or expected_offer_id != _reader_acs4_offer_id(
+                    self.credential_id, account.unique_id,
+                    loan.id, loan.record_id,
+                )
+            ):
                 raise ProviderConfigurationError('loan_not_observed')
             # A connected identity broker may be rebound independently from
             # the local Account object. If present, require its one exact owner
