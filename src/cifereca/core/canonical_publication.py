@@ -245,7 +245,7 @@ def publish_completed_acquisition(
                     ).fetchone()
                     or db.execute(
                         "SELECT 1 FROM artifact_variants WHERE artifact_id=? "
-                        "OR parent_artifact_id=? LIMIT 1",
+                        "OR source_artifact_id=? LIMIT 1",
                         (artifact_id, artifact_id),
                     ).fetchone()):
                 raise ValueError("canonical_artifact_collision")
