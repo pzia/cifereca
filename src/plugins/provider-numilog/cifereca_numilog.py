@@ -880,14 +880,19 @@ class NumilogSession(ProviderSession):
             )
         return owner[2][0]
 
-    def _validate_download_owner(self, expected):
+    def _validate_download_owner(self, expected, *, owner_scope=None):
         # A newly valid binding is not the binding which authorized this
-        # delivery. Do not redirect Alice's bytes into Bob's ADEPT profile.
+        # delivery. A->A broker replacement is also a new authority, even
+        # when the same identity string remains associated with the account.
         try:
             current = self._identity_id()
+            scope_stable = (
+                owner_scope is None
+                or self._inventory_owner_or_none() == owner_scope
+            )
         except Exception:
-            current = None
-        if current != expected:
+            current, scope_stable = None, False
+        if current != expected or not scope_stable:
             raise ProviderCapabilityError(
                 'Numilog : rattachement du compte modifié ; téléchargement arrêté'
             ) from None
@@ -941,12 +946,25 @@ class NumilogSession(ProviderSession):
         return produced,self.library_url
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
-                  authorized_link=None, authorized_kind=None):
+                  authorized_link=None, authorized_kind=None, expected_owner_scope=None):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
             if owner is None and self.identity_broker is not None:
                 owner = self._identity_id()
+            # The direct-EPUB route previously checked only the owner string
+            # during network reads and before publication. Preserve the Core
+            # broker instance plus exact candidate multiset from the initial
+            # fresh owned card, not just its identity label.
+            owner_scope = expected_owner_scope
+            if owner is not None:
+                if owner_scope is None and self.identity_broker is not None:
+                    owner_scope = self._inventory_owner_or_none()
+                if self.identity_broker is not None and owner_scope is None:
+                    raise ProviderCapabilityError(
+                        'Numilog : rattachement du compte modifié ; téléchargement arrêté'
+                    )
+                self._validate_download_owner(owner, owner_scope=owner_scope)
             seen = set()
             # Keep the fresh owned row's readBook coordinates across redirects;
             # confirmation-page product/copy evidence cannot choose another book.
@@ -987,7 +1005,7 @@ class NumilogSession(ProviderSession):
             for hop in range(12):
                 trace.fail('adept_unconfirmed')
                 if owner is not None:
-                    self._validate_download_owner(owner)
+                    self._validate_download_owner(owner, owner_scope=owner_scope)
                 trace.fail('origin_rejected')
                 attested_hop = (url == selected_link or signed_redirect_chain)
                 if attested_hop:
@@ -1004,7 +1022,7 @@ class NumilogSession(ProviderSession):
                     if owner is None:
                         owner = self._identity_id()
                     else:
-                        self._validate_download_owner(owner)
+                        self._validate_download_owner(owner, owner_scope=owner_scope)
                     if self.acquisition_broker is None:
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
@@ -1287,7 +1305,7 @@ class NumilogSession(ProviderSession):
                                 output.write(chunk)
                         trace.fail('adept_unconfirmed')
                         if owner is not None:
-                            self._validate_download_owner(owner)
+                            self._validate_download_owner(owner, owner_scope=owner_scope)
                         trace.fail('artifact_invalid')
                         if inspect_artifact(part, 'acsm').valid:
                             acsm = part.with_suffix('.acsm')
@@ -1295,6 +1313,8 @@ class NumilogSession(ProviderSession):
                             try:
                                 trace.fail('adept_unconfirmed')
                                 result = self._fulfill_acsm(acsm,title=title,trace=trace,identity_id=owner)
+                                if owner is not None:
+                                    self._validate_download_owner(owner, owner_scope=owner_scope)
                                 trace.success('acsm_complete')
                                 trace.event('adept_fulfillment', 'acsm_complete', hops=hop+1)
                                 return result
@@ -1306,13 +1326,18 @@ class NumilogSession(ProviderSession):
                         validate_epub(part)
                         trace.fail('adept_unconfirmed')
                         if owner is not None:
-                            self._validate_download_owner(owner)
+                            self._validate_download_owner(owner, owner_scope=owner_scope)
                         if title:
                             destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
                         else:
                             publish_artifact_file(part, destination, overwrite=True)
                     finally:
                         part.unlink(missing_ok=True)
+                    # Publication may call an external plugin and race the
+                    # Core owner broker. Never report success to Core after
+                    # a swap, even if the bytes have already been staged.
+                    if owner is not None:
+                        self._validate_download_owner(owner, owner_scope=owner_scope)
                     self._diag('téléchargement',bytes=size,format='EPUB')
                     trace.success('epub_complete')
                     trace.event('artifact_validation','epub_complete',hops=hop+1)
@@ -1325,6 +1350,7 @@ class NumilogSession(ProviderSession):
         with self.lock:
             self._canonical_item(item)
             owner = self._identity_id() if self.identity_broker is not None else None
+            owner_scope = self._inventory_owner_or_none() if owner is not None else None
             # Read a fresh private library only for an explicit user action.
             # Search/sync call _rows() without delivery_evidence, so no signed
             # ACSM link escapes into SearchResult, catalog, or diagnostics.
@@ -1332,7 +1358,7 @@ class NumilogSession(ProviderSession):
                 include_delivery=True, delivery_record_id=item.record_id,
             )
             if owner is not None:
-                self._validate_download_owner(owner)
+                self._validate_download_owner(owner, owner_scope=owner_scope)
             row = next((row for row in rows if self._id(row) == item.record_id),None)
             if row is None:
                 raise ProviderError('Numilog : livre absent de la bibliothèque actuelle')
@@ -1383,7 +1409,8 @@ class NumilogSession(ProviderSession):
                 )
                 return self._download(start,directory/name,title=row['title'],author=item.author,
                     book_id=self._id(row),source='owned_card' if entry_from_owned_card else 'readbook',
-                    identity_id=owner,expected_readbook_url=row['href'],
+                    identity_id=owner,expected_owner_scope=owner_scope,
+                    expected_readbook_url=row['href'],
                     from_owned_confirmation=type(row.get('confirmation')) is str
                         and not isinstance(evidence, OwnedDelivery),
                     authorized_link=evidence.url if isinstance(evidence, OwnedDelivery) else None,
