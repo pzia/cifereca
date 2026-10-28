@@ -211,3 +211,74 @@ def test_bounded_positive_cardinality_zero_and_n():
         snapshot = read_account_rights_snapshot(service, account)
         assert snapshot.status == "partial" and len(snapshot.rights) == count
         assert not snapshot.claims_complete_branch
+
+
+@pytest.mark.parametrize("inflight_change", [
+    "append_same_account", "replace_with_same_account",
+    "duplicate_same_session", "replace_with_same_session",
+])
+def test_inplace_duplicate_or_replaced_registration_after_provider_io_is_rejected(
+    inflight_change,
+):
+    service, account, session = rig()
+    original_accounts = service.accounts
+    original_sessions = service._sessions
+
+    def read(selected):
+        result = ProviderSession(
+            session.provider_id, session.credential_id,
+        ).rights_observation_snapshot(selected)
+        if inflight_change == "append_same_account":
+            service.accounts.append(replace(account))
+        elif inflight_change == "replace_with_same_account":
+            service.accounts[0] = replace(account)
+        elif inflight_change == "duplicate_same_session":
+            service._sessions["duplicate-reader"] = ProviderSession(
+                session.provider_id, session.credential_id,
+            )
+        elif inflight_change == "replace_with_same_session":
+            service._sessions[("provider-alpha", "cred-A")] = ProviderSession(
+                session.provider_id, session.credential_id,
+            )
+        else:
+            pytest.fail("unrecognized synthetic transition")
+        assert service.accounts is original_accounts
+        assert service._sessions is original_sessions
+        assert service._account_context_epoch == 1
+        return result
+
+    session.reader = read
+    result = read_account_rights_snapshot(service, account)
+    assert session.calls == 1
+    assert result.status == "failed"
+    assert result.rights == ()
+    assert result.coverage == "unknown"
+    assert not result.authorizes_mutation
+
+
+def test_unrelated_registered_session_does_not_invalidate_selected_account():
+    service, account, session = rig()
+    def read(selected):
+        service._sessions["unrelated"] = ProviderSession("provider-beta", "other")
+        return ProviderSession(
+            session.provider_id, session.credential_id,
+        ).rights_observation_snapshot(selected)
+    session.reader = read
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "partial"
+    assert len(result.rights) == 1
+    assert session.calls == 1
+
+
+def test_distinct_borrower_same_credential_does_not_steal_selected_account():
+    service, account, session = rig()
+    def read(selected):
+        service.accounts.append(replace(account, unique_id="borrower-sibling"))
+        return ProviderSession(
+            session.provider_id, session.credential_id,
+        ).rights_observation_snapshot(selected)
+    session.reader = read
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "partial"
+    assert result.scope.account_id == "buyer-A"
+    assert session.calls == 1
