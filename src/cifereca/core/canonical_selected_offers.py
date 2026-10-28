@@ -94,6 +94,18 @@ def qualify_selected_offers(
                        if type(row) is Account
                        and (row.identity_id, row.provider_id,
                             row.credential_id, row.unique_id) == coordinates]
+            # The selected-offer read is itself private provider I/O. Check
+            # the live upstream borrower before and after that read, rather
+            # than relying only on the later delivery executor's GET fence.
+            session_accounts = session.accounts
+            if (not isinstance(session_accounts, (list, tuple))
+                    or sum(
+                        type(row) is Account
+                        and (row.identity_id, row.provider_id,
+                             row.credential_id, row.unique_id) == coordinates
+                        for row in session_accounts
+                    ) != 1):
+                return False
             registered = [s for s in service._sessions.values()
                           if getattr(s, "provider_id", None) == scope.provider_id
                           and getattr(s, "credential_id", None) == scope.credential_id]
