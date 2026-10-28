@@ -128,10 +128,8 @@ def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
         assert [(b.upstream, b.completeness) for b in snapshot.branches] == [
             ("dilicom", "partial"), ("syracuse", "unknown"),
         ]
-        assert session.last_loan_errors == [{
-            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
-            "reason_code": reason,
-        }]
+        # Typed snapshots do not write the mutable legacy error facade.
+        assert session.last_loan_errors == []
         assert sum(path.endswith("/ListLoans") for path in calls) == 2
         assert reason in repr(diag.events)
     finally:
@@ -149,7 +147,7 @@ def test_both_404_then_upstream_recovers_without_claiming_absence():
     try:
         with pytest.raises(ProviderConfigurationError):
             session.loan_inventory_snapshot(account)
-        assert len(session.last_loan_errors) == 2
+        assert session.last_loan_errors == []
         broken["value"] = False
         snapshot = session.loan_inventory_snapshot(account)
         assert snapshot.status == "success"
@@ -172,10 +170,7 @@ def test_listloans_transport_error_is_not_an_empty_manifest():
         result = session.loan_inventory_snapshot(account)
         assert result.status == "partial"
         assert result.loans == ()
-        assert session.last_loan_errors == [{
-            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
-            "reason_code": "paris_loans_transport_timeout",
-        }]
+        assert session.last_loan_errors == []
     finally:
         session.close()
 
@@ -212,10 +207,9 @@ def test_listloans_supplier_error_is_preserved_with_structured_code(
         assert PRIVATE in repr(diagnostics.events)
         assert "loans DILICOM" in repr(diagnostics.events)
         assert "loans SYRACUSE" in repr(diagnostics.events)
-        assert session.last_loan_errors == [
-            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
-            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
-        ]
+        # Raw diagnostics remain searchable; the typed producer does not
+        # mutate the legacy v1 side channel to report the same failure.
+        assert session.last_loan_errors == []
     finally:
         session.close()
 
@@ -281,10 +275,9 @@ def test_listloans_raw_error_is_searchable_and_exported_without_truncation(
         exported = json.loads(export_raw_journal(log_path))
         assert sum(raw in json.dumps(row, ensure_ascii=False)
                    for row in exported["events"]) == 2
-        assert session.last_loan_errors == [
-            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed"},
-            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed"},
-        ]
+        # Raw diagnostics remain searchable; the typed producer does not
+        # mutate the legacy v1 side channel to report the same failure.
+        assert session.last_loan_errors == []
     finally:
         session.close()
         logger.removeHandler(handler_file)
