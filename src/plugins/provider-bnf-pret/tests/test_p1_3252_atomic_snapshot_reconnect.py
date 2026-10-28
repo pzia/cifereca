@@ -54,7 +54,7 @@ def test_reconnect_cannot_replace_account_between_loan_read_and_snapshot():
     observed, release, reconnect_started, reconnect_completed = (
         Event(), Event(), Event(), Event()
     )
-    legacy = session.loans
+    legacy = session._read_live_loans_locked
 
     def hold_after_loan_get(account):
         rows = legacy(account)
@@ -63,7 +63,7 @@ def test_reconnect_cannot_replace_account_between_loan_read_and_snapshot():
             raise AssertionError("Synthetic BnF snapshot timeout")
         return rows
 
-    session.loans = hold_after_loan_get
+    session._read_live_loans_locked = hold_after_loan_get
 
     def reconnect():
         reconnect_started.set()
