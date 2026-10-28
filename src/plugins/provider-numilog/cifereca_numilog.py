@@ -745,6 +745,41 @@ class NumilogSession(ProviderSession):
             )
             return replace(base, rights=(qualified,))
 
+    def rights_selected_delivery_offer_snapshot(
+        self, account, *, edition_id, right_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        """Provider-neutral selected-right entrypoint for Core #3171.
+
+        Unlike the ordinary rights inventory, this deliberately performs a
+        targeted private preflight. It must be called only after Core has
+        admitted the exact SourceKey and checked persistent consent; the
+        boolean is an explicit-action fence, never proof of that consent.
+        No content URL, signed token, receipt or bytes are returned.
+        """
+        if (explicit_user_action is not True
+                or kind != 'purchase' or branch != 'meslivres'
+                or type(edition_id) is not str or not edition_id
+                or type(right_id) is not str or edition_id != right_id
+                or type(account) is not Account
+                or account.provider_id != 'numilog'
+                or account.credential_id != self.credential_id):
+            raise ProviderCapabilityError('numilog_selected_offer_scope_mismatch')
+        pinned = (account.identity_id, account.provider_id,
+                  account.credential_id, account.unique_id)
+        selected = self.rights_delivery_offer_snapshot(account, right_id)
+        expected_scope = (pinned[0], pinned[1], pinned[2], pinned[3])
+        observed_scope = (selected.scope.identity_id, selected.scope.provider_id,
+                          selected.scope.credential_id, selected.scope.account_id)
+        right = selected.exact(edition_id, right_id, kind)
+        if (selected.branch != branch or observed_scope != expected_scope
+                or len(selected.rights) != 1 or right is None
+                or not right.provider_attested or right.state != 'active'
+                or (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id) != pinned):
+            raise ProviderCapabilityError('numilog_selected_offer_scope_changed')
+        return selected
+
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
 
