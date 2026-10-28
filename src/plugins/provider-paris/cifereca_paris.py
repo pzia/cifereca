@@ -927,7 +927,11 @@ class ParisProviderSession(ProviderSession):
         ]
         return state
 
-    def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:
+    def download_digital(
+        self, loan: Loan, account: Account, target_dir: Path, *,
+        expected_right_id: str | None = None,
+        expected_identity_id: str | None = None,
+    ) -> tuple[Path, str]:
         """Existing-loan delivery only: exact live Paris borrower and loan.
 
         Core decides acquisition permission; this provider still must never
@@ -1018,15 +1022,78 @@ class ParisProviderSession(ProviderSession):
 
             if not scope_current():
                 raise ProviderConfigurationError("paris_download_scope_mismatch")
+            # Canonical selected-right preflight is opt-in. A prior Core
+            # right/consent admission must not silently reuse an old PNB URL
+            # after return, renewal, account rebind or another user's copy.
+            # Legacy explicit workflows without these arguments are intact.
+            delivery_loan = replace(loan)
+            if expected_right_id is not None or expected_identity_id is not None:
+                if (type(expected_right_id) is not str
+                        or not 0 < len(expected_right_id) <= 256
+                        or expected_right_id != loan.id
+                        or type(expected_identity_id) is not str
+                        or expected_identity_id != scope[1]
+                        or owner is None or owner[1] != (expected_identity_id,)):
+                    raise ProviderConfigurationError("paris_selected_right_not_admitted")
+                # This is a new authenticated loan *inventory* read, not a
+                # new acquisition/token GET. It cannot prove complete
+                # absence or turn an untrusted state into 'active'. Require
+                # a single exact DILICOM right before touching any PNB URL.
+                fresh = self._snapshot_for_account(account)
+                if not scope_current():
+                    raise ProviderConfigurationError("paris_download_scope_mismatch")
+                failed_dilicom = any(
+                    branch.upstream == "dilicom"
+                    and branch.reason_code == "branch_unavailable"
+                    for branch in fresh.branches
+                )
+                candidates = []
+                for row in (() if failed_dilicom else fresh.loans):
+                    if (type(row) is not Loan
+                            or row.provider != "DILICOM"
+                            or row.medium != "digital"
+                            or row.id != expected_right_id
+                            or row.record_id != loan.record_id
+                            or row.source_provider != self.provider_id
+                            or row.source_credential != self.credential_id
+                            or row.source_account_id != (scope[0] or "primary")
+                            or row.identity_id != scope[1]
+                            or type(row.raw) is not dict):
+                        continue
+                    raw_id = row.raw.get("Id") or row.raw.get("HoldingId")
+                    raw_edition = row.raw.get("RecordId")
+                    if (type(raw_id) not in (str, int)
+                            or type(raw_edition) not in (str, int)
+                            or str(raw_id) != expected_right_id
+                            or str(raw_edition) != loan.record_id):
+                        continue
+                    candidates.append(row)
+                if len(candidates) != 1 or not scope_current():
+                    raise ProviderConfigurationError("paris_selected_right_unobserved")
+                # Only the FRESH account-scoped card supplies a candidate.
+                # Without its explicit PNB link, the historical fallback
+                # DownloadDigitalDocument may issue a quota/borrow POST:
+                # never use that route for an exact Core-selected old right.
+                # This is an attested candidate URL, NOT positive active
+                # permission or the final delivery receipt.
+                selected = candidates[0]
+                if type(selected.ebook_url) is not str or not selected.ebook_url.strip():
+                    raise ProviderConfigurationError("paris_selected_delivery_unobserved")
+                delivery_loan = replace(selected)
             # Never pass the caller's mutable loan directly to the PNB
             # request builder: it reads provider/edition after preferences.
             # Its private POST must always use the edition admitted above.
-            delivery_loan = replace(loan)
             borrower_uid = "" if scope[4] else scope[0]
-            return self._download_digital_scoped_impl(
+            completed, historical_url = self._download_digital_scoped_impl(
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
             )
+            # A signed PNB URL is transient secret transport evidence, NOT a
+            # SourceReference or Core delivery receipt. Keep the old tuple
+            # contract for historical callers only; the selected canonical
+            # route returns no private URL outside the provider boundary.
+            return completed, ("" if expected_right_id is not None
+                               else historical_url)
 
     def _download_digital_scoped_impl(self, loan: Loan, account: Account,
                                       target_dir: Path, *, scope_guard=None,
