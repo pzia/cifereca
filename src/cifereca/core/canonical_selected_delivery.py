@@ -81,6 +81,18 @@ def complete_selected_delivery(
                 and getattr(session, "_closed", False) is False
                 and storage.identity_for_connection(
                     scope.provider_id, scope.credential_id) == scope.identity_id
+                and sum(
+                    x.get("provider_id") == scope.provider_id
+                    and x.get("credential_id") == scope.credential_id
+                    and x.get("enabled") is True
+                    for x in storage.provider_connections(identity_id=scope.identity_id)
+                ) == 1
+                and sum(
+                    x.get("provider_id") == scope.provider_id
+                    and x.get("credential_id") == scope.credential_id
+                    and x.get("account_id") == scope.account_id
+                    for x in storage.provider_accounts(identity_id=scope.identity_id)
+                ) == 1
                 and service.sync_source_enabled(account) is True
             )
         except (AttributeError, TypeError, KeyError, ValueError):
