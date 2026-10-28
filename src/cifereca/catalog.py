@@ -183,6 +183,34 @@ class LocalCatalog:
         # Likewise a top-level directory is not a supplier declaration.
         return None, None
 
+    def _canonical_stage_visible(self, path: Path) -> bool:
+        """Uncommitted candidate bytes are not public library placements.
+
+        After Core's atomic provider OriginLink+Placement publication, the
+        same file is eligible for the normal verified catalog scan. This
+        read-only fence cannot grant source rights or infer an OriginLink.
+        """
+        try:
+            try:
+                relative = path.relative_to(self.root)
+            except ValueError:
+                relative = path.relative_to(self.root.resolve())
+        except ValueError:
+            return False
+        if ".canonical-delivery" not in relative.parts:
+            return True
+        # No global catalogue rescan or legacy backup lookup. The exact
+        # committed physical path needs an OriginLink in the same profile.
+        with self.storage._lock, self.storage._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM placements AS p "
+                "JOIN origin_links AS o ON o.artifact_id=p.artifact_id "
+                "AND o.identity_id=p.identity_id AND o.origin_kind='provider' "
+                "WHERE p.path=? AND p.state='present' LIMIT 1",
+                (str(path.resolve()),),
+            ).fetchone()
+        return row is not None
+
     def _index_bundle(
         self,
         root: Path,
@@ -336,6 +364,9 @@ class LocalCatalog:
         if not path.is_relative_to(root_resolved) or linked_child():
             return {"status": "invalid", "path": str(submitted),
                     "reason": "catalog_index_path_not_local"}
+        if not self._canonical_stage_visible(path):
+            return {"status": "invalid", "path": str(path),
+                    "reason": "canonical_staging_not_published"}
         path_owner, _ = self._path_hints(path)
         if identity_id is not None and path_owner and path_owner != identity_id:
             # This is a new path, not necessarily an existing SQLite placement.
@@ -638,7 +669,7 @@ class LocalCatalog:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)):
+        for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts) and self._canonical_stage_visible(p)):
             scanned += 1
             if not is_unlinked_local_file(path):
                 invalid += 1
