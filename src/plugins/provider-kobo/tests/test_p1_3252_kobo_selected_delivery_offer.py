@@ -240,3 +240,34 @@ def test_kobo_opaque_offer_never_bypasses_explicit_core_identity():
         assert len(requests) == count
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("race", [
+    "owner_B", "broker_ABA", "credential_swap", "live_account_ABA",
+])
+def test_kobo_rebind_during_local_offer_projection_refuses_old_snapshot(
+    race, monkeypatch,
+):
+    import cifereca_kobo_delivery_offer as delivery
+
+    s, vault, broker, a, requests = setup()
+    original = delivery.exact_kobo_offer_id
+    def during_projection(*args, **kwargs):
+        offer = original(*args, **kwargs)
+        assert offer.startswith("kobo.descriptor:")
+        if race == "owner_B":
+            broker.identities = ("identity-B",)
+        elif race == "broker_ABA":
+            s.identity_broker = OwnerBroker()
+        elif race == "credential_swap":
+            s._accounts[0].credential_id = "other-card"
+        else:
+            s._accounts = [replace(s._accounts[0])]
+        return offer
+    monkeypatch.setattr(delivery, "exact_kobo_offer_id", during_projection)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="owner_changed"):
+            s.rights_delivery_offer_snapshot(a, "book-1", explicit_user_action=True)
+        assert len(requests) == 1 and vault.calls == 1
+    finally:
+        s.close()
