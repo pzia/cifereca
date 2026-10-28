@@ -275,11 +275,17 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     if local.status == 'needs_reconciliation':
-        return {'status': 'attention_required', 'code': (
-            'bnf_local_candidate_reconciliation_required'
-            if local.reason == 'local_candidate_found'
-            else 'bnf_local_evidence_unavailable'
-        )}
+        if local.reason != 'local_candidate_found':
+            # Broken/inconclusive local evidence is a real integrity gate.
+            # A title match on otherwise readable local bytes is NOT.
+            return {'status': 'attention_required',
+                    'code': 'bnf_local_evidence_unavailable'}
+        _TRACE_LOG.info(
+            "TRACE bnf local bibliographic hint is not a Sync veto "
+            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+            account.provider_id, account.credential_id,
+            account.unique_id, loan.id,
+        )
 
     # An old manually imported EPUB may not have any SQLite reference.
     # Consult only configured manual/ roots via Core's bounded, no-follow
@@ -319,11 +325,20 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     if physical_result.status == 'needs_reconciliation':
-        return {'status': 'attention_required', 'code': (
-            'bnf_local_candidate_reconciliation_required'
-            if physical_result.reason == 'local_candidate_found'
-            else 'bnf_local_evidence_unavailable'
-        )}
+        if physical_result.reason != 'local_candidate_found':
+            return {'status': 'attention_required',
+                    'code': 'bnf_local_evidence_unavailable'}
+        # The OPF title can confirm a bibliographic candidate but it never
+        # proves a provider OriginLink, the current ACSM or ADEPT identity.
+        # A previously configured, fresh account-scoped opt-in is therefore
+        # allowed to reach the independently signed GET as in #3171, never
+        # to adopt, unlink, relocate or delete the historical manual EPUB.
+        _TRACE_LOG.info(
+            "TRACE bnf local OPF hint is not a Sync veto "
+            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
+            account.provider_id, account.credential_id,
+            account.unique_id, loan.id,
+        )
     # A signed ACSM is a private short-lived candidate. If admission fails
     # before ADEPT is invoked, it must not linger in acquisition-work.
     # Once handed to import_acsm, leave lifetime and receipt ownership to
