@@ -160,3 +160,44 @@ def test_authentication_has_no_new_http_observations(caplog):
         assert observations(caplog) == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("failure", "reason"), [
+    (httpx.ConnectTimeout("SYNTHETIC_PRIVATE_TRANSPORT_CAUSE"),
+     "transport_unavailable"),
+    (RuntimeError("SYNTHETIC_PRIVATE_UNEXPECTED_CAUSE"),
+     "unexpected_failure"),
+])
+def test_canonical_failed_http_event_keeps_raw_exception_and_closed_code(
+    failure, reason, caplog,
+):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        raise failure
+
+    client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises((ReaderHTTPError, RuntimeError)):
+                client.activity()
+
+        events = observations(caplog)
+        assert len(calls) == 1
+        assert [event["detail"]["event"] for event in events] == [
+            "begin", "terminal",
+        ]
+        terminal = events[-1]
+        detail = terminal["detail"]
+        assert terminal["status"] == "failed"
+        assert detail["logical_endpoint"] == "activity"
+        assert detail["code"] == reason  # existing consumer vocabulary
+        assert detail["error_type"] == type(failure).__name__
+        assert detail["error_message"] == str(failure)
+        assert str(failure) in detail["error_traceback"]
+        assert "http_status" not in detail  # never invent headers/status
+        assert "content_type" not in detail
+        assert events[0]["detail"]["request_ref"] == detail["request_ref"]
+    finally:
+        client.close()
