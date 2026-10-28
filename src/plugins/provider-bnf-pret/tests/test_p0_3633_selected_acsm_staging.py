@@ -60,6 +60,7 @@ def stage(session, account, offer, path, **changes):
 def test_real_httpx_selected_bnf_acsm_to_exact_core_staging(tmp_path):
     session, account, _, calls, get, offer = ready()
     try:
+        before_activity = sum(c[0] == "GET" and c[2] == "/my_profile/activity" for c in calls)
         path, returned_url = stage(session, account, offer, tmp_path)
         assert path.is_file() and path.parent == tmp_path
         assert path.suffix == ".acsm" and path.read_bytes() == TOKEN
@@ -70,8 +71,8 @@ def test_real_httpx_selected_bnf_acsm_to_exact_core_staging(tmp_path):
         assert not any(p.suffix == ".part" for p in tmp_path.iterdir())
         # After offer preflight, candidate selects one exact page and a
         # second fresh page immediately before exactly ONE signed token GET.
-        assert len([c for c in calls if c[0] == "GET" and
-                    c[2] == "/my_profile/activity"]) == 4
+        assert (sum(c[0] == "GET" and c[2] == "/my_profile/activity"
+                    for c in calls) - before_activity) == 2
     finally:
         session.close()
 
@@ -138,7 +139,7 @@ def test_fresh_candidate_observation_refuses_before_token_get(
             session.identity_broker.identities = ("profile-a", "profile-a")
         else:
             session.close()
-        with pytest.raises((ProviderCapabilityError, ProviderError, Exception)):
+        with pytest.raises((ProviderCapabilityError, ProviderError)):
             stage(session, account, offer, tmp_path)
         assert token_gets == []
         assert not list(tmp_path.rglob("*.acsm"))
