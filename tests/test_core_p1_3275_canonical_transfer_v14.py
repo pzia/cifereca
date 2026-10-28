@@ -210,3 +210,33 @@ def test_reappearing_valid_independent_copy_repairs_invalid_placement_only(case)
     assert replay.placement_id == first.placement_id
     assert db.placement_for_path(b)["state"] == "present"
     assert rows(db)["origin_links"] == 4
+
+
+def test_two_donors_reusing_same_transfer_id_keep_distinct_contextual_origins(case):
+    db, root, a = case
+    b = target(root.parent, "B")
+    c = target(root.parent, "C")
+    db.placement_put({
+        "path": str(c), "identity_id": "C",
+        "artifact_id": "sha256:" + SHA, "state": "present",
+    })
+    first = transfer(db, root, a, b, "A", "B", transfer_id="shared-id")
+    second = transfer(db, root, c, b, "C", "B", transfer_id="shared-id")
+    assert first.internal_reference_id != second.internal_reference_id
+    assert first.transfer_origin_id != second.transfer_origin_id
+    assert first.cifereca_origin_id != second.cifereca_origin_id
+    assert rows(db) == {
+        "artifacts": 1, "placements": 3,
+        "source_references": 3, "origin_links": 6,
+        "entitlements": 0,
+    }
+    with db._lock, db._connect() as connection:
+        transfers = connection.execute(
+            "SELECT from_identity_id FROM origin_links "
+            "WHERE origin_kind='transfer' AND identity_id='B' "
+            "ORDER BY from_identity_id"
+        ).fetchall()
+    assert transfers == [("A",), ("C",)]
+    assert transfer(
+        db, root, a, b, "A", "B", transfer_id="shared-id",
+    ).changed is False
