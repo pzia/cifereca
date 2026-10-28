@@ -153,3 +153,21 @@ def test_typed_bnf_inventory_copy_refuses_inflight_session_rebind(change):
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+def test_public_typed_inventory_reader_accepts_bnf_core_copy_without_legacy_retry():
+    from cifereca.plugin_api import read_loan_inventory
+
+    session, account, client = fixture()
+    copy = replace(account)
+    try:
+        report = read_loan_inventory(session, copy)
+        assert report.status == "partial"
+        assert report.scope.identity_id == "synthetic-identity"
+        assert len(report.loans) == 1
+        assert report.loans[0].source_credential == "synthetic-credential"
+        assert report.reason_code == "inventory_not_exhaustive"
+        # Reader does not fall back to the instance-only legacy loans(copy).
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
