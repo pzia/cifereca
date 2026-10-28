@@ -114,3 +114,71 @@ def test_bnf_legacy_loans_stable_scope_still_delivers_one_positive_loan():
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+class OwnerBroker:
+    def __init__(self, identity="identity-A"):
+        self.identity = identity
+
+    def accounts(self):
+        from types import SimpleNamespace
+        return [SimpleNamespace(
+            provider_id="bnf-pret", account_id="credential-A",
+            identity_id=self.identity,
+        )]
+
+
+@pytest.mark.parametrize("race", [
+    "owner_changed", "broker_swapped_same_owner", "duplicated_owner",
+])
+def test_bnf_legacy_loans_refuse_inflight_broker_owner_rebind(race):
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    broker = OwnerBroker()
+    session.identity_broker = broker
+    original = client.activity
+
+    def during_activity():
+        response = original()
+        if race == "owner_changed":
+            broker.identity = "identity-B"
+        elif race == "broker_swapped_same_owner":
+            session.identity_broker = OwnerBroker("identity-A")
+        else:
+            broker.accounts = lambda: [
+                *OwnerBroker("identity-A").accounts(),
+                *OwnerBroker("identity-A").accounts(),
+            ]
+        return response
+
+    client.activity = during_activity
+    try:
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.loans(account)
+        assert client.calls == ["login", "activity"]
+        assert session._observed_loans == {}
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("owner", ["identity-B", ""])
+def test_bnf_legacy_loans_refuse_unlinked_broker_before_private_get(owner):
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    session.identity_broker = OwnerBroker(owner)
+    try:
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.loans(account)
+        assert client.calls == ["login"]
+    finally:
+        session.close()
+
+
+def test_bnf_legacy_loans_stable_owner_broker_keeps_one_get():
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    session.identity_broker = OwnerBroker()
+    try:
+        result = session.loans(account)
+        assert len(result) == 1
+        assert result[0].identity_id == "identity-A"
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
