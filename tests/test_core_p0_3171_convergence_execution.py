@@ -286,3 +286,48 @@ def test_consent_lookup_exception_is_never_approval(rig, when):
     assert result[0].status == ("pending" if when == "before" else "blocked")
     assert service.calls == (0 if when == "before" else 1)
     assert rows(service.storage) == (0, 0, 0, 0)
+
+
+def test_new_canonical_placement_is_indexed_without_full_library_scan(rig):
+    service, account, source, snapshot, root, lock_path = rig
+    delivered = fake_delivery(service, root)
+    result = run(service, account, snapshot, root, lock_path, {source}, delivered)
+    assert result[0].status == "downloaded"
+    entries = service.storage.catalog_entries()
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["artifact_id"] == "sha256:" + SHA
+    assert entry["identity_id"] == "A"
+    assert entry["local_state"] == "local"
+    assert entry["placement_id"] == service.storage.placements()[0]["placement_id"]
+    assert service.storage.entitlements() == []
+    assert run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("idempotent second Sync must not GET"),
+    )[0].status == "present_attested"
+    assert service.storage.catalog_entries() == entries
+
+
+def test_postcommit_catalogue_failure_does_not_rollback_origin_or_repeat_get(
+    rig, monkeypatch,
+):
+    from cifereca.catalog import LocalCatalog
+
+    service, account, source, snapshot, root, lock_path = rig
+    def fail_index(*_args, **_kw):
+        raise RuntimeError("synthetic catalogue projection interruption")
+    monkeypatch.setattr(LocalCatalog, "index_path", fail_index)
+    result = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert result[0].status == "downloaded"
+    assert rows(service.storage) == (1, 1, 1, 1)
+    assert service.storage.catalog_entries() == []
+    second = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("committed origin avoids a repeated GET"),
+    )
+    assert second[0].status == "present_attested"
+    assert service.calls == 1
+    assert rows(service.storage) == (1, 1, 1, 1)
