@@ -52,6 +52,11 @@ def test_selected_acsm_stays_in_private_staging_without_legacy_adept(tmp_path):
         assert source == session.library_url
         assert seen == [READ_BOOK, SIGNED]
         assert acquisition.calls == []
+        assert any(
+            args[2] == "ok" and kw.get("detail", {}).get("code") == "acsm_candidate"
+            for args, kw in diagnostics.events
+            if len(args) >= 3
+        )
         assert not list(attempt.glob("*.part"))
         assert not list(attempt.glob("*.epub"))
     finally:
