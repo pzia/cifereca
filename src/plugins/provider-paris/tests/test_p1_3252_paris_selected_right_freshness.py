@@ -148,3 +148,26 @@ def test_legacy_explicit_download_keeps_its_original_no_inventory_get(
         assert content_gets == [SIGNED]
     finally:
         session.close()
+
+
+def test_selected_loan_without_fresh_ebook_link_never_posts_new_pnb_borrow(
+    tmp_path, monkeypatch,
+):
+    session, account, loan, client, content_gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan(url="")]
+    posted = []
+    client.pnb_preferences = lambda: posted.append("PREFS")
+    client.download_digital_document = lambda *_: posted.append("POST")
+    try:
+        with pytest.raises(
+            ProviderConfigurationError, match="paris_selected_delivery_unobserved",
+        ):
+            session.download_digital(
+                loan, account, tmp_path, expected_right_id=loan.id,
+                expected_identity_id=account.identity_id,
+            )
+        assert posted == []  # no fallback quota/borrow POST
+        assert content_gets == []
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()
