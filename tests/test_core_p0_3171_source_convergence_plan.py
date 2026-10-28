@@ -199,7 +199,7 @@ def test_duplicate_snapshots_or_scan_scope_rejected_instead_of_last_write_wins()
     with pytest.raises(ValueError, match="duplicate_source_reference"):
         plan(snap, snap)
     with pytest.raises(ValueError, match="ambiguous_profile_scan"):
-        plan(snap, scans=(scan("A"), scan("A"))
+        plan(snap, scans=(scan("A"), scan("A")))
 
 
 def test_zero_mutation_deterministic_second_plan():
