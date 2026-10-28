@@ -90,7 +90,7 @@ def test_binding_survives_storage_reopen_and_is_revocable(tmp_path):
         service.close()
     reopened = Storage(path)
     try:
-        assert reopened.schema_version() == 13
+        assert reopened.schema_version() == 14
         assert reopened.paris_borrower_adept_binding_get(
             credential_id="alice-paris", account_id="linked-123"
         )["profile_id"] == "bob-profile"
