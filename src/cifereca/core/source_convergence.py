@@ -49,13 +49,16 @@ class PlacementEvidence:
     sha256: str
     size: int
     verified: bool
+    verification_ref: str = ""
 
     def __post_init__(self) -> None:
         if (not _id(self.identity_id) or not _id(self.placement_id)
                 or type(self.sha256) is not str or len(self.sha256) != 64
                 or any(ch not in "0123456789abcdef" for ch in self.sha256)
                 or type(self.size) is not int or self.size < 0
-                or type(self.verified) is not bool):
+                or type(self.verified) is not bool
+                or not _id(self.verification_ref, empty=True)
+                or (self.verified and not self.verification_ref)):
             raise ValueError("invalid_placement_evidence")
 
 
