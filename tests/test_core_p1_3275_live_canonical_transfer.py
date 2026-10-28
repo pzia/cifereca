@@ -12,7 +12,6 @@ import sqlite3
 
 import pytest
 
-from cifereca.core.canonical_publication import _stable
 from tests.test_core0925_open_destinations import _placement, _service
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
 
@@ -145,10 +144,13 @@ def test_altered_source_artifact_hash_never_mints_transfer_origin(tmp_path):
     service, root, a, placement_a, artifact = prepare(tmp_path)
     a.write_bytes(b"%PDF-1.7\nAn unrelated changed file\n")
     try:
-        copied = service.materialize_to_identity(placement_a, "bob")
-        assert copied["status"] == "complete"
+        with pytest.raises(
+            Exception, match="Artifact source modifié depuis son indexation",
+        ):
+            service.materialize_to_identity(placement_a, "bob")
         assert canon_rows(service.storage)["origin_links"] == 0
+        assert canon_rows(service.storage)["placements"] == 1
         assert service.storage.entitlements() == []
-        assert Path(copied["path"]).read_bytes() == a.read_bytes()
+        assert not (root / "bob" / "local" / "book.pdf").exists()
     finally:
         service.close()
