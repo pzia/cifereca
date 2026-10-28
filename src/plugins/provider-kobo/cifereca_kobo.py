@@ -695,10 +695,25 @@ class KoboSession(ProviderSession):
                 return None
             owners = []
             for ref in bindings:
-                if (getattr(ref, "provider_id", None) == "kobo"
-                        and getattr(ref, "account_id", None) == expected_account):
-                    identity = getattr(ref, "identity_id", None)
-                    owners.append(identity if type(identity) is str else "")
+                if (getattr(ref, "provider_id", None) != "kobo"
+                        or getattr(ref, "account_id", None) != expected_account):
+                    continue
+                # Core #3171 publishes AccountRef v2, credential-qualified.
+                # A different Vault credential may legitimately have the
+                # same upstream account ID; it is NOT another owner of this
+                # session. Preserve legacy v1 as an ambiguous candidate when
+                # v1/v2 overlap, never silently trust a credential-less row.
+                version = getattr(ref, "scope_version", 1)
+                if type(version) is not int or version not in (1, 2):
+                    return None
+                if version == 2:
+                    credential = getattr(ref, "credential_id", None)
+                    if type(credential) is not str or not credential:
+                        return None
+                    if credential != self.credential_id:
+                        continue
+                identity = getattr(ref, "identity_id", None)
+                owners.append(identity if type(identity) is str else "")
             return (id(broker), tuple(sorted(owners)))
         except Exception:
             return None
