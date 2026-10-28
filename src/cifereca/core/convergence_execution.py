@@ -309,6 +309,25 @@ def execute_admitted_convergence(
                     "TRACE canonical intake state update failed provider_id=%s "
                     "right_id=%s", scope.provider_id, key.right_id,
                 )
+            # B is now atomically committed. A targeted descriptive index
+            # makes this Placement visible without waiting for a full scan.
+            # An indexing failure cannot revoke the already valid provider
+            # OriginLink, nor may it turn success into a second provider GET.
+            try:
+                from ..catalog import LocalCatalog
+                indexed = LocalCatalog(initial_storage, library_root).index_path(
+                    completed.path, identity_id=scope.identity_id,
+                )
+                if type(indexed) is not dict or indexed.get("status") != "indexed":
+                    _LOG.warning(
+                        "TRACE canonical catalog projection deferred provider_id=%s "
+                        "code=canonical_catalog_index_deferred", scope.provider_id,
+                    )
+            except Exception:
+                _LOG.exception(
+                    "TRACE canonical catalog projection failed provider_id=%s "
+                    "code=canonical_catalog_index_failed", scope.provider_id,
+                )
             results.append(ConvergenceOutcome(
                 key,
                 "recovered" if was_recovered else (
