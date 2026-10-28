@@ -20,7 +20,7 @@ OBSERVED = "2026-10-28T10:00:00+00:00"
 def source(provider="provider-alpha", identity="A", credential="cred-A",
            account="account-A", edition="book-1", right="purchase-1",
            kind="purchase", *, state="active", delivery="available",
-           evidence_kind="provider_response", status="success"):
+           evidence_kind="provider_response", status="success", branch="books"):
     scope = ProviderRightsScope(identity, provider, credential, account)
     row = ProviderRightObservation(
         edition, right, kind, state, evidence_kind,
@@ -31,9 +31,9 @@ def source(provider="provider-alpha", identity="A", credential="cred-A",
     )
     snapshot = ProviderRightsSnapshot(
         scope=scope, rights=(row,), status=status, coverage="partial",
-        branch="books",
+        branch=branch,
     )
-    return snapshot, SourceKey(scope, edition, right, kind)
+    return snapshot, SourceKey(scope, edition, right, kind, branch)
 
 
 def placement(identity, placement_id, sha=SHA_A, verified=True):
@@ -168,7 +168,7 @@ def test_missing_file_after_complete_scan_proposes_only_if_deliverable_and_conse
     assert plan(no_delivery, scans=(scan("A"),),
                 consent=(no_delivery_key,)).decisions[0].state == "pending"
     assert plan(snap, scans=(scan("A", False),),
-                consent=(key,)).decisions[0].reason == "local_scan_incomplete"
+                consent=(key,)).decisions[0].reason == "scan_incomplete_independent_admission_required"
 
 
 def test_stale_file_does_not_count_as_presence_or_initiate_download():
@@ -343,3 +343,51 @@ def test_declared_file_in_foreign_profile_cannot_satisfy_scoped_source():
             key, "foreign-relation", "file-in-B", "declared_current",
             "check-in-B", identity_id="B",
         )
+
+
+def test_same_account_same_right_ids_but_distinct_branches_are_independent():
+    first, fk = source(branch="syracuse", right="same-id", edition="same-edition")
+    second, sk = source(branch="dilicom", right="same-id", edition="same-edition")
+    assert fk != sk
+    assert fk.scope == sk.scope
+    # A verified OriginLink from one library branch must not satisfy another.
+    result = plan(first, second,
+                  origins=(origin(fk),),
+                  placements=(placement("A", "exact-file"),),
+                  scans=(scan("A"),), consent=(sk,))
+    assert [d.state for d in result.decisions] == [
+        "present_attested", "missing_to_download",
+    ]
+    # Even a distinct fingerprint registered in the other branch remains
+    # independent; no cross-branch inference from equal title or SHA.
+    third = plan(first, second,
+                 origins=(origin(sk, SHA_B),), scans=(scan("A"),),
+                 placements=(placement("A", "same-title", SHA_A),),
+                 candidates=(LocalCandidate(sk, "same-title"),))
+    assert third.decisions[0].state == "pending"
+    assert third.decisions[1].state == "needs_reconciliation"
+
+
+def test_same_scope_branch_identical_positive_right_is_duplicate_fail_closed():
+    first, _ = source(branch="same")
+    second, _ = source(branch="same")
+    with pytest.raises(ValueError, match="duplicate_source_reference"):
+        plan(first, second)
+
+
+def test_incomplete_scan_is_not_negative_proof_nor_a_permanent_download_veto():
+    snap, key = source()
+    review = plan(snap, scans=(scan("A", False),), consent=(key,)).decisions[0]
+    assert review.state == "pending"
+    assert review.independent_acquisition_review_possible
+    assert not review.acquisition_authorized
+    assert review.placement_ids == ()
+    # Without a deliverable offer/consent, even independent review cannot
+    # be suggested. An unverified local candidate instead needs reconciliation.
+    not_consented = plan(snap, scans=(scan("A", False),)).decisions[0]
+    assert not not_consented.independent_acquisition_review_possible
+    candidate = plan(snap, scans=(scan("A", False),),
+                     candidates=(LocalCandidate(key, "uncertain-file"),),
+                     consent=(key,)).decisions[0]
+    assert candidate.state == "needs_reconciliation"
+    assert not candidate.independent_acquisition_review_possible
