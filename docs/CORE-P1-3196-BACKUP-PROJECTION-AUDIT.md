@@ -146,3 +146,14 @@ placeholder canonique non issu de backup_items et la compatibilité du
 rafraîchissement legacy non vérifié. Aucun réseau ni traitement ADEPT réel.
 Cette barrière ne retire pas encore les writers et lecteurs backup_items :
 #3196 reste ouvert jusqu'à leur migration et à la projection lecture seule.
+
+## Handoff d'une mise à jour legacy partielle (#3196)
+
+Après l'UPSERT de compatibilité, `backup_put()` transmet au miroir la ligne
+**effectivement fusionnée dans la même transaction**, plutôt que son seul
+dictionnaire d'entrée. Un patch sans compte/identité conserve ainsi le scope
+connu, les options coalescées et le même identifiant canonique. Il ne crée
+plus un deuxième droit/receipt à compte NULL ni ne contourne un conflit de
+propriétaire préexistant dans le ledger. Si le miroir refuse ce propriétaire,
+la modification de compatibilité est également annulée. Ce correctif ne
+migre pas les doublons historiques et ne retire pas la projection legacy.

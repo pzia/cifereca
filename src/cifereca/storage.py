@@ -1629,10 +1629,22 @@ class Storage:
             # Keep the 0.7 compatibility projection and the generic 0.8 ledger
             # in the same SQLite transaction. This makes Kobo immediately visible
             # to the provider-neutral acquisition model without duplicating sync I/O.
-            mirror = dict(item)
-            mirror.setdefault("updated_at", now)
-            mirror.setdefault("attempt_count", attempt_count_value)
-            self._mirror_backup_row(db, mirror, now=now, migration=False)
+            # The UPSERT may have retained an already known account/identity,
+            # loan, strategy or attempt counter from a partial legacy patch.
+            # Hand off THAT merged row under the same write transaction. The
+            # raw input would manufacture a second NULL-account entitlement
+            # and could evade the canonical owner's collision guards.
+            keys = ["provider_id", "credential_id", "item_id", *self._backup_keys()]
+            persisted = db.execute(
+                "SELECT " + ",".join(keys) + " FROM backup_items "
+                "WHERE provider_id=? AND credential_id=? AND item_id=?",
+                (str(item.get("provider_id") or ""),
+                 str(item.get("credential_id") or ""),
+                 str(item.get("item_id") or "")),
+            ).fetchone()
+            if persisted is None:
+                raise ValueError("backup_projection_handoff_missing")
+            self._mirror_backup_row(db, dict(zip(keys, persisted)), now=now, migration=False)
 
     def backup_prune_missing(
         self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]
