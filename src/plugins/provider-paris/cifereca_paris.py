@@ -1070,9 +1070,16 @@ class ParisProviderSession(ProviderSession):
                     candidates.append(row)
                 if len(candidates) != 1 or not scope_current():
                     raise ProviderConfigurationError("paris_selected_right_unobserved")
-                # Only the FRESH account-scoped card supplies the delivery
-                # URL; never use the potentially stale caller's URL.
-                delivery_loan = replace(candidates[0])
+                # Only the FRESH account-scoped card supplies a candidate.
+                # Without its explicit PNB link, the historical fallback
+                # DownloadDigitalDocument may issue a quota/borrow POST:
+                # never use that route for an exact Core-selected old right.
+                # This is an attested candidate URL, NOT positive active
+                # permission or the final delivery receipt.
+                selected = candidates[0]
+                if type(selected.ebook_url) is not str or not selected.ebook_url.strip():
+                    raise ProviderConfigurationError("paris_selected_delivery_unobserved")
+                delivery_loan = replace(selected)
             # Never pass the caller's mutable loan directly to the PNB
             # request builder: it reads provider/edition after preferences.
             # Its private POST must always use the edition admitted above.
