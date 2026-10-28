@@ -514,6 +514,18 @@ class BnfProviderSession(ProviderSession):
                 or account.provider_id != self.provider_id
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('bnf_selected_delivery_scope_mismatch')
+        # Core hands over an already created private staging directory.
+        # Reject an invalid or switched final-component symlink BEFORE any
+        # authenticated HTML or ACSM GET. Legacy explicit download_digital()
+        # retains its historical destination handling.
+        if not isinstance(target_dir, (str, Path)):
+            raise ProviderCapabilityError('bnf_selected_delivery_target_invalid')
+        try:
+            staging = Path(target_dir)
+            if staging.is_symlink() or not staging.is_dir():
+                raise ProviderCapabilityError('bnf_selected_delivery_target_invalid')
+        except (OSError, ValueError, TypeError):
+            raise ProviderCapabilityError('bnf_selected_delivery_target_invalid') from None
         with self._lock:
             # The optional Core path requires a broker-verified borrower,
             # unlike the historical brokerless manual token action.
@@ -553,7 +565,7 @@ class BnfProviderSession(ProviderSession):
             # A second fresh loan check still occurs inside download_digital
             # immediately before the signed token GET; no stale ACSM fallback.
             return self.download_digital(
-                matches[0], live, Path(target_dir),
+                matches[0], live, staging,
                 explicit_user_action=True,
                 expected_offer_id=delivery_offer_id,
             )
@@ -610,7 +622,8 @@ class BnfProviderSession(ProviderSession):
             epoch = self._epoch
             # Account and Loan are mutable even while this session lock is held:
             # the Core can rebind them during activity() or loan_token(). Pin
-            # both scopes and refuse a token GET/publication after any change.
+            # both scopes AND the unique live account instance: a replacement
+            # with identical values (A->A) must also revoke this ACSM GET.
             account_scope = (account.provider_id, account.credential_id,
                              account.unique_id, account.identity_id)
             loan_scope = (loan.id, loan.record_id, loan.provider, loan.medium,
@@ -626,6 +639,10 @@ class BnfProviderSession(ProviderSession):
                          loan.state, loan.source_provider, loan.source_credential,
                          loan.source_account_id, loan.identity_id) == loan_scope
                     and self._observed_loans.get(loan_id) == resource_id
+                    and self.provider_id == account_scope[0]
+                    and self.credential_id == account_scope[1]
+                    and len(self._accounts) == 1
+                    and self._accounts[0] is account
                     and self.identity_broker is broker
                     and (broker is None or
                          self._core_owner_binding(account_scope[2]) == owner_binding)
