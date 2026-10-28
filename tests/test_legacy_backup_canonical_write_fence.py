@@ -106,3 +106,77 @@ def test_untouched_legacy_placeholder_still_accepts_legacy_refresh(tmp_path):
         assert len(store.catalog_entries()) == 1
     finally:
         store.close()
+
+
+
+def test_unverified_legacy_sha_cannot_poison_real_final_artifact_publication(tmp_path):
+    """Same-SHA legacy size/format lies must not block final Core bytes."""
+    store = Storage(tmp_path / "state.sqlite")
+    try:
+        store.identity_put({
+            "identity_id": "A", "label": "A", "directory_name": "A",
+        })
+        connection = store.provider_connection_put({
+            "identity_id": "A", "provider_id": "seller",
+            "credential_id": "card",
+        })
+        store.provider_account_put({
+            "identity_id": "A", "provider_id": "seller",
+            "credential_id": "card", "connection_id": connection,
+            "account_id": "buyer",
+        })
+        path = tmp_path / "books" / "A" / "book.pdf"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"%PDF-1.7\\nFinal confirmed bytes\\n")
+        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+        # The v0.7 compatibility record claims an impossible EPUB format and
+        # size for the real PDF at this path. Its claim is NOT an Artifact.
+        store.backup_put(legacy(path, sha))
+        artifact_id = "sha256:" + sha
+        assert store.artifact_get(artifact_id) is None
+        assert store.backup_get("seller", "card", "edition")["sha256"] == sha
+        assert store.placements()[0]["state"] == "unverified"
+
+        scope = ProviderRightsScope("A", "seller", "card", "buyer")
+        source = SourceKey(scope, "edition", "right", "purchase", "purchases")
+        snapshot = ProviderRightsSnapshot(
+            scope, (ProviderRightObservation(
+                "edition", "right", "purchase", "active", "provider_response",
+                "observed-positive-right", "2026-10-28T08:00:00+00:00",
+                "unknown",
+            ),), branch="purchases", status="partial", coverage="partial",
+        )
+        result = publish_completed_acquisition(
+            store, library_root=tmp_path / "books", path=path,
+            source=source, snapshot=snapshot, final_sha256=sha,
+            delivery_receipt_ref="actual-completed-delivery",
+        )
+        assert result.artifact_id == artifact_id
+        real_artifact = store.artifact_get(artifact_id)
+        assert real_artifact["size"] == path.stat().st_size
+        assert real_artifact["media_format"] == "pdf"
+        assert store.placements()[0]["state"] == "present"
+        with store._lock, store._connect() as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM origin_links WHERE origin_kind='provider'"
+            ).fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_legacy_sha_without_existing_file_does_not_create_artifact(tmp_path):
+    store = Storage(tmp_path / "state.sqlite")
+    try:
+        target = tmp_path / "nonexistent.epub"
+        store.backup_put(legacy(target, "a" * 64))
+        assert store.artifact_get("sha256:" + "a" * 64) is None
+        assert len(store.backup_list("seller")) == 1
+        assert store.placements()[0]["state"] == "unverified"
+        assert store.acquisitions()[0]["status"] == "complete"
+        # Historical receipt state is not a provider OriginLink or bytes.
+        with store._lock, store._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
+    finally:
+        store.close()
