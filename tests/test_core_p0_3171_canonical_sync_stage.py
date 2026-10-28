@@ -40,7 +40,7 @@ class Service:
         )
         session = NS(
             provider_id="seller-a", credential_id="card-a",
-            connected=True, _closed=False,
+            connected=True, _closed=False, accounts=[self.account],
         )
         if typed:
             def read(_account):
