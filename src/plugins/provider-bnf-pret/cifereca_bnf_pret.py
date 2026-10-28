@@ -352,9 +352,19 @@ class BnfProviderSession(ProviderSession):
             for loan in inventory.loans:
                 # Both opaque IDs come from the authenticated active-loan HTML:
                 # never substitute a catalogue URL, title, ISBN or file hash.
-                if (loan.medium != 'digital' or loan.state != 'active'
-                        or type(loan.record_id) is not str or not loan.record_id
-                        or type(loan.id) is not str or not loan.id):
+                if (loan.medium != 'digital' or loan.state != 'active'):
+                    continue
+                # The current BnF HTML parser limits route IDs to 128 ASCII
+                # characters. Keep the public rights/1 boundary independent
+                # of that parser: a malformed typed loan or future parser
+                # regression must not erase valid sibling rights by raising
+                # from ProviderRightObservation.__post_init__.
+                coordinates = (loan.record_id, loan.id)
+                if not all(
+                    type(value) is str and 1 <= len(value) <= 256
+                    and not any(char in value for char in ('\x00', '\r', '\n'))
+                    for value in coordinates
+                ):
                     continue
                 rights.append(ProviderRightObservation(
                     edition_id=loan.record_id, right_id=loan.id,
