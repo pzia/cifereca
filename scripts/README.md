@@ -1,5 +1,11 @@
 # Scripts de packaging plugins
 
+## Recette jetable de main
+
+`python3 scripts/recette.py` prépare puis lance une copie isolée et hors ligne
+des données locales sur un SHA figé de main. Voir [le guide de recette](../docs/RECETTE-JETABLE.md)
+pour les prérequis Linux, `--no-start`, `verify` et `destroy`.
+
 Ces scripts construisent les artefacts à partir des sources versionnées sous
 `plugins/<plugin>/`. Ils n'utilisent que la bibliothèque standard Python.
 
