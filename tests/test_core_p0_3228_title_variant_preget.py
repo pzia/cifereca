@@ -53,7 +53,7 @@ def test_bibliographic_review_title_normalization_is_exact_tokens_only(tmp_path)
     ).status == "none_observed"
 
 
-def test_bnf_indexed_manual_typographic_title_blocks_new_get(
+def test_bnf_indexed_manual_typographic_title_does_not_veto_signed_get(
     connected_core, tmp_path, monkeypatch,
 ):
     service, session, account, loan, downloaded = _ready(connected_core)
@@ -77,13 +77,13 @@ def test_bnf_indexed_manual_typographic_title_blocks_new_get(
         outcome = materialize(service, account, loan)
         assert outcome == {
             "status": "attention_required",
-            "code": "bnf_local_candidate_reconciliation_required",
+            "code": "bnf_auto_acquisition_failed",
         }
-    assert not attempts and not downloaded
+    assert attempts == ["would-get", "would-get"] and not downloaded
     assert path.read_bytes() == before
 
 
-def test_bnf_unindexed_opf_typographic_title_blocks_new_get(
+def test_bnf_unindexed_opf_typographic_title_does_not_veto_signed_get(
     connected_core, tmp_path, monkeypatch,
 ):
     service, session, account, loan, downloaded = _ready(connected_core)
@@ -104,9 +104,9 @@ def test_bnf_unindexed_opf_typographic_title_blocks_new_get(
     )
     for _ in range(2):
         assert materialize(service, account, loan)["code"] == (
-            "bnf_local_candidate_reconciliation_required"
+            "bnf_auto_acquisition_failed"
         )
-    assert not attempts and not downloaded
+    assert attempts == ["would-get", "would-get"] and not downloaded
 
 
 def test_distinct_extra_volume_remains_eligible_without_reusing_old_title(
