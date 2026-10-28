@@ -67,17 +67,17 @@ def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
     read_a_complete, unblock_a, read_b_started, read_b_complete = (
         Event(), Event(), Event(), Event()
     )
-    legacy_loans = session.loans
+    legacy_loans = session._read_loans_for_account
 
-    def frozen_loans(account):
-        rows = legacy_loans(account)
+    def frozen_loans(account, *, publish_legacy_status=True):
+        rows = legacy_loans(account, publish_legacy_status=publish_legacy_status)
         if account.unique_id == a.unique_id:
             read_a_complete.set()
             if not unblock_a.wait(10):
                 raise AssertionError("Synthetic read A timed out")
         return rows
 
-    session.loans = frozen_loans
+    session._read_loans_for_account = frozen_loans
 
     def run_b():
         read_b_started.set()
@@ -137,10 +137,10 @@ def test_same_account_snapshot_is_one_read_per_branch_without_claiming_absence()
 
 def test_typed_branch_failure_survives_legacy_side_channel_cleared():
     session, a, _ = fixture()
-    original = session.loans
+    original = session._read_loans_for_account
 
-    def clear_v1_after_read(account):
-        rows = original(account)
+    def clear_v1_after_read(account, *, publish_legacy_status=True):
+        rows = original(account, publish_legacy_status=publish_legacy_status)
         session.last_loan_errors.clear()
         return rows
 
@@ -164,10 +164,10 @@ def test_typed_branch_failure_survives_legacy_side_channel_cleared():
 
 def test_typed_success_ignores_stale_legacy_failure_from_another_read():
     session, _a, b = fixture()
-    original = session.loans
+    original = session._read_loans_for_account
 
-    def inject_v1_error_after_read(account):
-        rows = original(account)
+    def inject_v1_error_after_read(account, *, publish_legacy_status=True):
+        rows = original(account, publish_legacy_status=publish_legacy_status)
         session.last_loan_errors = [{"upstream": "DILICOM", "code": "stale"}]
         return rows
 
