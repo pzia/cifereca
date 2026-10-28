@@ -1045,6 +1045,7 @@ class KoboSession(ProviderSession):
         # live account's *original* identity, even if empty, across the POST.
         if ((live_scope[1], live_scope[2], live_scope[3])
                 != (pinned[1], pinned[2], pinned[3])
+                or live_scope[0] not in (None, "", "default", pinned[0])
                 or not pinned[0] or not pinned[3]
                 or owner is None or owner[1] != (pinned[0],)):
             raise ProviderCapabilityError("kobo_selected_offer_owner_changed")
