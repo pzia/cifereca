@@ -157,7 +157,7 @@ def validate_epub(path):
     except (KeyError,OSError,zipfile.BadZipFile,ET.ParseError,RuntimeError,NotImplementedError):
         raise ProviderError('Numilog : le fichier reçu n’est pas un EPUB valide') from None
 
-def _numilog_card_offer_id(credential_id, account_id, right_id, evidence):
+def _numilog_card_offer_id(identity_id, credential_id, account_id, right_id, evidence):
     """Opaque exact scoped offer from a real signed MesLivres owned card.
 
     ProductId and IndexExemplaire come from the DOM-bound provider action.
@@ -168,7 +168,7 @@ def _numilog_card_offer_id(credential_id, account_id, right_id, evidence):
             or evidence.delivery_kind not in {'acsm', 'epub_direct'}
             or not _attested_public_https(evidence.url)):
         return ''
-    coords = (credential_id, account_id, right_id,
+    coords = (identity_id, credential_id, account_id, right_id,
               evidence.product_id, evidence.copy_index, evidence.delivery_kind)
     if (not all(type(x) is str and 0 < len(x) <= 256 for x in coords)
             or not all(x.isascii() and x.isdecimal() and len(x) <= 16
@@ -735,7 +735,7 @@ class NumilogSession(ProviderSession):
                 # ownership, but it cannot claim any executable offer.
                 return replace(base, rights=(original,))
             offer_id = _numilog_card_offer_id(
-                account.credential_id, account.unique_id,
+                account.identity_id, account.credential_id, account.unique_id,
                 right_id, selected[0].get('delivery'),
             )
             qualified = replace(
@@ -1537,7 +1537,7 @@ class NumilogSession(ProviderSession):
             trace.fail('redirect_limit')
             raise ProviderError('Numilog : trop de redirections ou pages intermédiaires')
 
-    def download_direct(self,item,target_dir,*,expected_offer_id=None):
+    def download_direct(self,item,target_dir,*,expected_offer_id=None,expected_identity_id=None):
         with self.lock:
             # An optional Core-admitted offer can only narrow the legacy
             # explicit selection; it never grants an automatic acquisition.
@@ -1545,11 +1545,18 @@ class NumilogSession(ProviderSession):
                 type(expected_offer_id) is not str
                 or not expected_offer_id.startswith('numilog.card:')
                 or len(expected_offer_id) != len('numilog.card:') + 64
+                or type(expected_identity_id) is not str
+                or not expected_identity_id
             ):
                 raise ProviderCapabilityError('numilog_offer_unobserved')
             self._canonical_item(item)
             owner = self._identity_id() if self.identity_broker is not None else None
             owner_scope = self._inventory_owner_or_none() if owner is not None else None
+            # An offer admitted for A must never trigger a private page GET
+            # using the new valid owner B. Core supplies the exact expected
+            # identity independently from the opaque offer identifier.
+            if expected_offer_id is not None and owner != expected_identity_id:
+                raise ProviderCapabilityError('numilog_offer_owner_changed')
             # Read a fresh private library only for an explicit user action.
             # Search/sync call _rows() without delivery_evidence, so no signed
             # ACSM link escapes into SearchResult, catalog, or diagnostics.
@@ -1565,8 +1572,9 @@ class NumilogSession(ProviderSession):
                 # No readBook fallback, confirmation navigation or signed GET
                 # may silently replace the exact action admitted by Core.
                 current_offer = _numilog_card_offer_id(
-                    self.credential_id, 'numilog:' + self.scope,
-                    item.record_id, row.get('delivery'),
+                    expected_identity_id, self.credential_id,
+                    'numilog:' + self.scope, item.record_id,
+                    row.get('delivery'),
                 )
                 if current_offer != expected_offer_id:
                     raise ProviderCapabilityError('numilog_offer_changed')
