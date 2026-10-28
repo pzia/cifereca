@@ -136,3 +136,57 @@ def test_bnf_selected_candidate_owner_rebound_during_activity(tmp_path):
         assert client.calls == ["login", "activity", "activity"]
     finally:
         session.close()
+
+
+def test_bnf_selected_candidate_aba_broker_swap_after_activity_rejected(tmp_path):
+    from test_p1_3252_rights_observation_snapshot import CoreOwnerBroker
+    session, account, client, right = setup()
+    try:
+        read = client.activity
+        def rebind_same_identity():
+            html = read()
+            session.identity_broker = CoreOwnerBroker(("identity-A",))
+            return html
+        client.activity = rebind_same_identity
+        session.download_digital = lambda *a, **kw: pytest.fail("A→A token GET")
+        with pytest.raises(Exception, match="account_scope_mismatch"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert client.calls == ["login", "activity", "activity"]
+    finally:
+        session.close()
+
+
+def test_bnf_selected_candidate_duplicate_borrowers_refused_before_network(tmp_path):
+    session, account, client, right = setup()
+    try:
+        session.identity_broker.identities = ("identity-A", "identity-A")
+        before = list(client.calls)
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_owner_changed"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert client.calls == before
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("mutated", [
+    dict(credential_id="other-credential"),
+    dict(unique_id="foreign-borrower"),
+    dict(identity_id="identity-B"),
+])
+def test_bnf_selected_candidate_foreign_account_scope_no_get(tmp_path, mutated):
+    from dataclasses import replace
+    session, account, client, right = setup()
+    try:
+        foreign = replace(account, **mutated)
+        before = list(client.calls)
+        with pytest.raises(ProviderCapabilityError):
+            session.rights_selected_delivery_candidate(
+                foreign, **selected(right, tmp_path),
+            )
+        assert client.calls == before
+    finally:
+        session.close()
