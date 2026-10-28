@@ -1,5 +1,7 @@
 # Core P1 #3119 — contrat additif d'inventaire de prêts
 
+> **Document historique/partiel — 28/10/2026.** inventaire de prêts v1, observations positives par branche, pas droit à acquérir. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
+
 **Statut : première tranche d'API, non activée dans la réconciliation.** API publique
 `cifereca.plugin_api.loan_inventory`, réexportée depuis `cifereca.plugin_api`.
 Le fournisseur historique conserve `ProviderSession.loans(account) -> list[Loan]`.
