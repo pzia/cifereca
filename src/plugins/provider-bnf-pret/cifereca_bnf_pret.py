@@ -486,6 +486,69 @@ class BnfProviderSession(ProviderSession):
             # this explicit selection; unknown delivery stays unknown.
             return replace(selected, rights=(right,))
 
+    def rights_selected_delivery_candidate(
+        self, account, *, edition_id, right_id, kind, branch,
+        delivery_offer_id, target_dir, explicit_user_action=False,
+    ):
+        """Execute one selected *already owned* loan to a candidate ACSM.
+
+        The existing guarded download_digital does the fresh action/token
+        recheck. This method cannot attest an EPUB, ADEPT receipt or Core
+        publication and must never be called before Core consent/admission.
+        """
+        if (explicit_user_action is not True
+                or kind != 'loan' or branch != 'bnf_html'
+                or type(account) is not Account
+                or type(edition_id) is not str or not edition_id
+                or type(right_id) is not str or not right_id
+                or type(delivery_offer_id) is not str
+                or account.provider_id != self.provider_id
+                or account.credential_id != self.credential_id):
+            raise ProviderCapabilityError('bnf_selected_delivery_scope_mismatch')
+        with self._lock:
+            # The optional Core path requires a broker-verified borrower,
+            # unlike the historical brokerless manual token action.
+            pinned = (account.identity_id, account.provider_id,
+                      account.credential_id, account.unique_id)
+            if (not self.connected or self._closed
+                    or len(self._accounts) != 1
+                    or type(self._accounts[0]) is not Account):
+                raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
+            live = self._accounts[0]
+            owner = self._core_owner_binding(pinned[3])
+            if ((live.identity_id, live.provider_id,
+                 live.credential_id, live.unique_id) != pinned
+                    or owner is None or owner[1] != (pinned[0],)
+                    or delivery_offer_id != _reader_acs4_offer_id(
+                        pinned[0], pinned[2], pinned[3], right_id, edition_id,
+                    )):
+                raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
+            epoch = self._epoch
+            loans = self.loans(live)
+            if (self._closed or not self.connected or epoch != self._epoch
+                    or len(self._accounts) != 1 or self._accounts[0] is not live
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != pinned
+                    or (live.identity_id, live.provider_id,
+                        live.credential_id, live.unique_id) != pinned
+                    or self._core_owner_binding(pinned[3]) != owner):
+                raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
+            matches = [
+                loan for loan in loans
+                if loan.id == right_id and loan.record_id == edition_id
+                and loan.source_account_id == pinned[3]
+                and loan.raw.get('reader_acs4_offer_id') == delivery_offer_id
+            ]
+            if len(matches) != 1:
+                raise ProviderCapabilityError('bnf_selected_delivery_unobserved')
+            # A second fresh loan check still occurs inside download_digital
+            # immediately before the signed token GET; no stale ACSM fallback.
+            return self.download_digital(
+                matches[0], live, Path(target_dir),
+                explicit_user_action=True,
+                expected_offer_id=delivery_offer_id,
+            )
+
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
                          *, explicit_user_action: bool = False,
                          expected_offer_id: str | None = None):

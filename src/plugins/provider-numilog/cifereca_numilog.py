@@ -780,6 +780,72 @@ class NumilogSession(ProviderSession):
             raise ProviderCapabilityError('numilog_selected_offer_scope_changed')
         return selected
 
+    def rights_selected_delivery_candidate(
+        self, account, *, edition_id, right_id, kind, branch,
+        delivery_offer_id, target_dir, explicit_user_action=False,
+    ):
+        """Execute one Core-admitted selected purchase, returning a *candidate*.
+
+        No consent is inferred here. Core must have checked persistent
+        SourceKey consent before this call and must validate/finalize the
+        returned bytes and independently publish Placement/OriginLink.
+        Reuse the existing proven, revalidating download_direct path.
+        """
+        if (explicit_user_action is not True
+                or kind != 'purchase' or branch != 'meslivres'
+                or type(account) is not Account
+                or type(edition_id) is not str or not edition_id
+                or type(right_id) is not str or edition_id != right_id
+                or type(delivery_offer_id) is not str
+                or not delivery_offer_id.startswith('numilog.card:')
+                or len(delivery_offer_id) != len('numilog.card:') + 64
+                or any(c not in '0123456789abcdef'
+                       for c in delivery_offer_id[len('numilog.card:'):])
+                or account.provider_id != 'numilog'
+                or account.credential_id != self.credential_id):
+            raise ProviderCapabilityError('numilog_selected_delivery_scope_mismatch')
+
+        with self.lock:
+            accounts = self._accounts
+            live = accounts[0] if len(accounts) == 1 else None
+            pinned = (account.identity_id, account.provider_id,
+                      account.credential_id, account.unique_id)
+            owner = self._inventory_owner_or_none()
+            if (not self.connected or live is None
+                    or (live.identity_id, live.provider_id,
+                        live.credential_id, live.unique_id) != pinned
+                    or owner is None or owner[0] != 'broker'
+                    or owner[2] != (pinned[0],)):
+                raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+            # library() is the existing scoped positive listing. A stale or
+            # ambiguous item cannot select an alternative book by title.
+            listed = self.library()
+            if (self._accounts is not accounts
+                    or len(self._accounts) != 1
+                    or self._accounts[0] is not live
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != pinned
+                    or (live.identity_id, live.provider_id,
+                        live.credential_id, live.unique_id) != pinned
+                    or self._inventory_owner_or_none() != owner):
+                raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+            matches = [
+                item for item in listed
+                if (item.record_id == right_id
+                    and item.source_provider == 'numilog'
+                    and item.source_credential == self.credential_id)
+            ]
+            if len(matches) != 1:
+                raise ProviderCapabilityError('numilog_selected_delivery_unobserved')
+            # This existing path fetches the fresh exact signed card again,
+            # rejects changed offer/owner before the delivery GET and stages
+            # a candidate. A returned Path is NOT a canonical Core receipt.
+            return self.download_direct(
+                matches[0], target_dir,
+                expected_offer_id=delivery_offer_id,
+                expected_identity_id=pinned[0],
+            )
+
     def public_product_detail(self, product_url):
         """Explicit anonymous product GET, sharing the public session HTTP budget.
 
