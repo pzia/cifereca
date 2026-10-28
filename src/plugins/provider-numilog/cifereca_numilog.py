@@ -465,6 +465,12 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : portée de preuves d’achats indisponible'
                 )
+            # Account is a mutable Core model. Pin the caller's exact scope
+            # before I/O; the broker owner alone cannot detect a caller rebind.
+            caller_scope = (
+                account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id,
+            )
             owner = self._inventory_owner_or_none()
             if (
                 type(owner) is not tuple or len(owner) != 3
@@ -482,6 +488,8 @@ class NumilogSession(ProviderSession):
                 or self._accounts[0].unique_id != expected_account
                 or self._accounts[0].provider_id != 'numilog'
                 or self._accounts[0].credential_id != self.credential_id
+                or (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id) != caller_scope
             ):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; observations arrêtées'
@@ -510,7 +518,9 @@ class NumilogSession(ProviderSession):
                     # A malformed authenticated card makes this read
                     # incomplete; never present its absence as a revocation.
                     continue
-            if self._inventory_owner_or_none() != owner or not self.connected:
+            if (self._inventory_owner_or_none() != owner or not self.connected
+                    or (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id) != caller_scope):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; observations arrêtées'
                 )
@@ -518,7 +528,7 @@ class NumilogSession(ProviderSession):
             # by _rows(): do NOT claim an exhaustive entitlement snapshot.
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
-                    account.identity_id, 'numilog', self.credential_id,
+                    caller_scope[0], 'numilog', self.credential_id,
                     expected_account,
                 ),
                 rights=tuple(observations),
