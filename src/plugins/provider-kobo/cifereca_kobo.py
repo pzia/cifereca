@@ -945,8 +945,11 @@ class KoboSession(ProviderSession):
                        bound.provider_id, bound.credential_id)
         owner = self._rights_owner_snapshot(account_id)
         if (owner is None or owner[1] != (identity_id,)
-                or caller_scope != (bound.identity_id, "kobo",
-                                    self.credential_id, bound.unique_id)):
+                or type(identity_id) is not str or not identity_id
+                or (account.provider_id, account.credential_id, account.unique_id)
+                != ("kobo", self.credential_id, bound.unique_id)
+                or (bound.provider_id, bound.credential_id)
+                != ("kobo", self.credential_id)):
             raise ProviderCapabilityError("kobo_delivery_offer_owner_unverified")
 
         def scope_current() -> bool:
