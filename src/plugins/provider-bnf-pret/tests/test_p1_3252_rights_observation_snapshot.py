@@ -130,12 +130,62 @@ def test_bnf_changed_borrower_during_activity_cannot_publish_rights(change):
         session.close()
 
 
-def test_bnf_other_account_is_rejected_without_activity_get():
+def test_bnf_exact_core_account_copy_is_valid_without_rebinding_live_account():
     session, account, client = fixture(activity(("edition-1", "loan-1")))
+    copy = replace(account)
+    assert copy is not session._accounts[0]
+    try:
+        result = session.rights_observation_snapshot(copy)
+        assert result.scope.identity_id == "identity-A"
+        assert [(right.edition_id, right.right_id) for right in result.rights] == [
+            ("edition-1", "loan-1"),
+        ]
+        assert client.calls == ["login", "activity"]
+        assert session._accounts[0] is account
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("field,foreign", [
+    ("identity_id", "identity-B"),
+    ("provider_id", "paris"),
+    ("credential_id", "other-credential"),
+    ("unique_id", "other-account"),
+])
+def test_bnf_foreign_core_account_copy_is_rejected_without_private_get(field, foreign):
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    copy = replace(account, **{field: foreign})
+    try:
+        with pytest.raises((ProviderConfigurationError, ProviderCapabilityError)):
+            session.rights_observation_snapshot(copy)
+        assert client.calls == ["login"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("change", [
+    "live_account_replaced", "live_account_rebound", "caller_copy_rebound",
+])
+def test_bnf_account_copy_rebinding_during_get_cannot_publish_rights(change):
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    copy = replace(account)
+    original = client.activity
+
+    def during_activity():
+        html = original()
+        if change == "live_account_replaced":
+            session._accounts = [replace(account)]
+        elif change == "live_account_rebound":
+            account.identity_id = "identity-B"
+        else:
+            copy.identity_id = "identity-B"
+        return html
+
+    client.activity = during_activity
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
-            session.rights_observation_snapshot(replace(account))
-        assert client.calls == ["login"]
+            session.rights_observation_snapshot(copy)
+        assert client.calls == ["login", "activity"]
     finally:
         session.close()
 

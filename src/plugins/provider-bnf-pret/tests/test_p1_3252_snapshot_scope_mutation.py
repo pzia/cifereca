@@ -89,3 +89,85 @@ def test_stable_borrower_keeps_partial_and_no_hidden_download():
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+def test_typed_bnf_loan_inventory_accepts_exact_core_account_copy():
+    session, account, client = fixture()
+    copy = replace(account)
+    try:
+        snapshot = session.loan_inventory_snapshot(copy)
+        assert snapshot.scope.identity_id == "synthetic-identity"
+        assert snapshot.scope.credential_id == "synthetic-credential"
+        assert len(snapshot.loans) == 1
+        assert snapshot.loans[0].identity_id == copy.identity_id
+        assert client.calls == ["login", "activity"]
+        # Keep v1 instance-only behavior to avoid broadening its authority.
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.loans(copy)
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("field,foreign", [
+    ("identity_id", "foreign-identity"),
+    ("credential_id", "foreign-credential"),
+    ("provider_id", "paris"),
+    ("unique_id", "foreign-account"),
+])
+def test_typed_bnf_inventory_foreign_core_copy_refused_before_get(field, foreign):
+    session, account, client = fixture()
+    copy = replace(account, **{field: foreign})
+    try:
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.loan_inventory_snapshot(copy)
+        assert client.calls == ["login"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("change", [
+    "live_replaced_same_values", "caller_rebound", "bound_rebound", "live_removed",
+])
+def test_typed_bnf_inventory_copy_refuses_inflight_session_rebind(change):
+    session, account, client = fixture()
+    copy = replace(account)
+    original = session.loans
+
+    def mutate_after_read(borrower):
+        rows = original(borrower)
+        if change == "live_replaced_same_values":
+            session._accounts = [replace(account)]
+        elif change == "caller_rebound":
+            copy.identity_id = "other-identity"
+        elif change == "bound_rebound":
+            account.identity_id = "other-identity"
+        else:
+            session._accounts = []
+        return rows
+
+    session.loans = mutate_after_read
+    try:
+        with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
+            session.loan_inventory_snapshot(copy)
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
+def test_public_typed_inventory_reader_accepts_bnf_core_copy_without_legacy_retry():
+    from cifereca.plugin_api import read_loan_inventory
+
+    session, account, client = fixture()
+    copy = replace(account)
+    try:
+        report = read_loan_inventory(session, copy)
+        assert report.status == "partial"
+        assert report.scope.identity_id == "synthetic-identity"
+        assert len(report.loans) == 1
+        assert report.loans[0].source_credential == "synthetic-credential"
+        assert report.reason_code == "inventory_not_exhaustive"
+        # Reader does not fall back to the instance-only legacy loans(copy).
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
