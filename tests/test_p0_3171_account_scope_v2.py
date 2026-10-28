@@ -104,3 +104,33 @@ def test_binding_duplicated_between_selection_and_acquisition_fails_closed():
             item(), identity_id="profile-A", account_id="same-upstream-id",
         )
     assert core.acquisitions == []
+
+def test_immutable_item_with_missing_credential_cannot_bypass_selected_account():
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class ImmutableItem:
+        source_provider: str = "kobo"
+        source_credential: str = ""
+
+    core = FakeCore()
+    core.accounts_data = core.accounts_data[:1]
+    broker = AcquisitionBrokerImpl(core)
+    with pytest.raises(ValueError, match="item credential binding unavailable"):
+        broker.acquire(ImmutableItem(), identity_id="profile-A", account_id=None)
+    assert core.acquisitions == []
+
+
+def test_immutable_item_already_bound_to_exact_credential_can_route():
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class ImmutableItem:
+        source_provider: str = "kobo"
+        source_credential: str = "cred-B"
+
+    core = FakeCore()
+    assert AcquisitionBrokerImpl(core).acquire(
+        ImmutableItem(), identity_id="profile-A", account_id="same-upstream-id",
+    ) == "cred-B"
+    assert core.acquisitions == ["cred-B"]
