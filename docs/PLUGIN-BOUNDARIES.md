@@ -6,6 +6,12 @@
 
 Le Core et les plugins émettent dans **un journal brut unique**, sans effacer les détails des opérations. Ni le journal, ni la console, ni le broker, ni les exports bruts ne masquent les valeurs (URLs, chemins, comptes, tokens, cookies, titres, etc.). L'IHM Diagnostics est seule à pseudonymiser **les valeurs de login et de mot de passe**, sans masquer d'autre champ. Les tests vérifient la fidélité des valeurs brutes et la pseudonymisation de rendu ; aucun envoi automatique ni dump d'authentification créé uniquement pour les diagnostics. Fichiers locaux 0600, confirmation avant export brut. Ce contrat remplace les anciennes exigences d'expurgation générique des logs. Voir [journal canonique](DIAGNOSTICS_CANONICAL_JOURNAL.md) et [contrat transversal](LOGGING-CONTRACT.md).
 
+## Synchronisation A/B/C — contrat directeur du 28 octobre 2026
+
+**[ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) font foi.** Le Core seul décide et exécute la **Sync automatique unique** : observation de SourceReference exacte (identité/provider/credential/compte/branche/édition), contrôle d'une présence locale par OriginLink attesté → SHA final → Placement vérifié dans le profil, puis nouvelle acquisition dans les options autorisées si non satisfaite. Un scan incomplet n'est pas une absence prouvée et ne bloque pas à jamais une acquisition autrement admise. Le rattrapage manuel #2797 est exceptionnel, pas un préflight universel.
+
+Les plugins produisent les faits fournisseurs/branches et offres séparées, et assurent leur protocole ; ils ne publient pas de droit à partir de Notice C, n'accordent pas eux-mêmes l'origine Core au SHA final et ne touchent pas Storage privé. Le Core publiera atomiquement Artifact/Placement/OriginLink après contenu final et ADEPT éventuel, sans double autorité backup_items/ledger. **La cible n'est pas encore entièrement en production** : snapshots read-only #3252 sont disponibles ; #3171/#3196 doivent livrer l'admission et la persistance convergentes. Les responsabilités Diagnostics plus haut restent inchangées.
+
 ## Principe
 
 Une fonctionnalité appartient au Core lorsqu'elle exprime un mécanisme transversal réutilisable par plusieurs plugins ou par l'orchestration générale. Elle appartient au plugin lorsqu'elle encode un protocole, une politique ou un comportement propre à un fournisseur/runtime.
