@@ -156,7 +156,8 @@ def test_rebinding_during_descriptor_post_cannot_publish_old_offer(change):
         elif change == "account_replace":
             s._accounts = [replace(s._accounts[0])]
         elif change == "client_rebind":
-            s.client = object()
+            # Preserve the plugin client's close() contract after the race.
+            s.client = type(vault)([])
         else:
             s._personal_binding_generation += 1
         return descriptor()
