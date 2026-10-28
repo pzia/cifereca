@@ -325,7 +325,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         try:
                             consent = consent_reader(account)
                         except Exception:
-                            _TRACE_LOG.exception(
+                            logging.getLogger("cifereca").exception(
                                 "TRACE canonical Sync consent read failed provider_id=%s "
                                 "credential_id=%s", account.provider_id, account.credential_id,
                             )
