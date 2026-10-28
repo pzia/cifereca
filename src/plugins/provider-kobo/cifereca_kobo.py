@@ -567,6 +567,43 @@ class KoboSession(ProviderSession):
         ):
             raise ProviderError("Kobo-Vault : session modifiée pendant lecture")
 
+    def _scoped_personal_manifest(
+        self, bound_account: Account, generation: int, account_id: str,
+    ) -> list[dict[str, Any]]:
+        """Fence every *real* Vault manifest page to one live Core owner.
+
+        Existing injected/test Vault implementations retain their historical
+        zero-argument library_manifest() contract. The real provider client
+        can prevent a second private GET after a Core broker/account rebind.
+        """
+        vault = self.client
+        if not isinstance(vault, KoboVaultClient):
+            return vault.library_manifest()
+        broker = self.identity_broker
+        owner = self._rights_owner_snapshot(account_id) if broker is not None else None
+        bound_scope = (
+            bound_account.unique_id, bound_account.identity_id,
+            bound_account.provider_id, bound_account.credential_id,
+        )
+
+        def check() -> None:
+            self._ensure_personal_binding(
+                bound_account, generation, expected_account_id=account_id,
+            )
+            if (
+                (bound_account.unique_id, bound_account.identity_id,
+                 bound_account.provider_id, bound_account.credential_id)
+                != bound_scope
+                or self.identity_broker is not broker
+                or (broker is not None
+                    and self._rights_owner_snapshot(account_id) != owner)
+            ):
+                raise ProviderError(
+                    "Kobo-Vault : propriétaire modifié pendant pagination privée"
+                )
+
+        return vault.library_manifest(page_guard=check)
+
     def library(self) -> list[SearchResult]:
         # The rights/inventory view must be tied to a verified connection,
         # independently of the acquisition-specific backup_manifest() path.
@@ -585,7 +622,9 @@ class KoboSession(ProviderSession):
         bound_account = self._accounts[0]
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
-        items = self.client.library_manifest()
+        items = self._scoped_personal_manifest(
+            bound_account, generation, account_id,
+        )
         self._ensure_personal_binding(
             bound_account, generation, expected_account_id=account_id,
         )
@@ -849,7 +888,9 @@ class KoboSession(ProviderSession):
         bound_account = self._accounts[0]
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
-        items = self.client.library_manifest()
+        items = self._scoped_personal_manifest(
+            bound_account, generation, account_id,
+        )
         # Unlike an empty manifest, a disconnected/replaced session is not
         # evidence that purchases disappeared. Do not publish rows OR an
         # authoritative empty manifest after this race.
