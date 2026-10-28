@@ -495,7 +495,7 @@ class KoboVaultClient:
                     # absent collection flag must not be treated as catalogue
                     # absence. An explicit owned=False is never overridden.
                     individual = dict(raw)
-                    if source == "library":
+                    if source == "library" and individual.get("owned") is None:
                         individual.setdefault("collection", "library")
                     merged[key] = individual
         return {
