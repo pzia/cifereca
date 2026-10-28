@@ -41,7 +41,12 @@ def placement(identity, placement_id, sha=SHA_A, verified=True):
 
 
 def origin(key, sha=SHA_A, kind="provider", attested=True):
-    return OriginEvidence(kind, sha, key, attested)
+    return OriginEvidence(
+        kind, sha, key, attested, identity_id=key.scope.identity_id,
+        origin_ref=f"{kind}:{key.right_id}:{sha}",
+        proof_ref="synthetic-core-proof" if attested else "",
+        parent_sha256=SHA_B if kind == "derived" else None,
+    )
 
 
 def scan(identity, complete=True):
@@ -135,10 +140,10 @@ def test_transfer_A_to_B_to_C_not_automatically_recreated():
         origin(ak), origin(bk),
         origin(ak, kind="adept"),
         origin(bk, kind="adept"),
-        OriginEvidence("transfer", SHA_A),
-        OriginEvidence("cifereca", SHA_A),
-        OriginEvidence("transfer", SHA_A),
-        OriginEvidence("cifereca", SHA_A),
+        OriginEvidence("transfer", SHA_A, identity_id="B", origin_ref="A-to-B"),
+        OriginEvidence("cifereca", SHA_A, identity_id="B", origin_ref="B-internal"),
+        OriginEvidence("transfer", SHA_A, identity_id="C", origin_ref="B-to-C"),
+        OriginEvidence("cifereca", SHA_A, identity_id="C", origin_ref="C-internal"),
     )
     assert len(origins) == 8
     result = plan(a, b, placements=(placement("A", "A-file"),),
@@ -210,3 +215,32 @@ def test_zero_mutation_deterministic_second_plan():
     second = plan(snap, **inputs)
     assert first == second
     assert first.decisions[0].state == "present_attested"
+
+def test_origin_link_requires_exact_context_and_proof_without_granting_right():
+    snap, key = source()
+    with pytest.raises(ValueError, match="invalid_origin_evidence"):
+        OriginEvidence("provider", SHA_A, key, True,
+                       identity_id="B", origin_ref="foreign", proof_ref="receipt")
+    with pytest.raises(ValueError, match="invalid_origin_evidence"):
+        OriginEvidence("provider", SHA_A, key, True,
+                       identity_id="A", origin_ref="unproven")
+    with pytest.raises(ValueError, match="invalid_origin_evidence"):
+        OriginEvidence("derived", SHA_A, identity_id="A", origin_ref="convert",
+                       parent_sha256=SHA_A)
+    declared = OriginEvidence(
+        "manual", SHA_A, key, False, identity_id="A",
+        origin_ref="user-recorded", proof_ref="",
+    )
+    result = plan(snap, placements=(placement("A", "book"),),
+                  origins=(declared,), scans=(scan("A"),),
+                  candidates=(LocalCandidate(key, "book"),))
+    assert result.decisions[0].state == "needs_reconciliation"
+
+
+def test_duplicate_attested_origin_is_idempotent_not_a_second_placement():
+    snap, key = source()
+    link = origin(key)
+    result = plan(snap, placements=(placement("A", "copy"),),
+                  origins=(link, link), scans=(scan("A"),))
+    assert result.decisions[0].placement_ids == ("copy",)
+    assert result.decisions[0].state == "present_attested"
