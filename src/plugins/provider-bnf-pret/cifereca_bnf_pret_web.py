@@ -356,6 +356,7 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         raise WebParseError("item_limit")
     loans = {}
     partial = False
+    quarantined_loan_ids: set[str] = set()
     for card in cards:
         if not card.closed:
             partial = True
@@ -376,10 +377,21 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         loan = LoanRecord(next(iter(lids)), resource_id,
                           next(iter(titles)) if len(titles) == 1 else "",
                           tuple(author_values), _loan_cover(card, resource_id))
+        if loan.loan_id in quarantined_loan_ids:
+            # The third or later occurrence must not resurrect a loan with
+            # two conflicting resource IDs on this same provider page.
+            partial = True
+            continue
         if loan.loan_id in loans:
             previous = loans[loan.loan_id]
             if previous.resource_id != loan.resource_id:
-                raise WebParseError("ambiguous_loans")
+                # Quarantine *both* meanings of the signed loan identifier.
+                # A single broken card must not erase independent positive
+                # loans, nor let a first/last-wins item reach token selection.
+                loans.pop(loan.loan_id)
+                quarantined_loan_ids.add(loan.loan_id)
+                partial = True
+                continue
             if previous.thumbnail_url != loan.thumbnail_url:
                 # Duplicate cards with conflicting evidence must not choose
                 # a cover arbitrarily; keep the positive loan but no image.
