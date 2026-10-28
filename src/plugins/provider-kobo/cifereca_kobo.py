@@ -1177,6 +1177,8 @@ class KoboSession(ProviderSession):
         mode: str = "descriptor",
         display_profile: str | None = None,
         include_acsm: bool | None = None,
+        expected_offer_id: str | None = None,
+        expected_identity_id: str | None = None,
     ) -> dict[str, Any]:
         # A direct caller of this provider method can bypass the advisory
         # backup manifest and personal search. It must not issue a private
@@ -1222,6 +1224,19 @@ class KoboSession(ProviderSession):
                 )
 
         ensure_acquisition_scope()
+        # Optional exact Core-admitted offer narrows only the selected
+        # descriptor route. Never trust a string offer token as consent.
+        # Brokerless direct legacy requests without this option are intact.
+        if expected_offer_id is not None:
+            if (type(expected_offer_id) is not str
+                    or not expected_offer_id.startswith("kobo.descriptor:")
+                    or len(expected_offer_id) != len("kobo.descriptor:") + 64
+                    or type(expected_identity_id) is not str
+                    or not expected_identity_id
+                    or mode != "descriptor"
+                    or broker is None or owner is None
+                    or owner[1] != (expected_identity_id,)):
+                raise ProviderCapabilityError("kobo_delivery_offer_not_admitted")
         # The generic engine already avoids delegated 403 retries, but direct
         # provider callers must not bypass the account-scoped refusal. A
         # delegated denial is mode-specific: it must not block a separately
@@ -1246,6 +1261,18 @@ class KoboSession(ProviderSession):
                 include_acsm=acsm,
             )
             ensure_acquisition_scope()
+            if expected_offer_id is not None:
+                from cifereca_kobo_delivery_offer import exact_kobo_offer_id
+                current = exact_kobo_offer_id(
+                    result, identity_id=expected_identity_id,
+                    credential_id=self.credential_id,
+                    account_id=account_id, product_id=product_id,
+                )
+                if current != expected_offer_id:
+                    raise ProviderCapabilityError("kobo_delivery_offer_changed")
+                # The descriptor is private: preserve the exact bound broker
+                # fence even when local candidate projection takes time.
+                ensure_acquisition_scope()
             return result
         except KoboVaultError as exc:
             # In-flight reconnect/owner change invalidates the old account's
