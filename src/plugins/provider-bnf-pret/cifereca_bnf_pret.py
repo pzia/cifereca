@@ -266,11 +266,26 @@ class BnfProviderSession(ProviderSession):
                     or owner_binding is None
                     or owner_binding[1] != (caller_scope[1],)):
                 raise ProviderCapabilityError("bnf_rights_owner_unverified")
-            inventory = self._loan_inventory_snapshot_locked(account)
+            # Core may pass a defensive Account copy. The only session
+            # authorized for a BnF GET is still the *live* Account instance:
+            # check exact scope before reading it and pin its instance, so
+            # rebinds/reconnects A->A cannot authorize stale observations.
+            if len(self._accounts) != 1 or type(self._accounts[0]) is not Account:
+                raise ProviderConfigurationError('account_scope_mismatch')
+            bound = self._accounts[0]
+            bound_scope = (
+                bound.unique_id, bound.identity_id,
+                bound.provider_id, bound.credential_id,
+            )
+            if bound_scope != caller_scope:
+                raise ProviderConfigurationError('account_scope_mismatch')
+            inventory = self._loan_inventory_snapshot_locked(bound)
             scope = inventory.scope
             if (not self.connected or self._closed or len(self._accounts) != 1
-                    or account is not self._accounts[0]
-                    or LoanInventoryScope.for_account(account) != scope
+                    or self._accounts[0] is not bound
+                    or (bound.unique_id, bound.identity_id,
+                        bound.provider_id, bound.credential_id) != bound_scope
+                    or LoanInventoryScope.for_account(bound) != scope
                     or (account.unique_id, account.identity_id,
                         account.provider_id, account.credential_id) != caller_scope
                     or core_binding() != owner_binding):
@@ -292,8 +307,10 @@ class BnfProviderSession(ProviderSession):
                     observed_at=observed, delivery='unknown',
                 ))
             if (not self.connected or self._closed or len(self._accounts) != 1
-                    or account is not self._accounts[0]
-                    or LoanInventoryScope.for_account(account) != scope
+                    or self._accounts[0] is not bound
+                    or (bound.unique_id, bound.identity_id,
+                        bound.provider_id, bound.credential_id) != bound_scope
+                    or LoanInventoryScope.for_account(bound) != scope
                     or (account.unique_id, account.identity_id,
                         account.provider_id, account.credential_id) != caller_scope
                     or core_binding() != owner_binding):
