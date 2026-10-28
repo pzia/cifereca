@@ -350,3 +350,61 @@ def test_numilog_strict_rights_rows_never_load_delivery_on_duplicate(monkeypatch
         assert hints[0]["delivery_selector"] is None
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("change", [
+    "replace_same_scope", "replace_other_identity",
+    "duplicate_same_scope", "remove",
+])
+def test_numilog_rights_refuse_live_account_replacement_during_inventory(change):
+    """A stale session Account cannot authorize purchases after reconnect A->A."""
+    from dataclasses import replace
+
+    s, broker = session()
+    bound = s._accounts[0]
+    active = bound
+    seen = []
+
+    def rows(**kwargs):
+        seen.append(kwargs)
+        if change == "remove":
+            s._accounts = []
+        elif change == "duplicate_same_scope":
+            s._accounts.append(replace(bound))
+        else:
+            other = replace(bound)
+            if change == "replace_other_identity":
+                other.identity_id = "identity-B"
+            s._accounts = [other]
+        return [owned_row()]
+
+    s._rows = rows
+    try:
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
+            s.rights_observation_snapshot(bound_account(s))
+        assert seen == [{"rights_observation": True}]
+        assert broker.owner == "identity-A"
+    finally:
+        s.close()
+
+
+def test_numilog_rights_refuse_account_replacement_after_field_projection():
+    """The final guard must re-check the actual active Account, not only Core."""
+    from dataclasses import replace
+
+    s, broker = session()
+    s._rows = lambda **kwargs: [owned_row()]
+    original = s._id
+
+    def rebind_after_normalization(row):
+        result = original(row)
+        s._accounts = [replace(s._accounts[0])]
+        return result
+
+    s._id = rebind_after_normalization
+    try:
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
+            s.rights_observation_snapshot(bound_account(s))
+        assert broker.owner == "identity-A"
+    finally:
+        s.close()

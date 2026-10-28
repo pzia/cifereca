@@ -482,6 +482,14 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : portée de preuves d’achats indisponible'
                 )
+            # A reconnected Account object may replace the previous live
+            # session account with identical values while _rows() runs.
+            # Pin its *instance* as well as the entire mutable scope.
+            bound_account = self._accounts[0]
+            bound_scope = (
+                bound_account.unique_id, bound_account.identity_id,
+                bound_account.provider_id, bound_account.credential_id,
+            )
             # Account is a mutable Core model. Pin the caller's exact scope
             # before I/O; the broker owner alone cannot detect a caller rebind.
             caller_scope = (
@@ -506,6 +514,9 @@ class NumilogSession(ProviderSession):
                 or len(self._accounts) != 1
                 or self._accounts[0].unique_id != expected_account
                 or self._accounts[0].provider_id != 'numilog'
+                or self._accounts[0] is not bound_account
+                or (bound_account.unique_id, bound_account.identity_id,
+                    bound_account.provider_id, bound_account.credential_id) != bound_scope
                 or self._accounts[0].credential_id != self.credential_id
                 or (account.identity_id, account.provider_id,
                     account.credential_id, account.unique_id) != caller_scope
@@ -538,6 +549,9 @@ class NumilogSession(ProviderSession):
                     # incomplete; never present its absence as a revocation.
                     continue
             if (self._inventory_owner_or_none() != owner or not self.connected
+                    or len(self._accounts) != 1 or self._accounts[0] is not bound_account
+                    or (bound_account.unique_id, bound_account.identity_id,
+                        bound_account.provider_id, bound_account.credential_id) != bound_scope
                     or (account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id) != caller_scope):
                 raise ProviderCapabilityError(
