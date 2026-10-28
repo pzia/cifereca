@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+from typing import Any, Callable
 from ipaddress import ip_address
 import re
 from urllib.parse import unquote, urljoin, urlsplit
@@ -391,12 +391,23 @@ class KoboCatalogService:
     def search(
         self, query: str, *, field: str = "all", limit: int = 50,
         page: int = 0, scope: str = "all",
+        private_guard: Callable[[], None] | None = None,
     ) -> list[SearchResult]:
         self.last_search_rejections = []
         if scope not in {"catalog", "all"}:
             raise ProviderError("Kobo-Vault : portée de recherche invalide")
+        # Only the actual Vault client understands per-network-hop owner
+        # guards; injected old catalogue clients keep their v1 method shape.
+        guarded_options = (
+            {"private_guard": private_guard}
+            if private_guard is not None and isinstance(self.client, KoboVaultClient)
+            else {}
+        )
         try:
-            payload = self.client.search(query, field=field, scope=scope, limit=limit, page=page)
+            payload = self.client.search(
+                query, field=field, scope=scope, limit=limit, page=page,
+                **guarded_options,
+            )
         except KoboVaultError as exc:
             # Vault may authorize catalogue discovery yet refuse the separate
             # private /library/search route (e.g. missing delegated scope).
