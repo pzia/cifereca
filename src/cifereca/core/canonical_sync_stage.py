@@ -118,11 +118,16 @@ def observe_canonical_rights_in_sync(
     """
     if type(account) is not Account or not callable(cancelled):
         raise ValueError("invalid_canonical_rights_request")
+    # Inspect only the already registered session. Resolving through the
+    # legacy service method may throw for synthetic/local sources without a
+    # remote session; the optional v14 observer must not break their Sync.
     try:
-        session = service._session_for_account(account)
+        session = service._sessions.get(
+            service._session_key(account.provider_id, account.credential_id)
+        )
     except (AttributeError, KeyError, ValueError, TypeError):
         return None
-    if getattr_static(session, "rights_observation_snapshot", None) is None:
+    if session is None or getattr_static(session, "rights_observation_snapshot", None) is None:
         return None
     if service.sync_source_enabled(account) is not True:
         raise ValueError("canonical_rights_source_disabled")
@@ -154,7 +159,25 @@ def observe_canonical_rights_in_sync(
         row.provider_attested and row.state == "active"
         for row in snapshot.rights
     )
-    changed = persist_attested_source_references(service.storage, snapshot)
+    try:
+        changed = persist_attested_source_references(service.storage, snapshot)
+    except ValueError as exc:
+        if str(exc) != "canonical_rights_core_binding_changed":
+            raise
+        # Legacy sessions can expose a typed snapshot without having the
+        # complete v14 provider_accounts binding. Reject publication of A,
+        # but never cancel their independent loan/materialization results.
+        _LOG.warning(
+            "TRACE canonical rights skipped unbound source provider_id=%s "
+            "credential_id=%s account_id=%s",
+            account.provider_id, account.credential_id, account.unique_id,
+        )
+        return {
+            "status": "failed", "observed": len(snapshot.rights),
+            "attested_active": 0, "source_references_changed": 0,
+            "present_attested": 0, "pending": len(snapshot.rights),
+            "read_only_plan": True, "acquisition_authorized": False,
+        }
     # Every physical presence must be freshly hashed in this profile and
     # linked to the exact already committed origin. Missing coverage is
     # deliberately not converted to an absent file or a GET permission.
