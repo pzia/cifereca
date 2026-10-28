@@ -134,12 +134,12 @@ def plan_convergence(
     origins: tuple[OriginEvidence, ...] = (),
     scans: tuple[ProfileScan, ...] = (),
     candidates: tuple[LocalCandidate, ...] = (),
-    consent_scopes: frozenset[ProviderRightsScope] = frozenset(),
+    consent_references: frozenset[SourceKey] = frozenset(),
 ) -> ConvergencePlan:
     """Plan positives only. No filesystem/network/store access or write permit.
 
     The caller must explicitly supply complete filesystem coverage and local
-    candidates, including possible same-title alternatives. 'missing_to_download'
+    candidates, including possible same-title alternatives. Explicit consent is\n    keyed to the exact right (and its kind), not just a shared account. 'missing_to_download'
     remains a *proposal*, not permission. Executor owns fresh locks/rights/consent.
     """
     if (type(snapshots) is not tuple or len(snapshots) > 64
@@ -152,8 +152,8 @@ def plan_convergence(
             or any(type(x) is not ProfileScan for x in scans)
             or type(candidates) is not tuple or len(candidates) > 100_000
             or any(type(x) is not LocalCandidate for x in candidates)
-            or type(consent_scopes) is not frozenset
-            or any(type(x) is not ProviderRightsScope for x in consent_scopes)):
+            or type(consent_references) is not frozenset
+            or any(type(x) is not SourceKey for x in consent_references)):
         raise ValueError("invalid_convergence_input")
     scan_by_identity = {scan.identity_id: scan for scan in scans}
     if len(scan_by_identity) != len(scans):
@@ -209,7 +209,7 @@ def plan_convergence(
             if scan is None or not scan.complete:
                 decision("pending", "local_scan_incomplete")
                 continue
-            if row.delivery == "available" and key.scope in consent_scopes:
+            if row.delivery == "available" and key in consent_references:
                 decision("missing_to_download", "no_local_proof_after_complete_scan")
             else:
                 decision("pending", "delivery_or_consent_unavailable")
