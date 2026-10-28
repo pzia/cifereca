@@ -25,9 +25,25 @@ def _right(storage):
     return rights[0]
 
 
+def _register(storage, *, identity="alice", account="primary"):
+    storage.identity_put({
+        "identity_id": identity, "label": identity, "directory_name": identity,
+    })
+    connection = storage.provider_connection_put({
+        "identity_id": identity, "provider_id": "opaque-seller",
+        "credential_id": "card",
+    })
+    storage.provider_account_put({
+        "identity_id": identity, "provider_id": "opaque-seller",
+        "credential_id": "card", "connection_id": connection,
+        "account_id": account,
+    })
+
+
 def test_same_explicit_right_is_inactivated_only_on_authoritative_prune(tmp_path):
     storage = Storage(tmp_path / "test.sqlite")
     try:
+        _register(storage)
         storage.backup_put(_legacy())
         right = _right(storage)
         receipt = storage.acquisitions(provider_id="opaque-seller")
@@ -198,5 +214,79 @@ def test_valid_complete_inventory_preserves_exact_legacy_right(tmp_path, seen_id
             "entitlements_inactivated": 0,
         }
         assert _right(storage)["state"] == "active"
+    finally:
+        storage.close()
+
+
+
+def test_stale_right_is_not_inactivated_after_credential_rebind(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        _register(storage, identity="alice", account="primary")
+        storage.backup_put(_legacy())
+        before_right = _right(storage)
+        receipt = storage.acquisitions(provider_id="opaque-seller")
+        storage.identity_put({
+            "identity_id": "bob", "label": "Bob", "directory_name": "bob",
+        })
+        # Simulate the documented rebind in the same SQLite transaction:
+        # no supplier manifest for Bob can attest Alice's right as absent.
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE provider_connections SET identity_id='bob' "
+                "WHERE provider_id='opaque-seller' AND credential_id='card'"
+            )
+            db.execute(
+                "DELETE FROM provider_accounts "
+                "WHERE provider_id='opaque-seller' AND credential_id='card'"
+            )
+            connection_id = db.execute(
+                "SELECT connection_id FROM provider_connections "
+                "WHERE provider_id='opaque-seller' AND credential_id='card'"
+            ).fetchone()[0]
+        storage.provider_account_put({
+            "identity_id": "bob", "provider_id": "opaque-seller",
+            "credential_id": "card", "connection_id": connection_id,
+            "account_id": "primary",
+        })
+        result = storage.backup_prune_missing("opaque-seller", "card", set())
+        assert result["entitlements_inactivated"] == 0
+        assert _right(storage) == before_right
+        assert storage.acquisitions(provider_id="opaque-seller") == receipt
+        assert storage.backup_list("opaque-seller") == []
+    finally:
+        storage.close()
+
+
+def test_stale_right_is_not_inactivated_after_borrower_rebind(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        _register(storage, identity="alice", account="primary")
+        storage.backup_put(_legacy())
+        before = _right(storage)
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE provider_accounts SET account_id='secondary' "
+                "WHERE identity_id='alice' AND provider_id='opaque-seller' "
+                "AND credential_id='card'"
+            )
+        result = storage.backup_prune_missing("opaque-seller", "card", set())
+        assert result["pruned"] == 1
+        assert result["entitlements_inactivated"] == 0
+        assert _right(storage) == before
+    finally:
+        storage.close()
+
+
+def test_missing_registered_source_is_not_negative_evidence_for_a_right(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy())
+        before = _right(storage)
+        result = storage.backup_prune_missing("opaque-seller", "card", set())
+        assert result == {
+            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 0,
+        }
+        assert _right(storage) == before
     finally:
         storage.close()
