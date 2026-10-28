@@ -86,7 +86,7 @@ def exact_kobo_offer_id(
     """
     coordinates = (identity_id, credential_id, account_id, product_id)
     if (not all(type(x) is str and 0 < len(x) <= 256 for x in coordinates)
-            or type(payload) is not dict):
+            or type(payload) is not dict or not _current_expiry(payload)):
         return ""
     # Vault descriptor metadata is provider-controlled, not an extension of
     # Core's attested owner. An explicit conflicting scope anywhere in this
