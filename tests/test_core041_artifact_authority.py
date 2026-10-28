@@ -76,7 +76,7 @@ def test_schema_10_and_transform_is_core_authoritative(tmp_path):
     broker=ArtifactExecutionBrokerImpl(service)
     result=broker.execute_transform(TransformRequest(source,'optimize'),control=Control())
     assert result.artifact_id != source.artifact_id
-    assert service.storage.schema_version() == 13
+    assert service.storage.schema_version() == 14
     variants=broker.variants(source)
     assert len(variants)==1 and variants[0].artifact_id==result.artifact_id
     placements=[p for p in service.storage.placements() if p['artifact_id']==result.artifact_id]
