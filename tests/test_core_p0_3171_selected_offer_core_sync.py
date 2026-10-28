@@ -16,6 +16,14 @@ from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
 
 
+@pytest.fixture(autouse=True)
+def _selected_preflight_lock(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_offers.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
+
+
 def _enabled(service, root):
     consent = {service.source}
     service._canonical_persisted_consent = lambda _account: frozenset(consent)
