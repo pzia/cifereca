@@ -908,9 +908,9 @@ class KoboSession(ProviderSession):
         # evidence that purchases disappeared. Do not publish rows OR an
         # authoritative empty manifest after this race.
         self._ensure_personal_binding(
-                bound_account, generation, expected_account_id=account_id,
+            bound_account, generation, expected_account_id=account_id,
             expected_identity_id=bound_identity_id,
-            )
+        )
         # Keep the complete raw snapshot only inside this provider call so
         # its advisory classification can count foreign-account rows. Such
         # rows must never reach Core's legacy materialization loop.
@@ -1026,9 +1026,9 @@ class KoboSession(ProviderSession):
         # fence; a close/reconnect there must not return a stale backup batch.
         try:
             self._ensure_personal_binding(
-                bound_account, generation, expected_account_id=account_id,
+            bound_account, generation, expected_account_id=account_id,
             expected_identity_id=bound_identity_id,
-            )
+        )
         except ProviderError:
             self.backup_manifest_rejection_count = 0
             raise
