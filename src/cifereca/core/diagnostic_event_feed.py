@@ -386,6 +386,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 )} if connect_attempt_detail else {}),
                 **({"detail": audit_detail, "status": audit_detail["status"]}
                    if audit_detail else {}),
+                **({"task_ref": audit_detail["task_ref"]}
+                   if "task_ref" in audit_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
@@ -700,6 +702,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                if 'task_ref' in bnf_action_detail else {}),
             **({"task_ref": loan_download_detail["task_ref"]}
                if "task_ref" in loan_download_detail else {}),
+            **({"task_ref": reconciliation_detail["task_ref"]}
+               if "task_ref" in reconciliation_detail else {}),
             "status": bnf_action_detail['status'] if bnf_action_detail else loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
