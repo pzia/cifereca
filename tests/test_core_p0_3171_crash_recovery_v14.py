@@ -44,7 +44,7 @@ def test_post_get_sql_failure_recovers_same_receipt_no_second_get(rig, monkeypat
     assert service.calls == 1
     assert rows(service.storage) == (0, 0, 0, 0)
     stage, = journal(service.storage)
-    assert stage[0] == "acquiring" and stage[1] is None
+    assert stage[0] == "canonical_receipt_staged" and stage[1] is None
     assert json.loads(stage[2])["source"] == [
         "A", "seller-a", "card-A", "buyer-A",
         "purchases", "edition", "purchase", "purchase",
@@ -212,4 +212,30 @@ def test_recovery_never_infers_provenance_from_manual_path(rig, monkeypatch):
     assert after[0].status == "downloaded"
     assert service.calls == 2
     assert manual.exists()
+    assert rows(service.storage) == (1, 1, 1, 1)
+
+
+def test_normal_opening_recovery_never_destroys_completed_delivery_checkpoint(
+    rig, monkeypatch,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    run(service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root))
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", original,
+    )
+    before = journal(service.storage)
+    assert len(before) == 1
+    assert before[0][0] == "canonical_receipt_staged"
+    # Opening Sync calls this existing generic recovery. It must not
+    # classify a final receipt as an unfinished network acquisition.
+    assert service.storage.acquisition_recover_interrupted() == 0
+    assert journal(service.storage) == before
+    recovered = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("startup must not force a second GET"),
+    )
+    assert recovered[0].status == "recovered"
+    assert service.calls == 1
     assert rows(service.storage) == (1, 1, 1, 1)
