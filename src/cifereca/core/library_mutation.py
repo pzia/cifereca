@@ -101,6 +101,19 @@ def _materialize_to_identity_locked(
     artifact_id = str(source.get("artifact_id") or "").strip()
     item_id = str(source.get("source_item_id") or source_entry.get("item_id") or "").strip() or None
 
+    # A canonical Artifact is immutable final SHA evidence. If its source
+    # bytes were altered, never copy them under that old Artifact ID. Legacy
+    # placeholder rows without an actual Artifact are not upgraded by guess.
+    if not is_bundle and artifact_id.startswith("sha256:"):
+        registered = self.storage.artifact_get(artifact_id)
+        if registered is not None and (
+            registered.get("sha256") != source_digest
+            or registered.get("size") != src.stat().st_size
+        ):
+            raise ProviderConfigurationError(
+                "Artifact source modifié depuis son indexation"
+            )
+
     def publish_canonical_send(path: Path) -> None:
         """Publish the verified local transfer only when source B is canonical.
 
