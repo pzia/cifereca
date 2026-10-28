@@ -859,7 +859,6 @@ class ParisProviderSession(ProviderSession):
                     or account.provider_id != self.provider_id
                     or account.credential_id != self.credential_id
                     or type(account.is_primary) is not bool
-                    or account.is_primary != (account.unique_id == "")
                     or loan.provider != "DILICOM" or loan.medium != "digital"
                     or loan.source_provider != self.provider_id
                     or loan.source_credential != self.credential_id
