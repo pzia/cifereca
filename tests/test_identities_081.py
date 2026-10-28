@@ -38,7 +38,7 @@ def test_schema_v5_roundtrips_identity_connection_account_and_device():
         storage.adept_profile_binding_set("identity", "alice", "ade-alice")
         storage.device_binding_put({"device_id": "reader-1", "identity_id": "alice", "label": "Liseuse Alice"})
 
-        assert storage.schema_version() == 13
+        assert storage.schema_version() == 14
         assert storage.identity_get("alice")["reading_languages"] == ["fr", "en"]
         assert storage.identity_for_connection("kobo", "vault-a") == "alice"
         assert storage.provider_accounts(identity_id="alice")[0]["account_id"] == "reader-a"
@@ -150,7 +150,7 @@ def test_v3_database_migrates_to_v5_with_identity_tables_and_identity_columns():
         # the migration is intentionally idempotent when columns already exist.
         db.commit(); db.close()
         migrated = Storage(db_path)
-        assert migrated.schema_version() == 13
+        assert migrated.schema_version() == 14
         tables = {row[0] for row in sqlite3.connect(db_path).execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"identities", "provider_connections", "provider_accounts", "adept_profile_bindings", "device_bindings"} <= tables
 
@@ -292,7 +292,7 @@ def test_v4_ambiguous_kobo_rows_migrate_to_distinct_identities_without_data_loss
         db.commit(); db.close()
 
         migrated = Storage(db_path)
-        assert migrated.schema_version() == 13
+        assert migrated.schema_version() == 14
         connections = migrated.provider_connections()
         kobo = [row for row in connections if row["provider_id"] == "kobo"]
         assert len(kobo) == 2
