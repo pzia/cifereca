@@ -723,6 +723,12 @@ class KoboSession(ProviderSession):
             raise ProviderCapabilityError(
                 "Kobo-Vault : compte des observations de droits incohérent"
             )
+        # Account is mutable even when the provider's session generation is
+        # fixed. A caller can be rebound while Vault is loading.
+        caller_scope = (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
         account_id = bound.unique_id
         owner = self._rights_owner_snapshot(account_id)
         if owner is None or owner[1] != (account.identity_id,):
@@ -733,7 +739,9 @@ class KoboSession(ProviderSession):
         results = self.library()  # ONE existing authenticated Vault GET.
         self._ensure_personal_binding(bound, generation)
         if (self._rights_owner_snapshot(account_id) != owner
-                or bound.unique_id != account_id):
+                or bound.unique_id != account_id
+                or (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id) != caller_scope):
             raise ProviderCapabilityError(
                 "Kobo-Vault : propriétaire modifié pendant la lecture"
             )
@@ -770,13 +778,15 @@ class KoboSession(ProviderSession):
             ))
         self._ensure_personal_binding(bound, generation)
         if (self._rights_owner_snapshot(account_id) != owner
-                or bound.unique_id != account_id):
+                or bound.unique_id != account_id
+                or (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id) != caller_scope):
             raise ProviderCapabilityError(
                 "Kobo-Vault : propriétaire modifié pendant la lecture"
             )
         return ProviderRightsSnapshot(
             scope=ProviderRightsScope(
-                account.identity_id, "kobo", self.credential_id, account_id,
+                caller_scope[0], "kobo", self.credential_id, account_id,
             ),
             rights=tuple(observed_rights),
             status="partial", coverage="partial",
