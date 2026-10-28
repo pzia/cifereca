@@ -1,6 +1,7 @@
 """BnF reader provider using the same public provider contract as Paris."""
 from __future__ import annotations
 from pathlib import Path
+from datetime import datetime, timezone
 import threading
 from uuid import uuid4
 from cifereca.plugin_api import (
@@ -9,6 +10,7 @@ from cifereca.plugin_api import (
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
     ProviderCapabilityError, ProviderError, normalize_language_tag,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
+    ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
 )
 from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
@@ -190,6 +192,53 @@ class BnfProviderSession(ProviderSession):
             ),),
             reason_code='inventory_not_exhaustive',
         )
+
+    def rights_observation_snapshot(self, account):
+        """One authenticated BnF activity read -> positive scoped loan claims.
+
+        The HTML inventory is partial even when empty. In particular, neither
+        missing loans nor a resource title grant any negative or purchase right.
+        No ACSM/token call is made here; Core owns matching and acquisition.
+        """
+        # Same lock as connect/close and legacy loan GET. Freeze the mutable
+        # borrower across both the typed inventory and rights projection.
+        with self._lock:
+            inventory = self._loan_inventory_snapshot_locked(account)
+            scope = inventory.scope
+            if (not self.connected or self._closed or len(self._accounts) != 1
+                    or account is not self._accounts[0]
+                    or LoanInventoryScope.for_account(account) != scope):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            observed = datetime.now(timezone.utc).isoformat()
+            rights = []
+            for loan in inventory.loans:
+                # Both opaque IDs come from the authenticated active-loan HTML:
+                # never substitute a catalogue URL, title, ISBN or file hash.
+                if (loan.medium != 'digital' or loan.state != 'active'
+                        or type(loan.record_id) is not str or not loan.record_id
+                        or type(loan.id) is not str or not loan.id):
+                    continue
+                rights.append(ProviderRightObservation(
+                    edition_id=loan.record_id, right_id=loan.id,
+                    kind='loan', state='active',
+                    evidence_kind='provider_response',
+                    evidence_ref='bnf_html.active_loans',
+                    observed_at=observed, delivery='unknown',
+                ))
+            if (not self.connected or self._closed or len(self._accounts) != 1
+                    or account is not self._accounts[0]
+                    or LoanInventoryScope.for_account(account) != scope):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            return ProviderRightsSnapshot(
+                scope=ProviderRightsScope(
+                    scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id,
+                ),
+                rights=tuple(rights),
+                status='partial', coverage='partial',
+                pagination_complete=False, branch='bnf_html',
+                observed_at=observed, snapshot_ref='bnf_html.active_loans',
+            )
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
                          *, explicit_user_action: bool = False):
