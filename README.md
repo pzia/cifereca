@@ -1,18 +1,19 @@
-# Architecture et rationalisation
+# CIFERECA — architecture et rationalisation
 
-La documentation de référence de l'architecture actuelle, de la cible et des travaux structurels restants est dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Contrat canonique et parcours nominal : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — décision du propriétaire [#3171](https://github.com/pzia/cifereca/issues/3171) du 28 octobre 2026.**
 
-Repères rapides :
+Une **synchronisation automatique unique** observe achats/prêts exacts (A, SourceReference, identité/compte/branche), vérifie une copie locale par l'origine fournisseur attestée et son SHA final/Placement **dans le profil** (B), puis **acquiert les absents non satisfaits** dans les limites de droits, offres et consentements autorisés. Un titre/ISBN similaire ne suffit pas à rapprocher ; un scan incomplet n'est ni une absence prouvée ni un veto permanent. Après ACSM/ADEPT éventuel, publication transactionnelle Artifact global SHA, Placement propre au profil et OriginLink contextuels. Les notices bibliographiques (C) demeurent descriptives. Le rapprochement manuel #2797 est un rattrapage **exceptionnel**, pas une seconde boucle obligatoire.
 
-- le Core applicatif vit sous `src/cifereca/` ;
-- les plugins fonctionnels vivent actuellement sous `plugins/<plugin>/` ;
-- `src/cifereca/plugins/` contient le framework/loader/manager de plugins, pas les plugins fonctionnels ;
-- `src/cifereca/builtin_ui/`, `src/cifereca/paris/` et `src/cifereca/kobo/` restent des zones historiques à rationaliser ;
-- `bundled_plugins/` et `integrations/` ne sont plus des sources actives ;
-- l'organisation des tests est décrite dans [docs/TEST-ORGANIZATION.md](docs/TEST-ORGANIZATION.md) ;
-- l'état global du chantier est indexé dans [docs/RATIONALIZATION-STATUS.md](docs/RATIONALIZATION-STATUS.md).
+**État réel (28/10)** : les observations en lecture seule des fournisseurs Kobo/Numilog/Paris/BnF sont disponibles ; le moteur transactionnel convergent **n'est pas encore livré**. Les PR #3523 (plan pur) et #3528 (lecture scopée) sont des tranches ouvertes, non une publication d'OriginLink SQLite. La migration de backup_items relève de #3196 ; les flux historiques restent actifs et protégés jusqu'à équivalence vérifiée.
 
-> Les sections ci-dessous conservent l'historique des livraisons. Elles ne constituent pas la carte d'architecture de référence.
+Repères du dépôt :
+- Core : src/cifereca/ ; API des plugins : src/cifereca/plugin_api/ ; CoreUI : src/cifereca/gui/ et builtin_ui/.
+- **Plugins fonctionnels : src/plugins/<plugin>/** ; src/cifereca/plugins/ est le framework/loader/manager, et plugins/ à la racine n'est pas une source active.
+- Paris : src/plugins/provider-paris/ ; src/cifereca/paris/ **n'existe pas** dans le tree actuel. src/cifereca/kobo/ garde un reliquat historique.
+- Tests : [docs/TEST-ORGANIZATION.md](docs/TEST-ORGANIZATION.md) ; simulation fonctionnelle **déjà existante** : simulation/ ; environnements/ pour les runtimes.
+- Rationalisation et statuts : [docs/RATIONALIZATION-STATUS.md](docs/RATIONALIZATION-STATUS.md).
+
+> Les sections de versions ci-dessous sont **historiques**, ne priment pas sur le contrat #3171 et n'attestent pas les fonctionnalités non fusionnées.
 
 ---
 
