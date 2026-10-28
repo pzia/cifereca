@@ -866,8 +866,22 @@ class NumilogSession(ProviderSession):
             identity_id=self._identity_id()
         else:
             self._validate_download_owner(identity_id)
+        # Core's owner ID alone cannot distinguish an identity broker swapped
+        # A->A while ADEPT imports. Pin the *exact* owner bindings and broker
+        # instance around this potentially long-running external operation.
+        owner_scope = self._inventory_owner_or_none()
+        if (type(owner_scope) is not tuple or len(owner_scope) != 3
+                or owner_scope[0] != 'broker'
+                or owner_scope[2] != (identity_id,)):
+            raise ProviderCapabilityError(
+                'Numilog : rattachement du compte modifié ; téléchargement arrêté'
+            )
         result=self.acquisition_broker.import_acsm(
             Path(path), identity_id=identity_id, provider_id='numilog', title=title or None)
+        if self._inventory_owner_or_none() != owner_scope:
+            raise ProviderCapabilityError(
+                'Numilog : rattachement du compte modifié ; téléchargement arrêté'
+            )
         self._validate_download_owner(identity_id)
         if not isinstance(result,dict):
             raise ProviderError('Numilog : résultat de fulfillment ACSM invalide')
