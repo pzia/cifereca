@@ -169,6 +169,9 @@ def test_paris_disconnect_during_pnb_response_never_stages_file(tmp_path, monkey
 
 def test_paris_fallback_pnb_post_uses_pinned_loan_edition_and_borrower(tmp_path, monkeypatch):
     session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
+    # This fixture defaults to is_primary=True even with a nonempty ID.
+    # Model this particular fallback as a linked borrower instead.
+    account.is_primary = False
     loan.ebook_url = None
     captured = []
 
@@ -205,6 +208,9 @@ def test_paris_fallback_pnb_preferences_rebind_blocks_endpoint_before_post(
     tmp_path, monkeypatch,
 ):
     session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
+    # This fixture defaults to is_primary=True even with a nonempty ID.
+    # Model this particular fallback as a linked borrower instead.
+    account.is_primary = False
     loan.ebook_url = None
     endpoint_calls = []
 
