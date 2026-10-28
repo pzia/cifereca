@@ -174,6 +174,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
         prefix=".kobo-selected-", suffix="." + fmt, dir=target,
     )
     path = Path(filename)
+    succeeded = False
     try:
         with os.fdopen(fd, "wb") as out:
             if not bound():
@@ -219,12 +220,12 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             )
         # A supplier stream is never a Core receipt or verified OriginLink.
         # Only this staging path is returned; the signed URL remains private.
+        succeeded = True
         return path, ""
-    except (httpx.HTTPError, OSError, ValueError) as exc:
+    except (httpx.HTTPError, OSError, ValueError):
         raise ProviderCapabilityError(
             "kobo_candidate_transport_failed"
         ) from None
     finally:
-        # Success leaves the candidate for Core; all failed paths must be
-        # cleared. This is controlled in the outer method below.
-        pass
+        if not succeeded:
+            path.unlink(missing_ok=True)
