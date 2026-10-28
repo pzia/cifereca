@@ -612,10 +612,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 existing["thumbnail_url"] = base_cover.url
             existing["metadata"] = {**metadata, **dict(existing.get("metadata") or {})}
 
+    # A v0.7 backup projection is not scoped by identity/borrower: even a
+    # descriptive title/cover can leak a former owner's private metadata.
+    # Present only catalogue, canonical entitlement and scoped loan facts.
     from .bnf_import_provenance import display_links
     bnf_links = display_links(self.storage,
                              [p for rows in placements_by_artifact.values() for p in rows], local_keys)
-    backup_by_key = {(str(row.get("credential_id") or ""), str(row.get("item_id") or "")): row for row in self.storage.backup_list("kobo")}
     loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
     for loan in self.last_loans:
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
@@ -639,13 +641,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
         existing = merged.get(canonical_key, {})
         meta = dict(entitlement.get("metadata") or {})
-        backup = backup_by_key.get((str(entitlement.get("credential_id") or ""), item_id), {}) if provider_id == "kobo" else {}
         loan = loans_by_key.get((provider_id, str(entitlement.get("credential_id") or ""), entitlement.get("account_id"), item_id))
         loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
-        title = str(meta.get("title") or backup.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
-        author = meta.get("author") or backup.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
+        title = str(meta.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
+        author = meta.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
         from ..core.search import file_format
-        source_media_format = meta.get("media_format") or backup.get("format") or (loan.media_format if loan else None) or loan_extra.get("format")
+        source_media_format = meta.get("media_format") or (loan.media_format if loan else None) or loan_extra.get("format")
         local_format = file_format(existing.get("media_format")) if existing.get("local") else ""
         media_format = local_format or file_format(source_media_format) or file_format(existing.get("media_format"))
         meta["source_media_format"] = source_media_format
@@ -660,7 +661,6 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         for url, source, strength, evidence in (
             (existing_meta.get("cover_url") or existing_meta.get("thumbnail_url"), "catalog-entry", 60, f"{provider_id}:{item_id}"),
             (meta.get("cover_url") or meta.get("thumbnail_url"), "entitlement", 80, str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}")),
-            (backup.get("cover_url"), "kobo-backup", 100, f"{provider_id}:{item_id}"),
             ((loan.thumbnail_url if loan else None), "loan", 90, f"{provider_id}:{item_id}"),
         ):
             value = cover_candidate(url, tier="origin", source=source, evidence_id=evidence, evidence_strength=strength)
