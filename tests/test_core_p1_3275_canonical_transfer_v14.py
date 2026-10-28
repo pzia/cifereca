@@ -12,6 +12,7 @@ import sqlite3
 import pytest
 
 from cifereca.core.canonical_transfer import publish_completed_local_transfer
+from cifereca.locking import InterProcessLock
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_atomic_publication_v14 import (
     BYTES, SHA, new_source, publish, register, target,
@@ -19,8 +20,12 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 
 
 @pytest.fixture
-def case(tmp_path):
+def case(tmp_path, monkeypatch):
     db = Storage(tmp_path / "store.sqlite")
+    monkeypatch.setattr(
+        "cifereca.core.canonical_transfer.acquisition_lock_file",
+        lambda: tmp_path / "shared-acquisition.lock",
+    )
     register(db, "A", "seller-a", "card-a", account="buyer-a")
     register(db, "B", "seller-b", "card-b", account="buyer-b")
     db.identity_put({
@@ -53,12 +58,13 @@ def rows(db):
 
 
 def transfer(db, root, a, b, src, dst, *, transfer_id, authorized=True):
-    return publish_completed_local_transfer(
-        db, library_root=root, from_identity_id=src, to_identity_id=dst,
-        from_path=a, to_path=b, transfer_id=transfer_id,
-        transfer_receipt_ref="completed-copy-" + transfer_id,
-        explicitly_authorized=authorized,
-    )
+    with InterProcessLock(root.parent / "shared-acquisition.lock") as lease:
+        return publish_completed_local_transfer(
+            db, library_root=root, from_identity_id=src, to_identity_id=dst,
+            from_path=a, to_path=b, transfer_id=transfer_id,
+            transfer_receipt_ref="completed-copy-" + transfer_id,
+            explicitly_authorized=authorized, shared_lock=lease,
+        )
 
 
 def test_A_to_B_purchase_B_to_C_creates_1_artifact_3_placements_8_origins(case):
@@ -240,3 +246,34 @@ def test_two_donors_reusing_same_transfer_id_keep_distinct_contextual_origins(ca
     assert transfer(
         db, root, a, b, "A", "B", transfer_id="shared-id",
     ).changed is False
+
+
+def test_explicit_transfer_without_held_global_lock_never_writes(case):
+    db, root, a = case
+    b = target(root.parent, "B")
+    unopened = InterProcessLock(root.parent / "shared-acquisition.lock")
+    before = rows(db)
+    with pytest.raises(ValueError, match="canonical_transfer_authorization_required"):
+        publish_completed_local_transfer(
+            db, library_root=root,
+            from_identity_id="A", to_identity_id="B",
+            from_path=a, to_path=b, transfer_id="unlocked",
+            transfer_receipt_ref="signed-synthetic-copy",
+            explicitly_authorized=True, shared_lock=unopened,
+        )
+    assert rows(db) == before
+
+
+def test_other_lock_does_not_authorize_canonical_transfer(case):
+    db, root, a = case
+    b = target(root.parent, "B")
+    before = rows(db)
+    with InterProcessLock(root.parent / "unrelated.lock") as unrelated:
+        with pytest.raises(ValueError, match="canonical_transfer_authorization_required"):
+            publish_completed_local_transfer(
+                db, library_root=root, from_identity_id="A",
+                to_identity_id="B", from_path=a, to_path=b,
+                transfer_id="wrong-lock", transfer_receipt_ref="copy-completed",
+                explicitly_authorized=True, shared_lock=unrelated,
+            )
+    assert rows(db) == before
