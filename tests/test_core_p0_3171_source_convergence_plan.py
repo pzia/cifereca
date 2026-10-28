@@ -90,8 +90,10 @@ def test_same_edition_different_sha_does_not_link_by_metadata():
                   origins=(origin(key, SHA_A),), scans=(scan("A"),),
                   candidates=(LocalCandidate(key, "unrelated"),),
                   consent=(key,))
-    assert result.decisions[0].state == "needs_reconciliation"
+    assert result.decisions[0].state == "missing_to_download"
+    assert result.decisions[0].reason == "unattested_candidate_no_satisfaction"
     assert result.decisions[0].placement_ids == ()
+    assert not result.acquisition_authorized
 
 
 def test_scope_is_exact_credential_account_identity_edition_and_right():
@@ -389,5 +391,40 @@ def test_incomplete_scan_is_not_negative_proof_nor_a_permanent_download_veto():
     candidate = plan(snap, scans=(scan("A", False),),
                      candidates=(LocalCandidate(key, "uncertain-file"),),
                      consent=(key,)).decisions[0]
-    assert candidate.state == "needs_reconciliation"
-    assert not candidate.independent_acquisition_review_possible
+    assert candidate.state == "pending"
+    assert candidate.independent_acquisition_review_possible
+    assert not candidate.acquisition_authorized
+
+
+def test_bibliographic_only_candidate_does_not_force_a_manual_reconciliation():
+    for provider in ("provider-alpha", "provider-beta"):
+        snapshot, key = source(provider=provider)
+        other_bytes = placement("A", "similar-title-file", SHA_B)
+        hint = LocalCandidate(key, "similar-title-file")
+        result = plan(snapshot, placements=(other_bytes,),
+                      candidates=(hint,), scans=(scan("A"),),
+                      consent=(key,))
+        decision = result.decisions[0]
+        assert decision.state == "missing_to_download"
+        assert decision.reason == "unattested_candidate_no_satisfaction"
+        assert decision.placement_ids == ()
+        assert not decision.acquisition_authorized
+        # The same hint without an exact consent/offered delivery cannot
+        # authorize an alternative route by title, even after a full scan.
+        no_consent = plan(snapshot, placements=(other_bytes,),
+                          candidates=(hint,), scans=(scan("A"),))
+        assert no_consent.decisions[0].state == "needs_reconciliation"
+        assert not no_consent.decisions[0].acquisition_authorized
+
+
+def test_stale_origin_does_not_become_an_indefinite_manual_veto():
+    snap, key = source()
+    stale = plan(snap, placements=(placement("A", "old", verified=False),),
+                 origins=(origin(key),), scans=(scan("A"),),
+                 consent=(key,)).decisions[0]
+    assert stale.state == "needs_reconciliation"
+    assert stale.independent_acquisition_review_possible
+    assert not stale.acquisition_authorized
+    no_consent = plan(snap, placements=(placement("A", "old", verified=False),),
+                      origins=(origin(key),), scans=(scan("A"),)).decisions[0]
+    assert not no_consent.independent_acquisition_review_possible
