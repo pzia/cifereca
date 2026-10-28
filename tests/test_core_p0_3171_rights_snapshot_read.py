@@ -59,6 +59,7 @@ def rig(provider="provider-alpha", *, owner="A", credential="cred-A",
         credential_id=credential, unique_id=buyer,
     )
     session = ProviderSession(provider, credential, reader)
+    session.accounts = [account]
     service = SimpleNamespace(
         _account_context_epoch=1,
         accounts=[account],
@@ -79,6 +80,53 @@ def test_two_independent_provider_adapters_one_read_exact_scope(provider):
     assert report.rights[0].edition_id == "edition-1"
     assert not report.authorizes_mutation
     assert not report.authorizes_negative_reconciliation
+
+
+@pytest.mark.parametrize("change", [
+    "foreign", "missing", "duplicate", "malformed", "unreadable",
+])
+def test_unbound_live_provider_borrower_denies_rights_read(change):
+    service, account, session = rig()
+    if change == "foreign":
+        session.accounts = [replace(account, unique_id="other-borrower")]
+    elif change == "missing":
+        session.accounts = []
+    elif change == "duplicate":
+        session.accounts = [account, replace(account)]
+    elif change == "malformed":
+        session.accounts = None
+    else:
+        del session.accounts
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert session.calls == 0
+    assert not result.authorizes_mutation
+
+
+def test_live_provider_borrower_rebound_during_rights_read_discarded():
+    service, account, session = rig()
+
+    def read(selected):
+        snapshot = ProviderSession(
+            session.provider_id, session.credential_id,
+        ).rights_observation_snapshot(selected)
+        # No Core epoch or registry replacement: only upstream session scope.
+        session.accounts = [replace(account, unique_id="other-borrower")]
+        return snapshot
+
+    session.reader = read
+    result = read_account_rights_snapshot(service, account)
+    assert session.calls == 1
+    assert result.status == "failed" and result.rights == ()
+    assert not result.authorizes_mutation
+
+
+def test_other_borrowers_in_same_session_do_not_block_exact_owner():
+    service, account, session = rig()
+    session.accounts.append(replace(account, unique_id="linked-borrower"))
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "partial" and len(result.rights) == 1
+    assert session.calls == 1
 
 
 def test_missing_optional_method_cannot_fallback_to_entitlements_or_library():

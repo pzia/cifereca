@@ -143,9 +143,12 @@ def test_upstream_session_borrower_rebound_denies_private_offer_read(rig, kind):
     service.session.rights_selected_delivery_offer_snapshot = (
         lambda *_a, **_kw: pytest.fail("foreign session must not read selected offer")
     )
-    with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
-        synchronize_account_source(service, service.account)
-    assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
+    # The new A reader refuses the stale borrower BEFORE selected-offer
+    # preflight, so there is no admission lease and no preflight exception.
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_rights"]["status"] == "failed"
+    assert "canonical_execution" not in result
+    assert downloads == [] and db.placements() == [] and refs(db) == ([], 0)
 
 
 def test_upstream_borrower_change_during_selected_offer_read_blocks_get(rig):
