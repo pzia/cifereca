@@ -883,6 +883,20 @@ class NumilogSession(ProviderSession):
                 if (getattr(ref, 'provider_id', None) != 'numilog'
                         or getattr(ref, 'account_id', None) != target):
                     continue
+                # AccountRef v2 (#3171) proves the credential as well as the
+                # upstream account. An identical synthetic account key from
+                # another credential is not authority for this session.
+                # Legacy v1 refs remain candidates: mixed v1/v2 cannot
+                # silently erase a duplicate unqualified owner.
+                version = getattr(ref, 'scope_version', 1)
+                if type(version) is not int or version not in (1, 2):
+                    return ('unverified_broker', id(broker))
+                if version == 2:
+                    credential = getattr(ref, 'credential_id', None)
+                    if type(credential) is not str or not credential:
+                        return ('unverified_broker', id(broker))
+                    if credential != self.credential_id:
+                        continue
                 identity = getattr(ref, 'identity_id', None)
                 # Bad IDs remain unresolved; never stringify arbitrary
                 # provider objects, even into an internal owner snapshot.
