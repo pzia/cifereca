@@ -129,12 +129,55 @@ def test_numilog_exact_offer_required_before_any_signed_download(tmp_path):
         with pytest.raises(ProviderCapabilityError, match="numilog_offer_changed"):
             s.download_direct(
                 item, tmp_path, expected_offer_id="numilog.card:" + "0" * 64,
+                expected_identity_id="identity-A",
             )
         assert called == []
         assert s.download_direct(
             item, tmp_path, expected_offer_id=observed.delivery_offer_id,
+            expected_identity_id="identity-A",
         ) == (tmp_path / "fake.epub", s.library_url)
         assert len(called) == 1
         assert called[0][1]["authorized_link"] == SIGNED
+    finally:
+        s.close()
+
+
+def test_numilog_foreign_identity_offer_refused_before_private_meslivres_get(
+    tmp_path,
+):
+    s, broker, reads = rig(_page(_card(12, 9001, SIGNED)))
+    try:
+        account = bound_account(s)
+        right = s.rights_observation_snapshot(account).rights[0]
+        offered = s.rights_delivery_offer_snapshot(
+            account, right.right_id,
+        ).rights[0]
+        item = s.library()[0]
+        before = len(reads)
+        broker.owner = "identity-B"
+        with pytest.raises(ProviderCapabilityError, match="numilog_offer_owner_changed"):
+            s.download_direct(
+                item, tmp_path, expected_offer_id=offered.delivery_offer_id,
+                expected_identity_id="identity-A",
+            )
+        assert len(reads) == before
+        assert not list(tmp_path.iterdir())
+    finally:
+        s.close()
+
+
+def test_numilog_offer_requires_independent_core_identity_not_just_opaque_id(tmp_path):
+    s, broker, reads = rig(_page(_card(12, 9001, SIGNED)))
+    try:
+        account = bound_account(s)
+        right = s.rights_observation_snapshot(account).rights[0]
+        offer = s.rights_delivery_offer_snapshot(account, right.right_id).rights[0]
+        item = s.library()[0]
+        before = len(reads)
+        with pytest.raises(ProviderCapabilityError, match="numilog_offer_unobserved"):
+            s.download_direct(
+                item, tmp_path, expected_offer_id=offer.delivery_offer_id,
+            )
+        assert len(reads) == before
     finally:
         s.close()
