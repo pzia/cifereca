@@ -910,6 +910,93 @@ class KoboSession(ProviderSession):
             observed_at=observed, snapshot_ref="kobo.personal_manifest",
         )
 
+    def rights_delivery_offer_snapshot(
+        self, account: Account, right_id: str, *, explicit_user_action: bool = False,
+    ):
+        """Selected, Core-admitted #3252 Vault descriptor preflight.
+
+        A private Vault acquisition POST is not an inventory read and may
+        count as a provider access. It is *never* initiated by the regular
+        rights snapshot or by a missing/invalid user-action admission.
+        Its payload may contain signed links; only a stable opaque offer ID
+        is returned, never the payload or those URLs.
+        """
+        from dataclasses import replace
+        from cifereca_kobo_delivery_offer import exact_kobo_offer_id
+
+        if (explicit_user_action is not True
+                or type(right_id) is not str
+                or _strict_product_id({"product_id": right_id}) != right_id
+                or type(account) is not Account
+                or not self.connected or len(self._accounts) != 1):
+            raise ProviderCapabilityError("kobo_delivery_offer_not_admitted")
+
+        # Pin everything before the positive-right inventory read. A change
+        # to the Core owner between inventory and the POST is not admissible.
+        bound_accounts = self._accounts
+        bound = bound_accounts[0]
+        generation = self._personal_binding_generation
+        client = self.client
+        broker = self.identity_broker
+        identity_id, account_id = account.identity_id, account.unique_id
+        caller_scope = (account.identity_id, account.provider_id,
+                        account.credential_id, account.unique_id)
+        bound_scope = (bound.unique_id, bound.identity_id,
+                       bound.provider_id, bound.credential_id)
+        owner = self._rights_owner_snapshot(account_id)
+        if (owner is None or owner[1] != (identity_id,)
+                or caller_scope != (bound.identity_id, "kobo",
+                                    self.credential_id, bound.unique_id)):
+            raise ProviderCapabilityError("kobo_delivery_offer_owner_unverified")
+
+        def scope_current() -> bool:
+            try:
+                self._ensure_personal_binding(
+                    bound, generation, expected_account_id=account_id,
+                    expected_identity_id=bound_scope[1],
+                )
+                return (
+                    self.connected is True
+                    and self._accounts is bound_accounts
+                    and self._accounts[0] is bound
+                    and self.client is client
+                    and self.identity_broker is broker
+                    and (bound.unique_id, bound.identity_id, bound.provider_id,
+                         bound.credential_id) == bound_scope
+                    and (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id) == caller_scope
+                    and self._rights_owner_snapshot(account_id) == owner
+                )
+            except ProviderError:
+                return False
+
+        if not scope_current():
+            raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        baseline = self.rights_observation_snapshot(account)
+        if not scope_current():
+            raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        right = baseline.exact(right_id, right_id, "purchase")
+        if (right is None or right.state != "active"
+                or right.provider_attested is not True):
+            raise ProviderCapabilityError("kobo_delivery_offer_right_unobserved")
+        # Exactly one POST for the exact attested product, after an explicit
+        # selection. Do not fall back to delegated mode on a descriptor 403.
+        payload = self.resolve_acquisition(
+            right_id, mode="descriptor", include_acsm=True,
+        )
+        if not scope_current():
+            raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        offer_id = exact_kobo_offer_id(
+            payload, identity_id=identity_id, credential_id=self.credential_id,
+            account_id=account_id, product_id=right_id,
+        )
+        qualified = replace(
+            right,
+            delivery="available" if offer_id else "unknown",
+            delivery_offer_id=offer_id,
+        )
+        return replace(baseline, rights=(qualified,))
+
     def backup_manifest(self) -> list[dict[str, Any]]:
         # No diagnostic may outlive the previous manifest if fetching raises.
         self.backup_manifest_rejection_count = 0
