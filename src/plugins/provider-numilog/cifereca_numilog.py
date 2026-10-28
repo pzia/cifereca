@@ -434,6 +434,28 @@ class NumilogSession(ProviderSession):
             source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='library',
             owned=True,downloadable=True,metadata={'format_unverified':True,**({'public_url_evidence':'numilog.library_title_link'} if public_url else {})})
 
+    def _legacy_inventory_account_binding(self):
+        """Pin live Core Account *instances*, not only their owner labels.
+
+        Legacy callers can still use library/search with zero active Account
+        rows; the binding then records that exact empty live list. This does
+        not grant rights: the typed #3252 snapshot has stricter admission.
+        """
+        accounts = self._accounts
+        if type(accounts) not in (list, tuple):
+            return None
+        return (
+            id(accounts),
+            tuple(
+                (id(account), getattr(account, "unique_id", None),
+                 getattr(account, "identity_id", None),
+                 getattr(account, "provider_id", None),
+                 getattr(account, "credential_id", None))
+                for account in accounts
+            ),
+            len(accounts),
+        )
+
     def library(self):
         with self.lock:
             # The HTTP client is serialized with reconnect/close, but the Core
@@ -442,9 +464,15 @@ class NumilogSession(ProviderSession):
             # publish a positive purchase observation under a new identity.
             # Standalone legacy sessions without a broker remain supported.
             owner = self._inventory_owner_or_none()
+            account_binding = self._legacy_inventory_account_binding()
+            if account_binding is None:
+                raise ProviderCapabilityError(
+                    'Numilog : session de bibliothèque indisponible'
+                )
             rows = self._rows()
             normalized = [self._normalize(row) for row in rows]
-            if self._inventory_owner_or_none() != owner:
+            if (self._inventory_owner_or_none() != owner
+                    or self._legacy_inventory_account_binding() != account_binding):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; inventaire arrêté'
                 )
@@ -633,10 +661,12 @@ class NumilogSession(ProviderSession):
         # Core identity rebind cannot publish stale purchased-book hits.
         with self.lock:
             owner = self._inventory_owner_or_none()
+            account_binding = self._legacy_inventory_account_binding()
             matches = [row for row in self.library() if all(t in fold(row.title) for t in terms)]
             start = page*50
             result = matches[start:start+50]
-            if self._inventory_owner_or_none() != owner:
+            if (self._inventory_owner_or_none() != owner
+                    or self._legacy_inventory_account_binding() != account_binding):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; recherche arrêtée'
                 )
