@@ -33,11 +33,14 @@ class SourceKey:
     edition_id: str
     right_id: str
     kind: Literal["purchase", "loan"]
+    branch: str
 
     def __post_init__(self) -> None:
         if (type(self.scope) is not ProviderRightsScope
                 or not _id(self.edition_id) or not _id(self.right_id)
-                or self.kind not in ("purchase", "loan")):
+                or type(self.kind) is not str
+                or self.kind not in ("purchase", "loan")
+                or not _id(self.branch)):
             raise ValueError("invalid_source_reference")
 
 
@@ -166,6 +169,15 @@ class ConvergenceDecision:
     def acquisition_authorized(self) -> bool:
         return False
 
+    @property
+    def independent_acquisition_review_possible(self) -> bool:
+        """Incomplete scan does not prove absence or permanently veto a request.
+
+        Requires a separate executor admission, scope/consent/rights check and
+        a new local preflight; this flag NEVER grants an automatic download.
+        """
+        return self.reason == "scan_incomplete_independent_admission_required"
+
 
 @dataclass(frozen=True, slots=True)
 class ConvergencePlan:
@@ -193,7 +205,8 @@ def plan_convergence(
     """Plan positives only. No filesystem/network/store access or write permit.
 
     The caller must explicitly supply complete filesystem coverage and local
-    candidates, including possible same-title alternatives. Explicit consent is\n    keyed to the exact right (and its kind), not just a shared account. 'missing_to_download'
+    candidates, including possible same-title alternatives. Explicit consent is
+    keyed to the exact right (and its kind), not just a shared account. 'missing_to_download'
     remains a *proposal*, not permission. Executor owns fresh locks/rights/consent.
     """
     if (type(snapshots) is not tuple or len(snapshots) > 64
@@ -253,7 +266,8 @@ def plan_convergence(
     for snapshot in snapshots:
         # A failed/partial remote inventory never yields negative rights.
         for row in snapshot.rights:
-            key = SourceKey(snapshot.scope, row.edition_id, row.right_id, row.kind)
+            key = SourceKey(snapshot.scope, row.edition_id, row.right_id,
+                            row.kind, snapshot.branch)
             if key in seen:
                 raise ValueError("duplicate_source_reference")
             seen.add(key)
@@ -292,7 +306,13 @@ def plan_convergence(
                 continue
             scan = scan_by_identity.get(key.scope.identity_id)
             if scan is None or not scan.complete:
-                decision("pending", "local_scan_incomplete")
+                # No verified absence can be asserted. Yet an explicitly
+                # consented offer may be independently admitted later after
+                # fresh, fail-closed local checks; do not veto it forever.
+                if row.delivery == "available" and key in consent_references:
+                    decision("pending", "scan_incomplete_independent_admission_required")
+                else:
+                    decision("pending", "local_scan_incomplete")
                 continue
             if row.delivery == "available" and key in consent_references:
                 decision("missing_to_download", "no_local_proof_after_complete_scan")
