@@ -134,7 +134,9 @@ def test_unverified_legacy_sha_cannot_poison_real_final_artifact_publication(tmp
         # size for the real PDF at this path. Its claim is NOT an Artifact.
         store.backup_put(legacy(path, sha))
         artifact_id = "sha256:" + sha
-        assert store.artifact_get(artifact_id) is None
+        legacy_artifact = store.artifact_get(artifact_id)
+        assert legacy_artifact["metadata"] == {"imported_from": "backup_items"}
+        assert legacy_artifact["size"] == 999999
         assert store.backup_get("seller", "card", "edition")["sha256"] == sha
         assert store.placements()[0]["state"] == "unverified"
 
@@ -156,6 +158,7 @@ def test_unverified_legacy_sha_cannot_poison_real_final_artifact_publication(tmp
         real_artifact = store.artifact_get(artifact_id)
         assert real_artifact["size"] == path.stat().st_size
         assert real_artifact["media_format"] == "pdf"
+        assert real_artifact["metadata"] == {}
         assert store.placements()[0]["state"] == "present"
         with store._lock, store._connect() as db:
             assert db.execute(
@@ -171,7 +174,9 @@ def test_legacy_sha_without_existing_file_does_not_create_artifact(tmp_path):
     try:
         target = tmp_path / "nonexistent.epub"
         store.backup_put(legacy(target, "a" * 64))
-        assert store.artifact_get("sha256:" + "a" * 64) is None
+        assert store.artifact_get("sha256:" + "a" * 64)["metadata"] == {
+            "imported_from": "backup_items"
+        }
         assert len(store.backup_list("seller")) == 1
         assert store.placements()[0]["state"] == "unverified"
         assert store.acquisitions()[0]["status"] == "complete"
