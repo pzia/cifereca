@@ -184,6 +184,8 @@ def test_stale_file_does_not_count_as_presence_or_initiate_download():
 
 @pytest.mark.parametrize("state,evidence,expected", [
     ("inactive", "provider_response", "inactive"),
+    ("inactive", "historical_receipt", "pending"),
+    ("inactive", "legacy_unverified", "pending"),
     ("unknown", "provider_response", "pending"),
     ("active", "historical_receipt", "pending"),
     ("active", "legacy_unverified", "pending"),
@@ -191,8 +193,10 @@ def test_stale_file_does_not_count_as_presence_or_initiate_download():
 def test_unconfirmed_or_inactive_right_cannot_request_download(state, evidence, expected):
     snap, key = source(state=state, evidence_kind=evidence,
                      delivery="available" if evidence != "legacy_unverified" and state == "active" else "unknown")
-    assert plan(snap, scans=(scan("A"),),
-                consent=(key,)).decisions[0].state == expected
+    result = plan(snap, scans=(scan("A"),), consent=(key,))
+    assert result.decisions[0].state == expected
+    assert not result.acquisition_authorized
+    assert not result.decisions[0].authorizes_negative_reconciliation
 
 
 def test_loan_is_distinct_from_purchase_even_for_same_edition_and_bytes():
@@ -464,3 +468,40 @@ def test_declared_copy_cannot_veto_pre_authorized_acquisition(right_kind):
     assert foreign.state == "pending"
     assert not foreign.independent_acquisition_review_possible
     assert not foreign.acquisition_authorized
+
+
+def test_explicit_inactive_provider_claim_remains_read_only_even_with_full_branch():
+    scope = ProviderRightsScope("A", "provider-alpha", "cred-A", "buyer-A")
+    right = ProviderRightObservation(
+        "edition-A", "loan-A", "loan", "inactive",
+        "provider_response", "synthetic-provider-observation", OBSERVED,
+    )
+    snap = ProviderRightsSnapshot(
+        scope=scope, rights=(right,), status="success",
+        coverage="complete", pagination_complete=True, branch="digital",
+        observed_at=OBSERVED, snapshot_ref="completed-page",
+    )
+    first = plan(snap).decisions[0]
+    assert first.state == "inactive"
+    assert not first.authorizes_negative_reconciliation
+    assert not first.acquisition_authorized
+
+    legacy = replace(right, evidence_kind="legacy_unverified",
+                     evidence_ref="", observed_at=None)
+    unproven = replace(snap, rights=(legacy,), coverage="partial",
+                       pagination_complete=None, snapshot_ref="")
+    result = plan(unproven)
+    assert result.decisions[0].state == "pending"
+    assert result.decisions[0].reason == "provider_right_unattested"
+    assert not result.decisions[0].authorizes_negative_reconciliation
+
+
+def test_historical_inactive_claim_cannot_override_exact_attested_file():
+    snap, key = source(state="inactive", evidence_kind="historical_receipt",
+                       delivery="unknown")
+    result = plan(snap, placements=(placement("A", "file"),),
+                  origins=(origin(key),), scans=(scan("A"),))
+    assert result.decisions[0].state == "pending"
+    assert result.decisions[0].reason == "provider_right_unattested"
+    assert not result.decisions[0].authorizes_negative_reconciliation
+    assert not result.decisions[0].provider_satisfied
