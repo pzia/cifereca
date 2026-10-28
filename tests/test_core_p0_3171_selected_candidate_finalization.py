@@ -81,6 +81,11 @@ def test_exact_selected_candidate_becomes_core_receipt_once_then_no_second_get(r
     path = Path(placement["path"])
     assert path.read_bytes() == BYTES
     assert path.is_relative_to(root / "A" / ".canonical-delivery")
+    immediate = db.catalog_entries()
+    assert len(immediate) == 1
+    assert immediate[0]["placement_id"] == placement["placement_id"]
+    assert immediate[0]["artifact_id"] == "sha256:" + SHA
+    assert immediate[0]["identity_id"] == "A"
     with db._lock, db._connect() as sql:
         origin = sql.execute(
             "SELECT origin_kind,evidence_ref FROM origin_links"
@@ -264,6 +269,45 @@ def test_uncommitted_staging_is_invisible_until_atomic_provider_publication(rig)
     # the physical library scanner reveal the EPUB/PDF as a local catalogue.
     scanned = catalog.scan()
     assert scanned.cataloged == 1 and scanned.invalid == 0
+    entries = db.catalog_entries()
+    assert len(entries) == 1
+    assert entries[0]["placement_id"] == db.placements()[0]["placement_id"]
+
+
+def test_candidate_after_commit_catalogue_failure_recovers_without_second_get(rig, monkeypatch):
+    service, db, root = rig
+    _, preflights = _prepare(service)
+    gets = []
+
+    def candidate(*args, **kwargs):
+        gets.append(kwargs["delivery_offer_id"])
+        return _native(*args, **kwargs)
+
+    service.session.rights_selected_delivery_candidate = candidate
+    genuine_index = LocalCatalog.index_path
+
+    def interrupt(*_args, **_kwargs):
+        raise RuntimeError("synthetic post-commit descriptive index failure")
+
+    monkeypatch.setattr(LocalCatalog, "index_path", interrupt)
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert first["files_materialized"] == 1
+    assert gets == ["signed-right-offer"] and len(preflights) == 1
+    assert db.catalog_entries() == []
+    assert len(db.placements()) == 1 and refs(db)[1] == 1
+
+    monkeypatch.setattr(LocalCatalog, "index_path", genuine_index)
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["present_attested"] == 1
+    assert second["canonical_execution"]["downloaded"] == 0
+    assert gets == ["signed-right-offer"] and len(preflights) == 1
+    assert db.catalog_entries() == []
+
+    # The next ordinary read-only inventory can rebuild only the
+    # descriptive catalogue from the already committed provider origin.
+    observed = LocalCatalog(db, root).scan()
+    assert observed.cataloged == 1 and observed.invalid == 0
     entries = db.catalog_entries()
     assert len(entries) == 1
     assert entries[0]["placement_id"] == db.placements()[0]["placement_id"]
