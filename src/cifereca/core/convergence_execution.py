@@ -136,6 +136,23 @@ def execute_admitted_convergence(
             ]
             if len(matching_accounts) != 1 or matching_accounts[0] is not account:
                 return False
+            # The Core registry alone is insufficient: a connected session
+            # may silently switch its upstream borrower without replacing
+            # the Python session or bumping the Core account epoch. Require
+            # exactly one currently exposed upstream account for this source
+            # before GET, after GET and at the SQLite publication boundary.
+            session_accounts = session.accounts
+            if not isinstance(session_accounts, (list, tuple)):
+                return False
+            if sum(
+                type(candidate) is Account
+                and (candidate.identity_id, candidate.provider_id,
+                     candidate.credential_id, candidate.unique_id)
+                == (scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id)
+                for candidate in session_accounts
+            ) != 1:
+                return False
             if sum(
                 candidate is session for candidate in sessions.values()
                 if getattr(candidate, "provider_id", None) == scope.provider_id

@@ -64,6 +64,15 @@ def complete_selected_delivery(
 
     def bound() -> bool:
         try:
+            session_accounts = session.accounts
+            if (not isinstance(session_accounts, (list, tuple))
+                    or sum(
+                        type(x) is Account
+                        and (x.identity_id, x.provider_id,
+                             x.credential_id, x.unique_id) == coords
+                        for x in session_accounts
+                    ) != 1):
+                return False
             return (
                 service.accounts is accounts and service._sessions is sessions
                 and service.storage is storage

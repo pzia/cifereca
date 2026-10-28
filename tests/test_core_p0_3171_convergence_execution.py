@@ -36,7 +36,7 @@ class FakeService:
             )] = NS(
                 provider_id=account.provider_id,
                 credential_id=account.credential_id,
-                connected=True, _closed=False,
+                connected=True, _closed=False, accounts=[account],
             )
 
     @staticmethod
@@ -167,6 +167,47 @@ def test_rebind_while_downloading_never_creates_a_foreign_origin(rig):
     assert (root / "A" / "book.pdf").read_bytes() == BYTES
 
 
+@pytest.mark.parametrize("kind", ["rebound", "missing", "duplicate", "unreadable"])
+def test_session_upstream_borrower_must_still_match_before_get(rig, kind):
+    service, account, source, snapshot, root, lock_path = rig
+    session = service._sessions[("seller-a", "card-A")]
+    if kind == "rebound":
+        session.accounts = [replace(account, unique_id="other-borrower")]
+    elif kind == "missing":
+        session.accounts = []
+    elif kind == "duplicate":
+        session.accounts = [account, replace(account)]
+    else:
+        session.accounts = None
+    with pytest.raises(ValueError, match="convergence_session_rebound"):
+        run(
+            service, account, snapshot, root, lock_path, {source},
+            lambda *_: pytest.fail("unbound session borrower must not GET"),
+        )
+    assert service.calls == 0
+    assert rows(service.storage) == (0, 0, 0, 0)
+
+
+def test_session_upstream_borrower_changed_during_get_blocks_publication(rig):
+    service, account, source, snapshot, root, lock_path = rig
+    session = service._sessions[("seller-a", "card-A")]
+
+    def switch_borrower(_key):
+        # The same connected session, Core registry and epoch remain intact.
+        session.accounts = [replace(account, unique_id="new-borrower")]
+
+    result = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root, on_get=switch_borrower),
+    )
+    assert [(r.status, r.reason) for r in result] == [
+        ("blocked", "scope_rebound_after_get"),
+    ]
+    assert service.calls == 1
+    assert rows(service.storage) == (0, 0, 0, 0)
+    assert (root / "A" / "book.pdf").read_bytes() == BYTES
+
+
 def test_core_epoch_changed_between_account_read_and_dispatch_denies_get(rig):
     service, account, source, snapshot, root, lock_path = rig
     service._account_context_epoch += 1
@@ -205,7 +246,7 @@ def test_two_interchangeable_provider_adapters_share_sha_not_profile_rights(rig)
     service.accounts.append(b)
     service._sessions[("seller-b", "card-B")] = NS(
         provider_id="seller-b", credential_id="card-B",
-        connected=True, _closed=False,
+        connected=True, _closed=False, accounts=[b],
     )
     source_b, snap_b = new_source(
         "B", provider="seller-b", credential="card-B", account="buyer-B",

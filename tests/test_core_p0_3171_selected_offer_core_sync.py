@@ -130,6 +130,38 @@ def test_foreign_or_unoffered_selection_cannot_enter_executor(rig, spoof):
     assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
 
 
+@pytest.mark.parametrize("kind", ["foreign", "duplicate", "unavailable"])
+def test_upstream_session_borrower_rebound_denies_private_offer_read(rig, kind):
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    if kind == "foreign":
+        service.session.accounts = [replace(service.account, unique_id="other-borrower")]
+    elif kind == "duplicate":
+        service.session.accounts = [service.account, replace(service.account)]
+    else:
+        service.session.accounts = None
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail("foreign session must not read selected offer")
+    )
+    with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
+        synchronize_account_source(service, service.account)
+    assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
+
+
+def test_upstream_borrower_change_during_selected_offer_read_blocks_get(rig):
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+
+    def selected(*_args, **_kwargs):
+        service.session.accounts = [replace(service.account, unique_id="switched")]
+        return _selected(service)
+
+    service.session.rights_selected_delivery_offer_snapshot = selected
+    with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
+        synchronize_account_source(service, service.account)
+    assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
+
+
 def test_changed_epoch_during_offer_preflight_refuses_entire_old_session(rig):
     service, db, root = rig
     _, downloads = _enabled(service, root)
