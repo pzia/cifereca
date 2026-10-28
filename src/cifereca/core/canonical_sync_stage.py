@@ -102,6 +102,7 @@ def persist_attested_source_references(
 def observe_canonical_rights_in_sync(
     service: Any, account: Account, *,
     cancelled: Callable[[], bool] = lambda: False,
+    snapshot_sink: Callable[[ProviderRightsSnapshot], None] | None = None,
 ) -> dict[str, Any] | None:
     """Opt-in rights phase of the *existing* source Sync, no additional loop.
 
@@ -151,6 +152,12 @@ def observe_canonical_rights_in_sync(
     plan = plan_existing_verified_presence(
         service.storage, snapshot, library_root=Path(service.library_dir()),
     )
+    if snapshot_sink is not None:
+        if not callable(snapshot_sink):
+            raise ValueError("invalid_canonical_snapshot_sink")
+        # Only Core's existing source Sync receives this in-memory lease.
+        # No raw A payload or private delivery URL is stored in Sync facts.
+        snapshot_sink(snapshot)
     return {
         "status": snapshot.status, "observed": len(snapshot.rights),
         "attested_active": admitted,
