@@ -191,8 +191,8 @@ class Diagnostics:
         """Core-only terminal result for ONE explicitly requested recovery.
 
         Generic add() cannot claim verified_loan_download. Strict projection
-        and a constant log grammar prevent a plugin-supplied URL, exception,
-        loan ID, profile or account label from escaping either channel.
+        and a constant log grammar reject untyped payloads. Observed loan IDs
+        and sanitized causes are optional; no provider call is inferred.
         """
         from .core.diagnostic_loan_download import public_fields, log_message
         fields = public_fields(event)
@@ -209,12 +209,17 @@ class Diagnostics:
             logging.WARNING
         )
         record = self.enabled and (self.level != "errors" or status != "success")
+        if record or logging.getLogger("cifereca").isEnabledFor(severity):
+            reference = diagnostic_task_reference()
+            if reference:
+                fields["task_ref"] = reference
         if record:
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 category="PNB" if fields["provider_id"] == "paris" else "LOAN",
                 operation="download_loan", status="ok" if status == "success" else status,
                 duration_ms=fields["duration_ms"], detail=fields,
+                task_ref=fields.get("task_ref"),
                 verified_loan_download=True,
             )
             with self._lock:

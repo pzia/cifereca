@@ -82,6 +82,9 @@ class RedactionFilter(logging.Filter):
     def filter(self, record):
         if _diagnostic_level == "errors" and record.levelno < logging.WARNING:
             return False
+        from .core.diagnostic_acquisition_failure import is_acquisition_failure
+        if is_acquisition_failure(record):
+            return True  # An observed failure is not optional verbose TRACE.
         message = record.getMessage()
         from .core.diagnostic_log_policy import is_public_core_observation
         if message.startswith(("TRACE ", "EVENT ")) and is_public_core_observation(record.name, message):
@@ -96,11 +99,16 @@ class CanonicalEventFormatter(logging.Formatter):
 
     Core producers attach _cifereca_journal_payload to a LogRecord. File and
     console share canonical JSON while independent handlers receive the
-    unchanged legacy message. Neither extra emission nor redaction occurs.
+    unchanged legacy message. No extra emission occurs. The #3632 adapter
+    protects credential values in recognized acquisition failures only.
     """
 
     def format(self, record):
         payload = getattr(record, "_cifereca_journal_payload", None)
+        from .core.diagnostic_acquisition_failure import failure_payload
+        failure = failure_payload(record)
+        if failure is not None:
+            payload = failure
         if type(payload) is not dict:
             return super().format(record)
         try:
@@ -113,6 +121,16 @@ class CanonicalEventFormatter(logging.Formatter):
         clone.msg = "DIAG_JSON " + body
         clone.args = ()
         clone.exc_text = None
+        if failure is not None:
+            # The sanitized cause/chain already belongs to this same record;
+            # never append the original credential-bearing exception again.
+            clone.exc_info = None
+            clone.stack_info = None
+            if failure["status"] in {"failed", "refused"} and clone.levelno < logging.ERROR:
+                # Same severity contract as the corresponding typed terminal;
+                # retain the emitter's original level in observed_severity.
+                clone.levelno = logging.ERROR
+                clone.levelname = "ERROR"
         return super().format(clone)
 
 
