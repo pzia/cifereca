@@ -210,3 +210,27 @@ def test_acsm_without_confirmed_adept_result_never_becomes_artifact(rig):
     outcome = synchronize_account_source(service, service.account)
     assert outcome["canonical_execution"]["failed"] == 1
     assert refs(db)[1] == 0 and db.placements() == []
+
+
+def test_account_unregistered_after_selected_offer_blocks_candidate_get(rig):
+    service, db, root = rig
+    _prepare(service)
+    original = service.session.rights_selected_delivery_offer_snapshot
+
+    def remove_account(*args, **kwargs):
+        observed = original(*args, **kwargs)
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "DELETE FROM provider_accounts "
+                "WHERE identity_id='A' AND provider_id='seller-a' "
+                "AND credential_id='card-a' AND account_id='buyer-a'"
+            )
+        return observed
+
+    service.session.rights_selected_delivery_offer_snapshot = remove_account
+    service.session.rights_selected_delivery_candidate = (
+        lambda *_a, **_kw: pytest.fail("no GET after SQL account unbinding")
+    )
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert refs(db)[1] == 0 and db.placements() == []
