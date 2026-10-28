@@ -17,7 +17,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -322,6 +322,9 @@ class Storage:
         v11: structured action events for dashboard statistics.
         v12: performance indexes for catalogue/library projections.
         v13: explicit, pinned Paris borrower-to-ADEPT identity/profile grants.
+        v14: empty, additive canonical SourceReference and OriginLink storage.
+            Legacy entitlements/backup_items remain untouched; their migration
+            needs exact source/branch proofs and independent guarded writers.
         """
         version = cls._read_schema_version(db)
         _TRACE_LOG.info("TRACE storage migrate begin from=%s target=%s", version, CURRENT_SCHEMA_VERSION)
@@ -986,6 +989,99 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT migration_v13")
                 raise
             version = 13
+
+        if version < 14:
+            # Foundations only: NO copying or mirroring from backup_items,
+            # entitlements, path labels or ledger history. Old rows lack the
+            # exact verified account/branch/origin needed to assert authority.
+            # In particular, this migration performs zero file/network I/O.
+            db.execute("SAVEPOINT migration_v14")
+            try:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS source_references (
+                        source_reference_id TEXT PRIMARY KEY,
+                        identity_id TEXT NOT NULL,
+                        provider_id TEXT NOT NULL,
+                        credential_id TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        branch_id TEXT NOT NULL,
+                        edition_id TEXT NOT NULL,
+                        right_id TEXT NOT NULL,
+                        reference_kind TEXT NOT NULL CHECK (
+                            reference_kind IN ('purchase','loan','notice','internal')
+                        ),
+                        state TEXT NOT NULL DEFAULT 'unknown' CHECK (
+                            state IN ('active','inactive','unknown')
+                        ),
+                        synchronizable INTEGER NOT NULL DEFAULT 0 CHECK (
+                            synchronizable IN (0,1)
+                        ),
+                        evidence_kind TEXT NOT NULL DEFAULT 'unverified',
+                        evidence_ref TEXT NOT NULL DEFAULT '',
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        observed_at TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        UNIQUE(identity_id,provider_id,credential_id,account_id,
+                               branch_id,edition_id,right_id,reference_kind)
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_source_references_scope
+                    ON source_references(identity_id,provider_id,credential_id,
+                                         account_id,branch_id,reference_kind)
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS origin_links (
+                        origin_link_id TEXT PRIMARY KEY,
+                        origin_kind TEXT NOT NULL CHECK (
+                            origin_kind IN ('provider','manual','transfer',
+                                            'cifereca','adept','derived')
+                        ),
+                        identity_id TEXT NOT NULL,
+                        artifact_id TEXT NOT NULL,
+                        source_reference_id TEXT,
+                        evidence_ref TEXT NOT NULL DEFAULT '',
+                        parent_artifact_id TEXT,
+                        from_identity_id TEXT,
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        CHECK (
+                            origin_kind != 'provider'
+                            OR source_reference_id IS NOT NULL
+                        ),
+                        CHECK (
+                            origin_kind != 'derived'
+                            OR (parent_artifact_id IS NOT NULL
+                                AND parent_artifact_id <> artifact_id)
+                        ),
+                        CHECK (
+                            origin_kind = 'derived'
+                            OR parent_artifact_id IS NULL
+                        ),
+                        FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id),
+                        FOREIGN KEY(source_reference_id)
+                            REFERENCES source_references(source_reference_id),
+                        FOREIGN KEY(parent_artifact_id)
+                            REFERENCES artifacts(artifact_id)
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_origin_links_artifact
+                    ON origin_links(artifact_id,identity_id,origin_kind)
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_origin_links_source
+                    ON origin_links(source_reference_id,origin_kind)
+                """)
+                cls._write_schema_version(db, 14)
+                db.execute("RELEASE SAVEPOINT migration_v14")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v14")
+                db.execute("RELEASE SAVEPOINT migration_v14")
+                raise
+            version = 14
 
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
