@@ -5,6 +5,12 @@ Référence du 28 octobre 2026 : `cifereca.rights.observation/1`, API publique
 effectivement produits par les adaptateurs installables**, pas le mécanisme
 de Sync, ni une certification de compte fournisseur réel.
 
+**Handoff offres de livraison #3252 → Core #3171 :**
+[matrice des offres réelles, GET, preuves et limites](RIGHTS-DELIVERY-OFFERS-3252.md).
+Les observations ordinaires Numilog/Kobo/Paris ne sont pas des autorisations
+de téléchargement ; Numilog dispose d'un préflight ciblé optionnel #3586 et
+la qualification de l'action signée BnF est fusionnée via #3585.
+
 **Autorité séparée :** A = achat/prêt affirmé par le fournisseur dans un scope
 identité/provider/credential/compte/branche/édition/droit ; B = octets
 d'artefact vérifiés, SHA final et Placement dans un profil ; C = Notice
@@ -17,10 +23,10 @@ généralisé, aucun veto à partir d'un titre ou d'un ISBN candidat.
 
 | Producteur réel | Source et branche A | Identifiants admis | Type et état rapportés | Couverture | Offre de livraison dans A |
 |---|---|---|---|---|---|
-| `provider-numilog` | `MesLivres` authentifié ; `meslivres` | `numilog:<scope-credential>:<lid>:<variant-hash>` ; pas de rapprochement avec la fiche commerciale | achat, `active`, preuve `numilog.meslivres` | `partial`, pagination non attestée exhaustive, doublons `(lid, variant)` mis en quarantaine | `unknown`, aucune URL signée dans le snapshot |
+| `provider-numilog` | `MesLivres` authentifié ; `meslivres` | `numilog:<scope-credential>:<lid>:<variant-hash>` ; pas de rapprochement avec la fiche commerciale | achat, `active`, preuve `numilog.meslivres` | `partial`, pagination non attestée exhaustive, doublons `(lid, variant)` mis en quarantaine | `unknown` au scan normal ; `available` seulement dans le préflight ciblé #3586 sur action signée exacte (et identité #3587), sans exporter l'URL |
 | `provider-kobo` | manifeste Vault personnel ; `personal_manifest` | `product_id` authentifié strict, compte exact ; édition = droit dans le contrat v1 | achat `owned=True`, `active` même si archivé ; `owned=False` non promu ; preuve `kobo.personal_manifest` | `partial`, vignettes catalogue et résultats publics non probants | `unknown`, archive ≠ droit de télécharger |
 | `provider-paris` | prêts DILICOM ; `dilicom` | `Id` ou `HoldingId` **réel** + `RecordId` ; jamais repli titre/UUID | prêt, `unknown` (aucun état actif inféré) ; preuve `paris.dilicom.listloans` | `partial`, pas d'exhaustivité ; branche SYRACUSE physique séparée. Si DILICOM échoue, la PR #3547 (fusionnée) précise `failed/unknown`. | `unknown`, ni ACSM ni PNB déclenché |
-| `provider-bnf-pret` | section `active-loans` du HTML authentifié ; `bnf_html` | `loan_id` + `resource_id` exacts, pas de couverture/titre de catalogue comme preuve | prêt `active` observé dans la section active ; preuve `bnf_html.active_loans` | `partial`, même si la page renvoie 0 prêt | `unknown` ; récupération de jeton séparée, uniquement après action explicitement admise |
+| `provider-bnf-pret` | section `active-loans` du HTML authentifié ; `bnf_html` | `loan_id` + `resource_id` exacts, pas de couverture/titre de catalogue comme preuve | prêt `active` observé dans la section active ; preuve `bnf_html.active_loans` | `partial`, même si la page renvoie 0 prêt | `available` seulement si une action signée `reader-acs4` du prêt exact est présente dans le même HTML (#3585) ; sinon `unknown`. GET du jeton distinct et explicitement admis |
 
 Chaque ligne `ProviderRightObservation` rapporte une observation positive
 provenant d'un compte lié à une identité ; **aucun état `partial` ou
