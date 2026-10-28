@@ -292,3 +292,61 @@ def test_epub_and_kepub_same_final_sha_do_not_split_artifact(store, tmp_path):
     assert x.artifact_id == y.artifact_id
     assert x.placement_id != y.placement_id
     assert rows(store) == (1, 2, 2, 2)
+
+
+def test_configured_symlink_root_accepts_resolved_and_alias_paths(store, tmp_path):
+    source, snap = new_source()
+    register(store, "A", "seller", "card-A")
+    actual_root = tmp_path / "real-library"
+    alias = tmp_path / "linked-library"
+    path = actual_root / "A" / "book.pdf"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(BYTES)
+    alias.symlink_to(actual_root, target_is_directory=True)
+    first = publish(store, alias, path, source, snap)
+    second = publish(store, alias, alias / "A" / "book.pdf", source, snap)
+    assert first.placement_id == second.placement_id
+    assert second.changed is False
+    assert rows(store) == (1, 1, 1, 1)
+
+
+def test_fresh_provider_positive_may_refresh_only_mutable_source_evidence(store, tmp_path):
+    source, snap = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    original = publish(store, tmp_path / "EBooks", path, source, snap)
+    fresh = replace(
+        snap, rights=(replace(
+            snap.rights[0], evidence_ref="new-positive-observation",
+            observed_at="2026-10-28T09:00:00+00:00",
+        ),),
+    )
+    updated = publish(store, tmp_path / "EBooks", path, source, fresh)
+    assert updated.changed
+    assert updated.source_reference_id == original.source_reference_id
+    assert updated.origin_link_ids == original.origin_link_ids
+    assert rows(store) == (1, 1, 1, 1)
+    with store._lock, store._connect() as db:
+        state = db.execute(
+            "SELECT identity_id,credential_id,account_id,evidence_ref "
+            "FROM source_references WHERE source_reference_id=?",
+            (original.source_reference_id,),
+        ).fetchone()
+    assert state == ("A", "card-A", "buyer-A", "new-positive-observation")
+    again = publish(store, tmp_path / "EBooks", path, source, fresh)
+    assert again.changed is False
+
+
+def test_registered_profile_symlink_child_refused_before_sql(store, tmp_path):
+    source, snap = new_source()
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    target_path = tmp_path / "elsewhere" / "book.pdf"
+    target_path.parent.mkdir()
+    target_path.write_bytes(BYTES)
+    link = root / "A" / "linked"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target_path.parent, target_is_directory=True)
+    with pytest.raises(ValueError, match="canonical_profile_symlink"):
+        publish(store, root, link / "book.pdf", source, snap)
+    assert rows(store) == (0, 0, 0, 0)
