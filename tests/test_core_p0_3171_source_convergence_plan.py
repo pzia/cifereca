@@ -276,7 +276,7 @@ def test_fresh_user_declaration_is_present_but_not_attested_or_acquired(provider
     snap, key = source(provider=provider)
     record = DeclaredAssociationEvidence(
         key, "relation-1", "file-1", "declared_current",
-        "fresh-Core-file-verification",
+        "fresh-Core-file-verification", identity_id="A",
     )
     expected = plan(snap, scans=(scan("A"),), declarations=(record,),
                     consent=(key,))
@@ -291,8 +291,9 @@ def test_stale_or_conflicting_declared_links_require_review_not_download():
     snap, key = source()
     current = DeclaredAssociationEvidence(
         key, "rel-current", "local-1", "declared_current", "fresh-check",
+        identity_id="A",
     )
-    stale = DeclaredAssociationEvidence(key, "rel-stale", "local-2", "needs_review")
+    stale = DeclaredAssociationEvidence(key, "rel-stale", "local-2", "needs_review", identity_id="A")
     result = plan(snap, declarations=(current, stale),
                   scans=(scan("A"),), consent=(key,))
     assert result.decisions[0].state == "needs_reconciliation"
@@ -303,7 +304,7 @@ def test_stale_or_conflicting_declared_links_require_review_not_download():
 
 def test_revoked_declaration_is_historical_and_does_not_block_new_candidate():
     snap, key = source()
-    revoked = DeclaredAssociationEvidence(key, "revoked", "old-file", "revoked")
+    revoked = DeclaredAssociationEvidence(key, "revoked", "old-file", "revoked", identity_id="A")
     decision = plan(snap, declarations=(revoked,), scans=(scan("A"),),
                     consent=(key,)).decisions[0]
     assert decision.state == "missing_to_download"
@@ -316,6 +317,7 @@ def test_declaration_is_scoped_to_exact_right_including_loan():
     loan, lk = source(right="temporary-loan", kind="loan")
     declaration = DeclaredAssociationEvidence(
         pk, "rel-purchase", "shared-file", "declared_current", "fresh-file",
+        identity_id="A",
     )
     result = plan(purchase, loan, scans=(scan("A"),),
                   declarations=(declaration,), consent=(lk,))
@@ -330,4 +332,14 @@ def test_declaration_is_scoped_to_exact_right_including_loan():
 def test_inconsistent_declaration_verification_is_rejected(status, proof):
     snap, key = source()
     with pytest.raises(ValueError, match="invalid_declared_association_evidence"):
-        DeclaredAssociationEvidence(key, "relation", "file", status, proof)
+        DeclaredAssociationEvidence(key, "relation", "file", status, proof,
+                                    identity_id="A")
+
+
+def test_declared_file_in_foreign_profile_cannot_satisfy_scoped_source():
+    snap, key = source()
+    with pytest.raises(ValueError, match="invalid_declared_association_evidence"):
+        DeclaredAssociationEvidence(
+            key, "foreign-relation", "file-in-B", "declared_current",
+            "check-in-B", identity_id="B",
+        )
