@@ -22,6 +22,10 @@ from .canonical_publication import _physical_target, _same_file, _stable
 from .source_convergence import SourceKey
 
 _SCHEMA = "canonical.completed-delivery.v1"
+# The generic opening recovery rewrites *every* status='acquiring' ledger
+# row to retryable_error, indiscriminately. A completed-delivery checkpoint
+# is NOT an in-flight download and must survive that legacy startup sweep.
+_STAGED = "canonical_receipt_staged"
 
 
 def _stage_id(source: SourceKey, offer_id: str) -> str:
@@ -147,20 +151,20 @@ def record_completed_delivery_for_recovery(
                 "acquisition_id,provider_id,credential_id,account_id,item_id,"
                 "identity_id,status,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (record_id, *coords, "acquiring", data, now, now),
+                (record_id, *coords, _STAGED, data, now, now),
             )
         elif row[:5] != coords:
             raise ValueError("canonical_intake_record_collision")
-        elif row[5] in ("complete", "acquiring"):
+        elif row[5] in ("complete", _STAGED):
             # The same supplier offer may be legally reissued after the
             # original file was removed. A NEW completed GET and its new
             # receipt replace only this *non-authoritative* retry checkpoint,
             # never the provider/ADEPT historical OriginLinks.
-            if row[6] != data or row[5] != "acquiring":
+            if row[6] != data or row[5] != _STAGED:
                 db.execute(
-                    "UPDATE acquisition_ledger SET status='acquiring',"
+                    "UPDATE acquisition_ledger SET status=?,"
                     "metadata_json=?,artifact_id=NULL,updated_at=? "
-                    "WHERE acquisition_id=?", (data, now, record_id),
+                    "WHERE acquisition_id=?", (_STAGED, data, now, record_id),
                 )
         else:
             raise ValueError("canonical_intake_record_state_conflict")
@@ -195,7 +199,7 @@ def recover_completed_delivery(
         if row is None or row[:5] != (
             scope.provider_id, scope.credential_id, scope.account_id,
             source.edition_id, scope.identity_id,
-        ) or row[5] not in ("acquiring", "complete"):
+        ) or row[5] not in (_STAGED, "complete"):
             return None
         owner = db.execute(
             "SELECT identity_id,enabled FROM provider_connections "
@@ -254,8 +258,8 @@ def mark_completed_delivery_published(
     with storage._lock, storage._connect() as db:
         db.execute(
             "UPDATE acquisition_ledger SET status='complete',artifact_id=?,"
-            "updated_at=? WHERE acquisition_id=? AND status='acquiring'",
-            (artifact_id, now, _stage_id(source, offer_id)),
+            "updated_at=? WHERE acquisition_id=? AND status=?",
+            (artifact_id, now, _stage_id(source, offer_id), _STAGED),
         )
 
 
