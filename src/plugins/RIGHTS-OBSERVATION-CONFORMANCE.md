@@ -98,3 +98,25 @@ de recette réelle chez le fournisseur, ni une preuve de transaction Core
 Propriétaires : Plugins pour les producteurs et leur protocole ;
 Core #3171/#3196 pour l'autorisation, le broker versionné, la transaction
 et la validation après publication. Pas de nouvelle file de réconciliation.
+
+
+## Candidats de livraison exacts — réception Plugins #3252 (28/10/2026)
+
+| Fournisseur | Préflight ciblé admis | Candidat finalisable par Core | Épreuve sur comptes/credentials |
+|---|---|---|---|
+| **Numilog** | `rights_selected_delivery_offer_snapshot`, branche `meslivres`, achat `edition_id == right_id`; action signée de la carte actuelle | `rights_selected_delivery_candidate` réemploie `download_direct` et exige l'offre opaque et le propriétaire courant, sans alternative par titre | refus A→B et A→A, doubles `AccountRef`, compte/credential étranger, offre révoquée ; 0 GET de contenu si garde négative |
+| **BnF-Prêt** | même signature, branche `bnf_html`, paire `resource_id + loan_id` ; action ACS4 observée | même signature de candidat ; `download_digital` relit la session et délivre **un ACSM candidat**, non EPUB final | prêt exact, rejet A→B/A→A, doublons et compte/credential étranger, action signée disparue ; 0 token GET si refus |
+| **Kobo** | `rights_delivery_offer_snapshot` explicite par `product_id` et POST descriptor, PR de garde DRM concurrente #3602 | `resolve_acquisition` privé revalide l'offre, **pas encore de façade commune ni de GET de contenu raccordé** | les gardes multi-identité et contradictions DRM sont testées par le fournisseur ; ne pas présumer les PR ouvertes fusionnées |
+| **Paris** | aucune offre `available` tant que `ListLoans` ne démontre pas un `state=active` utilisable ; restent `unknown` | téléchargement explicite historique, **pas de candidat automatique canonique** | vérification DILICOM fraîche en PR #3596, pas une preuve de réception tant que CI non verte/fusionnée |
+
+**Preuves de merge Plugins :** #3605 (`87f7f84c`, PR CI 40698713127
+SUCCESS) et #3606 (`a95f0a0b`, PR CI 40700334565 SUCCESS). Les tests de
+source exacte s'exécutent sur les vrais adaptateurs avec réseau synthétique.
+Ils ne constituent ni un reçu de livraison indépendant, ni une acquisition
+post-ADEPT, ni une publication transactionnelle de Core. Gardes renforcées
+A→A, doublon de broker et credentials croisés dans un lot de tests distinct.
+
+**Critère encore ouvert :** admission/consentement effectivement persisté,
+routage Core et retour d'un reçu indépendant avec octets finaux EPUB/PDF
+contrôlés puis `OriginLink→SHA→Placement` atomique ; deuxième Sync à zéro
+GET après rehash. Les producteurs ne fournissent pas cette autorité.

@@ -124,3 +124,64 @@ def test_numilog_selected_candidate_rotated_or_foreign_offer_blocks_signed_get(t
             )
     finally:
         session.close()
+
+
+def test_numilog_selected_candidate_aba_broker_swap_after_listing_rejected(tmp_path):
+    from tests.test_p1_3252_rights_observation_snapshot import IdentityBroker
+    session, account, broker, reads, right = setup()
+    try:
+        before = session.library
+        def replaced_broker():
+            items = before()
+            new_broker = IdentityBroker()
+            new_broker.account_id = "numilog:" + session.scope
+            session.identity_broker = new_broker  # same A, different authority
+            return items
+        session.library = replaced_broker
+        session._download = lambda *a, **kw: pytest.fail("A→A broker replacement GET")
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_owner_changed"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+    finally:
+        session.close()
+
+
+def test_numilog_selected_candidate_duplicate_accountrefs_rejected_pre_get(tmp_path):
+    from types import SimpleNamespace
+    session, account, broker, reads, right = setup()
+    try:
+        broker.accounts = lambda: [
+            SimpleNamespace(
+                provider_id="numilog", account_id="numilog:" + session.scope,
+                identity_id="identity-A",
+            ) for _ in range(2)
+        ]
+        before = list(reads)
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_owner_changed"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert reads == before
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("mutated", [
+    dict(credential_id="other-credential"),
+    dict(unique_id="numilog:foreign-account"),
+    dict(identity_id="identity-B"),
+])
+def test_numilog_selected_candidate_foreign_account_scope_no_get(tmp_path, mutated):
+    from dataclasses import replace
+    session, account, broker, reads, right = setup()
+    try:
+        forged = replace(account, **mutated)
+        before = list(reads)
+        with pytest.raises(ProviderCapabilityError):
+            session.rights_selected_delivery_candidate(
+                forged, **selected(right, tmp_path),
+            )
+        assert reads == before
+    finally:
+        session.close()
