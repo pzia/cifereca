@@ -1,5 +1,10 @@
 # Cifereca — guide des agents
 
+## Architecture canonique (28/10/2026)
+
+**Toute évolution Core/Plugins/UX de synchronisation doit suivre [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) et la décision [#3171](https://github.com/pzia/cifereca/issues/3171).** Une seule Sync automatique inventorie les droits exacts A, vérifie OriginLink→SHA→Placement dans le profil B, puis acquiert les fichiers non satisfaits selon droits/consentements existants ; Notice C reste descriptive. Le rattrapage manuel #2797 est une exception, jamais une deuxième boucle obligatoire. La documentation cible **ne signifie pas que le moteur soit livré** ; #3528 est un lecteur Core **fusionné**, #3523 un plan en mémoire **ouvert** ; les migrations #3196/#3275 restent nécessaires. Les consignes de journal brut et de credentials ci-dessous **prévalent** pour leur périmètre.
+
+
 ## Consigne supérieure Diagnostics (25/10/2026, #3132)
 
 **Journaliser les faits observés sans expurgation générale.** Core, plugins, journal local unique, miroir console, broker et exports bruts conservent les valeurs **exactement telles qu'émises**, y compris URL, chemins, titres, identifiants, tokens, cookies, en-têtes et détails d'erreur. Aucune valeur ne doit être remplacée par `[opération masquée]` pour seule raison de confidentialité générale. Ne pas créer de nouveaux dumps HTTP/authentification en dehors d'une instrumentation métier explicitement demandée.

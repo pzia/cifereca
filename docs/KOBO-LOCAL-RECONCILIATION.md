@@ -1,5 +1,7 @@
 # Réconciliation locale Kobo confirmée
 
+> **Document historique/partiel — 28/10/2026.** rattrapage Kobo ponctuel, pas un prérequis universel de la Sync. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
+
 `kobo-audit --credential CONNEXION --plan` reste un diagnostic en lecture seule.
 Ses comptes pseudonymisés et ses `case-*` éphémères ne peuvent jamais servir de
 cible d'exécution. `evidence_status` distingue les octets locaux vérifiés de

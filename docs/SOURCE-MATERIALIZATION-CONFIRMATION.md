@@ -1,5 +1,7 @@
 # Matérialisation confirmée d'une source (#1346)
 
+> **Document historique/partiel — 28/10/2026.** matérialisation explicitement confirmée et spécialisée, pas le moteur A→B cible. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
+
 Le broker public `sync` distingue trois opérations. `synchronize_source` conserve
 son contrat inventaire/droits : il ne télécharge aucun livre. L'aperçu existant
 `preview_local_materialization` reste consultatif et ne crée aucune permission.

@@ -1,5 +1,7 @@
 # Rôle : core
 
+**Architecture directrice du 28/10/2026 :** [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) priment sur les descriptions de sync historiques : **un seul parcours automatique** SourceReference A → preuve OriginLink/SHA/Placement B → acquisition autorisée si nécessaire ; Notice C descriptive, vérification manuelle #2797 exceptionnelle. Les observations read-only ne signifient pas que l'intégration Core est livrée. Respecter la frontière de responsabilité de ce rôle et la politique de journal brut ci-dessous.
+
 **Skill journalisation obligatoire :** [cifereca-logging](../skills/cifereca-logging/SKILL.md) · [contrat transverse](../../docs/LOGGING-CONTRACT.md). Les consignes Diagnostics ci-dessous restent prioritaires.
 
 **Confidentialité :** protection spécifique des **credentials d'authentification uniquement** (mots de passe, tokens, cookies authentifiants, clés/secrets API et liens signés donnant accès). Tout autre contenu de trace, erreur, livre, compte, profil, chemin ou capture ne déclenche ni masquage, ni ticket, ni chantier de confidentialité. Voir [la doctrine commune](../../AGENTS.md). Les règles d’intégrité restent distinctes.

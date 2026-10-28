@@ -1,5 +1,7 @@
 # #2385 — contrat Core v1 : catalogue ≠ inventaire personnel ≠ acquisition
 
+> **Document historique/partiel — 28/10/2026.** capacité catalogue en lecture seule, non preuve de prêt/achat/fichier. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
+
 ## Périmètre effectivement livré
 
 `LibraryService.catalogue_source_capabilities(identity_id=None)` est une

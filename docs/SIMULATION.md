@@ -1,80 +1,19 @@
 # Simulation fonctionnelle CIFERECA
 
-État documentaire : 7 octobre 2026.
+**État réel au 28/10/2026 : le répertoire simulation/ EXISTE et reste le banc fonctionnel de référence.** Voir [ARCHITECTURE.md](ARCHITECTURE.md) et la cible Core [#3171](https://github.com/pzia/cifereca/issues/3171). Il n'y a aucune migration « simulation/ → simulation/ » à effectuer.
 
-## État actuel
+## Fonction actuelle
 
-Le dépôt possède `simulation/`.
+simulation/ contient les faux services BnF, Kobo, Paris, Numilog et les sources publiques/OPDS, des livres et données déterministes, des profils TOML, datasetctl.py (services, XDG isolé, health checks) et ses propres tests.
 
-Il contient notamment :
+Ce banc permet de vérifier les scénarios A→B de synchronisation **sans toucher aux comptes réels** ; il ne représente pas l'autorité métier : les règles et l'admission sont dans le Core, les protocoles dans les plugins. Le scénario A→B→C, huit OriginLink et zéro droit transmis est un **critère de test à réaliser dans #3171/#3275**, non une simulation actuellement prouvée et pas un P2 à développer opportunistement.
 
-- des faux services BnF, Kobo, Paris, Numilog, OPDS/Ebooks gratuits ;
-- des fixtures/livres déterministes ;
-- des profils TOML ;
-- `datasetctl.py` pour l'orchestration, l'isolation XDG et les health checks ;
-- des tests propres au banc de simulation.
+## Responsabilités et frontières
 
-Le dépôt ne possède pas encore de répertoire `simulation/`.
+Le banc peut fournir faux services versionnés, états de fournisseur, jeux déterministes et fichiers, profils, erreurs/latences/volume et mesures des scénarios. Il ne contient ni bootstrap GTK/dépendances OS, ni écriture métier de remplacement du Core, ni protocoles réels des fournisseurs.
 
-## Cible
+environnements/ prépare la machine (par exemple GTK/Xvfb/D-Bus sur Debian) ; simulation/ prépare les fournisseurs et profils. Un E2E installe l'environnement, démarre les faux services et données isolées, lance Cifereca, puis vérifie le parcours et l'absence de mutation non autorisée.
 
-`simulation/` doit devenir l'environnement fonctionnel simulé de référence.
+## Maintenance
 
-La cible n'est pas de copier `simulation/` puis de maintenir deux systèmes. La migration doit aboutir à une seule référence :
-
-```text
-simulation/  -- migration progressive -->  simulation/
-                                      \
-                                       -> suppression des éléments obsolètes
-```
-
-## Responsabilités de la simulation
-
-La simulation fonctionnelle peut porter :
-
-- faux services versionnés ;
-- états fournisseur reproductibles ;
-- jeux de données et fixtures ;
-- profils/scénarios ;
-- orchestration de services ;
-- génération de configuration isolée ;
-- collecte de résultats fonctionnels ;
-- scénarios reproductibles d'erreur/latence/volume.
-
-Elle ne doit pas porter :
-
-- bootstrap GTK ou dépendances OS ;
-- logique applicative Cifereca ;
-- tests unitaires Core ;
-- règles fournisseur réelles qui doivent vivre dans les plugins.
-
-## Relation avec `environnements/`
-
-`environnements/` prépare la machine/runtime. La simulation prépare le monde fonctionnel autour de Cifereca.
-
-Exemple d'un E2E :
-
-1. `environnements/openai-chat-debian/` fournit GTK/Xvfb/D-Bus ;
-2. la simulation démarre les faux services et construit le profil ;
-3. Cifereca est lancé contre cet état isolé ;
-4. le scénario vérifie le comportement fonctionnel/UX.
-
-## Plan de migration de `simulation/`
-
-Aucun déplacement n'est effectué par le lot documentaire.
-
-Migration recommandée :
-
-1. inventorier les faux services et helpers encore utilisés ;
-2. définir l'interface de la future orchestration `simulation/` ;
-3. migrer les briques génériques (`fake_books`, profils, health checks) sans duplication ;
-4. migrer les protocoles fournisseur avec leurs tests ;
-5. mettre à jour les recettes E2E et les skills ;
-6. retirer les chemins `simulation/` devenus inutilisés ;
-7. supprimer `simulation/` lorsque plus aucun consommateur ne dépend de lui.
-
-## Règle pendant la transition
-
-Tant que `simulation/` n'existe pas, `simulation/` reste la référence fonctionnelle pratique.
-
-Ne pas créer un nouveau faux service dans une arborescence concurrente sans lot de migration explicite.
+Conserver simulation/ comme **référence unique** ; ajouter/retirer des fixtures seulement pour une recette explicitement engagée. Aucun déplacement générique ni deuxième arborescence ne sont prescrits par ce document. La rationalisation des faux services obsolètes relève d'une tâche dédiée, et les P2 non engagés restent au backlog.
