@@ -118,11 +118,14 @@ def observe_canonical_rights_in_sync(
         return None
     if getattr_static(session, "rights_observation_snapshot", None) is None:
         return None
+    if service.sync_source_enabled(account) is not True:
+        raise ValueError("canonical_rights_source_disabled")
     before_epoch = service._account_context_epoch
     snapshot = read_account_rights_snapshot(service, account, cancelled=cancelled)
     if snapshot.status == "cancelled" or cancelled():
         raise Cancelled("canonical_rights_sync_cancelled")
     if (service._account_context_epoch != before_epoch
+            or service.sync_source_enabled(account) is not True
             or service.storage.identity_for_connection(
                 account.provider_id, account.credential_id,
             ) != account.identity_id):
