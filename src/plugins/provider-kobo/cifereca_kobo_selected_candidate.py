@@ -117,8 +117,9 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
     original = (live.identity_id, live.provider_id,
                 live.credential_id, live.unique_id)
     owner = session._rights_owner_snapshot(caller[3])
-    if (original[1:] != caller[1:] or owner is None
-            or owner[1] != (caller[0],)):
+    if (original[1:] != caller[1:]
+            or original[0] not in (None, "", "default", caller[0])
+            or owner is None or owner[1] != (caller[0],)):
         raise ProviderCapabilityError("kobo_candidate_owner_unverified")
 
     def bound():
