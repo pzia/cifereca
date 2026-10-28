@@ -408,3 +408,97 @@ def test_numilog_rights_refuse_account_replacement_after_field_projection():
         assert broker.owner == "identity-A"
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("foreign_owner", ["identity-A", "identity-B"])
+def test_numilog_v2_same_upstream_account_other_credential_cannot_claim_right(
+    foreign_owner,
+):
+    s, broker = session()
+    broker.accounts = lambda: [
+        SimpleNamespace(
+            provider_id="numilog", account_id="numilog:" + s.scope,
+            identity_id="identity-A", credential_id=s.credential_id,
+            scope_version=2,
+        ),
+        SimpleNamespace(
+            provider_id="numilog", account_id="numilog:" + s.scope,
+            identity_id=foreign_owner, credential_id="other-credential",
+            scope_version=2,
+        ),
+    ]
+    seen = []
+    s._rows = lambda **kw: (seen.append(kw) or [owned_row()])
+    try:
+        snap = s.rights_observation_snapshot(bound_account(s))
+        assert len(snap.rights) == 1 and snap.rights[0].kind == "purchase"
+        assert snap.scope.credential_id == s.credential_id
+        assert s._identity_id() == "identity-A"
+        assert seen == [{"rights_observation": True}]
+        assert not snap.authorizes_negative_reconciliation
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("refs", [
+    [SimpleNamespace(provider_id="numilog", account_id="ACCOUNT",
+                     identity_id="identity-A", credential_id="wrong",
+                     scope_version=2)],
+    [SimpleNamespace(provider_id="numilog", account_id="ACCOUNT",
+                     identity_id="identity-A", credential_id="",
+                     scope_version=2)],
+    [SimpleNamespace(provider_id="numilog", account_id="ACCOUNT",
+                     identity_id="identity-A", credential_id="synthetic-account",
+                     scope_version=2),
+     SimpleNamespace(provider_id="numilog", account_id="ACCOUNT",
+                     identity_id="identity-A")],
+])
+def test_numilog_v2_wrong_or_mixed_ref_refuses_typed_rights_and_acsm_owner(
+    refs,
+):
+    s, broker = session()
+    owner_id = "numilog:" + s.scope
+    broker.accounts = lambda: [
+        SimpleNamespace(
+            provider_id=ref.provider_id,
+            account_id=owner_id if ref.account_id == "ACCOUNT" else ref.account_id,
+            identity_id=ref.identity_id,
+            **({"scope_version": ref.scope_version,
+                "credential_id": ref.credential_id}
+               if hasattr(ref, "scope_version") else {}),
+        )
+        for ref in refs
+    ]
+    seen = []
+    s._rows = lambda **kw: (seen.append(kw) or [owned_row()])
+    try:
+        with pytest.raises(ProviderCapabilityError, match="propriétaire unique"):
+            s.rights_observation_snapshot(bound_account(s))
+        with pytest.raises(ProviderCapabilityError, match="non résolue"):
+            s._identity_id()
+        assert seen == []
+    finally:
+        s.close()
+
+
+def test_numilog_v2_credential_race_during_get_does_not_publish_purchase():
+    s, broker = session()
+    credential = [s.credential_id]
+    broker.accounts = lambda: [
+        SimpleNamespace(
+            provider_id="numilog", account_id="numilog:" + s.scope,
+            identity_id="identity-A", credential_id=credential[0],
+            scope_version=2,
+        ),
+    ]
+
+    def rows(**kw):
+        credential[0] = "another-credential"
+        return [owned_row()]
+
+    s._rows = rows
+    try:
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire modifiée"):
+            s.rights_observation_snapshot(bound_account(s))
+    finally:
+        s.close()
