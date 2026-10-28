@@ -109,10 +109,10 @@ def test_one_commit_idempotent_second_publication_no_false_rights(store, tmp_pat
 
 
 def test_two_providers_identical_bytes_distinct_profile_and_right(store, tmp_path):
-    a, sa = new_source("A", provider="seller-A", credential="cred-A", account="buyer-A")
-    b, sb = new_source("B", provider="seller-B", credential="cred-B", account="buyer-B")
-    register(store, "A", "seller-A", "cred-A")
-    register(store, "B", "seller-B", "cred-B", account="buyer-B")
+    a, sa = new_source("A", provider="seller-a", credential="cred-A", account="buyer-A")
+    b, sb = new_source("B", provider="seller-b", credential="cred-B", account="buyer-B")
+    register(store, "A", "seller-a", "cred-A")
+    register(store, "B", "seller-b", "cred-B", account="buyer-B")
     root = tmp_path / "EBooks"
     pa, pb = target(tmp_path, "A"), target(tmp_path, "B")
     ra = publish(store, root, pa, a, sa)
@@ -269,10 +269,10 @@ def test_same_path_with_new_unverified_bytes_does_not_mutate_existing_right(stor
 def test_epub_and_kepub_same_final_sha_do_not_split_artifact(store, tmp_path):
     import zipfile
 
-    first, one = new_source(profile="A", provider="seller-A", credential="card-A")
-    second, two = new_source(profile="B", provider="seller-B", credential="card-B")
-    register(store, "A", "seller-A", "card-A")
-    register(store, "B", "seller-B", "card-B")
+    first, one = new_source(profile="A", provider="seller-a", credential="card-A")
+    second, two = new_source(profile="B", provider="seller-b", credential="card-B")
+    register(store, "A", "seller-a", "card-A")
+    register(store, "B", "seller-b", "card-B")
     root = tmp_path / "EBooks"
     a = root / "A" / "book.epub"
     b = root / "B" / "book.kepub.epub"
