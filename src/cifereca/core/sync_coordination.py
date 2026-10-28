@@ -343,10 +343,25 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                                     and key in latest
                                     and all(type(x) is SourceKey for x in latest))
 
+                        # The optional selected-offer preflight is permitted
+                        # only under the already held lock, exact persisted
+                        # consent and the registered Core delivery route.
+                        # It returns A only; the executor still owns all GET,
+                        # receipt, revalidation and atomic B publication.
+                        from .canonical_selected_offers import qualify_selected_offers
+                        session = self._session_for_account(account)
+                        root = self.library_dir()
+                        qualified_snapshot = qualify_selected_offers(
+                            self, account, session, admitted_snapshots[0],
+                            admitted_epoch=admitted_epoch, shared_lock=sync_lease,
+                            library_root=root, persisted_consent=consent,
+                            consent_still_current=current_consent,
+                            cancelled=cancelled_for_rights,
+                        )
                         outcomes = execute_admitted_convergence(
-                            self, account, self._session_for_account(account),
-                            admitted_snapshots[0], admitted_epoch=admitted_epoch,
-                            shared_lock=sync_lease, library_root=self.library_dir(),
+                            self, account, session, qualified_snapshot,
+                            admitted_epoch=admitted_epoch,
+                            shared_lock=sync_lease, library_root=root,
                             persisted_consent=consent,
                             consent_still_current=current_consent,
                             deliver=delivery, cancelled=cancelled_for_rights,
