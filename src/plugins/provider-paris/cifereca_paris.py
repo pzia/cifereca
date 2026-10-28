@@ -868,7 +868,8 @@ class ParisProviderSession(ProviderSession):
                 raise ProviderConfigurationError("paris_download_scope_mismatch")
 
             scope = (account.unique_id, account.identity_id,
-                     account.provider_id, account.credential_id)
+                     account.provider_id, account.credential_id,
+                     account.is_primary)
             loan_scope = (
                 loan.id, loan.record_id, loan.provider, loan.medium,
                 loan.source_provider, loan.source_credential,
@@ -879,7 +880,8 @@ class ParisProviderSession(ProviderSession):
                 active for active in self._accounts
                 if type(active) is Account
                 and (active.unique_id, active.identity_id,
-                     active.provider_id, active.credential_id) == scope
+                     active.provider_id, active.credential_id,
+                     active.is_primary) == scope
             ]
             if len(live) != 1:
                 raise ProviderConfigurationError("paris_download_scope_mismatch")
@@ -912,14 +914,17 @@ class ParisProviderSession(ProviderSession):
                 return (
                     self.connected is True
                     and (account.unique_id, account.identity_id,
-                         account.provider_id, account.credential_id) == scope
+                         account.provider_id, account.credential_id,
+                         account.is_primary) == scope
                     and (bound.unique_id, bound.identity_id,
-                         bound.provider_id, bound.credential_id) == scope
+                         bound.provider_id, bound.credential_id,
+                         bound.is_primary) == scope
                     and len(self._accounts) >= 1
                     and len(current := [
                         x for x in self._accounts if type(x) is Account
                         and (x.unique_id, x.identity_id,
-                             x.provider_id, x.credential_id) == scope
+                             x.provider_id, x.credential_id,
+                             x.is_primary) == scope
                     ]) == 1 and current[0] is bound
                     and (loan.id, loan.record_id, loan.provider, loan.medium,
                          loan.source_provider, loan.source_credential,
@@ -931,12 +936,19 @@ class ParisProviderSession(ProviderSession):
 
             if not scope_current():
                 raise ProviderConfigurationError("paris_download_scope_mismatch")
+            # Never pass the caller's mutable loan directly to the PNB
+            # request builder: it reads provider/edition after preferences.
+            # Its private POST must always use the edition admitted above.
+            delivery_loan = replace(loan)
+            borrower_uid = "" if scope[4] else scope[0]
             return self._download_digital_scoped_impl(
-                loan, account, target_dir, scope_guard=scope_current,
+                delivery_loan, account, target_dir,
+                scope_guard=scope_current, borrower_uid=borrower_uid,
             )
 
     def _download_digital_scoped_impl(self, loan: Loan, account: Account,
-                                      target_dir: Path, *, scope_guard=None) -> tuple[Path, str]:
+                                      target_dir: Path, *, scope_guard=None,
+                                      borrower_uid=None) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -985,7 +997,12 @@ class ParisProviderSession(ProviderSession):
                 book_id, public_site(self.client.base_url), bool(account.unique_id),
             )
             ensure_scope()
-            url = self.client.download_digital_document(loan, "" if account.is_primary else account.unique_id, prefs)
+            url = self.client.download_digital_document(
+                loan,
+                borrower_uid if borrower_uid is not None else
+                ("" if account.is_primary else account.unique_id),
+                prefs,
+            )
             ensure_scope()
             _TRACE_LOG.info(
                 "TRACE download paris acquisition-url end book_id=%s url_returned=%s duration_ms=%s",
