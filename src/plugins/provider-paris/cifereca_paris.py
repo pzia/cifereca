@@ -463,9 +463,11 @@ class ParisProviderSession(ProviderSession):
 
     def loans(self, account: Account) -> list[Loan]:
         with self._loan_inventory_lock:
-            return self._read_loans_for_account(account)
+            return self._read_loans_for_account(account, publish_legacy_status=True)
 
-    def _read_loans_for_account(self, account: Account) -> list[Loan]:
+    def _read_loans_for_account(
+        self, account: Account, *, publish_legacy_status: bool = True,
+    ) -> list[Loan]:
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -580,8 +582,12 @@ class ParisProviderSession(ProviderSession):
                 raise ProviderConfigurationError("account_scope_mismatch")
         # Do not let a later mutation of the legacy error facade change the
         # branch coverage of this particular typed read.
+        # The typed read captures per-branch evidence in its private ContextVar.
+        # Only the explicit v1 loans() facade publishes the mutable legacy
+        # diagnostic list; a typed reader must neither consult nor mutate it.
         self._loan_branch_failures.set(frozenset(error["upstream"] for error in errors))
-        self.last_loan_errors = errors
+        if publish_legacy_status:
+            self.last_loan_errors = errors
         if errors and not rows and len(errors) == 2:
             raise ProviderConfigurationError(
                 "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
@@ -648,7 +654,9 @@ class ParisProviderSession(ProviderSession):
         # side channel can be overwritten by legacy consumers or wrappers.
         token = self._loan_branch_failures.set(None)
         try:
-            rows = self.loans(account)
+            rows = self._read_loans_for_account(
+                account, publish_legacy_status=False,
+            )
             failed = self._loan_branch_failures.get()
         finally:
             self._loan_branch_failures.reset(token)
