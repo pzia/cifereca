@@ -151,6 +151,18 @@ def execute_admitted_convergence(
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
+    def live_consent(key: SourceKey) -> bool:
+        try:
+            return consent_still_current(key) is True
+        except Exception:
+            # Revoked/malformed/unavailable consent state never grants GET.
+            _LOG.exception(
+                "TRACE convergence consent lookup failed provider_id=%s "
+                "credential_id=%s right_id=%s",
+                key.scope.provider_id, key.scope.credential_id, key.right_id,
+            )
+            return False
+
     if cancelled():
         raise Cancelled("convergence_cancelled_before_admission")
     if not current():
@@ -189,7 +201,7 @@ def execute_admitted_convergence(
         if row.delivery != "available":
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
             continue
-        if key not in persisted_consent or consent_still_current(key) is not True:
+        if key not in persisted_consent or not live_consent(key):
             results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
             continue
 
@@ -211,7 +223,7 @@ def execute_admitted_convergence(
             # earlier in-memory frozen consent snapshot. The Core caller owns
             # this lookup into its persisted, exact right-level preference.
             if (key not in persisted_consent or
-                    consent_still_current(key) is not True):
+                    not live_consent(key)):
                 results.append(ConvergenceOutcome(key, "blocked", "consent_revoked_after_get"))
                 break
             published = publish_completed_acquisition(
