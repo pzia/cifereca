@@ -16,10 +16,9 @@ from tests.test_numilog_owned_js_delivery_p0 import SIGNED, _card, _page
 def setup():
     session, broker, reads = rig(_page(_card(12, 9001, SIGNED)))
     account = bound_account(session)
-    # The candidate-execution path requires a live Core-owned Account bound
-    # to the same identity; unlike a read-only typed observation, a detached
-    # defensive Account copy cannot grant a delivery.
-    session._accounts[0].identity_id = account.identity_id
+    # Real sessions can keep an unassigned live identity; the independent
+    # Core broker must still attest the exact Account copy before delivery.
+    assert session._accounts[0].identity_id != account.identity_id
     right = session.rights_delivery_offer_snapshot(
         account, session.rights_observation_snapshot(account).rights[0].right_id,
     ).rights[0]
@@ -183,5 +182,36 @@ def test_numilog_selected_candidate_foreign_account_scope_no_get(tmp_path, mutat
                 forged, **selected(right, tmp_path),
             )
         assert reads == before
+    finally:
+        session.close()
+
+def test_numilog_selected_candidate_conflicting_live_identity_refused_before_network(tmp_path):
+    session, account, broker, reads, right = setup()
+    try:
+        session._accounts[0].identity_id = "identity-B"
+        before = list(reads)
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_owner_changed"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert reads == before
+    finally:
+        session.close()
+
+
+def test_numilog_selected_candidate_live_account_rebind_after_listing_blocks_get(tmp_path):
+    session, account, broker, reads, right = setup()
+    try:
+        original = session.library
+        def switch_live_binding():
+            items = original()
+            session._accounts[0].identity_id = "identity-B"
+            return items
+        session.library = switch_live_binding
+        session._download = lambda *a, **kw: pytest.fail("unexpected download")
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_owner_changed"):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
     finally:
         session.close()
