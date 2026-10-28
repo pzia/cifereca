@@ -55,7 +55,7 @@ def fixture():
 ])
 def test_mutated_borrower_during_activity_rejected_before_typed_publication(change):
     session, account, client = fixture()
-    original = session.loans
+    original = session._read_live_loans_locked
 
     def mid_read(borrower):
         rows = original(borrower)
@@ -69,7 +69,7 @@ def test_mutated_borrower_during_activity_rejected_before_typed_publication(chan
             session._accounts = []
         return rows
 
-    session.loans = mid_read
+    session._read_live_loans_locked = mid_read
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.loan_inventory_snapshot(account)
@@ -132,7 +132,7 @@ def test_typed_bnf_inventory_foreign_core_copy_refused_before_get(field, foreign
 def test_typed_bnf_inventory_copy_refuses_inflight_session_rebind(change):
     session, account, client = fixture()
     copy = replace(account)
-    original = session.loans
+    original = session._read_live_loans_locked
 
     def mutate_after_read(borrower):
         rows = original(borrower)
@@ -146,7 +146,7 @@ def test_typed_bnf_inventory_copy_refuses_inflight_session_rebind(change):
             session._accounts = []
         return rows
 
-    session.loans = mutate_after_read
+    session._read_live_loans_locked = mutate_after_read
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.loan_inventory_snapshot(copy)
