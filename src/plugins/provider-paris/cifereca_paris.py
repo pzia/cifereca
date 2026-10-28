@@ -5,6 +5,7 @@ import logging
 import httpx
 from contextvars import ContextVar
 from dataclasses import replace
+from datetime import datetime, timezone
 from threading import RLock
 import re
 import time
@@ -33,6 +34,7 @@ from cifereca.plugin_api import (
     ProviderSession,
     ProviderError, Cancelled,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
+    ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
     inspect_artifact_content,
     publish_artifact_content,
     sanitize_filename_component,
@@ -576,6 +578,57 @@ class ParisProviderSession(ProviderSession):
             branches=branches,
             reason_code="branch_unavailable" if failed else None,
         )
+
+    def rights_observation_snapshot(self, account: Account) -> ProviderRightsSnapshot:
+        """Read-only DILICOM loan claims from the already-scoped two-branch GET.
+
+        Paris loan normalization has a *descriptive* fallback based on title or
+        a generated UUID when upstream Id/HoldingId is missing. Those fallbacks
+        are NOT admissible provider right identifiers; only actual DILICOM
+        response IDs and RecordId may be promoted to this versioned envelope.
+        """
+        with self._loan_inventory_lock:
+            inventory = self._snapshot_for_account(account)
+            scope = inventory.scope
+            observed = datetime.now(timezone.utc).isoformat()
+            rights = []
+            for loan in inventory.loans:
+                if loan.provider != "DILICOM" or loan.medium != "digital":
+                    continue
+                raw = loan.raw
+                if type(raw) is not dict:
+                    continue
+                right_id = raw.get("Id") or raw.get("HoldingId")
+                edition_id = raw.get("RecordId")
+                # bool is an int in Python, but not a stable upstream ID.
+                if (type(right_id) not in (str, int)
+                        or type(edition_id) not in (str, int)
+                        or not str(right_id) or not str(edition_id)
+                        or loan.id != str(right_id)
+                        or loan.record_id != str(edition_id)):
+                    continue
+                rights.append(ProviderRightObservation(
+                    edition_id=str(edition_id), right_id=str(right_id),
+                    kind="loan", state="unknown",
+                    evidence_kind="provider_response",
+                    evidence_ref="paris.dilicom.listloans",
+                    observed_at=observed, delivery="unknown",
+                ))
+            # Core may mutate the mutable borrower independently from the
+            # session lock. Revalidate its exact scope before publication.
+            if (not self.connected
+                    or LoanInventoryScope.for_account(account) != scope):
+                raise ProviderConfigurationError("account_scope_mismatch")
+            return ProviderRightsSnapshot(
+                scope=ProviderRightsScope(
+                    scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id,
+                ),
+                rights=tuple(rights),
+                status="partial", coverage="partial",
+                pagination_complete=False, branch="dilicom",
+                observed_at=observed, snapshot_ref="paris.dilicom.listloans",
+            )
 
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
