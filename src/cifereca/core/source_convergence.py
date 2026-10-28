@@ -140,9 +140,12 @@ class DeclaredAssociationEvidence:
     placement_id: str
     status: Literal["declared_current", "needs_review", "revoked"]
     verification_ref: str = ""
+    identity_id: str = ""
 
     def __post_init__(self) -> None:
         if (type(self.source) is not SourceKey
+                or self.identity_id != self.source.scope.identity_id
+                or not _id(self.identity_id)
                 or not _id(self.relation_id) or not _id(self.placement_id)
                 or type(self.status) is not str
                 or self.status not in ("declared_current", "needs_review", "revoked")
