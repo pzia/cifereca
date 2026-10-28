@@ -1084,10 +1084,16 @@ class ParisProviderSession(ProviderSession):
             # request builder: it reads provider/edition after preferences.
             # Its private POST must always use the edition admitted above.
             borrower_uid = "" if scope[4] else scope[0]
-            return self._download_digital_scoped_impl(
+            completed, historical_url = self._download_digital_scoped_impl(
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
             )
+            # A signed PNB URL is transient secret transport evidence, NOT a
+            # SourceReference or Core delivery receipt. Keep the old tuple
+            # contract for historical callers only; the selected canonical
+            # route returns no private URL outside the provider boundary.
+            return completed, ("" if expected_right_id is not None
+                               else historical_url)
 
     def _download_digital_scoped_impl(self, loan: Loan, account: Account,
                                       target_dir: Path, *, scope_guard=None,
