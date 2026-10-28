@@ -23,13 +23,14 @@ def setup():
 
 
 def selected(right, target_dir, **changes):
-    return dict(
+    request = dict(
         edition_id=right.edition_id, right_id=right.right_id,
         kind="purchase", branch="meslivres",
         delivery_offer_id=right.delivery_offer_id,
         target_dir=target_dir, explicit_user_action=True,
-        **changes,
     )
+    request.update(changes)
+    return request
 
 
 def test_selected_numilog_executes_existing_offer_guard_once(tmp_path):
