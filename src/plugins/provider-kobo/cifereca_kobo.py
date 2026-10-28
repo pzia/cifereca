@@ -1005,6 +1005,76 @@ class KoboSession(ProviderSession):
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         return replace(baseline, rights=(qualified,))
 
+    def rights_selected_delivery_offer_snapshot(
+        self, account, *, edition_id, right_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        """#3252: exact Core-selected Kobo right; NO content GET or receipt.
+
+        The Core first admits a positive SourceKey, persisted consent, session
+        and epoch. This optional ABI only reuses the existing explicit Vault
+        descriptor preflight; its POST cannot be triggered by inventory Sync.
+        """
+        from cifereca.plugin_api import ProviderRightsSnapshot
+
+        if (explicit_user_action is not True
+                or type(edition_id) is not str or not edition_id
+                or type(right_id) is not str or edition_id != right_id
+                or type(kind) is not str or kind != "purchase"
+                or type(branch) is not str or branch != "personal_manifest"
+                or type(account) is not Account
+                or account.provider_id != "kobo"
+                or account.credential_id != self.credential_id):
+            raise ProviderCapabilityError("kobo_selected_offer_scope_mismatch")
+
+        # An Account and even its Core owner may mutate independently while
+        # the private POST and subsequent local projection execute.
+        accounts = self._accounts
+        if not self.connected or len(accounts) != 1:
+            raise ProviderCapabilityError("kobo_selected_offer_owner_changed")
+        live = accounts[0]
+        generation = self._personal_binding_generation
+        broker, client = self.identity_broker, self.client
+        pinned = (account.identity_id, account.provider_id,
+                  account.credential_id, account.unique_id)
+        live_scope = (live.identity_id, live.provider_id,
+                      live.credential_id, live.unique_id)
+        owner = self._rights_owner_snapshot(pinned[3])
+        if (pinned != live_scope or not pinned[0] or not pinned[3]
+                or owner is None or owner[1] != (pinned[0],)):
+            raise ProviderCapabilityError("kobo_selected_offer_owner_changed")
+
+        offer = self.rights_delivery_offer_snapshot(
+            account, right_id, explicit_user_action=True,
+        )
+        try:
+            self._ensure_personal_binding(
+                live, generation, expected_account_id=pinned[3],
+                expected_identity_id=pinned[0],
+            )
+        except ProviderError as exc:
+            raise ProviderCapabilityError("kobo_selected_offer_owner_changed") from exc
+        if (self.connected is not True or self._accounts is not accounts
+                or len(self._accounts) != 1 or self._accounts[0] is not live
+                or self.identity_broker is not broker or self.client is not client
+                or (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id) != pinned
+                or (live.identity_id, live.provider_id,
+                    live.credential_id, live.unique_id) != live_scope
+                or self._rights_owner_snapshot(pinned[3]) != owner):
+            raise ProviderCapabilityError("kobo_selected_offer_owner_changed")
+        if (type(offer) is not ProviderRightsSnapshot
+                or (offer.scope.identity_id, offer.scope.provider_id,
+                    offer.scope.credential_id, offer.scope.account_id) != pinned
+                or offer.branch != branch or len(offer.rights) != 1
+                or offer.status != "partial" or offer.coverage != "partial"):
+            raise ProviderCapabilityError("kobo_selected_offer_scope_changed")
+        selected = offer.exact(edition_id, right_id, kind)
+        if (selected is None or selected.state != "active"
+                or not selected.provider_attested):
+            raise ProviderCapabilityError("kobo_selected_offer_right_unobserved")
+        return offer
+
     def backup_manifest(self) -> list[dict[str, Any]]:
         # No diagnostic may outlive the previous manifest if fetching raises.
         self.backup_manifest_rejection_count = 0
