@@ -109,7 +109,7 @@ def test_bnf_positive_loan_rights_0_1_n_without_implicit_acquisition(pairs):
 ])
 def test_bnf_changed_borrower_during_activity_cannot_publish_rights(change):
     session, account, client = fixture(activity(("edition-1", "loan-1")))
-    original = session.loans
+    original = session._read_live_loans_locked
 
     def changed_during_read(borrower):
         rows = original(borrower)
@@ -121,7 +121,7 @@ def test_bnf_changed_borrower_during_activity_cannot_publish_rights(change):
             session._accounts = [replace(account)]
         return rows
 
-    session.loans = changed_during_read
+    session._read_live_loans_locked = changed_during_read
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.rights_observation_snapshot(account)

@@ -63,7 +63,14 @@ identité exacts. Le lien de téléchargement n'est pas transmis au Core.
 
 L'inventaire est **toujours partiel** : `loan_inventory_snapshot()` publie
 `status=partial`, branche `bnf_html` et raison typée `inventory_not_exhaustive`.
-Le canal mutable historique `last_loan_errors` a été retiré du plugin (#3197). La synchronisation ajoute/actualise les prêts
+Le canal mutable historique `last_loan_errors` a été retiré du plugin (#3197).
+Dans la migration ciblée #3628, le producteur typé utilise directement la
+lecture HTML BnF scoppée sous verrou, **sans appeler la façade v1
+\`session.loans(account)\`**. Les deux entrées partagent la même implémentation
+interne de GET : une seule lecture par invocation. La façade v1 reste
+exposée pour les plugins installés selon le contrat API existant ; elle
+ne certifie jamais l'exhaustivité, ni le retour ou la disparition d'un droit.
+ La synchronisation ajoute/actualise les prêts
 observés, mais une page vide, tronquée, une session expirée ou un prêt absent
 ne prouve aucune fin de droit. Le Core actuel (#2975) conserve les anciens droits
 sans preuve négative exhaustive ; #2055 interdit les acquisitions BnF implicites.
