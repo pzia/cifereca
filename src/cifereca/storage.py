@@ -1718,6 +1718,26 @@ class Storage:
                 (provider, credential),
             ).fetchall()
             stale = [dict(zip(keys, row)) for row in rows if str(row[2] or "") not in seen]
+            # A current manifest belongs to the connection registered NOW,
+            # not to an earlier identity/borrower bound to the same v0.7 key.
+            # An old row remains prunable as a compatibility projection, but
+            # cannot revoke the former owner's canonical right after a rebind.
+            active_connections = db.execute(
+                "SELECT identity_id,enabled FROM provider_connections "
+                "WHERE provider_id=? AND credential_id=?",
+                (provider, credential),
+            ).fetchall()
+            bound_identity = (
+                active_connections[0][0] if len(active_connections) == 1
+                and active_connections[0][1] == 1 else None
+            )
+            bound_accounts = (
+                db.execute(
+                    "SELECT account_id FROM provider_accounts "
+                    "WHERE identity_id=? AND provider_id=? AND credential_id=?",
+                    (bound_identity, provider, credential),
+                ).fetchall() if bound_identity is not None else []
+            )
             local_preserved = 0
             entitlements_inactivated = 0
             for row in stale:
@@ -1741,6 +1761,9 @@ class Storage:
                 identity = row.get("identity_id")
                 exact_right = (
                     type(identity) is str and bool(identity)
+                    and identity == bound_identity
+                    and sum(account[0] == row.get("account_id")
+                            for account in bound_accounts) == 1
                     and entitlement is not None
                     and entitlement[:7] == (
                         provider, credential, row.get("account_id"),
