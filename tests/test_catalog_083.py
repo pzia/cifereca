@@ -244,7 +244,57 @@ def test_recent_acquisitions_reads_cover_sources_once_not_per_placement(monkeypa
             monkeypatch.setattr(service.storage, "entitlements", counted_entitlements)
             rows = service.recent_acquisitions(identity_id="default")
             assert len(rows) >= 3
-            assert counts == {"backup": 1, "entitlements": 1}
+            assert counts == {"backup": 0, "entitlements": 1}
+        finally:
+            service.close()
+
+
+
+def test_recent_covers_ignore_foreign_or_unscoped_legacy_backup_even_with_matching_item(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        service = _service(td)
+        try:
+            book = Path(td) / "EBooks" / "hugues" / "manual" / "Kobo.pdf"
+            book.parent.mkdir(parents=True, exist_ok=True)
+            book.write_bytes(b"%PDF-1.7\\nSynthetic offline fixture\\n")
+            indexed = service.catalog_index_path(
+                book, title="Same edition", item_id="shared-edition",
+                identity_id="default", provider_id="kobo",
+            )
+            assert indexed["status"] == "indexed"
+            # v0.7 can associate the SAME edition with a foreign or absent
+            # owner and still expose an apparently authoritative cover URL.
+            with service.storage._lock, service.storage._connect() as db:
+                db.execute(
+                    "INSERT INTO backup_items(provider_id,credential_id,item_id,"
+                    "title,status,updated_at,identity_id,account_id,cover_url) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    ("kobo", "foreign-card", "shared-edition", "Same edition",
+                     "complete", 1, "alex", "other-account",
+                     "https://example.test/foreign-cover.jpg"),
+                )
+            assert len(service.storage.backup_list("kobo")) == 1
+            def forbidden(*args, **kwargs):
+                raise AssertionError("recent placements must not read backup_items")
+            monkeypatch.setattr(service.storage, "backup_list", forbidden)
+            initial = service.recent_acquisitions(identity_id="default")
+            selected = next(x for x in initial if x["path"] == str(book))
+            assert selected["identity_id"] == "default"
+            assert selected["item_id"] == "shared-edition"
+            assert selected["thumbnail_url"] is None
+
+            # A canonical entitlement of this profile remains a valid
+            # descriptive cover source; no historical backup is consulted.
+            service.storage.entitlement_put({
+                "provider_id": "kobo", "credential_id": "owned-card",
+                "account_id": "owned-account", "identity_id": "default",
+                "item_id": "shared-edition", "entitlement_type": "owned",
+                "state": "active",
+                "metadata": {"cover_url": "https://example.test/owner-cover.jpg"},
+            })
+            again = service.recent_acquisitions(identity_id="default")
+            chosen = next(x for x in again if x["path"] == str(book))
+            assert chosen["thumbnail_url"] == "https://example.test/owner-cover.jpg"
         finally:
             service.close()
 

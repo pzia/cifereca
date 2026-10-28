@@ -328,22 +328,12 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
 def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -> list[dict[str, Any]]:
     """Return recent local materializations, newest first.
 
-    The indexes below deliberately avoid the historical N+1 pattern where
-    every visible placement re-read the full Kobo backup and entitlement
-    tables solely to resolve a cover.
+    Covers come from the scoped catalogue, current loan inventory and
+    canonical entitlement metadata; backup_items is historical only and
+    must never be queried to decorate a current placement.
     """
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
     entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
-    backup_by_item: dict[str, list[tuple[dict[str, Any], str | None]]] = {}
-    for record in self.storage.backup_list("kobo"):
-        item_key = str(record.get("item_id") or record.get("product_id") or "")
-        if not item_key:
-            continue
-        try:
-            record_identity = self.identity_for_connection("kobo", str(record.get("credential_id") or "")).identity_id
-        except Exception:
-            record_identity = None
-        backup_by_item.setdefault(item_key, []).append((record, record_identity))
     loan_by_key: dict[tuple[str, str, str | None], Loan] = {}
     for loan in self.last_loans:
         try:
@@ -394,16 +384,6 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             if public:
                 cover_candidates.append(public)
         if item_id:
-            if provider_id == "kobo":
-                for record, record_identity in backup_by_item.get(item_id, []):
-                    if row_identity and record_identity and record_identity != row_identity:
-                        continue
-                    value = cover_candidate(
-                        record.get("cover_url"), tier="origin", source="kobo-backup",
-                        evidence_id=f"{provider_id}:{item_id}", evidence_strength=100,
-                    )
-                    if value:
-                        cover_candidates.append(value)
             loan_candidates = [
                 loan_by_key.get((provider_id, item_id, row_identity)),
                 loan_by_key.get((provider_id, item_id, None)),
