@@ -264,3 +264,21 @@ def test_consent_revoked_during_get_blocks_canonical_persistence(rig):
     assert result[0].reason == "consent_revoked_after_get"
     assert rows(service.storage) == (0, 0, 0, 0)
     assert (root / "A" / "book.pdf").read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("when", ["before", "after"])
+def test_consent_lookup_exception_is_never_approval(rig, when):
+    service, account, source, snapshot, root, lock_path = rig
+    checks = []
+    def lookup(_key):
+        checks.append(1)
+        if when == "before" or len(checks) > 1:
+            raise RuntimeError("synthetic unreadable consent store")
+        return True
+    result = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root), consent_still_current=lookup,
+    )
+    assert result[0].status == ("pending" if when == "before" else "blocked")
+    assert service.calls == (0 if when == "before" else 1)
+    assert rows(service.storage) == (0, 0, 0, 0)
