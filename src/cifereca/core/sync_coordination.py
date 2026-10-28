@@ -353,8 +353,8 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         )
                         counts = {
                             status: sum(row.status == status for row in outcomes)
-                            for status in ("downloaded", "present_attested", "pending",
-                                           "blocked", "failed", "cancelled")
+                            for status in ("downloaded", "recovered", "present_attested",
+                                           "pending", "blocked", "failed", "cancelled")
                         }
                         result["canonical_execution"] = counts
                         if counts["cancelled"]:

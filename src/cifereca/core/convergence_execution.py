@@ -21,6 +21,11 @@ from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsSnapshot,
 )
 from .canonical_publication import publish_completed_acquisition
+from .canonical_recovery import (
+    mark_completed_delivery_published,
+    record_completed_delivery_for_recovery,
+    recover_completed_delivery,
+)
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 
@@ -43,7 +48,7 @@ class CompletedDelivery:
 
 
 OutcomeStatus = Literal[
-    "present_attested", "downloaded", "pending", "blocked", "failed", "cancelled",
+    "present_attested", "downloaded", "recovered", "pending", "blocked", "failed", "cancelled",
 ]
 
 
@@ -147,6 +152,16 @@ def execute_admitted_convergence(
                 return False
             if service.sync_source_enabled(account) is not True:
                 return False
+            connections = service.storage.provider_connections(
+                identity_id=scope.identity_id,
+            )
+            if sum(
+                conn.get("provider_id") == scope.provider_id
+                and conn.get("credential_id") == scope.credential_id
+                and conn.get("enabled") is True
+                for conn in connections
+            ) != 1:
+                return False
             return True
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
@@ -195,10 +210,11 @@ def execute_admitted_convergence(
 
         # A stale/unknown right, unsigned delivery, missing configured
         # consent or disabled source can never start a file GET or ADEPT.
-        if row.state != "active" or not row.provider_attested:
+        if (snapshot.status not in ("success", "partial")
+                or row.state != "active" or not row.provider_attested):
             results.append(ConvergenceOutcome(key, "pending", "right_unconfirmed"))
             continue
-        if row.delivery != "available":
+        if row.delivery != "available" or not row.delivery_offer_id:
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
             continue
         if key not in persisted_consent or not live_consent(key):
@@ -206,10 +222,25 @@ def execute_admitted_convergence(
             continue
 
         try:
-            completed = deliver(key, row)
+            completed = recover_completed_delivery(
+                initial_storage, source=key, offer_id=row.delivery_offer_id,
+                library_root=library_root, shared_lock=shared_lock,
+            )
+            # A receipt copied verbatim from an inventory observation is
+            # not independent evidence of a completed GET. Reject it before
+            # journaling, otherwise a malformed record could be replayed
+            # forever instead of permitting a genuinely new delivery.
+            if completed is not None and completed.receipt_ref == row.evidence_ref:
+                completed = None
+            was_recovered = completed is not None
+            if completed is None:
+                completed = deliver(key, row)
             if (type(completed) is not CompletedDelivery
                     or completed.source != key
-                    or completed.delivery_offer_id != row.delivery_offer_id):
+                    or completed.delivery_offer_id != row.delivery_offer_id
+                    or type(completed.receipt_ref) is not str
+                    or not completed.receipt_ref
+                    or completed.receipt_ref == row.evidence_ref):
                 raise ValueError("invalid_completed_delivery_binding")
             # The adapter can have replaced an account, credential, session or
             # switched identity during its GET. Never publish under its old A.
@@ -226,6 +257,21 @@ def execute_admitted_convergence(
                     not live_consent(key)):
                 results.append(ConvergenceOutcome(key, "blocked", "consent_revoked_after_get"))
                 break
+            # Persist a *completed* delivery receipt before any canonical B
+            # mutation. If publication crashes after this durable handoff,
+            # retry the same authorized Sync without re-downloading.
+            if not was_recovered:
+                record_completed_delivery_for_recovery(
+                    initial_storage, source=key,
+                    offer_id=row.delivery_offer_id, completed=completed,
+                    library_root=library_root, shared_lock=shared_lock,
+                )
+            if cancelled():
+                results.append(ConvergenceOutcome(key, "cancelled", "cancelled_after_receipt"))
+                break
+            if not current() or not live_consent(key):
+                results.append(ConvergenceOutcome(key, "blocked", "scope_or_consent_after_receipt"))
+                break
             published = publish_completed_acquisition(
                 initial_storage,
                 library_root=library_root,
@@ -236,9 +282,26 @@ def execute_admitted_convergence(
                 delivery_receipt_ref=completed.receipt_ref,
                 adept_receipt_ref=completed.adept_receipt_ref,
             )
+            try:
+                mark_completed_delivery_published(
+                    initial_storage, source=key, offer_id=row.delivery_offer_id,
+                    artifact_id=published.artifact_id, shared_lock=shared_lock,
+                )
+            except Exception:
+                # The provider OriginLink and verified Placement, NOT the
+                # operation journal, are authoritative after commit.
+                _LOG.exception(
+                    "TRACE canonical intake state update failed provider_id=%s "
+                    "right_id=%s", scope.provider_id, key.right_id,
+                )
             results.append(ConvergenceOutcome(
-                key, "downloaded" if published.changed else "present_attested",
-                "canonical_delivery_committed", published.artifact_id,
+                key,
+                "recovered" if was_recovered else (
+                    "downloaded" if published.changed else "present_attested"
+                ),
+                "canonical_delivery_recovered" if was_recovered
+                else "canonical_delivery_committed",
+                published.artifact_id,
             ))
         except Cancelled:
             results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
