@@ -284,3 +284,54 @@ cache ; seul le HTML frais du parcours explicite la fournit. Les validations
 ACSM et le staging privé existants restent suivis du consentement ADEPT
 séparé. Tests synthétiques réussis ne valent pas recette du GET signé réel
 ni preuve de fulfillment ADEPT ; #2055 conserve ces validations terrain.
+
+
+## Livraison ACSM sélectionnée vers Core — P0 #3633
+
+Cette tranche ne concerne **que le contrat de livraison candidat BnF** et ne
+réimplémente ni les snapshots typés #3628, ni la Sync, ni ADEPT Core.
+
+| Situation | Observation / refus côté BnF | GET token | Staging |
+| --- | --- | --- | --- |
+| Prêt actif HTML authentifié, paire `loan_id/resource_id` et contrôle signé ACS4 uniques | Offre opaque `bnf.reader_acs4:…` scoppée sur identité, credential, compte, prêt et édition ; couverture toujours partielle | Un GET HTTPS signé seulement après admission Core et relecture fraîche | ACSM brut vérifié, fichier aléatoire privé, retour `(Path, "")` sans URL |
+| Aucun prêt, action absente, URL signée contradictoire, page remplacée ou identifiant différent | `unknown` / refus explicite | **0** | **0** |
+| Owner A→B, A→A par nouvelle instance, credential ou session modifiés pendant relecture | Refus avant GET, même si tous les champs du compte remplacé sont identiques | **0** | **0** |
+| Réaffectation pendant transfert ou staging | Refus au contrôle suivant, suppression de l'ACSM éventuellement écrit | Au plus le GET déjà commencé, jamais un second | **0** final |
+| URL signée tournée à droit/compte/prêt constants | Offre opaque stable ; URL uniquement depuis le nouveau HTML frais | Un GET de la nouvelle signature | ACSM du prêt exact |
+| 302, 401, 403, 429, 500, HTML, ACSM malformé, XML hors namespace ADEPT, dépassement taille | Échec transport/token typé, sans fallback ni retry signé | Au plus un GET | **0** |
+| Staging Core absent, non-répertoire, lien symbolique ou argument invalide | Refus avant tout réseau privé | **0** | **0** |
+
+`rights_selected_delivery_offer_snapshot(..., explicit_user_action=True)`
+requalifie l'unique action signée du prêt exact, et
+`rights_selected_delivery_candidate(..., delivery_offer_id, target_dir,
+explicit_user_action=True)` exige le broker Core unique et un répertoire de
+staging **déjà créé**. L'exécuteur reread le prêt exact, puis
+`download_digital` relit encore l'activité immédiatement avant le GET
+`/loans/{id}` signé. Aucune URL signée n'est publiée ni retournée.
+Une date d'expiration n'est **pas inventée** depuis le HTML : seule la
+présence actuelle dans `active-loans` et d'une action signée admissible vaut
+observation positive de candidature. Un refus d'accès HTTP au jeton peut
+signaler une expiration, sans présumer de sa cause métier.
+
+La révalidation pendant/après GET vérifie non seulement les valeurs gelées
+`provider/credential/account/identity/loan/edition` et le broker, mais
+aussi **l'instance unique vivante** du compte de session. Une réassignation
+identique A→A échoue donc sans publier l'ACSM, de même qu'une mutation de
+`session.provider_id` ou `session.credential_id`.
+
+**Preuves synthétiques :**
+`tests/test_p0_3633_selected_acsm_staging.py` et les suites déjà livrées
+`test_p1_3252_selected_delivery_candidate.py`,
+`test_p1_3252_bnf_signed_delivery_offer.py`,
+`test_explicit_token_failures.py`,
+`test_p0_2055_mutable_signed_token_scope.py`, etc.
+Tous les flux HTTPX restent en `MockTransport` ; aucun login réel, emprunt,
+retour, ADEPT, SQLite, OriginLink ou Placement n'est provoqué.
+
+**Handoff #3228 / #3252 → agent A :** le plugin ne délivre **qu'un ACSM
+candidat** et ne confirme ni EPUB/PDF final, ni identité d'activation ADEPT,
+ni idempotence Sync après crash, ni liens exacts avec les fichiers
+`manual/` préexistants. Les preuves Core de consentement persistant,
+ADEPT par identité, SHA/placement atomique, convergence et 2e Sync sans GET
+restent à qualifier séparément, ainsi que la recette d'une offre réelle
+avec un prêt autorisé. #3633 est borné à la candidature avant Core.
