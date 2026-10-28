@@ -160,6 +160,15 @@ class BnfProviderSession(ProviderSession):
             )
             if caller_scope[2:] != (self.provider_id, self.credential_id):
                 raise ProviderConfigurationError('account_scope_mismatch')
+            broker = self.identity_broker
+            owner = (
+                self._core_owner_binding(caller_scope[0])
+                if broker is not None else None
+            )
+            if broker is not None and (
+                owner is None or owner[1] != (caller_scope[1],)
+            ):
+                raise ProviderConfigurationError('account_scope_mismatch')
             try:
                 snapshot = self._snapshot(self.client.activity())
             except (ReaderHTTPError, WebParseError) as exc:
@@ -171,7 +180,10 @@ class BnfProviderSession(ProviderSession):
             if (not self.connected or len(self._accounts) != 1
                     or account is not self._accounts[0]
                     or (account.unique_id, account.identity_id,
-                        account.provider_id, account.credential_id) != caller_scope):
+                        account.provider_id, account.credential_id) != caller_scope
+                    or self.identity_broker is not broker
+                    or (broker is not None and
+                        self._core_owner_binding(caller_scope[0]) != owner)):
                 raise ProviderConfigurationError('account_scope_mismatch')
             # A partial/empty page cannot close historical rights; nevertheless
             # it must not authorize token downloads from stale observations.
