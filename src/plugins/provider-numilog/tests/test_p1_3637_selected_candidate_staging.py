@@ -44,7 +44,7 @@ def test_selected_staging_refuses_bad_directory_before_private_get(
 
 def _direct_epub_session():
     # The exact owned-card signature and DRM/format claim must be consistent.
-    card = _card(12, 9001, SIGNED_EPUB).replace(
+    card = _card(12, 9001, SIGNED_EPUB, attrs='onclick="ModalDownload(9001, 1)"').replace(
         "DrmTechnlology: 'ADOBE', link:",
         "DrmTechnlology: 'NOT_SPECIFIED', format: 'EPUB', link:",
     )
