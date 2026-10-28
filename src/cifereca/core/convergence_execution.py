@@ -226,12 +226,21 @@ def execute_admitted_convergence(
                 initial_storage, source=key, offer_id=row.delivery_offer_id,
                 library_root=library_root, shared_lock=shared_lock,
             )
+            # A receipt copied verbatim from an inventory observation is
+            # not independent evidence of a completed GET. Reject it before
+            # journaling, otherwise a malformed record could be replayed
+            # forever instead of permitting a genuinely new delivery.
+            if completed is not None and completed.receipt_ref == row.evidence_ref:
+                completed = None
             was_recovered = completed is not None
             if completed is None:
                 completed = deliver(key, row)
             if (type(completed) is not CompletedDelivery
                     or completed.source != key
-                    or completed.delivery_offer_id != row.delivery_offer_id):
+                    or completed.delivery_offer_id != row.delivery_offer_id
+                    or type(completed.receipt_ref) is not str
+                    or not completed.receipt_ref
+                    or completed.receipt_ref == row.evidence_ref):
                 raise ValueError("invalid_completed_delivery_binding")
             # The adapter can have replaced an account, credential, session or
             # switched identity during its GET. Never publish under its old A.
