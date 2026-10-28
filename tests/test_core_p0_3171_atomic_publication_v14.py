@@ -211,3 +211,57 @@ def test_existing_path_cannot_be_adopted_as_foreign_or_replaced_without_review(s
     with pytest.raises(ValueError, match="canonical_placement_scope_or_bytes_conflict"):
         publish(store, tmp_path / "EBooks", path, key, snap)
     assert rows(store) == (0, 1, 0, 0)
+
+
+def test_same_profile_two_independent_purchases_share_one_placement(store, tmp_path):
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    path = target(tmp_path, "A")
+    first, snap_first = new_source(right="purchase-first", edition="same-edition")
+    second, snap_second = new_source(right="purchase-second", edition="same-edition")
+    r1 = publish(store, root, path, first, snap_first)
+    r2 = publish(store, root, path, second, snap_second)
+    assert r1.artifact_id == r2.artifact_id
+    assert r1.placement_id == r2.placement_id
+    assert r1.source_reference_id != r2.source_reference_id
+    assert rows(store) == (1, 1, 2, 2)
+    assert store.entitlements() == []
+
+
+def test_same_right_id_on_two_branches_is_independent(store, tmp_path):
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    path = target(tmp_path, "A")
+    purchased, snap_one = new_source(branch="purchases")
+    renewed, snap_two = new_source(branch="loans")
+    a = publish(store, root, path, purchased, snap_one)
+    b = publish(store, root, path, renewed, snap_two)
+    assert a.source_reference_id != b.source_reference_id
+    assert a.origin_link_ids != b.origin_link_ids
+    assert rows(store) == (1, 1, 2, 2)
+
+
+def test_empty_primary_upstream_account_is_exact_not_null(store, tmp_path):
+    key, snapshot = new_source(provider="paris", account="", credential="card-primary",
+                               branch="dilicom", kind="loan", right="loan-1")
+    register(store, "A", "paris", "card-primary")
+    path = target(tmp_path, "A")
+    assert publish(store, tmp_path / "EBooks", path, key, snapshot).changed
+    with store._lock, store._connect() as db:
+        result = db.execute(
+            "SELECT account_id,reference_kind FROM source_references"
+        ).fetchall()
+    assert result == [("", "loan")]
+
+
+def test_same_path_with_new_unverified_bytes_does_not_mutate_existing_right(store, tmp_path):
+    key, snap = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    first = publish(store, tmp_path / "EBooks", path, key, snap)
+    old_counts = rows(store)
+    path.write_bytes(b"%PDF-1.7\\nAltered physical contents\\n")
+    with pytest.raises(ValueError, match="canonical_final_sha_mismatch"):
+        publish(store, tmp_path / "EBooks", path, key, snap)
+    assert rows(store) == old_counts
+    assert store.placement_for_path(path)["artifact_id"] == first.artifact_id
