@@ -37,7 +37,10 @@ def source(provider="provider-alpha", identity="A", credential="cred-A",
 
 
 def placement(identity, placement_id, sha=SHA_A, verified=True):
-    return PlacementEvidence(identity, placement_id, sha, 1234, verified)
+    return PlacementEvidence(
+        identity, placement_id, sha, 1234, verified,
+        verification_ref="synthetic-core-file-check" if verified else "",
+    )
 
 
 def origin(key, sha=SHA_A, kind="provider", attested=True):
@@ -261,3 +264,8 @@ def test_conflicting_origin_identifier_is_rejected_without_overwriting():
     second = replace(first, artifact_sha256=SHA_B)
     with pytest.raises(ValueError, match="conflicting_origin_evidence"):
         plan(snap, origins=(first, second), scans=(scan("A"),))
+
+
+def test_verified_placement_without_actual_core_check_is_not_admissible():
+    with pytest.raises(ValueError, match="invalid_placement_evidence"):
+        PlacementEvidence("A", "file", SHA_A, 1234, True)
