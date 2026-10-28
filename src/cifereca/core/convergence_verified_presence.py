@@ -42,10 +42,14 @@ def _verified_copy(
             return False
         if not relative.parts:
             return False
-        # Legacy flat paths can retain an exact existing OriginLink; another
-        # registered profile's directory is never this identity's copy.
-        if (relative.parts[0] in registered_directories
-                and relative.parts[0] != owner_directory):
+        # #3171: a physically attested profile copy MUST be inside its
+        # registered directory. A legacy flat/manual/other path is not
+        # acceptable evidence for target B even if SQLite claims that
+        # identity or happens to share the provider Artifact SHA. Such bytes
+        # remain untouched; acquisition eligibility is a separate decision.
+        if (len(relative.parts) < 2
+                or relative.parts[0] != owner_directory
+                or owner_directory not in registered_directories):
             return False
         current = alias
         for part in relative.parts:
