@@ -81,7 +81,8 @@ def test_two_providers_share_sha_but_require_distinct_exact_origins():
                        scans=(scan("A"), scan("B")),
                        candidates=(LocalCandidate(bk, "file-B"),),
                        consent=(bk,))
-    assert no_b_origin.decisions[1].state == "needs_reconciliation"
+    assert no_b_origin.decisions[1].state == "missing_to_download"
+    assert not no_b_origin.decisions[1].acquisition_authorized
 
 
 def test_same_edition_different_sha_does_not_link_by_metadata():
