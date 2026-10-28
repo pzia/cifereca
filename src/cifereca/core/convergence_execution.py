@@ -21,6 +21,11 @@ from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsSnapshot,
 )
 from .canonical_publication import publish_completed_acquisition
+from .canonical_recovery import (
+    mark_completed_delivery_published,
+    record_completed_delivery_for_recovery,
+    recover_completed_delivery,
+)
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 
@@ -43,7 +48,7 @@ class CompletedDelivery:
 
 
 OutcomeStatus = Literal[
-    "present_attested", "downloaded", "pending", "blocked", "failed", "cancelled",
+    "present_attested", "downloaded", "recovered", "pending", "blocked", "failed", "cancelled",
 ]
 
 
@@ -206,7 +211,13 @@ def execute_admitted_convergence(
             continue
 
         try:
-            completed = deliver(key, row)
+            completed = recover_completed_delivery(
+                initial_storage, source=key, offer_id=row.delivery_offer_id,
+                library_root=library_root, shared_lock=shared_lock,
+            )
+            was_recovered = completed is not None
+            if completed is None:
+                completed = deliver(key, row)
             if (type(completed) is not CompletedDelivery
                     or completed.source != key
                     or completed.delivery_offer_id != row.delivery_offer_id):
@@ -226,6 +237,21 @@ def execute_admitted_convergence(
                     not live_consent(key)):
                 results.append(ConvergenceOutcome(key, "blocked", "consent_revoked_after_get"))
                 break
+            # Persist a *completed* delivery receipt before any canonical B
+            # mutation. If publication crashes after this durable handoff,
+            # retry the same authorized Sync without re-downloading.
+            if not was_recovered:
+                record_completed_delivery_for_recovery(
+                    initial_storage, source=key,
+                    offer_id=row.delivery_offer_id, completed=completed,
+                    library_root=library_root, shared_lock=shared_lock,
+                )
+            if cancelled():
+                results.append(ConvergenceOutcome(key, "cancelled", "cancelled_after_receipt"))
+                break
+            if not current() or not live_consent(key):
+                results.append(ConvergenceOutcome(key, "blocked", "scope_or_consent_after_receipt"))
+                break
             published = publish_completed_acquisition(
                 initial_storage,
                 library_root=library_root,
@@ -236,9 +262,26 @@ def execute_admitted_convergence(
                 delivery_receipt_ref=completed.receipt_ref,
                 adept_receipt_ref=completed.adept_receipt_ref,
             )
+            try:
+                mark_completed_delivery_published(
+                    initial_storage, source=key, offer_id=row.delivery_offer_id,
+                    artifact_id=published.artifact_id, shared_lock=shared_lock,
+                )
+            except Exception:
+                # The provider OriginLink and verified Placement, NOT the
+                # operation journal, are authoritative after commit.
+                _LOG.exception(
+                    "TRACE canonical intake state update failed provider_id=%s "
+                    "right_id=%s", scope.provider_id, key.right_id,
+                )
             results.append(ConvergenceOutcome(
-                key, "downloaded" if published.changed else "present_attested",
-                "canonical_delivery_committed", published.artifact_id,
+                key,
+                "recovered" if was_recovered else (
+                    "downloaded" if published.changed else "present_attested"
+                ),
+                "canonical_delivery_recovered" if was_recovered
+                else "canonical_delivery_committed",
+                published.artifact_id,
             ))
         except Cancelled:
             results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
