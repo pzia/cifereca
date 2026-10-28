@@ -170,6 +170,11 @@ class ConvergenceDecision:
         return False
 
     @property
+    def authorizes_negative_reconciliation(self) -> bool:
+        """A plan is not an authoritative loan return or purchase revocation."""
+        return False
+
+    @property
     def provider_satisfied(self) -> bool:
         """Only exact OriginLink(provider) + verified profile bytes satisfy A.
 
@@ -288,12 +293,17 @@ def plan_convergence(
             def decision(state: DecisionState, reason: str, ids: tuple[str, ...] = ()) -> None:
                 decisions.append(ConvergenceDecision(key, state, reason, ids))
 
+            # An old receipt or unverified legacy state is never authority
+            # for ending a right. Even a reported inactive provider state is
+            # descriptive here: this read-only plan cannot close, return or
+            # revoke a loan/purchase. Explicit negative writes require the
+            # separately guarded provider inventory completeness contract.
+            if not row.provider_attested:
+                decision("pending", "provider_right_unattested")
+                continue
             if row.state != "active":
                 decision("inactive" if row.state == "inactive" else "pending",
                          "right_inactive" if row.state == "inactive" else "right_unconfirmed")
-                continue
-            if not row.provider_attested:
-                decision("pending", "provider_right_unattested")
                 continue
             hashes = origins_by_source.get(key, set())
             matching = [
