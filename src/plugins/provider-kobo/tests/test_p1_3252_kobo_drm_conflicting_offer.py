@@ -64,8 +64,9 @@ def test_known_consistent_drm_shapes_are_only_opaque_candidates():
 ])
 def test_signednodrm_cannot_hide_conflicting_family_or_protected(path, bad):
     row = plain()
-    row[path[1]] = bad if path[0] == "root" else row[path[0]].get(path[1])
-    if path[0] == "drm":
+    if path[0] == "root":
+        row[path[1]] = bad
+    else:
         row["drm"][path[1]] = bad
     assert qualify(row) == ""
 
