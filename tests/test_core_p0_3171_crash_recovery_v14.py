@@ -239,3 +239,54 @@ def test_normal_opening_recovery_never_destroys_completed_delivery_checkpoint(
     assert recovered[0].status == "recovered"
     assert service.calls == 1
     assert rows(service.storage) == (1, 1, 1, 1)
+
+
+def test_inventory_evidence_is_never_a_completed_delivery_receipt(rig):
+    service, account, source, snapshot, root, lock_path = rig
+    from cifereca.core.convergence_execution import CompletedDelivery
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+    def invalid(key, right):
+        service.calls += 1
+        path = root / "A" / "book.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(
+            key, right.delivery_offer_id, path, SHA,
+            right.evidence_ref,
+        )
+    first = run(service, account, snapshot, root, lock_path, {source}, invalid)
+    assert first[0].status == "failed"
+    assert journal(service.storage) == []
+    assert rows(service.storage) == (0, 0, 0, 0)
+    second = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert second[0].status == "downloaded"
+    assert service.calls == 2
+    assert journal(service.storage)[0][0] == "complete"
+    assert rows(service.storage) == (1, 1, 1, 1)
+
+
+def test_failed_optional_journal_status_update_never_uncommits_canonical_B(
+    rig, monkeypatch,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    def broken_mark(*_args, **_kwargs):
+        raise RuntimeError("synthetic best-effort ledger status write failed")
+    monkeypatch.setattr(
+        convergence_execution, "mark_completed_delivery_published", broken_mark,
+    )
+    first = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert first[0].status == "downloaded"
+    assert journal(service.storage)[0][0] == "canonical_receipt_staged"
+    assert rows(service.storage) == (1, 1, 1, 1)
+    second = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("canonical OriginLink B, not ledger status, avoids GET"),
+    )
+    assert second[0].status == "present_attested"
+    assert service.calls == 1
