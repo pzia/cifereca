@@ -61,25 +61,41 @@ class PlacementEvidence:
 
 @dataclass(frozen=True, slots=True)
 class OriginEvidence:
-    """Historical origin is NOT a right or a restoration instruction.
+    """B history: many contextual links may target one globally shared SHA.
 
-    Only a Core-attested 'provider' origin for the exact A key may satisfy A.
-    ADEPT, transfer, internal and derived origins remain distinct history.
+    Each link has an independent Core-owned identifier and an origin profile.
+    A provider link must match the exact right's owning identity; a transfer,
+    ADEPT or Cifereca origin cannot become a provider authorization.
     """
     kind: OriginKind
     artifact_sha256: str
     source: SourceKey | None = None
     attested: bool = False
+    identity_id: str = ""
+    origin_ref: str = ""
+    proof_ref: str = ""
+    parent_sha256: str | None = None
 
     def __post_init__(self) -> None:
+        valid_sha = lambda sha: (
+            type(sha) is str and len(sha) == 64
+            and all(ch in "0123456789abcdef" for ch in sha)
+        )
         if (self.kind not in ("provider", "manual", "transfer", "cifereca", "adept", "derived")
                 or type(self.kind) is not str
-                or type(self.artifact_sha256) is not str
-                or len(self.artifact_sha256) != 64
-                or any(ch not in "0123456789abcdef" for ch in self.artifact_sha256)
+                or not valid_sha(self.artifact_sha256)
                 or (self.source is not None and type(self.source) is not SourceKey)
                 or type(self.attested) is not bool
-                or (self.kind == "provider" and self.source is None)):
+                or not _id(self.identity_id) or not _id(self.origin_ref)
+                or not _id(self.proof_ref, empty=True)
+                or (self.attested and not self.proof_ref)
+                or (self.kind == "provider" and (
+                    self.source is None
+                    or self.source.scope.identity_id != self.identity_id))
+                or (self.kind == "derived" and (
+                    not valid_sha(self.parent_sha256)
+                    or self.parent_sha256 == self.artifact_sha256))
+                or (self.kind != "derived" and self.parent_sha256 is not None)):
             raise ValueError("invalid_origin_evidence")
 
 
@@ -123,8 +139,14 @@ class ConvergenceDecision:
 @dataclass(frozen=True, slots=True)
 class ConvergencePlan:
     decisions: tuple[ConvergenceDecision, ...]
-    read_only: bool = True
-    acquisition_authorized: bool = False
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    @property
+    def acquisition_authorized(self) -> bool:
+        return False
 
 
 def plan_convergence(
