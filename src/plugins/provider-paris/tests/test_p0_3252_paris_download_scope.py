@@ -228,3 +228,43 @@ def test_paris_fallback_pnb_preferences_rebind_blocks_endpoint_before_post(
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+def test_paris_pnb_core_v2_other_credential_on_same_borrower_is_not_a_duplicate(
+    tmp_path, monkeypatch,
+):
+    session, account, loan, _client, requested = prepare(tmp_path, monkeypatch)
+    from types import SimpleNamespace as NS
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="reader-A", identity_id="identity-A",
+           credential_id="card-A", scope_version=2),
+        NS(provider_id="paris", account_id="reader-A", identity_id="identity-B",
+           credential_id="card-B", scope_version=2),
+    ]
+    try:
+        path, _ = session.download_digital(loan, replace(account), tmp_path)
+        assert path.exists() and requested == [SIGNED]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("credential_version", [
+    {"identity_id": "identity-A", "credential_id": "card-B", "scope_version": 2},
+    {"identity_id": "identity-A", "credential_id": "", "scope_version": 2},
+])
+def test_paris_pnb_core_v2_foreign_credential_refuses_before_get(
+    tmp_path, monkeypatch, credential_version,
+):
+    session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
+    from types import SimpleNamespace as NS
+    session.identity_broker.accounts = lambda: [
+        NS(provider_id="paris", account_id="reader-A", **credential_version),
+    ]
+    try:
+        with pytest.raises(ProviderConfigurationError, match="paris_download_scope_mismatch"):
+            session.download_digital(loan, account, tmp_path)
+        assert requested == []
+        assert client.calls == []
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()
