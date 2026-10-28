@@ -169,9 +169,24 @@ class WebDOMTests(unittest.TestCase):
         self.assertEqual(len(result.loans), 1)
         self.assertEqual(result.status, 'partial')
 
-    def test_conflicting_loan_resource_is_rejected(self):
-        with self.assertRaisesRegex(web.WebParseError, '^ambiguous_loans$'):
-            self.parse_loans(loans(loan('a', 'ra') + loan('a', 'rb')))
+    def test_conflicting_loan_resource_quarantines_all_ambiguous_occurrences(self):
+        snapshot = self.parse_loans(loans(loan('a', 'ra') + loan('a', 'rb')))
+        self.assertEqual(snapshot.loans, ())
+        self.assertEqual(snapshot.status, 'partial')
+        self.assertFalse(snapshot.exhaustive)
+
+    def test_conflicting_right_id_preserves_only_independent_positive_loans(self):
+        snapshot = self.parse_loans(loans(
+            loan('a', 'ra') + loan('safe', 'safe-edition')
+            + loan('a', 'rb') + loan('a', 'ra')
+            + loan('another', 'other-edition')
+        ))
+        self.assertEqual(
+            [(row.loan_id, row.resource_id) for row in snapshot.loans],
+            [('safe', 'safe-edition'), ('another', 'other-edition')],
+        )
+        self.assertEqual(snapshot.status, 'partial')
+        self.assertFalse(snapshot.exhaustive)
 
     def test_absence_never_deletes_previous_observation(self):
         first = self.parse_loans(loans(loan('a', 'ra') + loan('b', 'rb')))

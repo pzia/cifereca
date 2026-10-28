@@ -7,7 +7,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.plugin_api import ProviderConfigurationError, ProviderCapabilityError
+from cifereca.plugin_api import Loan, ProviderConfigurationError, ProviderCapabilityError
 from cifereca_bnf_pret import BnfProviderSession
 
 
@@ -345,6 +345,63 @@ def test_bnf_rights_v2_credential_rebound_during_get_refuses_published_loan():
     try:
         with pytest.raises(ProviderConfigurationError, match="account_scope_mismatch"):
             session.rights_observation_snapshot(account)
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
+def test_bnf_conflicting_loan_id_quarantines_only_that_right_and_cannot_get_token(
+    tmp_path,
+):
+    html = activity(
+        ("edition-a", "ambiguous"),
+        ("edition-safe", "loan-safe"),
+        ("edition-b", "ambiguous"),
+        ("edition-a", "ambiguous"),  # a later repeat cannot resurrect it
+        ("edition-extra", "loan-extra"),
+    )
+    session, account, client = fixture(html)
+    try:
+        result = session.rights_observation_snapshot(account)
+        assert [(x.edition_id, x.right_id) for x in result.rights] == [
+            ("edition-safe", "loan-safe"), ("edition-extra", "loan-extra"),
+        ]
+        assert result.status == result.coverage == "partial"
+        assert not result.authorizes_negative_reconciliation
+        assert result.exact("edition-a", "ambiguous", "loan") is None
+        assert result.exact("edition-b", "ambiguous", "loan") is None
+        assert session._observed_loans == {
+            "loan-safe": "edition-safe", "loan-extra": "edition-extra",
+        }
+        assert client.calls == ["login", "activity"]
+        foreign = Loan(
+            id="ambiguous", record_id="edition-a",
+            title="Synthetic ambiguous", provider="BNF_PRET",
+            medium="digital", state="active",
+            source_provider=session.provider_id,
+            source_credential=session.credential_id,
+            source_account_id=account.unique_id,
+            identity_id=account.identity_id,
+        )
+        with pytest.raises(ProviderConfigurationError, match="loan_not_observed"):
+            session.download_digital(
+                foreign, account, tmp_path, explicit_user_action=True,
+            )
+        assert client.calls == ["login", "activity"]  # NO token/ACSM network
+    finally:
+        session.close()
+
+
+def test_bnf_single_conflicting_right_is_only_partial_not_revoked():
+    session, account, client = fixture(
+        activity(("edition-a", "ambiguous"), ("edition-b", "ambiguous")),
+    )
+    try:
+        result = session.rights_observation_snapshot(account)
+        assert result.rights == ()
+        assert result.status == result.coverage == "partial"
+        assert not result.authorizes_negative_reconciliation
+        assert session._observed_loans == {}
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
