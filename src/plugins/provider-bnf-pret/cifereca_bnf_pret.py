@@ -186,7 +186,7 @@ class BnfProviderSession(ProviderSession):
             raise ProviderConfigurationError('account_scope_mismatch')
         broker = self.identity_broker
         owner = (
-            self._core_owner_binding(caller_scope[0])
+            self._core_owner_binding(caller_scope[0], caller_scope[1])
             if broker is not None else None
         )
         if broker is not None and (
@@ -208,7 +208,7 @@ class BnfProviderSession(ProviderSession):
                     account.provider_id, account.credential_id) != caller_scope
                 or self.identity_broker is not broker
                 or (broker is not None and
-                    self._core_owner_binding(caller_scope[0]) != owner)):
+                    self._core_owner_binding(caller_scope[0], caller_scope[1]) != owner)):
             raise ProviderConfigurationError('account_scope_mismatch')
         # Presence of one *actual* validated reader ACSM action in the
         # same authenticated HTML is an offered retrieval route, not an
@@ -224,7 +224,7 @@ class BnfProviderSession(ProviderSession):
                     account.provider_id, account.credential_id) != caller_scope
                 or self.identity_broker is not broker
                 or (broker is not None and
-                    self._core_owner_binding(caller_scope[0]) != owner)):
+                    self._core_owner_binding(caller_scope[0], caller_scope[1]) != owner)):
             raise ProviderConfigurationError('account_scope_mismatch')
         # A partial/empty page cannot close historical rights; nevertheless
         # it must not authorize token downloads from stale observations.
@@ -303,7 +303,7 @@ class BnfProviderSession(ProviderSession):
             reason_code='inventory_not_exhaustive',
         )
 
-    def _core_owner_binding(self, account_id):
+    def _core_owner_binding(self, account_id, identity_id):
         """One unique Core owner reference, or None when not attestable.
 
         This local broker read does not authenticate to BnF or grant a token;
@@ -313,7 +313,11 @@ class BnfProviderSession(ProviderSession):
         if broker is None:
             return None
         try:
-            refs = broker.accounts()
+            if type(identity_id) is not str or not identity_id:
+                return None
+            # Resolve the owner in the selected Core identity, not across
+            # unrelated identities using the same BnF upstream account ID.
+            refs = broker.accounts(identity_id)
             if type(refs) not in (tuple, list):
                 return None
             owners = []
@@ -362,7 +366,7 @@ class BnfProviderSession(ProviderSession):
 
             def core_binding():
                 return (
-                    self._core_owner_binding(caller_scope[0])
+                    self._core_owner_binding(caller_scope[0], caller_scope[1])
                     if caller_scope is not None else None
                 )
 
@@ -536,7 +540,7 @@ class BnfProviderSession(ProviderSession):
                     or type(self._accounts[0]) is not Account):
                 raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
             live = self._accounts[0]
-            owner = self._core_owner_binding(pinned[3])
+            owner = self._core_owner_binding(pinned[3], pinned[0])
             if ((live.identity_id, live.provider_id,
                  live.credential_id, live.unique_id) != pinned
                     or owner is None or owner[1] != (pinned[0],)
@@ -552,7 +556,7 @@ class BnfProviderSession(ProviderSession):
                         account.credential_id, account.unique_id) != pinned
                     or (live.identity_id, live.provider_id,
                         live.credential_id, live.unique_id) != pinned
-                    or self._core_owner_binding(pinned[3]) != owner):
+                    or self._core_owner_binding(pinned[3], pinned[0]) != owner):
                 raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
             matches = [
                 loan for loan in loans
@@ -613,7 +617,7 @@ class BnfProviderSession(ProviderSession):
             # before any fresh inventory GET and at every token/publication
             # fence. Brokerless explicit legacy operation stays unchanged.
             broker = self.identity_broker
-            owner_binding = self._core_owner_binding(account.unique_id)
+            owner_binding = self._core_owner_binding(account.unique_id, account.identity_id)
             if broker is not None and (
                 owner_binding is None
                 or owner_binding[1] != (account.identity_id,)
@@ -647,7 +651,7 @@ class BnfProviderSession(ProviderSession):
                     and self._accounts[0] is account
                     and self.identity_broker is broker
                     and (broker is None or
-                         self._core_owner_binding(account_scope[2]) == owner_binding)
+                         self._core_owner_binding(account_scope[2], account_scope[3]) == owner_binding)
                 )
 
             try:
