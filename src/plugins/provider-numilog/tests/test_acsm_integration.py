@@ -9,7 +9,7 @@ import threading
 from http.server import ThreadingHTTPServer
 import zipfile
 
-from cifereca.plugin_api import AccountRef, AcquisitionBroker, IdentityBroker
+from cifereca.plugin_api import Account, AccountRef, AcquisitionBroker, IdentityBroker
 
 ROOT = Path(__file__).resolve().parents[4]
 PLUGIN_ROOT = ROOT / "src" / "plugins" / "provider-numilog"
@@ -144,6 +144,7 @@ def test_acsm_download_reaches_public_broker_and_simulated_adept_fulfillment():
             )
             try:
                 session.connect()
+                session._accounts[0].identity_id = "alexandre"
                 item = next(book for book in session.library() if book.title == row["title"])
                 produced, source = session.download_direct(item, root / "provider-downloads")
 

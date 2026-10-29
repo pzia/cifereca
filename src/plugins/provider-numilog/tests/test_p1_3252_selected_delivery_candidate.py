@@ -151,7 +151,7 @@ def test_numilog_selected_candidate_duplicate_accountrefs_rejected_pre_get(tmp_p
     from types import SimpleNamespace
     session, account, broker, reads, right = setup()
     try:
-        broker.accounts = lambda: [
+        broker.accounts = lambda identity_id=None: [
             SimpleNamespace(
                 provider_id="numilog", account_id="numilog:" + session.scope,
                 identity_id="identity-A",
