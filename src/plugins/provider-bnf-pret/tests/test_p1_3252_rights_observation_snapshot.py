@@ -224,6 +224,27 @@ def test_bnf_rights_foreign_identity_sharing_upstream_account_is_not_ambiguous()
         session.close()
 
 
+def test_bnf_foreign_identity_arriving_during_activity_preserves_exact_scope():
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    broker = session.identity_broker
+    original = client.activity
+
+    def arrival():
+        html = original()
+        broker.identities = ("identity-A", "identity-B")
+        return html
+
+    client.activity = arrival
+    try:
+        report = session.rights_observation_snapshot(account)
+        assert [right.right_id for right in report.rights] == ["loan-1"]
+        assert report.scope.identity_id == "identity-A"
+        assert set(broker.requests) == {"identity-A"}
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
 def test_bnf_rights_need_broker_but_legacy_loan_inventory_stays_supported():
     session, account, client = fixture(activity(("edition-1", "loan-1")))
     session.identity_broker = None
