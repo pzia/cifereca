@@ -23,8 +23,19 @@ def append_canonical_consent_controls(
     if not (callable(read) and callable(mutate)
             and sync_action_scope_current(window, scope)):
         return 0
+    # Remember only an opaque page number within the current identity.
+    # A 522-item Kobo inventory must remain navigable without rendering
+    # hundreds of GTK rows or truncating the selectable rights.
+    if getattr(window, "_canonical_consent_identity", None) != scope.identity_id:
+        window._canonical_consent_identity = scope.identity_id
+        window._canonical_consent_pages = {}
+    pages = window._canonical_consent_pages
+    page = pages.get(source.source_id, 0)
+    if type(page) is not int or not 0 <= page <= 2048:
+        page = 0
+        pages[source.source_id] = 0
     try:
-        choices = read(source.source_id)
+        choices = read(source.source_id, page=page)
     except Exception:
         return 0
     if type(choices) is not tuple or len(choices) > 48:
@@ -53,7 +64,7 @@ def append_canonical_consent_controls(
         allowed, eligible = choice["allowed"], choice["eligible"]
         kind = "Achat" if choice["kind"] == "purchase" else "Prêt"
         row = Adw.ActionRow()
-        row.set_title(f"Acquisition canonique · {kind} n°{number}")
+        row.set_title(f"Acquisition canonique · {kind} n°{page * 48 + number}")
         row.set_subtitle(
             ("Autorisation active : révocable."
              if allowed else
@@ -118,4 +129,24 @@ def append_canonical_consent_controls(
 
         button.connect("clicked", clicked)
         add_sync_detail(group, row)
+
+    def page_button(label: str, destination: int) -> None:
+        row = Adw.ActionRow()
+        row.set_title("Acquisitions canoniques — autres droits")
+        row.set_subtitle(
+            "Pagination de références exactes, sans nouvelle observation fournisseur."
+        )
+        button = window.action_button(label, "go-next-symbolic")
+        def clicked(_button):
+            if sync_action_scope_current(window, scope):
+                pages[source.source_id] = destination
+                window._refresh_sync_page()
+        button.connect("clicked", clicked)
+        add_sync_action(row, button)
+        add_sync_detail(group, row)
+
+    if page > 0:
+        page_button("Droits précédents", page - 1)
+    if len(safe) == 48 and page < 2048:
+        page_button("Droits suivants", page + 1)
     return len(safe)
