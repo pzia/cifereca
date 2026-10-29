@@ -252,10 +252,10 @@ def observe_canonical_rights_in_sync(
         # Legacy sessions can expose a typed snapshot without having the
         # complete v14 provider_accounts binding. Reject publication of A,
         # but never cancel their independent loan/materialization results.
+        # Account/credential values are private, and provider identifiers
+        # are not needed to diagnose a missing v14 account binding.
         _LOG.warning(
-            "TRACE canonical rights skipped unbound source provider_id=%s "
-            "credential_id=%s account_id=%s",
-            account.provider_id, account.credential_id, account.unique_id,
+            "TRACE canonical rights skipped code=canonical_rights_core_binding_changed"
         )
         return {
             "status": "failed", "observed": len(snapshot.rights),
