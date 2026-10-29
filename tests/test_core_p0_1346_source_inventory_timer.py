@@ -105,6 +105,53 @@ def test_periodic_opt_in_creates_single_minute_heartbeat_then_due_dispatch():
     assert ("dispatch", "alice", "periodic") in r.records["calls"]
 
 
+
+def test_oct29_periodic_refresh_defers_while_automatic_opening_holds_lock():
+    """The real 29 October opening took 86 s; the 60 s tick must not fail."""
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}})
+    opening = {"active": True}
+    r.window.runner.is_active_automatic_opening = lambda: opening["active"]
+    r.configure()
+    tick = next(iter(r.records["timers"].values()))
+    assert tick() is True
+    assert r.jobs == []
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+    opening["active"] = False
+    assert tick() is True
+    assert len(r.jobs) == 1
+    r.jobs[0].work()
+    assert ("dispatch", "alice", "periodic") in r.records["calls"]
+
+
+def test_oct29_queued_periodic_worker_does_not_race_new_opening():
+    """Recheck before broker I/O, not only when GTK enqueues the job."""
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}})
+    opening = {"active": False}
+    r.window.runner.is_active_automatic_opening = lambda: opening["active"]
+    r.configure()
+    tick = next(iter(r.records["timers"].values()))
+    assert tick() is True
+    assert len(r.jobs) == 1
+    opening["active"] = True
+    r.jobs[0].work()  # Deferred, not a failed provider/Sync attempt.
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+    opening["active"] = False
+    assert tick() is True
+    r.jobs[-1].work()
+    assert r.records["calls"].count(("dispatch", "alice", "periodic")) == 1
+
+
+def test_unavailable_opening_probe_defers_without_provider_side_effect():
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}})
+    def unavailable():
+        raise RuntimeError("PRIVATE_SESSION")
+    r.window.runner.is_active_automatic_opening = unavailable
+    r.configure()
+    assert next(iter(r.records["timers"].values()))() is True
+    assert not r.jobs
+
+
+
 def test_on_start_policy_does_not_install_a_periodic_timer():
     r = rig(modes={SOURCE_ID: {"mode": "on_start", "interval_minutes": 60}})
     r.configure()

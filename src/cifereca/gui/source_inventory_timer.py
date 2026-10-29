@@ -61,6 +61,23 @@ def _configured_identity_ids(window: Any) -> tuple[str, ...]:
     return values
 
 
+def _automatic_opening_in_flight(window: Any) -> bool:
+    """Defer a periodic refresh while the global automatic opening owns Sync.
+
+    No task cancellation, clock advance or false failed receipt: the next
+    heartbeat re-evaluates eligibility. Missing API on older test hosts does
+    not add an authority; an unusable installed probe fails closed.
+    """
+    runner = getattr(window, "runner", None)
+    probe = getattr(runner, "is_active_automatic_opening", None)
+    if probe is None:
+        return False
+    try:
+        return probe() is not False if callable(probe) else True
+    except Exception:
+        return True
+
+
 def periodic_identities_due(
     window: Any, broker: Any, *, now: datetime | None = None,
 ) -> tuple[str, ...]:
@@ -258,6 +275,10 @@ def configure(
             configure(window, timeout_add_seconds=timeout_add_seconds,
                       source_remove=source_remove, idle_add=idle_add)
             return False
+        # A periodic tick during opening_sync cannot acquire the same Core
+        # write lock. Treat this as deferred work, not a failed source sync.
+        if _automatic_opening_in_flight(window):
+            return True
         ids = periodic_identities_due(window, broker)
         if not ids:
             return True
@@ -266,6 +287,10 @@ def configure(
             failures = 0
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
+                # Opening may have been submitted after the GTK tick but
+                # before this queued worker began. Do not enter the broker.
+                if _automatic_opening_in_flight(window):
+                    return
                 if (
                     getattr(window, "_closed", False)
                     or _broker(window) is not broker

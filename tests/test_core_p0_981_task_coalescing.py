@@ -122,6 +122,34 @@ def test_five_identical_auto_submissions_create_one_worker_one_activity(session)
     assert s.runner._coalesced == {}
 
 
+
+def test_oct29_automatic_opening_gate_holds_through_gtk_delivery(session):
+    """The periodic timer must defer for worker AND pending terminal callback."""
+    s = session
+    worker, entered, release, calls = s.work()
+    assert s.runner.is_active_automatic_opening() is False
+    s.runner.submit(
+        "Opening", worker, kind="opening-sync",
+        coalesce_key="opening:global:shallow", origin="automatic",
+    )
+    assert entered.wait(3)
+    assert s.runner.is_active_automatic_opening() is True
+    # The worker can finish before GTK receives its completion. Keep blocking
+    # scheduled inventory until the real UI task release.
+    release.set()
+    deadline = time.monotonic() + 3
+    while True:
+        callback, args = s.queue.get(timeout=max(0.01, deadline - time.monotonic()))
+        if callback.__name__ == "deliver":
+            break
+        callback(*args)
+        assert time.monotonic() < deadline
+    assert s.runner.is_active_automatic_opening() is True
+    callback(*args)
+    assert s.runner.is_active_automatic_opening() is False
+
+
+
 def test_distinct_task_scope_and_kind_are_never_coalesced(session):
     s = session
     tasks = [s.work() for _ in range(3)]

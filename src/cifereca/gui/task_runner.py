@@ -43,6 +43,17 @@ class TaskRunner:
         # Every key is scoped by task kind; user controls always bypass it.
         self._coalesced: dict[tuple[str, str], int] = {}
 
+    def is_active_automatic_opening(self) -> bool:
+        """Passive GTK-side gate for periodic inventories during opening Sync.
+
+        Only the Core-owned global automatic opening reservation is inspected.
+        An in-flight result stays active until GTK delivery, avoiding a timer
+        race at the end of the worker. This never grants inventory or download
+        consent and does not release/replace the Core acquisition lock.
+        """
+        with self._lock:
+            return ("opening-sync", "opening:global:shallow") in self._coalesced
+
     def close(self) -> None:
         with self._lock:
             self._coalesced.clear()
