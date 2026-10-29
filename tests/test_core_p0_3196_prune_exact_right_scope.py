@@ -68,6 +68,42 @@ def test_even_exact_owner_manifest_cannot_revoke_canonical_mirrored_right(
         storage.close()
 
 
+def test_projection_prune_preserves_attested_origin_and_physical_file(tmp_path):
+    from tests.test_core_p0_3171_atomic_publication_v14 import (
+        BYTES, SHA, new_source, target, publish, rows,
+    )
+
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        _register(storage)
+        source, snapshot = new_source(
+            "alice", provider="opaque-seller", credential="card",
+            account="primary", edition="book", right="purchase",
+        )
+        root = tmp_path / "EBooks"
+        path = target(tmp_path, "alice")
+        publish(storage, root, path, source, snapshot)
+        legacy = _legacy()
+        legacy.update(local_path=str(path), sha256=SHA, size=len(BYTES))
+        storage.backup_put(legacy)
+        before_right = _right(storage)
+        before_origins = rows(storage)
+        before_placements = storage.placements()
+        before_receipts = storage.acquisitions(provider_id="opaque-seller")
+        assert before_origins == (1, 1, 1, 1)
+        assert storage.backup_prune_missing("opaque-seller", "card", []) == {
+            "pruned": 1, "local_preserved": 1, "entitlements_inactivated": 0,
+        }
+        assert storage.backup_list("opaque-seller") == []
+        assert _right(storage) == before_right
+        assert rows(storage) == before_origins
+        assert storage.placements() == before_placements
+        assert storage.acquisitions(provider_id="opaque-seller") == before_receipts
+        assert path.read_bytes() == BYTES
+    finally:
+        storage.close()
+
+
 @pytest.mark.parametrize("new_owner", ["bob", None, ""])
 def test_legacy_projection_cannot_inactivate_right_reassigned_or_unknown(
     tmp_path, new_owner,
