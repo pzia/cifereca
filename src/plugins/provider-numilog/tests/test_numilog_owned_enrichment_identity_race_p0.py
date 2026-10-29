@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cifereca.plugin_api import ProviderCapabilityError
+from cifereca.plugin_api import Account, ProviderCapabilityError
 from cifereca_numilog import NumilogSession
 from cifereca_numilog_public import parse_public_search
 from cifereca_numilog_public_detail import parse_public_detail_jsonld
@@ -31,7 +31,7 @@ class MutableBroker:
         self.owner = "identity-alice"
         self.calls = 0
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         self.calls += 1
         return [] if self.owner is None else [
             SimpleNamespace(provider_id="numilog",
@@ -48,6 +48,8 @@ def make_session():
     )
     broker.scope = s.scope
     s.connected = True
+    s._accounts = [Account(provider_id="numilog", credential_id=s.credential_id,
+                           unique_id="numilog:" + s.scope, identity_id=broker.owner)]
     card = PAGE.items[0]
     row = {
         "lid": "42", "variant": "()", "title": card.title,
@@ -173,7 +175,7 @@ def test_stable_owner_can_enrich_and_no_private_rights_are_reassigned(
 def test_broker_failure_mid_public_detail_does_not_expose_private_exception(monkeypatch):
     s, broker, row = make_session()
     def bad_detail(_url):
-        broker.accounts = lambda: (_ for _ in ()).throw(
+        broker.accounts = lambda identity_id=None: (_ for _ in ()).throw(
             RuntimeError("PRIVATE=" + PRIVATE))
         return detail(row)
     monkeypatch.setattr(client, "fetch_public_detail", bad_detail)
@@ -225,7 +227,7 @@ def test_duplicate_same_identity_owner_is_rejected_before_private_enrichment(mon
     """A repeated AccountRef is not proof of a uniquely bound credential."""
     s, broker, row = make_session()
     original_accounts = broker.accounts
-    def ambiguous():
+    def ambiguous(identity_id=None):
         return original_accounts() * 2
     broker.accounts = ambiguous
     seen = []
@@ -257,7 +259,7 @@ def test_same_identity_broker_replacement_or_duplicate_cannot_publish_metadata(
             s.identity_broker = newer
         else:
             original_accounts = broker.accounts
-            broker.accounts = lambda: original_accounts() * 2
+            broker.accounts = lambda identity_id=None: original_accounts() * 2
         return detail(row)
 
     monkeypatch.setattr(client, "fetch_public_detail", public_detail)

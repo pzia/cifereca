@@ -19,7 +19,7 @@ class IdentityBroker:
         self.calls = 0
         self.account_id = ""
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         self.calls += 1
         if self.owner is None:
             return []
@@ -56,7 +56,7 @@ def owned_row():
 
 def _candidate_broker(session_obj, identities):
     broker = SimpleNamespace(identities=list(identities), calls=0)
-    def accounts():
+    def accounts(identity_id=None):
         broker.calls += 1
         return [
             SimpleNamespace(provider_id="numilog",
@@ -415,7 +415,7 @@ def test_numilog_v2_same_upstream_account_other_credential_cannot_claim_right(
     foreign_owner,
 ):
     s, broker = session()
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         SimpleNamespace(
             provider_id="numilog", account_id="numilog:" + s.scope,
             identity_id="identity-A", credential_id=s.credential_id,
@@ -458,7 +458,7 @@ def test_numilog_v2_wrong_or_mixed_ref_refuses_typed_rights_and_acsm_owner(
 ):
     s, broker = session()
     owner_id = "numilog:" + s.scope
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         SimpleNamespace(
             provider_id=ref.provider_id,
             account_id=owner_id if ref.account_id == "ACCOUNT" else ref.account_id,
@@ -484,7 +484,7 @@ def test_numilog_v2_wrong_or_mixed_ref_refuses_typed_rights_and_acsm_owner(
 def test_numilog_v2_credential_race_during_get_does_not_publish_purchase():
     s, broker = session()
     credential = [s.credential_id]
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         SimpleNamespace(
             provider_id="numilog", account_id="numilog:" + s.scope,
             identity_id="identity-A", credential_id=credential[0],

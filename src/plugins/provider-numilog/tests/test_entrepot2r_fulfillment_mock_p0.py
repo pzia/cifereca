@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from cifereca.plugin_api import AccountRef, ProviderCapabilityError, ProviderError
+from cifereca.plugin_api import Account, AccountRef, ProviderCapabilityError, ProviderError
 from cifereca_numilog import NumilogSession
 from tests.test_entrepot2r_acsm_origin_p0 import SIGNED, Diagnostics
 
@@ -58,7 +58,7 @@ def make_session(handler, output_dir, *, status="complete", identities=("reader"
         acquisition_broker=broker,
     )
     account = "numilog:" + hashlib.sha256(b"synthetic").hexdigest()[:20]
-    session.identity_broker = SimpleNamespace(accounts=lambda **_kwargs: tuple(
+    session.identity_broker = SimpleNamespace(accounts=lambda identity_id=None, **_kwargs: tuple(
         AccountRef(
             account_id=account, identity_id=identity,
             provider_id="numilog", label="Fixture",
@@ -70,6 +70,8 @@ def make_session(handler, output_dir, *, status="complete", identities=("reader"
         transport=httpx.MockTransport(handler),
         follow_redirects=False, trust_env=False,
     )
+    session._accounts = [Account(provider_id="numilog", credential_id=session.credential_id,
+                                 unique_id=account, identity_id="reader")]
     return session, broker
 
 

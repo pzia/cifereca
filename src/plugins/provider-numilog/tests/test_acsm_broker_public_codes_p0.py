@@ -9,7 +9,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.plugin_api import AccountRef, ProviderCapabilityError, ProviderError
+from cifereca.plugin_api import Account, AccountRef, ProviderCapabilityError, ProviderError
 from cifereca_numilog import NumilogSession
 
 
@@ -29,10 +29,12 @@ def _session(outcome):
         acquisition_broker=NS(import_acsm=lambda *a, **kw: outcome),
     )
     account = "numilog:" + hashlib.sha256(b"fixture").hexdigest()[:20]
-    session.identity_broker = NS(accounts=lambda **_kwargs: (
+    session.identity_broker = NS(accounts=lambda identity_id=None, **_kwargs: (
         AccountRef(account_id=account, identity_id="reader",
                    provider_id="numilog", label="Synthetic"),
     ))
+    session._accounts = [Account(provider_id="numilog", credential_id=session.credential_id,
+                                 unique_id=account, identity_id="reader")]
     return session
 
 

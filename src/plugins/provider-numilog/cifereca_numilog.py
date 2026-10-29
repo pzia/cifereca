@@ -27,7 +27,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 # A descendant of the Core logger shares its canonical journal handler.
 _LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.88'
+VERSION = '0.1.89'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -1134,7 +1134,15 @@ class NumilogSession(ProviderSession):
         if broker is None:
             return None  # Legacy brokerless inventory inspection.
         try:
-            accounts = broker.accounts()
+            if len(self._accounts) != 1:
+                return ('unverified_broker', id(broker))
+            identity_id = self._accounts[0].identity_id
+            if type(identity_id) is not str or not identity_id:
+                return ('unverified_broker', id(broker))
+            # Without an explicit identity the public broker reads the UI
+            # selector. Inventory/fulfillment belongs to this live session,
+            # including when another profile is displayed during Sync.
+            accounts = broker.accounts(identity_id)
             if type(accounts) not in (list, tuple):
                 return ('unverified_broker',)
             target = 'numilog:' + self.scope

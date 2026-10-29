@@ -12,7 +12,7 @@ import httpx
 import pytest
 import zipfile
 
-from cifereca.plugin_api import AccountRef, ProviderCapabilityError, ProviderError
+from cifereca.plugin_api import Account, AccountRef, ProviderCapabilityError, ProviderError
 from cifereca_numilog import NumilogSession
 
 
@@ -87,6 +87,8 @@ def setup(tmp_path, handler, *, identities=("fictional-reader",), status="comple
         acquisition_broker=acquisition, identity_broker=identity_broker,
     )
     identity_broker.account_id = "numilog:" + session.scope
+    session._accounts = [Account(provider_id="numilog", credential_id=session.credential_id,
+                                 unique_id=identity_broker.account_id, identity_id="fictional-reader")]
     session.client.close()
     session.client = httpx.Client(
         transport=httpx.MockTransport(handler), follow_redirects=False, trust_env=False,

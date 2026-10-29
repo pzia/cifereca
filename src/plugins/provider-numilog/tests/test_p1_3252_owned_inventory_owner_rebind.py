@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cifereca.plugin_api import ProviderCapabilityError
+from cifereca.plugin_api import Account, ProviderCapabilityError
 from cifereca_numilog import NumilogSession
 
 
@@ -18,7 +18,7 @@ class IdentityBroker:
         self.calls = 0
         self.account_id = None
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         self.calls += 1
         if self.owner is None:
             return []
@@ -37,6 +37,8 @@ def session(*, with_broker=True):
     )
     instance.connected = True
     broker.account_id = "numilog:" + instance.scope
+    instance._accounts = [Account(provider_id="numilog", credential_id=instance.credential_id,
+                                  unique_id=broker.account_id, identity_id=broker.owner)]
     return instance, broker
 
 
@@ -134,7 +136,7 @@ def _candidate_broker(session, identities):
     broker = SimpleNamespace()
     broker.identities = list(identities)
     broker.calls = 0
-    def accounts():
+    def accounts(identity_id=None):
         broker.calls += 1
         return [
             SimpleNamespace(provider_id="numilog", account_id=owner_scope,
@@ -237,7 +239,7 @@ def test_unrelated_provider_binding_change_does_not_affect_numilog_account():
     s.identity_broker = broker
     original = broker.accounts
     foreign = []
-    def accounts():
+    def accounts(identity_id=None):
         return original() + list(foreign)
     broker.accounts = accounts
     def rows(**_):

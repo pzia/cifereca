@@ -37,7 +37,7 @@ def test_numilog_rights_pagination_stops_after_first_page_owner_change(
             newer.account_id = broker.account_id
             s.identity_broker = newer
         elif race == "same_owner_duplicate":
-            broker.accounts = lambda: [
+            broker.accounts = lambda identity_id=None: [
                 SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
                                 identity_id="identity-A"),
                 SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
@@ -142,7 +142,7 @@ def test_targeted_numilog_delivery_card_never_gets_next_page_after_rebind(
             new_broker.account_id = broker.account_id
             s.identity_broker = new_broker
         elif race == "same_owner_duplicate":
-            broker.accounts = lambda: [
+            broker.accounts = lambda identity_id=None: [
                 SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
                                 identity_id="identity-A"),
                 SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
@@ -253,7 +253,7 @@ def test_legacy_numilog_library_no_second_private_get_after_rebind(
             other.account_id = broker.account_id
             s.identity_broker = other
         elif race == "same_owner_duplicate":
-            broker.accounts = lambda: [
+            broker.accounts = lambda identity_id=None: [
                 SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
                                 identity_id="identity-A"),
                 SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
@@ -297,7 +297,7 @@ def test_legacy_unverified_owner_stays_readable_but_not_transactional(
 ):
     """Existing partial legacy inventory may be inspected, never attested."""
     s, broker = session()
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         SimpleNamespace(provider_id="numilog", account_id=broker.account_id,
                         identity_id=identity)
         for identity in owners

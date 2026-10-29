@@ -34,7 +34,7 @@ def test_numilog_adept_import_result_refused_after_owner_binding_race(
             session.identity_broker = newer
         elif race == "duplicate_owner":
             original = broker.accounts
-            broker.accounts = lambda: original() * 2
+            broker.accounts = lambda identity_id=None: original() * 2
         else:
             broker.owner = "identity-bob"
         return {"status": "complete", "path": str(produced)}
@@ -79,7 +79,7 @@ def test_numilog_stable_owner_still_returns_the_same_adept_artifact(tmp_path):
 def test_numilog_duplicate_owner_rejected_before_starting_adept_import(tmp_path):
     session, broker, _row = make_session()
     original = broker.accounts
-    broker.accounts = lambda: original() * 2
+    broker.accounts = lambda identity_id=None: original() * 2
     calls = []
     session.acquisition_broker = NS(import_acsm=lambda *_a, **_kw: calls.append("import"))
     try:
