@@ -358,7 +358,7 @@ def _run_observed_canonical_convergence(
         counts = {
             status: sum(row.status == status for row in outcomes)
             for status in ("downloaded", "recovered", "present_attested",
-                           "pending", "blocked", "failed", "cancelled")
+                           "pending", "blocked", "failed", "cancelled", "skipped_archived")
         }
         return counts
 
@@ -1229,7 +1229,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 executed.append({"status": "failed", "errors": 1, "sources": []})
         metric_keys = (
             "errors", "downloaded", "unchanged", "attempted", "pending",
-            "attention_required", "remaining", "manifest_items",
+            "attention_required", "skipped_archived", "remaining", "manifest_items",
         )
         counters = {
             key: sum(int(result.get(key) or 0) for result in executed)

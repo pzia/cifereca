@@ -49,7 +49,7 @@ class CompletedDelivery:
 
 
 OutcomeStatus = Literal[
-    "present_attested", "downloaded", "recovered", "pending", "blocked", "failed", "cancelled",
+    "present_attested", "downloaded", "recovered", "pending", "blocked", "failed", "cancelled", "skipped_archived",
 ]
 
 
@@ -240,6 +240,9 @@ def execute_admitted_convergence(
         if (snapshot.status not in ("success", "partial")
                 or row.state != "active" or not row.provider_attested):
             results.append(ConvergenceOutcome(key, "pending", "right_unconfirmed"))
+            continue
+        if row.delivery_unavailable_reason == "archived":
+            results.append(ConvergenceOutcome(key, "skipped_archived", "delivery_archived"))
             continue
         if row.delivery != "available" or not row.delivery_offer_id:
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))

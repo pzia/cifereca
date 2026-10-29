@@ -120,7 +120,7 @@ def test_typed_A_saved_in_same_existing_source_sync_once_and_without_get(rig):
     assert first["canonical_rights"] == {
         "status": "partial", "observed": 1, "attested_active": 1,
         "source_references_changed": 1, "present_attested": 0,
-        "pending": 1, "read_only_plan": True, "acquisition_authorized": False,
+        "pending": 1, "skipped_archived": 0, "read_only_plan": True, "acquisition_authorized": False,
     }
     saved, links = refs(db)
     assert saved == [(

@@ -73,6 +73,7 @@ class ProviderRightObservation:
     observed_at: str | None = None
     delivery: DeliveryAvailability = "unknown"
     delivery_offer_id: str = ""
+    delivery_unavailable_reason: Literal["", "archived"] = ""
 
     def __post_init__(self) -> None:
         if not _token(self.edition_id) or not _token(self.right_id):
@@ -101,6 +102,11 @@ class ProviderRightObservation:
             raise ValueError("invalid_rights_delivery")
         if (self.delivery == "available") != bool(self.delivery_offer_id):
             raise ValueError("unproven_rights_delivery")
+        if (type(self.delivery_unavailable_reason) is not str
+                or self.delivery_unavailable_reason not in ("", "archived")
+                or (self.delivery_unavailable_reason and (
+                    self.delivery != "unavailable" or not self.provider_attested))):
+            raise ValueError("invalid_rights_delivery_reason")
         if self.delivery == "available" and (
                 self.evidence_kind == "legacy_unverified" or self.state != "active"):
             raise ValueError("unproven_rights_delivery")

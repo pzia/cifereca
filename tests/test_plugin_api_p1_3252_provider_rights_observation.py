@@ -181,3 +181,25 @@ def test_no_io_no_plugin_or_storage_mutation_boundary():
     b = snap("numilog", rights=(purchase(),))
     assert (a.rights[0].state, b.rights[0].state) == ("active", "active")
     assert not (called.network or called.storage or called.download)
+
+
+def test_archive_reason_is_additive_and_does_not_change_right_or_create_offer():
+    right = replace(purchase(delivery="unavailable"), delivery_unavailable_reason="archived")
+    assert right.state == "active" and right.provider_attested
+    assert right.delivery_offer_id == "" and not right.authorizes_mutation
+    assert purchase(delivery="unavailable").delivery_unavailable_reason == ""
+
+
+@pytest.mark.parametrize("reason", [None, True, [], "archived_book", "unknown"])
+def test_invalid_delivery_reason_is_rejected(reason):
+    with pytest.raises(ValueError, match="invalid_rights_delivery_reason"):
+        replace(purchase(delivery="unavailable"), delivery_unavailable_reason=reason)
+
+
+@pytest.mark.parametrize("delivery", ["available", "unknown"])
+def test_archive_reason_requires_attested_unavailable_delivery(delivery):
+    with pytest.raises(ValueError, match="invalid_rights_delivery_reason"):
+        replace(purchase(delivery=delivery), delivery_unavailable_reason="archived")
+    with pytest.raises(ValueError, match="invalid_rights_delivery_reason"):
+        ProviderRightObservation("edition", "right", "purchase", delivery="unavailable",
+                                 delivery_unavailable_reason="archived")
