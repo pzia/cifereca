@@ -24,6 +24,13 @@ refusés. Pour copier des symlinks sources, Bubblewrap doit prendre en charge
 version dépourvue de cette capacité est refusée pour ces liens, sans solution
 moins confinée. Aucun lancement sans confinement ne remplace un Bubblewrap défaillant.
 
+Sur Ubuntu 24.04, commencer par
+`python3 scripts/recette-doctor.py --require-apparmor`. La
+[procédure Ubuntu / AppArmor](RECETTE-UBUNTU-24.04.md) distingue les refus
+userns/UID mapping/loopback, le profil distribué restrictif, les prérequis
+administrateur, le rollback et la version nécessaire pour `--ro-bind-fd`.
+Ne jamais désactiver la protection globale pour débloquer cette recette.
+
 Le script essaie `~/.config/cifereca/config.toml`, puis le format actuellement
 utilisé par le Core, `$XDG_CONFIG_HOME/cifereca/config.json` (par défaut
 `~/.config/cifereca/config.json`). `--config` choisit strictement le fichier
