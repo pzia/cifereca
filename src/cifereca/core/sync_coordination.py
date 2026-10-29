@@ -358,7 +358,7 @@ def _run_observed_canonical_convergence(
         counts = {
             status: sum(row.status == status for row in outcomes)
             for status in ("downloaded", "recovered", "present_attested",
-                           "pending", "blocked", "failed", "cancelled", "skipped_archived")
+                           "pending", "blocked", "failed", "cancelled", "skipped_archived", "inactive")
         }
         return counts
 
@@ -423,6 +423,11 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         admitted_epoch=admitted_epoch, sync_lease=sync_lease,
                         cancelled_for_rights=cancelled_for_rights,
                     )
+                    if (counts is None and canonical is not None
+                            and canonical.get("pending", 0) > 0):
+                        # An optional delivery ABI may be absent. Its absence
+                        # cannot turn the known unsatisfied A→B plan into PASS.
+                        result["status"] = "partial"
                     if counts is not None:
                         result["canonical_execution"] = counts
                         if counts["cancelled"]:
@@ -954,6 +959,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         sync_lease=_OPENING_CANONICAL_LEASE.get(),
                         cancelled_for_rights=lambda: False,
                     )
+                    if (counts is None and canonical is not None
+                            and canonical.get("pending", 0) > 0):
+                        inventory_partial = True
                     if counts is not None:
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts

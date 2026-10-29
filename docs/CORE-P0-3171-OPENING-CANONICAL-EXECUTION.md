@@ -81,3 +81,19 @@ succès sur l'ancien code (explicite/ouverture, sans offre/sans consentement)
 puis vérifie `partial`, zéro erreur d'exécution et zéro GET. Le cas positif
 vérifie une acquisition puis une deuxième Sync présente, un seul GET et un
 Placement conservé. Fournisseurs synthétiques, SQLite et verrou réels.
+
+### Fournisseur sans route de livraison
+
+Si le provider émet des droits canoniques mais n'implémente pas la route
+optionnelle de livraison, l'absence d'exécuteur n'efface pas les décisions du
+plan : un droit actif non satisfait maintient la Sync en `partial`, avec
+l'inventaire `success` conservé séparément. Si l'exécuteur existe, son résultat
+final remplace cette appréciation préalable : une acquisition achevée ne reste
+pas artificiellement en attente à cause du plan calculé avant son GET.
+
+Un droit `inactive` attesté donne un résultat descriptif `inactive`, jamais un
+`pending` de téléchargement. Cela ne ferme aucun droit SQLite : seuls les
+contrats séparés de preuve négative peuvent le faire. Liste vide, archive
+ignorée et historique inactif ne rendent donc pas le bilan partiel à eux seuls.
+Les tests de bilan couvrent explicite/ouverture avec et sans route, l'historique
+positif conservé et l'absence totale de GET/publication sur ces cas.

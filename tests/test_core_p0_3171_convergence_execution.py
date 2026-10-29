@@ -148,7 +148,8 @@ def test_without_admitted_offer_active_right_and_configured_consent_no_get(rig, 
         service, account, snapshot, root, lock_path, consent,
         lambda *_: pytest.fail("missing consent/right/offer MUST deny GET"),
     )
-    assert len(result) == 1 and result[0].status == "pending"
+    assert len(result) == 1
+    assert result[0].status == ("inactive" if condition == "inactive_right" else "pending")
     assert rows(service.storage) == (0, 0, 0, 0)
 
 
