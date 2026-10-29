@@ -21,7 +21,6 @@ def append_canonical_consent_controls(
     read = getattr(broker, "canonical_acquisition_choices", None)
     mutate = getattr(broker, "set_canonical_acquisition_choice", None)
     if not (callable(read) and callable(mutate)
-            and getattr(source, "enabled", None) is True
             and sync_action_scope_current(window, scope)):
         return 0
     try:
