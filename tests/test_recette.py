@@ -608,6 +608,32 @@ class RecipeFixture(unittest.TestCase):
         self.assertTrue(recette.verify(target)["ok"])
         recette.destroy(target)
 
+    def test_nested_release_dot_venvs_are_excluded_without_hiding_sibling_data(self):
+        for absolute in (False, True):
+            with self.subTest(absolute=absolute):
+                version = self.data / "runtime/releases/v1"
+                nested = version / "tools/compiler/.venv"
+                (nested / "bin").mkdir(parents=True)
+                (nested / "bin/python").symlink_to("/usr/bin/python3")
+                secret = nested / "credentials"
+                secret.symlink_to(self.production / "missing-secret")
+                secret_before = secret.lstat()
+                (nested.parent / "data.txt").write_bytes(b"keep useful sibling")
+                current = self.data / "runtime/current"
+                current.symlink_to(version if absolute else Path("releases/v1"))
+                target = self.create_fixture()
+                manifest = json.loads((target / "manifest.json").read_text())
+                for prefix in ("runtime/current", "runtime/releases/v1"):
+                    relative = Path(prefix) / "tools/compiler"
+                    self.assertIn(str(self.data / relative / ".venv"), manifest["excluded_rebuildable_runtimes"])
+                    self.assertFalse((target / "data/cifereca" / relative / ".venv").exists())
+                    self.assertEqual((target / "data/cifereca" / relative / "data.txt").read_bytes(), b"keep useful sibling")
+                self.assertEqual(secret.lstat(), secret_before)
+                self.assertTrue(recette.verify(target)["ok"])
+                recette.destroy(target)
+                current.unlink()
+                shutil.rmtree(self.data / "runtime")
+
     def test_runtime_exclusion_never_hides_external_links_in_books_or_useful_data(self):
         for source in (self.books / "runtime/releases/v1/.venv",
                        self.data / "runtime/releases/v1/business-data"):

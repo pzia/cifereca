@@ -108,7 +108,10 @@ Aucun lien, permission ou dossier de production n'est à modifier.
   `.virtualenv` directement sous `data/cifereca/runtime/releases/<release>/`
   ou `runtime/versions/<release>/`, ainsi que sous l'alias `runtime/current/`,
   sont exclus **avant toute résolution/lecture de leur contenu**. Cela couvre
-  les symlinks Python vers `/usr/bin` et les environnements eux-mêmes externes
+  aussi les `.venv` imbriqués à toute profondeur dans ces releases/versions
+  et leur alias `current` (par exemple `tools/compiler/.venv`). Leurs fichiers
+  voisins restent copiés sous les mêmes contrôles. Les symlinks Python vers
+  `/usr/bin` et les environnements eux-mêmes externes
   ou cassés. Le manifeste atteste leurs chemins dans
   `excluded_rebuildable_runtimes`. L'environnement de recette est reconstruit
   depuis le code figé ; le reste de la release, SQLite et les livres suivent
