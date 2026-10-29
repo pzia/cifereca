@@ -14,8 +14,9 @@ le seul ajout de ces contrôles, car leur état de provenance reste distinct.
 ## Contrat fermé (broker Core optionnel)
 
 `SynchronizationBrokerImpl.canonical_acquisition_choices(source_id)` lit
-**uniquement** une transaction SQLite : au maximum 48 SourceReferences déjà
-persistées, du compte exact. Retour : `reference` (empreinte opaque stable
+**uniquement** SQLite : pages de 48 SourceReferences déjà persistées,
+du compte exact, accessibles via un index stable ; notamment pour les
+522 références du compte Kobo observées le 29 octobre. Retour : `reference` (empreinte opaque stable
 de 64 caractères, **pas** un jeton d'autorisation), `kind` achat/prêt,
 `allowed` et `eligible` booléens. Aucun identifiant fournisseur/credential,
 numéro de prêt, titre privé, URL signée ni chemin n'est exposé dans l'API/UI.
@@ -26,11 +27,12 @@ primitive Core déjà livrée** `set_source_acquisition_consent` ; le `BEGIN
 IMMEDIATE` revalide l'attestation positive, la source active, l'identité,
 le credential, l'édition et le prêt avant d'écrire un grant. L'échec est
 fermé. Révoquer un grant ancien reste possible après disparition du droit,
-sans suppression du droit ni d'un fichier. Les records malformés ou plus de
-48 droits refusent de produire une liste tronquée.
+sans suppression du droit ni d'un fichier. Les records malformés sont refusés. Les droits au-delà de 48 sont exposés
+par les pages suivantes sans chargement fournisseur ni grant automatique.
 
 La page Synchronisation ajoute, dans les outils du compte visible, une
-action par droit affiché. **Autoriser** et **Révoquer** exigent un clic puis
+action par droit affiché, avec navigation entre pages de 48 droits.
+**Autoriser** et **Révoquer** exigent un clic puis
 une confirmation explicite ; le bouton respecte le scope CoreUI capturé
 (page/profil/source), puis la primitive Core revérifie sous SQLite. Le simple
 affichage ne déclenche jamais de provider GET, d'ACSM ou de publication.
