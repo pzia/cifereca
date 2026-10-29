@@ -85,7 +85,7 @@ def test_typed_consultation_rejects_changed_source_before_cache(tmp_path, change
             calls.append(requested)
             result = snapshot(a, [loan(a)])
             if change == "epoch":
-                service._account_context_epoch += 1
+                service._source_context_epoch += 1
             elif change == "session_swap":
                 service._sessions[service._session_key(a.provider_id, a.credential_id)] = NS(
                     provider_id=a.provider_id, credential_id=a.credential_id,

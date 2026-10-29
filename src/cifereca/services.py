@@ -37,6 +37,7 @@ from .core import adept_inventory_reconciliation
 from .core import kobo_backup
 from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
+from .core.source_context import source_context_epoch
 from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
@@ -857,7 +858,7 @@ class LibraryService:
             account.identity_id, account.provider_id,
             account.credential_id, account.unique_id,
         )
-        request_epoch = self._account_context_epoch
+        request_epoch = source_context_epoch(self)
         request_session_fields = (
             getattr(session, "provider_id", None),
             getattr(session, "credential_id", None),
@@ -879,14 +880,13 @@ class LibraryService:
         )
         if raw_reader is not None:
             from .plugin_api.loan_inventory import read_loan_inventory
-            epoch = self._account_context_epoch
             snapshot = read_loan_inventory(session, account)
             if snapshot.status in ("failed", "cancelled"):
                 raise ProviderConfigurationError("loan_inventory_read_unavailable")
             # The reader already checks the account and mutable session
-            # fields; additionally protect against an ABA identity switch or
+            # fields; additionally protect against an ABA source rebind or
             # replacement of the registered provider during the I/O.
-            if (self._account_context_epoch != epoch
+            if (source_context_epoch(self) != request_epoch
                     or self._session_for_account(account) is not session):
                 raise ProviderConfigurationError("loan_inventory_scope_changed")
             rows = list(snapshot.loans)
@@ -898,7 +898,7 @@ class LibraryService:
             # changes. Preserve non-registered legacy test/plugin shims:
             # only assert a registry lease if it existed at admission.
             if (
-                self._account_context_epoch != request_epoch
+                source_context_epoch(self) != request_epoch
                 or (
                     account.identity_id, account.provider_id,
                     account.credential_id, account.unique_id,
@@ -941,11 +941,19 @@ class LibraryService:
         return rows
 
     def refresh_loans(self, force: bool = False) -> list[Loan]:
-        self.last_loans = self._loans_for_account(self.current_account, force=force)
-        self.diagnostics.add("CACHE", "loans", detail={"count": len(self.last_loans), "identity": self.current_account.identity_id})
-        if force:
-            self.refresh_adept_inventory(self.current_account.identity_id)
-        return self.last_loans
+        account, epoch = self.current_account, self._account_context_epoch
+        rows = self._loans_for_account(account, force=force)
+        # Scoped reads may finish after a UI selection (including A→B→A).
+        # Cache the exact source, but publish only to the original UI context.
+        with self._search_generation_lock:
+            current = (self._account_context_epoch == epoch
+                       and self.current_account is account)
+            if current:
+                self.last_loans = rows
+        self.diagnostics.add("CACHE", "loans", detail={"count": len(rows), "identity": account.identity_id})
+        if force and current:
+            self.refresh_adept_inventory(account.identity_id)
+        return rows
 
     def refresh_identity_loans(self, force: bool = False, identity_id: str | None = None) -> list[Loan]:
         identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
