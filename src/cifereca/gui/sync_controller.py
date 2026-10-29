@@ -470,6 +470,13 @@ def _refresh_sync_page(self) -> None:
         now.set_valign(Gtk.Align.CENTER)
         if source.sync_capable:
             add_sync_action(row, now)
+            # A canonical right-level grant is independent of legacy Kobo
+            # backup, Numilog schedules and source inventory toggles. Only
+            # the opt-in Core broker exposes an exact, confirmed choice UI.
+            from .canonical_consent_controls import append_canonical_consent_controls
+            append_canonical_consent_controls(
+                self, broker, source, scope, group,
+            )
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
