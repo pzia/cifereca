@@ -64,3 +64,20 @@ un fournisseur vivant ; ne pas déclarer #3171 clos. Examiner séparément les
 trois achats Numilog en `needs_reconciliation`, les deux
 `cross_identity_loan` et l'attention ADEPT, en préservant les droits.
 Aucune opération Plugins B ni Diagnostics C modifiée.
+
+## Bilan avec convergence en attente
+
+Un inventaire canonique `success` ne suffit pas à terminer la Sync : si
+`canonical_execution.pending > 0` (par exemple offre ou consentement manquant),
+la source et le bilan d'identité à l'ouverture restent `partial`, comme la
+Sync explicite. Le compteur `pending` conserve la distinction avec `failed`
+et `blocked` ; aucune erreur fournisseur supplémentaire ni mutation de droit
+n'est produite. Une acquisition achevée ou une présence attestée sur la Sync
+suivante n'est pas rendue partielle par cette règle. Les résultats ignorés
+non-erreur, tels les archivés, ne constituent pas un pending implicite.
+
+Preuve : `test_core_p0_3171_pending_sync_outcome.py` reproduit quatre faux
+succès sur l'ancien code (explicite/ouverture, sans offre/sans consentement)
+puis vérifie `partial`, zéro erreur d'exécution et zéro GET. Le cas positif
+vérifie une acquisition puis une deuxième Sync présente, un seul GET et un
+Placement conservé. Fournisseurs synthétiques, SQLite et verrou réels.

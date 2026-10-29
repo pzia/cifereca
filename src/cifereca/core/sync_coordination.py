@@ -427,7 +427,9 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         result["canonical_execution"] = counts
                         if counts["cancelled"]:
                             raise Cancelled("canonical_sync_cancelled")
-                        if counts["failed"] or counts["blocked"]:
+                        # Inventory success does not finish A→B while a right
+                        # still awaits an offer/consent. This is not an error.
+                        if counts["failed"] or counts["blocked"] or counts["pending"]:
                             result["status"] = "partial"
                         if counts["downloaded"]:
                             result["files_materialized"] = (
@@ -960,7 +962,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             completed[key] += count
                         if counts["cancelled"]:
                             raise Cancelled("canonical_opening_cancelled")
-                        if counts["blocked"] or counts["failed"]:
+                        # Keep pending convergence visible without inflating
+                        # provider errors or changing any source right.
+                        if counts["blocked"] or counts["failed"] or counts["pending"]:
                             inventory_partial = True
                         new_acquisitions += counts["downloaded"]
                     source_outcomes[source_id] = (
