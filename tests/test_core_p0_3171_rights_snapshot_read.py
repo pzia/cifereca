@@ -61,7 +61,7 @@ def rig(provider="provider-alpha", *, owner="A", credential="cred-A",
     session = ProviderSession(provider, credential, reader)
     session.accounts = [account]
     service = SimpleNamespace(
-        _account_context_epoch=1,
+        _source_context_epoch=1,
         accounts=[account],
         _sessions={(provider, credential): session},
         storage=FakeStorage({(provider, credential): owner}),
@@ -159,7 +159,7 @@ def test_snapshot_from_changed_source_discarded_in_full(alter):
         if alter == "session_rebind":
             session.credential_id = "other"
         if alter == "account_epoch":
-            service._account_context_epoch += 1
+            service._source_context_epoch += 1
         if alter == "disconnect":
             session.connected = False
         if alter == "close":
@@ -292,7 +292,7 @@ def test_inplace_duplicate_or_replaced_registration_after_provider_io_is_rejecte
             pytest.fail("unrecognized synthetic transition")
         assert service.accounts is original_accounts
         assert service._sessions is original_sessions
-        assert service._account_context_epoch == 1
+        assert service._source_context_epoch == 1
         return result
 
     session.reader = read

@@ -166,6 +166,9 @@ class LibraryService:
         self.identities: list[Identity] = []
         self.current_identity: Identity | None = None
         self._account_context_epoch = 0
+        # Source operations survive UI selection changes. Reconfiguration
+        # and disconnect revoke their admission independently of UI searches.
+        self._source_context_epoch = 0
         recovered = self._recover_identity_directory_migration()
         self._sync_identity_configuration()
         if recovered:
@@ -381,6 +384,7 @@ class LibraryService:
         engine = self._identity_directory_engine()
         try:
             with InterProcessLock(acquisition_lock_file()):
+                self._source_context_epoch += 1
                 if engine.pending():
                     engine.run()
                     self._sync_identity_configuration()

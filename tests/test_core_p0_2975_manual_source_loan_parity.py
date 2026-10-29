@@ -152,7 +152,7 @@ def test_manual_source_rejects_mixed_or_stale_account_before_rights_write(
                         "sync.source.enabled." + service.sync_source_id(primary), "0",
                     )
                 elif attack == "epoch":
-                    service._account_context_epoch += 1
+                    service._source_context_epoch += 1
                 return rows
 
             session.loans = change_during_read

@@ -6,6 +6,8 @@ never GETs content, invokes ADEPT, creates a receipt or publishes SQLite B.
 """
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 from dataclasses import replace
 from inspect import getattr_static
 import logging
@@ -86,7 +88,7 @@ def qualify_selected_offers(
             if (service.storage is not initial_storage
                     or service.accounts is not initial_accounts
                     or service._sessions is not initial_sessions
-                    or service._account_context_epoch != admitted_epoch
+                    or source_context_epoch(service) != admitted_epoch
                     or (account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id) != coordinates):
                 return False

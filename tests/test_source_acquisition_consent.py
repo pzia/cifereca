@@ -125,7 +125,7 @@ def test_epoch_change_during_permission_write_rolls_back(rig):
     service, db, _ = rig
     persist_attested_source_references(db, service.snapshot)
     def rebound():
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
         return 1
     with db._lock, db._connect() as connection:
         connection.create_function("synthetic_rebind", 0, rebound)

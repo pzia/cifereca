@@ -439,6 +439,7 @@ def provider_diagnostic_state(self) -> dict[str, Any]:
 
 
 def close(self) -> None:
+    self._source_context_epoch = getattr(self, "_source_context_epoch", 0) + 1
     with self._virtual_schedule_lock:
         self._virtual_collection_closed = True
     with self._virtual_reconcile_lock:
@@ -460,6 +461,7 @@ def close(self) -> None:
 
 
 def disconnect_configured(self) -> None:
+    self._source_context_epoch = getattr(self, "_source_context_epoch", 0) + 1
     for key, session in list(self._sessions.items()):
         try:
             session.close()

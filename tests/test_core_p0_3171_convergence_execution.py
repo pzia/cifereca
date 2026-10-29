@@ -27,7 +27,7 @@ class FakeService:
         self.storage = storage
         self.accounts = list(accounts)
         self._sessions = {}
-        self._account_context_epoch = 1
+        self._source_context_epoch = 1
         self.enabled = True
         self.calls = 0
         for account in accounts:
@@ -84,7 +84,7 @@ def run(service, account, snapshot, root, lock_path, consent, deliver,
         return execute_admitted_convergence(
             service, account, service._sessions[(
                 account.provider_id, account.credential_id,
-            )], snapshot, admitted_epoch=service._account_context_epoch,
+            )], snapshot, admitted_epoch=service._source_context_epoch,
             shared_lock=lease, library_root=root,
             persisted_consent=frozenset(consent),
             consent_still_current=consent_still_current or (
@@ -211,7 +211,7 @@ def test_session_upstream_borrower_changed_during_get_blocks_publication(rig):
 
 def test_core_epoch_changed_between_account_read_and_dispatch_denies_get(rig):
     service, account, source, snapshot, root, lock_path = rig
-    service._account_context_epoch += 1
+    service._source_context_epoch += 1
     with InterProcessLock(lock_path) as lease:
         with pytest.raises(ValueError, match="convergence_session_rebound"):
             execute_admitted_convergence(

@@ -1,6 +1,8 @@
 """Account-scoped opt-in BnF loan materialization during Core synchronization."""
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 import hashlib
 import logging
 from pathlib import Path
@@ -131,7 +133,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         loan.source_provider, loan.source_credential, loan.source_account_id,
         loan.identity_id, loan.medium, loan.state,
     )
-    core_epoch = service._account_context_epoch
+    core_epoch = source_context_epoch(service)
     consent_revision = service.storage.metadata_get(policy_key(account) + '.revision')
     session = service._sessions.get(
         service._session_key('bnf-pret', account.credential_id),
@@ -145,7 +147,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 and service.storage.metadata_get(
                     policy_key(account) + '.revision'
                 ) == consent_revision
-                and service._account_context_epoch == core_epoch
+                and source_context_epoch(service) == core_epoch
                 and service._sessions.get(
                     service._session_key('bnf-pret', account.credential_id),
                 ) is session

@@ -40,7 +40,7 @@ def test_refreshed_manifest_rebind_during_http_cannot_publish_presence(
         elif change == "mutate_owner":
             session._accounts[0].unique_id = "different-owner"
         else:
-            service._account_context_epoch += 1
+            service._source_context_epoch += 1
         return manifest
 
     monkeypatch.setattr(session, "backup_manifest", raced)

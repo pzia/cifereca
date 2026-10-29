@@ -6,6 +6,8 @@ The existing executor must still check the current offer, session and bytes.
 """
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 import hashlib
 import json
 
@@ -49,7 +51,7 @@ def _attested(source, evidence_ref, observed_at):
 def _context(service, account):
     if type(account) is not Account:
         raise ValueError("invalid_acquisition_consent_account")
-    storage, accounts, epoch = service.storage, service.accounts, service._account_context_epoch
+    storage, accounts, epoch = service.storage, service.accounts, source_context_epoch(service)
     scope = (account.identity_id, account.provider_id, account.credential_id, account.unique_id)
 
     def current():
@@ -58,7 +60,7 @@ def _context(service, account):
                 a.identity_id, a.provider_id, a.credential_id, a.unique_id,
             ) == scope]
             return (service.storage is storage and service.accounts is accounts
-                    and service._account_context_epoch == epoch
+                    and source_context_epoch(service) == epoch
                     and len(matching) == 1 and matching[0] is account
                     and (account.identity_id, account.provider_id,
                          account.credential_id, account.unique_id) == scope)

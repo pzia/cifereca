@@ -4,6 +4,8 @@ Facade-owned sessions, acquisition helpers, locks and storage remain unique;
 no widgets or additional remote calls are introduced."""
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 from contextvars import ContextVar
 
 import time
@@ -125,7 +127,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         source_scope = (
             account.identity_id, account.provider_id,
             account.credential_id, account.unique_id,
-            self._account_context_epoch,
+            source_context_epoch(self),
         )
         # One selection point for typed envelope and installed v1 adapters.
         # Legacy positive lists can never certify missing/returned loans.
@@ -142,7 +144,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                  row.credential_id, row.unique_id) == source_scope[:4]
         ]
         if (len(matching) != 1 or matching[0] is not account
-                or self._account_context_epoch != source_scope[4]
+                or source_context_epoch(self) != source_scope[4]
                 or self.identity_by_id(account.identity_id) is None
                 or self._sessions.get(self._session_key(
                     account.provider_id, account.credential_id,
@@ -406,7 +408,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                                 check()
                         return False
 
-                    admitted_epoch = self._account_context_epoch
+                    admitted_epoch = source_context_epoch(self)
                     admitted_snapshots = []
                     canonical = observe_canonical_rights_in_sync(
                         self, account, cancelled=cancelled_for_rights,
@@ -700,7 +702,7 @@ def _registered_typed_loan_scope_current(
         if (type(account) is not Account or (
             account.identity_id, account.provider_id,
             account.credential_id, account.unique_id,
-            self._account_context_epoch,
+            source_context_epoch(self),
         ) != scope):
             return False
         matching = [
@@ -837,7 +839,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     typed_scope = (
                         account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id,
-                        self._account_context_epoch,
+                        source_context_epoch(self),
                     )
                     # Preserve legacy positive normalization while typed
                     # snapshots carry coverage; neither allows unproven
@@ -928,7 +930,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # reconciliation orchestration or automatic delivery
                     # permissions are invented by the startup path.
                     from .canonical_sync_stage import observe_canonical_rights_in_sync
-                    admitted_epoch = self._account_context_epoch
+                    admitted_epoch = source_context_epoch(self)
                     admitted_snapshots = []
                     canonical = observe_canonical_rights_in_sync(
                         self, account, snapshot_sink=admitted_snapshots.append,
