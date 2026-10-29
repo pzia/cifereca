@@ -766,7 +766,15 @@ class KoboSession(ProviderSession):
         if broker is None:
             return None
         try:
-            bindings = broker.accounts()
+            if len(self._accounts) != 1:
+                return None
+            identity_id = self._accounts[0].identity_id
+            if type(identity_id) is not str or not identity_id:
+                return None
+            # accounts(None) follows the UI selector in the public broker.
+            # This session's Core binding must determine the lookup even
+            # during a global sync or a selector change between Vault pages.
+            bindings = broker.accounts(identity_id)
             if type(bindings) not in (tuple, list):
                 return None
             owners = []

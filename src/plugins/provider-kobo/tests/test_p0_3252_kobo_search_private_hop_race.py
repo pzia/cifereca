@@ -56,7 +56,7 @@ def test_kobo_search_never_starts_private_get_after_public_owner_rebind(race):
         elif race == "broker_ABA":
             session.identity_broker = type(broker)(("identity-A",))
         elif race == "broker_v2_credential":
-            broker.accounts = lambda: [
+            broker.accounts = lambda identity_id=None: [
                 NS(provider_id="kobo", account_id="alice",
                    identity_id="identity-A", scope_version=2,
                    credential_id="foreign-credential"),

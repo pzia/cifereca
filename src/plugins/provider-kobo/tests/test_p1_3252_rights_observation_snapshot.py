@@ -20,7 +20,7 @@ class OwnerBroker:
         self.identities = identities
         self.calls = 0
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         self.calls += 1
         return tuple(
             NS(provider_id="kobo", account_id="alice", identity_id=identity)
@@ -309,7 +309,7 @@ def test_kobo_v2_two_credentials_one_upstream_account_are_independent(other_owne
     s, vault, broker, account = _rig([
         {"product_id": "book-1", "account_id": "alice", "owned": True},
     ])
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         NS(provider_id="kobo", account_id="alice", identity_id="identity-A",
            credential_id="synthetic-card", scope_version=2),
         NS(provider_id="kobo", account_id="alice", identity_id=other_owner,
@@ -340,7 +340,7 @@ def test_kobo_v2_wrong_credential_and_ambiguous_mixed_v1_v2_before_vault(refs):
     s, vault, broker, account = _rig([
         {"product_id": "book-1", "account_id": "alice", "owned": True},
     ])
-    broker.accounts = lambda: refs
+    broker.accounts = lambda identity_id=None: refs
     try:
         with pytest.raises(ProviderCapabilityError, match="propriétaire unique"):
             s.rights_observation_snapshot(account)
@@ -355,7 +355,7 @@ def test_kobo_v2_credential_rebound_during_manifest_read_does_not_emit_rights():
     ])
     broker_credential = ["synthetic-card"]
 
-    def refs():
+    def refs(identity_id=None):
         return [NS(provider_id="kobo", account_id="alice",
                    identity_id="identity-A",
                    credential_id=broker_credential[0], scope_version=2)]
