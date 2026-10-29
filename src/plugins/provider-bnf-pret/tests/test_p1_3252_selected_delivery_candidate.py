@@ -32,6 +32,33 @@ def selected(right, target_dir):
     )
 
 
+def test_bnf_selected_candidate_does_not_consult_v1_loans_facade(tmp_path):
+    session, account, client, right = setup()
+    try:
+        # The v1 API is a compatibility reader; a canonical right admitted
+        # by Core must never depend on its overridable result or side effects.
+        def forbidden_v1(*args, **kwargs):
+            pytest.fail("canonical candidate must not consult legacy loans()")
+
+        received = []
+        session.loans = forbidden_v1
+        session.download_digital = lambda *args, **kwargs: (
+            received.append((args, kwargs)) or (tmp_path / "candidate.acsm", "")
+        )
+
+        path, url = session.rights_selected_delivery_candidate(
+            account, **selected(right, tmp_path),
+        )
+        assert path == tmp_path / "candidate.acsm" and url == ""
+        assert client.calls == ["login", "activity", "activity"]
+        assert len(received) == 1
+        assert received[0][0][0].id == "loan-A"
+        assert received[0][0][0].record_id == "edition-A"
+        assert received[0][1]["expected_offer_id"] == right.delivery_offer_id
+    finally:
+        session.close()
+
+
 def test_bnf_selected_candidate_one_loan_and_expected_offer(tmp_path):
     session, account, client, right = setup()
     try:
