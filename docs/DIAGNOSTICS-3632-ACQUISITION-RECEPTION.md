@@ -122,3 +122,30 @@ Recette Paris puis BnF, uniquement après autorisation explicite des opérations
    seul ne constituent jamais la preuve d'une acquisition réelle réussie.
 
 Aucune étape fournisseur de cette liste n'a été exécutée pour #3632.
+
+## 29 octobre 2026 — corrélation canonique des terminaux worker (#2888)
+
+Dans `cifereca-journal-brut4(1).zip`, la fenêtre du 29 octobre
+06:59:23–07:02:44 Europe/Paris représente **434 occurrences physiques**
+distinctes. Quatre lignes Core `TRACE task correlation` possèdent un
+`task_ref` de 12 hexadécimales et un `status` exact, mais le lecteur canonique
+ne renseignait pas ces **champs déjà observés** : `task_ref` manquait et
+`status` était `unknown`. La page Diagnostics ne pouvait donc pas joindre
+la terminaison worker aux événements `source_sync` par preuve de référence.
+
+Le lecteur canonique reconnaît désormais uniquement la ligne entière
+`TRACE task correlation task_ref=<12hex> status=success|failed|cancelled`,
+émise sous le logger exactement `cifereca`, avec les niveaux respectifs
+`INFO`/`ERROR`/`WARNING`. Une ligne tronquée, une référence étrangère,
+un suffixe libre, un autre logger ou une gravité incohérente ne constituent
+**pas** une preuve de tâche. Cette projection n'ajoute **ni événement, ni
+opération, ni provider, ni GET, ni statut métier** : elle restitue le terminal
+du worker et son identifiant physique original. Les résultats métier Core
+restent séparés ; `worker=success` ne signifie pas `rights=success`.
+
+Les tests `tests/test_core_p0_2888_journal_exact_worker_scope.py` et
+`src/plugins/diagnostics-page/tests/test_p0_2888_canonical_worker_groups.py`
+exercent la lecture physique, les rotations, le rejet des faux positifs et
+le regroupement GTK sur cette référence exacte sans inférer de causalité
+par heure/message. Cette réparation est **synthétique** : le P0 #2888
+reste ouvert pour la recette fournisseur réelle explicitement autorisée.
