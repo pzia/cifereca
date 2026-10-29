@@ -164,6 +164,12 @@ def main():
         later(poll, 110)
 
     def button():
+        # Historical JSON moved beneath a collapsed advanced expander in
+        # #3649. GTK may not construct its descendant widgets until expanded.
+        for expander in walk(page[0]):
+            if isinstance(expander, Gtk.Expander) and expander.get_label() == "Filtres avancés":
+                reveal_diagnostics_section(expander)
+                expander.set_expanded(True)
         matches = [widget for widget in walk(page[0])
                    if isinstance(widget, Gtk.Button)
                    and widget.get_label() in {
