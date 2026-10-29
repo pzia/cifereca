@@ -1,20 +1,9 @@
-# Core P0 #3196 — un manifeste courant ne révoque pas l'ancien propriétaire
+# Core P0 #3196 — un manifeste v0.7 ne révoque aucun droit
 
-Le `backup_items` v0.7 possède une clé seulement `(provider_id, credential_id, item_id)` : une connexion réaffectée à une autre identité ou à un autre compte peut donc contenir des lignes anciennes d'un emprunteur précédent. Dans ce contexte, un manifeste frais du **nouveau** compte attestant l'absence de l'item ne peut pas désactiver l'Entitlement de l'ancien compte.
+La projection historique `backup_items` utilise seulement la clé `(provider_id, credential_id, item_id)`. Elle ne porte pas une attestation de portée négative complète compatible avec la SourceReference canonique ; elle peut en outre survivre à une réaffectation d'identité ou d'emprunteur.
 
-Sous la transaction SQL `BEGIN IMMEDIATE` déjà détenue par `Storage.backup_prune_missing`, le Core vérifie désormais avant **toute inactivation de droit** :
+Le garde originel exigeait une identité, une connexion et un compte exactement liés avant de permettre une désactivation `entitlements`. Ce garde ne suffisait pas : **une concordance de propriétaire ne prouve pas la révocation du droit**. Le Core ne fait donc désormais **aucune mise à jour d'Entitlement depuis `backup_prune_missing`**, y compris quand le propriétaire est connu et le snapshot complet au sens legacy.
 
-- l'Entitlement candidat porte les mêmes coordonnées exactes que la projection (identité, fournisseur, credential, account, item, type, loan) ;
-- la connexion du couple provider/credential existe **une fois** et est activée sur **cette** identité ;
-- le compte `provider_accounts` du même couple et de l'identité enregistrée existe **une fois** avec le même account ID ;
-- le droit est encore une projection explicitement marquée `backup_items`.
+Sous `BEGIN IMMEDIATE`, seules les lignes de **projection temporaire** absentes du manifeste sont supprimées. Les origin links, droits, reçus, fichiers et placements restent intacts. Le champ `entitlements_inactivated` continue d'être exposé, toujours à zéro. Les contrôles d'admission du manifeste et l'isolation par provider/credential restent en place.
 
-Sans ce triplet actuel, le Core peut purger l'ancienne ligne **de compatibilité** (comportement préexistant), mais **ne change pas** l'Entitlement ni son historique d'acquisition. Il n'infère jamais l'absence de prêt ni d'achat du fait d'une connexion réaffectée. Aucune mutation des Artifacts, Placements ou OriginLinks.
-
-## Régressions
-
-`tests/test_core_p0_3196_prune_exact_right_scope.py` couvre la connexion originale exacte, la réaffectation à une autre identité, la réaffectation à un autre compte et l'absence d'enregistrement courant. Les gardes de manifeste malformé, de collision et de portée du droit restent dans la même suite.
-
-## Limitations
-
-Le modèle de projection historique reste temporairement présent et son prune en tant que ligne de compatibilité demeure autorisé. Il ne faut pas en déduire un retour fournisseur, une preuve d'origine ou une récupération de prêt. Les migrations complètes et recettes live demeurent nécessaires à la fermeture #3196. Aucun P2.
+Une nouvelle autorité négative devra être introduite séparément à partir d'un snapshot fournisseur typé, exhaustif, et validé sous l'owner/compte exact, suivant #3171/#3197. Les tests couvrent les propriétaires exacts, rebonds de credentials, comptes et collisions. La migration 0.7/0.8 et la recette réelle restent ouvertes dans #3196.
