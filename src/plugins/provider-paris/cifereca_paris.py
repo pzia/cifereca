@@ -516,7 +516,10 @@ class ParisProviderSession(ProviderSession):
             if broker is None:
                 return None
             try:
-                refs = broker.accounts()
+                # The Core broker is scoped by target identity. Enumerating
+                # every identity incorrectly makes a distinct borrower of the
+                # same upstream account look like an ambiguous owner.
+                refs = broker.accounts(borrower_scope[1])
                 if type(refs) not in (list, tuple):
                     return None
                 key = borrower_scope[0] if borrower_scope[0] else (
@@ -731,7 +734,9 @@ class ParisProviderSession(ProviderSession):
                 if broker is None or scope_key is None:
                     return None
                 try:
-                    refs = broker.accounts()
+                    # Resolve ownership in the exact target identity; never
+                    # treat an unrelated library profile as a competing owner.
+                    refs = broker.accounts(scope_key[1])
                     if type(refs) not in (tuple, list):
                         return None
                     # Core's public AccountRef gives the primary borrower
@@ -991,7 +996,7 @@ class ParisProviderSession(ProviderSession):
                 if broker is None:
                     return None
                 try:
-                    refs = broker.accounts()
+                    refs = broker.accounts(scope[1])
                     if type(refs) not in (tuple, list):
                         return None
                     key = (scope[0] if scope[0] else
