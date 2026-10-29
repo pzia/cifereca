@@ -183,91 +183,106 @@ def read_source_acquisition_consent(service, account: Account) -> frozenset[Sour
         return frozenset(admitted) if current() else frozenset()
 
 
-# The GUI/broker only sees a bounded, closed description of an exact right.
-# The token is an opaque deterministic reference, NOT a bearer permission.
-# Neither credentials, loan IDs, book IDs, titles nor provider responses leave
-# this boundary as UI-visible values.
+# Broker/UI controls: bounded pages, exact identity, never a bearer token.
+# A source_reference_id is the Core's SHA-based opaque primary key. Expose
+# only its 64-hex fingerprint; resolve it through SQLite's exact indexed PK
+# at the mutation boundary. This scales to >500 Kobo rights without granting
+# any future, ambiguous, foreign, or unattested right.
 _CHOICES_LIMIT = 48
+_MAX_CHOICE_PAGE = 2048
 
 
-def _choices(service, account):
+def _choices(service, account, *, page: int = 0):
+    if type(page) is not int or not 0 <= page <= _MAX_CHOICE_PAGE:
+        raise ValueError("invalid_canonical_consent_page")
     storage, scope, current = _context(service, account)
     if not current():
         return (), current
-    # Source enablement reads Storage metadata: keep it OUTSIDE Storage._lock
-    # (which is deliberately non-reentrant). The real write repeats the gate.
+    # Metadata reads must not recurse into Storage._lock.
     enabled = service.sync_source_enabled(account) is True
     with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
         if not current() or not _bound(db, scope, enabled=False):
             return (), current
         rows = db.execute(
-            "SELECT branch_id,edition_id,right_id,reference_kind,state,"
-            "synchronizable,evidence_kind,evidence_ref,observed_at "
-            "FROM source_references WHERE identity_id=? AND provider_id=? "
-            "AND credential_id=? AND account_id=? "
-            "AND reference_kind IN ('purchase','loan') "
-            "ORDER BY source_reference_id LIMIT ?",
-            (*scope, _CHOICES_LIMIT + 1),
+            "SELECT source_reference_id,branch_id,edition_id,right_id,"
+            "reference_kind,state,synchronizable,evidence_kind,evidence_ref,"
+            "observed_at FROM source_references "
+            "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+            "AND account_id=? AND reference_kind IN ('purchase','loan') "
+            "ORDER BY source_reference_id LIMIT ? OFFSET ?",
+            (*scope, _CHOICES_LIMIT, page * _CHOICES_LIMIT),
         ).fetchall()
-        if len(rows) > _CHOICES_LIMIT:
-            return (), current  # Incomplete list is not a safe consent UI.
         bound_for_grant = _bound(db, scope, enabled=True)
         options = []
-        for branch, edition, right, kind, state, synchronizable, evidence_kind, evidence_ref, observed_at in rows:
+        for source_id, branch, edition, right, kind, state, synchronizable, evidence_kind, evidence_ref, observed_at in rows:
+            if type(source_id) is not str or not source_id.startswith("source:"):
+                continue
             try:
                 source = SourceKey(ProviderRightsScope(*scope), edition, right, kind, branch)
             except (ValueError, TypeError):
                 continue
-            reference = consent_key(source)[len(_PREFIX):]
-            saved = db.execute(
-                "SELECT value FROM metadata WHERE key=?", (consent_key(source),)
+            if source_id != _stable("source", *_coordinates(source)):
+                continue
+            record = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (consent_key(source),),
             ).fetchone()
-            opted_in = saved is not None and _payload_allowed(saved[0], source)
+            opted_in = record is not None and _payload_allowed(record[0], source)
             admissible = (
                 bound_for_grant and enabled
                 and state == "active" and synchronizable == 1
                 and evidence_kind == "provider_response"
                 and _attested(source, evidence_ref, observed_at)
             )
-            # An inactive historic permission remains visible for revocation,
-            # but cannot be used as acquisition consent without fresh A.
-            if admissible or opted_in:
-                options.append((reference, kind, opted_in, admissible, source))
+            # Render even inactive records as disabled rows: ordering/paging
+            # must not hide a later live right behind a legacy negative.
+            options.append((source_id[len("source:"):], kind, opted_in, admissible))
         return tuple(options) if current() else (), current
 
 
-def canonical_acquisition_choices(service, account: Account) -> tuple[dict[str, object], ...]:
-    """Offline, source-scoped, opaque right selectors; never provider I/O."""
-    rows, current = _choices(service, account)
+def canonical_acquisition_choices(
+    service, account: Account, *, page: int = 0,
+) -> tuple[dict[str, object], ...]:
+    """Offline page of exact-right selectors, never upstream/provider I/O."""
+    rows, current = _choices(service, account, page=page)
     if not current():
         return ()
     return tuple({
         "reference": reference, "kind": kind, "allowed": allowed,
         "eligible": eligible,
-    } for reference, kind, allowed, eligible, _source in rows)
+    } for reference, kind, allowed, eligible in rows)
 
 
 def set_canonical_acquisition_choice(
     service, account: Account, reference: str, *, allowed: bool,
 ) -> None:
-    """Explicit one-right change; resolve token and revalidate under SQLite.
-
-    Never accept SourceKey fields from UI/plugin input. The existing mutation
-    verifies attested A, exact Core account and consent within BEGIN IMMEDIATE.
-    """
+    """Resolve an opaque primary key in SQLite, then revalidate one grant."""
     if (type(reference) is not str or len(reference) != 64
             or any(char not in "0123456789abcdef" for char in reference)
             or type(allowed) is not bool):
         raise ValueError("invalid_canonical_consent_selection")
-    rows, current = _choices(service, account)
-    matches = [(source, eligible) for token, _kind, _saved, eligible, source in rows
-               if token == reference]
-    if len(matches) != 1 or not current():
+    storage, scope, current = _context(service, account)
+    if not current():
         raise ValueError("canonical_consent_selection_unavailable")
-    source, eligible = matches[0]
-    if allowed and not eligible:
-        raise ValueError("canonical_consent_positive_right_required")
-    # An earlier UI listing cannot license a change after account switching.
-    # The persisted mutation independently re-reads A and the active binding.
+    with storage._lock, storage._connect() as db:
+        row = db.execute(
+            "SELECT branch_id,edition_id,right_id,reference_kind "
+            "FROM source_references WHERE source_reference_id=? "
+            "AND identity_id=? AND provider_id=? AND credential_id=? "
+            "AND account_id=?",
+            ("source:" + reference, *scope),
+        ).fetchone()
+    if row is None or not current():
+        raise ValueError("canonical_consent_selection_unavailable")
+    try:
+        source = SourceKey(
+            ProviderRightsScope(*scope), row[1], row[2], row[3], row[0],
+        )
+    except (ValueError, TypeError):
+        raise ValueError("canonical_consent_selection_unavailable") from None
+    if _stable("source", *_coordinates(source)) != "source:" + reference:
+        raise ValueError("canonical_consent_selection_unavailable")
+    # The existing BEGIN IMMEDIATE Core mutation independently checks enabled
+    # source, positive A, exact account and last in-memory context. Revocation
+    # is valid even after the positive SourceReference becomes inactive.
     set_source_acquisition_consent(service, account, source, allowed=allowed)
