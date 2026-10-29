@@ -93,12 +93,26 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     return owner, None
 
 
-def _cross_identity_loan_conflict(acquisitions: Any, *, provider_loan_id: str, identity_id: str, entitlements: Any=()) -> bool:
-    """Reject a Paris loan recorded under another identity in either ledger.
+def _cross_identity_loan_conflict(
+    acquisitions: Any, *, provider_loan_id: str, identity_id: str,
+    entitlements: Any=(), credential_id: str | None=None,
+) -> bool:
+    """Block foreign Paris loans within a provably matching connection.
 
-    A currently active entitlement is also a trace of the same upstream
-    loan; it does not prove that identity is the rightful ADEPT owner.
+    Upstream loan IDs are not unique across independent Paris credentials.
+    Two different *attested* credential IDs cannot establish a cross-owner
+    conflict by loan ID alone. Missing or malformed historical credentials
+    stay ambiguous and therefore block. An account mismatch under the same
+    credential is NOT sufficient to bypass the borrower/ADEPT guard.
     """
+
+    def disjoint_connection(row: Any) -> bool:
+        stored = row.get("credential_id")
+        return (
+            type(credential_id) is str and bool(credential_id)
+            and type(stored) is str and bool(stored)
+            and stored != credential_id
+        )
     loan_key = str(provider_loan_id or "").strip()
     if not loan_key:
         return True
@@ -106,10 +120,12 @@ def _cross_identity_loan_conflict(acquisitions: Any, *, provider_loan_id: str, i
         str((row.get("metadata") or {}).get("provider_loan_id") or "").strip() == loan_key
         and str(row.get("identity_id") or "") != identity_id
         and str(row.get("strategy") or "") == "loan_auto"
+        and not disjoint_connection(row)
         for row in acquisitions
     )
     return acquired_elsewhere or any(
         str(row.get("loan_id") or "").strip() == loan_key
         and str(row.get("identity_id") or "") != identity_id
+        and not disjoint_connection(row)
         for row in entitlements
     )
