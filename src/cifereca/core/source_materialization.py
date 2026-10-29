@@ -172,15 +172,25 @@ def _evidence(service, account, manifest):
     # fingerprint stays private; no title, path, provider ID or token is logged.
     with service.storage._lock:
         db = service.storage._connect()
-        for table in ("backup_items", "entitlements", "acquisition_ledger", "provider_connections", "placements", "catalog_entries"):
-            if table in {"placements", "catalog_entries"}:
-                where, args = "identity_id=?", (account.identity_id,)
-            else:
-                where, args = "provider_id='kobo' AND credential_id=?", (account.credential_id,)
-            cursor = db.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY 1", args)
-            rows = cursor.fetchmany(10001)
-            _require(len(rows) <= 10000, "evidence_budget_exhausted")
-            tables[table] = rows
+        # The Python lock protects only this process. A separate writer may
+        # update the v0.7 projection, receipts or source binding between table
+        # reads. One SQLite read snapshot prevents accepting a fingerprint
+        # assembled from mutually incompatible generations. A SAVEPOINT also
+        # works if the reusable thread-local connection is already in a
+        # transaction; always release it even on an evidence-budget failure.
+        db.execute("SAVEPOINT kobo_materialization_evidence")
+        try:
+            for table in ("backup_items", "entitlements", "acquisition_ledger", "provider_connections", "placements", "catalog_entries"):
+                if table in {"placements", "catalog_entries"}:
+                    where, args = "identity_id=?", (account.identity_id,)
+                else:
+                    where, args = "provider_id='kobo' AND credential_id=?", (account.credential_id,)
+                cursor = db.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY 1", args)
+                rows = cursor.fetchmany(10001)
+                _require(len(rows) <= 10000, "evidence_budget_exhausted")
+                tables[table] = rows
+        finally:
+            db.execute("RELEASE SAVEPOINT kobo_materialization_evidence")
     return _digest({"tables": tables, "reasons": reasons, "files": files}), counts
 
 

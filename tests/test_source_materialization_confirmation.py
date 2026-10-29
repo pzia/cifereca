@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -213,6 +214,80 @@ def test_local_evidence_change_refuses_confirmation_without_delegation(case):
     assert result.facts["status"] == "preview_changed" and not result.ok
     assert not case.downloaded and _dump(case) == before
 
+
+
+def test_confirmation_evidence_is_one_sqlite_snapshot_across_processes(case):
+    """A concurrent writer between legacy tables cannot create hybrid A/B."""
+
+    storage = case.service.storage
+    account = case.target.accounts[0]
+    manifest = case.target._manifest
+    # The fixture uses a reusable thread-local SQLite connection in WAL
+    # mode. This is the same connection that reads six compatibility/canonical
+    # tables for explicit Kobo source confirmation.
+    baseline, _ = materialize._evidence(case.service, account, manifest)
+    db = storage._connect()
+    seen_savepoint = []
+    concurrent_commit = []
+
+    def writer_during_snapshot(statement):
+        if statement.startswith("SAVEPOINT kobo_materialization_evidence"):
+            seen_savepoint.append(True)
+        if (seen_savepoint and not concurrent_commit
+                and statement.startswith("SELECT * FROM entitlements ")):
+            # backup_items has already been read, fixing SQLite's read view.
+            # Update a table that _evidence reads later in its six-table walk.
+            with sqlite3.connect(storage.path, timeout=2) as writer:
+                cursor = writer.execute(
+                    "UPDATE provider_connections SET label=? "
+                    "WHERE provider_id='kobo' AND credential_id='vault-2'",
+                    ("External scope mutation",),
+                )
+                assert cursor.rowcount == 1
+            concurrent_commit.append(True)
+
+    try:
+        db.set_trace_callback(writer_during_snapshot)
+        in_flight, _ = materialize._evidence(case.service, account, manifest)
+    finally:
+        db.set_trace_callback(None)
+
+    assert seen_savepoint and concurrent_commit == [True]
+    # A mixed six-table read would capture the newly updated scope here.
+    assert in_flight == baseline
+    refreshed, _ = materialize._evidence(case.service, account, manifest)
+    assert refreshed != baseline
+    # SAVEPOINT is always released: the shared connection stays reusable and
+    # no transaction is held open after a successful proof.
+    assert not db.in_transaction
+
+
+def test_confirmation_snapshots_release_sqlite_savepoint_on_budget_failure(
+    case, monkeypatch,
+):
+    storage = case.service.storage
+    account = case.target.accounts[0]
+    manifest = case.target._manifest
+    db = storage._connect()
+    # Intercept only the per-table budget check after the first SELECT.
+    original_require = materialize._require
+    checked = []
+    def reject_after_sql_read(condition, reason):
+        if reason == "evidence_budget_exhausted":
+            checked.append(True)
+            # _evidence checks the legacy backup budget *before* SQL.
+            # Fail on the first SELECT budget check inside the SAVEPOINT.
+            if len(checked) == 2:
+                raise materialize._Rejected(reason)
+        return original_require(condition, reason)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(materialize, "_require", reject_after_sql_read)
+        with pytest.raises(materialize._Rejected, match="evidence_budget_exhausted"):
+            materialize._evidence(case.service, account, manifest)
+    assert len(checked) == 2
+    assert not db.in_transaction
+    assert materialize._evidence(case.service, account, manifest)[0]
 
 def test_provider_error_is_expurgated_and_does_not_change_inventory_state(case):
     token = _prepare(case)
