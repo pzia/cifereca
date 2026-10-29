@@ -185,6 +185,28 @@ def _make_event(match, identity, offset):
     provider_id = detail.get("provider_id")
     if type(provider_id) is str and 0 < len(provider_id) <= 90:
         event["provider_id"] = provider_id
+    elif (match["logger"] == "cifereca"
+          and category == "ACQUISITION" and operation == "loan sync"
+          and status in {"warning", "error"}
+          and type(detail) is dict):
+        # Historical Core opening-loan diagnostics (#2888) emitted the
+        # *observed source provider* under 'provider', not 'provider_id'.
+        # Restrict this compatibility projection to the precise Core message
+        # shape and the two supported loan sources. Never infer a provider
+        # from a free-text message, an ADEPT runtime, or an account label.
+        legacy_provider = detail.get("provider")
+        expected_outcome = (
+            "attention_required" if status == "warning" else "retryable_error"
+        )
+        if (type(legacy_provider) is str
+                and legacy_provider in {"paris", "bnf-pret"}
+                and detail.get("status") == expected_outcome
+                and type(detail.get("code")) is str
+                and 0 < len(detail["code"]) <= 90
+                and type(detail.get("loan_id")) is str
+                and 0 < len(detail["loan_id"]) <= 4096):
+            event["provider_id"] = legacy_provider
+            event["provider_id_origin"] = "legacy_opening_loan_sync"
     if task_ref:
         event["task_ref"] = task_ref
     if duration_ms is not None:
@@ -289,10 +311,10 @@ def query_journal(
         if severity and severity != event["severity"]:
             continue
         if provider_id:
-            # Only an actual structured provider_id field, never inference
-            # from a message or the module.
-            detail = event.get("detail") or {}
-            if detail.get("provider_id") != provider_id:
+            # Exact Core-structured provider_id, or the specifically scoped
+            # legacy opening-loan observation projected by _make_event.
+            # Neither a free-text mention nor a logger/module name qualifies.
+            if event.get("provider_id") != provider_id:
                 continue
         instant = datetime.fromisoformat(event["timestamp"])
         if lower and instant < lower or upper and instant > upper:
