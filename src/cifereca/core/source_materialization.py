@@ -170,7 +170,8 @@ def _evidence(service, account, manifest):
     tables = {}
     # A bounded snapshot of all local evidence for this source/identity. The
     # fingerprint stays private; no title, path, provider ID or token is logged.
-    with service.storage._lock, service.storage._connect() as db:
+    with service.storage._lock:
+        db = service.storage._connect()
         # The Python lock protects only this process. A separate writer may
         # update the v0.7 projection, receipts or source binding between table
         # reads. One SQLite read snapshot prevents accepting a fingerprint
