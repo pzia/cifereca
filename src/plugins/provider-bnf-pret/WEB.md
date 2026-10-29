@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.13.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.14.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -19,6 +19,24 @@ Dans Configuration, ajouter une connexion **BnF Prêt** au bon profil Cifereca,
 saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
+
+## Retrait du lecteur v1 dans l'acquisition canonique (#3197, 0.3.14)
+
+La livraison ciblée `rights_selected_delivery_candidate` n'appelle plus
+`session.loans(account)`, façade de compatibilité v1 surchargeable.
+Elle réutilise directement `_read_live_loans_locked`, le lecteur de page
+HTML déjà commun à `LoanInventorySnapshot`, sous les mêmes verrous,
+vérifications d'identité/credential/époque et revalidation du droit positif.
+L'acquisition conserve **une première lecture exacte**, puis une seconde
+lecture fraîche dans `download_digital` avant le GET ACSM signé. Aucune
+mutation ni téléchargement n'a lieu en inventaire ordinaire, et une page
+vide/partielle n'autorise aucune preuve de fin de droit.
+
+Les tests ciblés interdisent artificiellement `loans()` tout en validant
+la sélection et un ACSM synthétique via `httpx.MockTransport`.
+La façade legacy demeure disponible pour ses anciens appelants, mais
+ne participe plus à la sélection canonique. Ce n'est pas une recette BnF
+réelle ni une clôture de la migration Core #3197.
 
 ## Scoping du propriétaire du prêt (#3252, 0.3.13)
 
