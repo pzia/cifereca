@@ -24,7 +24,20 @@ sur un lien synthétique, y compris la conservation de son atime.
 
 Avec `--require-apparmor`, l'absence de restriction globale à **1**, d'AppArmor
 actif, ou du label enfant `unpriv_bwrap` en **enforce**, fait échouer le
-diagnostic. Code retour **0** = prérequis synthétiques vérifiés ; **2** =
+diagnostic. Une sonde négative supplémentaire démarre une sandbox identique,
+puis tente, dans son enfant, `unshare(CLONE_NEWUSER)` suivi de
+`unshare(CLONE_NEWNS)` : un nouveau user namespace peut redonner des
+capabilities locales même après `--cap-drop ALL`. Il faut observer un refus
+de permission (`EPERM` ou `EACCES`) à l'une de ces deux étapes, sous le même
+profil enfant en enforce. Le résultat conserve l'étape, errno et la cause
+originale dans `checks.child_capability_result`. Une opération autorisée,
+une limite atteinte, un syscall non disponible ou une preuve illisible ne
+constitue pas ce refus et fait échouer le doctor. Aucun montage, mapping UID,
+changement de profil ou fichier hôte n'est effectué par cette sonde ; ses
+namespaces synthétiques disparaissent avec le processus. Le refus observé
+ne permet pas d'attribuer seul la cause à AppArmor : consulter l'audit noyau.
+
+Code retour **0** = prérequis synthétiques vérifiés ; **2** =
 refus/non-vérifié, avec commande, code et stderr originaux dans le JSON. La
 répétition ne modifie ni profil, ni sysctl, ni données de production ; seuls
 des fichiers temporaires synthétiques sont créés et supprimés. Ne pas traiter
@@ -57,6 +70,7 @@ l'hôte sans les examiner.
 | `uid_map`, `setpcap` ou `userns_create` refusé | Examiner profil appliqué, état enforce et restriction userns. Ne pas conclure à une cause unique sans audit : conteneur/seccomp/limite de namespaces peuvent aussi interdire l'opération. |
 | `--ro-bind-fd` absent de `bwrap --help` | Version incompatible avec la lecture sans changement d'atime des liens de production. Bubblewrap 0.9.0 sans backport est insuffisant ; utiliser une version maintenue fournissant cette fonction (0.10+ ou backport distributeur), puis relancer la sonde. Aucun remplacement par `readlink` direct sur production. |
 | `unpriv_bwrap` absent, complain ou unconfined | Permissions enfant non démontrées : échec explicite, ne pas commencer la recette. |
+| `child_capability_denial_unverified` | Bootstrap et état initial ne suffisent pas : l'enfant a pu créer ses namespaces ou le refus de permission n'est pas attesté. Examiner le résultat exact et les overrides locaux ; ne pas élargir les permissions pour faire passer le test. |
 | Sonde réussie, recette refusée | Examiner l'erreur réelle de recette : permissions/FS, source concurrente ou lien dangereux restent des refus indépendants. |
 
 ## Profil restrictif : voie distribuée, revue administrateur
@@ -170,4 +184,5 @@ cycle sur la machine utilisateur avant d'en avoir les résultats réels.
 Références primaires : [Ubuntu 24.04 release notes, user namespaces](https://documentation.ubuntu.com/release-notes/24.04/),
 [AppArmor Ubuntu](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/),
 [syntaxe Noble](https://manpages.ubuntu.com/manpages/noble/man5/apparmor.d.5.html),
+[user namespaces Linux](https://man7.org/linux/man-pages/man7/user_namespaces.7.html),
 [profil upstream](https://gitlab.com/apparmor/apparmor/-/blob/master/profiles/apparmor/profiles/extras/bwrap-userns-restrict).

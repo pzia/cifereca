@@ -14,7 +14,8 @@ spec.loader.exec_module(doctor)
 
 class DoctorTests(unittest.TestCase):
     def diagnose(self, *, label="bwrap//&unpriv_bwrap (enforce)", restricted="1",
-                 bootstrap=0, feature=True, child=None, profile=None, syntax=0):
+                 bootstrap=0, feature=True, child=None, profile=None, syntax=0,
+                 capability=None, capability_exit=0):
         commands = []
         def run(args, **kwargs):
             commands.append((args, kwargs))
@@ -25,6 +26,11 @@ class DoctorTests(unittest.TestCase):
                 status = syntax
             elif "--unshare-all" in args:
                 status = bootstrap
+                if doctor.CAPABILITY_CHILD in args:
+                    status = capability_exit
+                    output = capability if capability is not None else json.dumps({
+                        "apparmor_label": label, "status": "denied", "stage": "mount_namespace",
+                        "errno": 1, "error": "Operation not permitted"})
                 if doctor.CHILD in args:
                     output = child if child is not None else json.dumps({
                         "namespaces": {kind: "child:" + kind for kind in ("user", "net", "mnt", "pid")},
@@ -48,7 +54,7 @@ class DoctorTests(unittest.TestCase):
         report, commands = self.diagnose()
         self.assertTrue(report["ok"], report)
         probes = [args for args, _ in commands if "--unshare-all" in args]
-        self.assertEqual(len(probes), 2)
+        self.assertEqual(len(probes), 3)
         for args in probes:
             for flag in ("--cap-drop", "ALL", "--clearenv", "--remount-ro", "--new-session"):
                 self.assertIn(flag, args)
@@ -66,7 +72,45 @@ class DoctorTests(unittest.TestCase):
     def test_old_bubblewrap_is_explicit_failure_without_symlink_fallback(self):
         report, commands = self.diagnose(feature=False)
         self.assertIn("ro_bind_fd_unavailable_for_source_symlinks", report["failures"])
-        self.assertEqual(sum("--unshare-all" in args for args, _ in commands), 1)
+        self.assertEqual(sum("--unshare-all" in args for args, _ in commands), 2)
+
+    def test_permission_denial_is_required_in_child_even_when_initial_capabilities_are_zero(self):
+        result = {"apparmor_label": "bwrap//&unpriv_bwrap (enforce)",
+                  "status": "allowed", "stage": "mount_namespace", "errno": 0}
+        report, _ = self.diagnose(capability=json.dumps(result))
+        self.assertFalse(report["ok"])
+        self.assertIn("child_capability_denial_unverified", report["failures"])
+        self.assertEqual(report["checks"]["child"]["cap_eff"], "0")
+        self.assertEqual(report["checks"]["child_capability_result"], result)
+
+    def test_child_permission_denials_preserve_stage_errno_and_cause(self):
+        for stage in ("user_namespace", "mount_namespace"):
+            for code in (1, 13):
+                result = {"apparmor_label": "bwrap//&unpriv_bwrap (enforce)",
+                          "status": "denied", "stage": stage, "errno": code,
+                          "error": "original permission error"}
+                with self.subTest(stage=stage, code=code):
+                    report, _ = self.diagnose(capability=json.dumps(result))
+                    self.assertTrue(report["ok"], report)
+                    self.assertEqual(report["checks"]["child_capability_result"], result)
+
+    def test_probe_errors_limits_or_invalid_results_are_not_permission_denials(self):
+        base = {"apparmor_label": "bwrap//&unpriv_bwrap (enforce)",
+                "status": "denied", "stage": "mount_namespace", "errno": 1}
+        cases = ["not json", "null", "[]", "{}"] + [json.dumps({**base, **change}) for change in (
+            {"errno": 38}, {"errno": 22}, {"errno": 28}, {"errno": True},
+            {"status": "unverified"}, {"stage": "unknown"}, {"apparmor_label": "unconfined"})]
+        for value in cases:
+            with self.subTest(value=value):
+                report, _ = self.diagnose(capability=value)
+                self.assertIn("child_capability_denial_unverified", report["failures"])
+        report, _ = self.diagnose(capability_exit=1)
+        self.assertIn("child_capability_denial_unverified", report["failures"])
+
+    def test_failed_bootstrap_does_not_run_or_accept_child_probe(self):
+        report, commands = self.diagnose(bootstrap=1)
+        self.assertNotIn("child_capability_probe", report["checks"])
+        self.assertFalse(any(doctor.CAPABILITY_CHILD in args for args, _ in commands))
 
     def test_unconfined_complain_or_disabled_global_policy_never_pass(self):
         for label, restricted in (("unconfined", "1"), ("bwrap (enforce)", "1"),
