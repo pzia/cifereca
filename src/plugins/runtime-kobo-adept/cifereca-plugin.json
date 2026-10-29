@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.runtime.kobo-adept",
-    "version": "1.2.33",
+    "version": "1.2.34",
     "name": "Kobo-Adept Runtime",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -46,7 +46,7 @@
           }
         }
       },
-      "version": "1.2.33",
+      "version": "1.2.34",
       "help_text": "Acquiert des fichiers et restitue les prêts ADEPT via Kobo-Adept. Le service expose aussi le cycle de vie explicite des profils : création/provisioning JSON via `profile add`, association d’une liseuse déjà autorisée via `profile associate`, et suppression sans `--force`. Un profil nouvellement créé n’est déclaré prêt qu’après vérification complete/fetch_capable/acsm_fetch_ready. Chaque restitution reste confirmée par l’inventaire local exact avant succès Core.",
       "capabilities": [
         "runtime.drm",
@@ -70,7 +70,7 @@
       "priority": 82,
       "display_name": "Profils Adobe",
       "description": "Création, association et suppression contrôlée des profils ADEPT Kobo-Adept.",
-      "version": "1.2.33",
+      "version": "1.2.34",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "help_text": "Page de gestion Kobo-Adept : la liste et le provisioning passent par le broker public `adept.profiles`. L’association d’une liseuse et la suppression restent des opérations explicites du runtime Kobo-Adept, non exposées par ce broker. Les opérations sont exécutées hors du thread GTK ; aucune suppression forcée n’est utilisée.",
@@ -108,7 +108,7 @@
       "priority": 100,
       "display_name": "Diagnostic Kobo-Adept",
       "description": "Vérification active et expurgée du runtime Kobo-Adept.",
-      "version": "1.2.33",
+      "version": "1.2.34",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "help_text": "Expose via cifereca.diagnostics.check/1 un contrôle borné du runtime Kobo-Adept. Seuls la disponibilité, la version de contrat et un booléen de résolution de l’exécutable sont restitués ; aucun chemin, argument, stderr ou secret n’est exposé.",
