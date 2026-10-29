@@ -106,7 +106,12 @@ class DailyJournalExport:
                 exported = self.broker.export_today_journal_zip(
                     destination, cancelled=control.cancelled,
                 )
-                return exported == destination and not control.cancelled()
+                # The worker returns only the destination actually
+                # acknowledged by Core. Never show a chosen-but-unsaved path
+                # as successful, and never log the private path.
+                return destination if (type(exported) is str
+                                       and exported == destination
+                                       and not control.cancelled()) else False
 
             try:
                 self.handle = self.tasks.submit(
@@ -123,7 +128,10 @@ class DailyJournalExport:
 
     def completed(self, handle):
         try:
-            okay = handle.result() is True
+            saved_path = handle.result()
+            # A path is a receipt only when the background broker positively
+            # acknowledged the *exact* selected destination.
+            okay = type(saved_path) is str
             error = None
         except FileExistsError:
             okay, error = False, "Le fichier existe déjà : choisissez un nouveau nom"
@@ -149,7 +157,7 @@ class DailyJournalExport:
         def show_status():
             if not self.closed and self.current():
                 self.host.toast(
-                    "Journal brut du jour exporté en ZIP (fichier local privé)"
+                    "Journal brut du jour exporté en ZIP : " + saved_path
                     if okay else error or "Export ZIP annulé"
                 )
             return False
