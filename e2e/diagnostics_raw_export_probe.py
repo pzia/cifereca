@@ -150,7 +150,7 @@ def main():
         matches = [widget for widget in walk(page[0])
                    if isinstance(widget, Gtk.Button)
                    and widget.get_label() in {
-                       "Exporter le journal brut…",
+                       "Exporter tout l’historique (JSON)…",
                        "Confirmer l’export brut non masqué",
                    }]
         assert len(matches) == 1
