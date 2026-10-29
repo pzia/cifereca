@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from gi.repository import Adw
+from gi.repository import Adw, Gtk
 
 from .sync_action_layout import add_sync_action
 from .sync_action_scope import sync_action_scope_current
@@ -69,7 +69,7 @@ def append_canonical_consent_controls(
             "edit-delete-symbolic" if allowed else "document-save-symbolic",
         )
         button.set_sensitive(bool(allowed or eligible))
-        button.set_valign(getattr(__import__("gi.repository", fromlist=["Gtk"]).Gtk.Align, "CENTER"))
+        button.set_valign(Gtk.Align.CENTER)
         add_sync_action(row, button)
 
         def clicked(_button, *, ref=choice["reference"], previous=allowed,
