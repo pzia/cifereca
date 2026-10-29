@@ -49,3 +49,14 @@ ou l'exhaustivité de l'inventaire. Elle n'autorise aucun cache/coalescence et
 ne supprime aucun rafraîchissement explicite. Les lectures restent exécutées
 à chaque appel. La classification des consommateurs non annotés reste
 `unattributed` ; la matrice des onze appels terrain reste à qualifier.
+
+## Contrat d’intégration cifereca ↔ Kobo-Adept
+
+Références normatives courantes :
+
+- [CIFERECA_KOBO_ADEPT_CONTRACT_1.3.md](./CIFERECA_KOBO_ADEPT_CONTRACT_1.3.md) — contrat d’intégration cifereca courant ;
+- [KOBO_ADEPT_HANDOFF_0.13.6.md](./KOBO_ADEPT_HANDOFF_0.13.6.md) — handoff de la distribution Kobo-Adept 0.13.6.
+
+Baseline : Kobo-Adept 0.13.6 est une release d’alignement documentaire/distribution, fonctionnellement inchangée par rapport à 0.13.5. Le contrat public Kobo-Adept reste `contract_version=8` et le download request reste en schema v2.
+
+Le runtime doit négocier `contract --json` et `capabilities --json` ; aucune fonctionnalité ne doit être activée sur le seul numéro de version.
