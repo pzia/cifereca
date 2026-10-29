@@ -281,7 +281,87 @@ def _run_observed_canonical_convergence(
             or sync_lease.path.resolve() != acquisition_lock_file().resolve()):
         return None
     from ..plugin_api import Cancelled
-    # An optional provider-neutral candidate ABI is now    # available on installed BnF/Numilog sessions. Core owns    # its *finalization* callback; the provider never emits    # a CompletedDelivery or OriginLink. No compatibility    # fallback or implied consent for older sessions.    delivery = getattr(self, "_canonical_right_delivery", None)    consent_reader = getattr(self, "_canonical_persisted_consent", None)    if (delivery is None and admitted_snapshots            and callable(consent_reader)):        from inspect import getattr_static        try:            candidate_session = self._session_for_account(account)        except (AttributeError, KeyError, TypeError, ValueError):            candidate_session = None        if (candidate_session is not None and callable(                getattr_static(candidate_session,                               "rights_selected_delivery_candidate", None))):            from .canonical_selected_delivery import complete_selected_delivery            delivery = lambda key, offer: complete_selected_delivery(                self, account, candidate_session, key, offer,                library_root=self.library_dir(), shared_lock=sync_lease,            )    if (admitted_snapshots and callable(delivery)            and callable(consent_reader)):        from .convergence_execution import execute_admitted_convergence        from .source_convergence import SourceKey        try:            consent = consent_reader(account)        except Exception:            logging.getLogger("cifereca").exception(                "TRACE canonical Sync consent read failed provider_id=%s "                "credential_id=%s", account.provider_id, account.credential_id,            )            consent = frozenset()        if type(consent) is not frozenset or any(            type(source) is not SourceKey for source in consent        ):            consent = frozenset()        def current_consent(key: SourceKey) -> bool:            # Called by the Core executor both before GET and            # after GET, rejecting consent revoked in flight.            latest = consent_reader(account)            return (type(latest) is frozenset                    and key in latest                    and all(type(x) is SourceKey for x in latest))        # The optional selected-offer preflight is permitted        # only under the already held lock, exact persisted        # consent and the registered Core delivery route.        # It returns A only; the executor still owns all GET,        # receipt, revalidation and atomic B publication.        from .canonical_selected_offers import qualify_selected_offers        session = self._session_for_account(account)        root = self.library_dir()        qualified_snapshot = qualify_selected_offers(            self, account, session, admitted_snapshots[0],            admitted_epoch=admitted_epoch, shared_lock=sync_lease,            library_root=root, persisted_consent=consent,            consent_still_current=current_consent,            cancelled=cancelled_for_rights,        )        outcomes = execute_admitted_convergence(            self, account, session, qualified_snapshot,            admitted_epoch=admitted_epoch,            shared_lock=sync_lease, library_root=root,            persisted_consent=consent,            consent_still_current=current_consent,            deliver=delivery, cancelled=cancelled_for_rights,            publication_guard=getattr(                self, "_canonical_publication_consent_current", None,            ),        )        counts = {            status: sum(row.status == status for row in outcomes)            for status in ("downloaded", "recovered", "present_attested",                           "pending", "blocked", "failed", "cancelled")        }        return counts
+    # An optional provider-neutral candidate ABI is now
+    # available on installed BnF/Numilog sessions. Core owns
+    # its *finalization* callback; the provider never emits
+    # a CompletedDelivery or OriginLink. No compatibility
+    # fallback or implied consent for older sessions.
+    delivery = getattr(self, "_canonical_right_delivery", None)
+    consent_reader = getattr(self, "_canonical_persisted_consent", None)
+    if (delivery is None and admitted_snapshots
+            and callable(consent_reader)):
+        from inspect import getattr_static
+        try:
+            candidate_session = self._session_for_account(account)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            candidate_session = None
+        if (candidate_session is not None and callable(
+                getattr_static(candidate_session,
+                               "rights_selected_delivery_candidate", None))):
+            from .canonical_selected_delivery import complete_selected_delivery
+            delivery = lambda key, offer: complete_selected_delivery(
+                self, account, candidate_session, key, offer,
+                library_root=self.library_dir(), shared_lock=sync_lease,
+            )
+    if (admitted_snapshots and callable(delivery)
+            and callable(consent_reader)):
+        from .convergence_execution import execute_admitted_convergence
+        from .source_convergence import SourceKey
+
+        try:
+            consent = consent_reader(account)
+        except Exception:
+            logging.getLogger("cifereca").exception(
+                "TRACE canonical Sync consent read failed provider_id=%s "
+                "credential_id=%s", account.provider_id, account.credential_id,
+            )
+            consent = frozenset()
+        if type(consent) is not frozenset or any(
+            type(source) is not SourceKey for source in consent
+        ):
+            consent = frozenset()
+
+        def current_consent(key: SourceKey) -> bool:
+            # Called by the Core executor both before GET and
+            # after GET, rejecting consent revoked in flight.
+            latest = consent_reader(account)
+            return (type(latest) is frozenset
+                    and key in latest
+                    and all(type(x) is SourceKey for x in latest))
+
+        # The optional selected-offer preflight is permitted
+        # only under the already held lock, exact persisted
+        # consent and the registered Core delivery route.
+        # It returns A only; the executor still owns all GET,
+        # receipt, revalidation and atomic B publication.
+        from .canonical_selected_offers import qualify_selected_offers
+        session = self._session_for_account(account)
+        root = self.library_dir()
+        qualified_snapshot = qualify_selected_offers(
+            self, account, session, admitted_snapshots[0],
+            admitted_epoch=admitted_epoch, shared_lock=sync_lease,
+            library_root=root, persisted_consent=consent,
+            consent_still_current=current_consent,
+            cancelled=cancelled_for_rights,
+        )
+        outcomes = execute_admitted_convergence(
+            self, account, session, qualified_snapshot,
+            admitted_epoch=admitted_epoch,
+            shared_lock=sync_lease, library_root=root,
+            persisted_consent=consent,
+            consent_still_current=current_consent,
+            deliver=delivery, cancelled=cancelled_for_rights,
+            publication_guard=getattr(
+                self, "_canonical_publication_consent_current", None,
+            ),
+        )
+        counts = {
+            status: sum(row.status == status for row in outcomes)
+            for status in ("downloaded", "recovered", "present_attested",
+                           "pending", "blocked", "failed", "cancelled")
+        }
+        return counts
+
 
 def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
     from .public_provider_diagnostics import registered_public_provider_id
