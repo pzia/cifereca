@@ -104,6 +104,7 @@ def _materialize_to_identity_locked(
     # A canonical Artifact is immutable final SHA evidence. If its source
     # bytes were altered, never copy them under that old Artifact ID. Legacy
     # placeholder rows without an actual Artifact are not upgraded by guess.
+    checkpoint = None
     if not is_bundle and artifact_id.startswith("sha256:"):
         registered = self.storage.artifact_get(artifact_id)
         if registered is not None and (
@@ -113,6 +114,15 @@ def _materialize_to_identity_locked(
             raise ProviderConfigurationError(
                 "Artifact source modifié depuis son indexation"
             )
+        if artifact_id == "sha256:" + source_digest:
+            from .local_transfer_recovery import LocalTransferCheckpoint
+            possible_checkpoint = LocalTransferCheckpoint(
+                self.storage, root=root, source=source, recipient=target_identity_id,
+                source_path=src, destination_dir=dest_dir, artifact_id=artifact_id,
+                sha256=source_digest, shared_lock=shared_lock,
+            )
+            if registered is not None or possible_checkpoint.exists():
+                checkpoint = possible_checkpoint
 
     def publish_canonical_send(path: Path) -> None:
         """Publish the verified local transfer only when source B is canonical.
@@ -131,6 +141,8 @@ def _materialize_to_identity_locked(
                 or source_artifact.get("sha256") != source_digest
                 or artifact_id != "sha256:" + source_digest
                 or source_artifact.get("size") != src.stat().st_size):
+            if checkpoint is not None:
+                raise ProviderConfigurationError("Artifact source modifié depuis son indexation")
             return
         from .canonical_transfer import publish_completed_local_transfer
         from .canonical_publication import _stable
@@ -149,6 +161,8 @@ def _materialize_to_identity_locked(
             transfer_receipt_ref=_stable("completed-local-send", completed_id),
             explicitly_authorized=True, shared_lock=shared_lock,
         )
+        if checkpoint is not None:
+            checkpoint.finish(path)
 
     def verified_target(path: Path) -> bool:
         if (path.is_symlink() or path.resolve() != path
@@ -201,6 +215,7 @@ def _materialize_to_identity_locked(
         fd, temporary = tempfile.mkstemp(prefix=".cifereca-send-", dir=dest_dir)
         os.close(fd)
         temp = Path(temporary)
+        journaled = False
         try:
             opened = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(opened, "rb") as input_stream, temp.open("wb") as out:
@@ -216,10 +231,18 @@ def _materialize_to_identity_locked(
                     raise ProviderConfigurationError("Destination modifiée pendant la copie")
                 os.replace(temp, dest)
             else:
+                if checkpoint is not None:
+                    checkpoint.record_ready(temp, dest)
+                    journaled = True
                 os.link(temp, dest)  # Exclusive destination; never hardlink src.
+                if checkpoint is not None:
+                    from .local_transfer_recovery import sync_directory
+                    sync_directory(dest_dir)
         finally:
-            temp.unlink(missing_ok=True)
+            if not journaled:
+                temp.unlink(missing_ok=True)
 
+    recovered = checkpoint.recover() if checkpoint is not None and owned_copy is None else None
     if owned_copy:
         dest, existing = owned_copy
         if not is_bundle and os.path.samefile(src, dest):
@@ -237,6 +260,8 @@ def _materialize_to_identity_locked(
             # Canonical publication survived, but its descriptive projection
             # did not. Repair it below using the SAME verified copy.
             status = "unchanged"
+    elif recovered is not None:
+        dest, status = recovered, "complete"
     else:
         dest = dest_dir / src.name
         stem, suffix = dest.stem, dest.suffix
