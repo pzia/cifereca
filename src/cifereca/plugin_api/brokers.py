@@ -153,6 +153,17 @@ class DiagnosticsBroker(Protocol):
     def runtime_diagnostic(self, plugin_id: str) -> Mapping[str, Any]: ...
     def active_checks(self) -> tuple[HealthCheckResult, ...]: ...
     def export_raw_journal(self) -> bytes: ...
+
+    def export_today_journal_zip(
+        self, destination: str, *, cancelled: Callable[[], bool] | None = None,
+    ) -> str:
+        """Optional #3649 local-only Diagnostics capability.
+
+        Creates a 0600 ZIP of the current local day without UI filters or
+        overwriting existing files. Older brokers may omit this method.
+        """
+        ...
+
     def http_trace_status(self) -> Mapping[str, Any]: ...
     def export_http_trace(self, destination: str) -> str:
         """Explicit confirmed private export, only with effective Trace active.

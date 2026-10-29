@@ -1564,6 +1564,14 @@ class DiagnosticsBrokerImpl:
         from .paths import log_file
         return export_raw_journal(log_file())
 
+    def export_today_journal_zip(self, destination: str, *, cancelled=None) -> str:
+        """#3649: create an exclusive private ZIP of today's local journal."""
+        from .core.diagnostic_journal_zip import export_daily_journal_zip
+        from .paths import log_file
+        return str(export_daily_journal_zip(
+            log_file(), destination, cancelled=cancelled,
+        ))
+
     def system_status(self):
         from .system_status import system_status
         return system_status(getattr(self.service, "plugin_manager", None))

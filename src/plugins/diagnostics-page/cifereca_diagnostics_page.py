@@ -473,6 +473,10 @@ class DiagnosticsPagePlugin:
         if previous_raw_chooser is not None:
             previous_raw_chooser.destroy()
         self._raw_export_chooser = None
+        previous_daily_export = getattr(self, "_daily_journal_export", None)
+        if previous_daily_export is not None:
+            previous_daily_export.close()
+        self._daily_journal_export = None
         previous_http_export = getattr(self, "_http_trace_export", None)
         if previous_http_export is not None:
             previous_http_export.close()
@@ -719,12 +723,24 @@ class DiagnosticsPagePlugin:
         journals_actions.append(journals_next)
         journals_actions.append(journals_copy)
         journals_tab.append(journals_actions)
-        journals_raw_export = Gtk.Button(label="Exporter le journal brut…")
-        journals_raw_export.set_tooltip_text(
-            "Export local non masqué, après confirmation : mots de passe, "
-            "identifiants, cookies, tokens et URLs peuvent être présents"
+        journals_today_export = Gtk.Button(
+            label="Exporter le journal brut du jour (ZIP)…"
         )
-        journals_tab.append(journals_raw_export)
+        journals_tab.append(journals_today_export)
+        from diagnostics_today_export import DailyJournalExport
+        self._daily_journal_export = DailyJournalExport(
+            journals_today_export, broker=broker, tasks=self.tasks, host=host,
+            current=lambda: self._page_root is page_root and self.diagnostics is broker,
+            folder=_readable_raw_export_folder,
+        )
+        # The historical all-retention JSON export remains available as an
+        # explicitly named advanced action, never confused with today's ZIP.
+        journals_raw_export = Gtk.Button(label="Exporter tout l’historique (JSON)…")
+        journals_raw_export.set_tooltip_text(
+            "Historique complet de la rétention, sans filtre ni masquage. "
+            "Peut contenir mots de passe, cookies, tokens et URLs privées."
+        )
+        advanced_box.append(journals_raw_export)
         journals_http_export = Gtk.Button(label="Exporter les échanges HTTP…")
         journals_tab.append(journals_http_export)
         from diagnostics_http_export import HTTPTraceExport
@@ -1617,11 +1633,12 @@ class DiagnosticsPagePlugin:
                 host.toast(
                     "Attention : le journal brut contient potentiellement logins, "
                     "mots de passe, cookies, tokens, URL et autres données sensibles. "
+                    "Cet export JSON inclut toute la rétention, pas seulement aujourd'hui. "
                     "Cliquez encore pour choisir un fichier local."
                 )
                 return
             raw_export_armed = False
-            journals_raw_export.set_label("Exporter le journal brut…")
+            journals_raw_export.set_label("Exporter tout l’historique (JSON)…")
             if not callable(getattr(broker, "export_raw_journal", None)):
                 host.toast("Core incompatible : export brut non disponible")
                 return
@@ -2268,6 +2285,10 @@ class DiagnosticsPagePlugin:
         if previous_raw_chooser is not None:
             previous_raw_chooser.destroy()
         self._raw_export_chooser = None
+        previous_daily_export = getattr(self, "_daily_journal_export", None)
+        if previous_daily_export is not None:
+            previous_daily_export.close()
+        self._daily_journal_export = None
         previous_http_export = getattr(self, "_http_trace_export", None)
         if previous_http_export is not None:
             previous_http_export.close()
