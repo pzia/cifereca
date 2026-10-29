@@ -40,22 +40,28 @@ def _register(storage, *, identity="alice", account="primary"):
     })
 
 
-def test_same_explicit_right_is_inactivated_only_on_authoritative_prune(tmp_path):
+@pytest.mark.parametrize("kind", ["owned", "loan"])
+def test_even_exact_owner_manifest_cannot_revoke_canonical_mirrored_right(
+    tmp_path, kind,
+):
     storage = Storage(tmp_path / "test.sqlite")
     try:
         _register(storage)
-        storage.backup_put(_legacy())
+        legacy = _legacy()
+        if kind == "loan":
+            legacy.update(entitlement_type="loan", loan_id="loan-123")
+        storage.backup_put(legacy)
         right = _right(storage)
         receipt = storage.acquisitions(provider_id="opaque-seller")
         assert right["state"] == "active"
         assert len(receipt) == 1
         assert storage.backup_prune_missing("opaque-seller", "card", set()) == {
-            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 1,
+            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 0,
         }
-        after = _right(storage)
-        assert after["identity_id"] == "alice"
-        assert after["state"] == "inactive"
-        assert after["metadata"]["compatibility_projection_pruned"] is True
+        # Even an exactly bound provider account and complete old manifest
+        # attest only projection membership, not a typed loan return or
+        # purchase revocation. Neither right nor provenance was rewritten.
+        assert _right(storage) == right
         assert storage.acquisitions(provider_id="opaque-seller") == receipt
         assert storage.backup_list("opaque-seller") == []
     finally:
