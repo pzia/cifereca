@@ -64,8 +64,13 @@ def test_attested_ids_and_states_reach_private_diagnostics_argument_not_plugin_r
     assert all(row["restoration"] == "not_evaluated" for row in facts.values())
     assert "placement-bob" not in json.dumps(batch)
     assert "placement_observations" not in result and "PRIVATE" not in json.dumps(result)
-    # C's current projection remains unchanged until C integrates this handoff.
-    assert "placement_observations" not in json.dumps(service.diagnostics.snapshot())
+    # C now observes the attested per-row detail; the broker return is unchanged.
+    detail = service.diagnostics.snapshot()[-1]["detail"]
+    batch = detail["placement_observations"]
+    assert batch["identity_id"] == "alice"
+    assert {item["placement_id"] for item in batch["observations"]} == {
+        "placement-alice", "placement-present",
+    }
 
 
 @pytest.mark.parametrize("reason", ["unmounted", "permission_denied"])
