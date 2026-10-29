@@ -23,6 +23,13 @@ _MAX_EVENT_BYTES = 256_000
 _ROTATIONS = (3, 2, 1, 0)
 _LEVELS = frozenset({"debug", "info", "warning", "error", "critical"})
 _DIAGNOSTIC_PREFIX = "DIAG_JSON "
+# Exactly the existing Core worker terminal emission. A free-text mention,
+# another logger or a severity/status contradiction is NOT a task reference.
+_TASK_CORRELATION = re.compile(
+    r"TRACE task correlation task_ref=([0-9a-f]{12}) "
+    r"status=(success|failed|cancelled)", re.ASCII,
+)
+_TASK_SEVERITY = {"success": "info", "failed": "error", "cancelled": "warning"}
 
 
 def journal_payload(value: Any, depth: int = 0) -> Any:
@@ -146,6 +153,14 @@ def _make_event(match, identity, offset):
             value_ms = document.get("duration_ms")
             if type(value_ms) is int and 0 <= value_ms <= 86_400_000:
                 duration_ms = value_ms
+    elif match["logger"] == "cifereca":
+        # The unstructured legacy worker line has an exact, finite Core
+        # format. Preserve its already emitted task_ref and outcome on the
+        # canonical journal surface; never infer a provider, cause or GET.
+        correlation = _TASK_CORRELATION.fullmatch(message)
+        if (correlation is not None
+                and level == _TASK_SEVERITY[correlation.group(2)]):
+            task_ref, status = correlation.groups()
     # A physical occurrence is identified by inode + offset, not a timestamp
     # or textual hash. Identical messages and rotation renames remain distinct.
     id_bytes = f"{identity[0]}:{identity[1]}:{offset}".encode("ascii")
