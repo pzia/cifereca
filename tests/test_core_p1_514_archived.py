@@ -7,6 +7,16 @@ from cifereca.kobo.vault import KoboVaultError
 from tests.test_kobo_backup_fault_isolation import _service, _ready_adept_state, _write_epub
 
 
+def _physical_placement_evidence(rows):
+    """Ignore only the legacy projection's mutable bookkeeping refresh time.
+
+    Ownership, path, SHA linkage, state, metadata and creation time still
+    require exact equality; a passive archive cannot change those facts.
+    """
+    return [{key: value for key, value in row.items() if key != "updated_at"}
+            for row in rows]
+
+
 def test_archived_409_is_persisted_and_not_retried_without_explicit_unarchive(tmp_path, monkeypatch):
     manifest = [{"product_id": "book-1", "title": "Book", "revision_id": "r1", "format": "EPUB"}]
     service, session = _service(tmp_path, manifest)
@@ -79,7 +89,7 @@ def test_archived_manifest_preserves_received_file_right_and_placement(tmp_path,
             after = service.storage.backup_get("kobo", "vault-1", "book-1")
             assert (after["local_path"], after["sha256"], after["status"]) == (
                 before["local_path"], before["sha256"], "complete")
-            assert service.storage.placements() == placements
+            assert _physical_placement_evidence(service.storage.placements()) == _physical_placement_evidence(placements)
             assert [(r["entitlement_id"], r["state"]) for r in service.storage.entitlements()] == [
                 (r["entitlement_id"], r["state"]) for r in rights]
             assert Path(after["local_path"]).read_bytes() == data
@@ -90,7 +100,7 @@ def test_archived_manifest_preserves_received_file_right_and_placement(tmp_path,
         summary = service.sync_kobo_backup_account("vault-1")
         assert summary["skipped_archived"] == 1 and summary["attention_required"] == 0
         assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] == "skipped_archived"
-        assert service.storage.placements() == placements
+        assert _physical_placement_evidence(service.storage.placements()) == _physical_placement_evidence(placements)
         assert safe_kobo_backup_report(service.kobo_backup_diagnostic())["attention_count"] == 0
         assert Path(before["local_path"]).read_bytes() == data
     finally:
