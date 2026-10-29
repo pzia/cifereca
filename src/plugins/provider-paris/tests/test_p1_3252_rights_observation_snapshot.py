@@ -37,12 +37,15 @@ class CoreOwnerBroker:
     def __init__(self, identities=("identity-A",)):
         self.identities = identities
         self.calls = 0
+        self.requests = []
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         self.calls += 1
+        self.requests.append(identity_id)
         return [
             NS(provider_id="paris", account_id="reader-A", identity_id=identity)
             for identity in self.identities
+            if identity_id is None or identity == identity_id
         ]
 
 
@@ -216,9 +219,26 @@ def test_paris_copy_of_bound_borrower_remains_compatible_after_instance_pin():
         session.close()
 
 
+def test_paris_owner_is_scoped_to_target_identity_with_shared_upstream_id():
+    session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
+    broker = session.identity_broker
+    # A second library identity may register the same upstream borrower;
+    # it is not an additional owner within the selected identity.
+    broker.identities = ("identity-A", "identity-B")
+    try:
+        report = session.rights_observation_snapshot(account)
+        assert len(report.rights) == 1
+        assert report.scope.identity_id == "identity-A"
+        assert broker.requests and set(broker.requests) == {"identity-A"}
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize("identities", [
-    (), ("identity-B",), ("identity-A", "identity-B"),
-    ("identity-A", "identity-A"),
+    (), ("identity-B",), ("identity-A", "identity-A"),
 ])
 def test_paris_unverified_core_owner_never_calls_private_loan_branches(identities):
     session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
@@ -364,7 +384,7 @@ def test_paris_empty_primary_borrower_matches_credential_scoped_core_account_ref
         upstream("primary-loan", "primary-edition"),
     ))
     account.unique_id = ""  # Upstream Paris primary borrower convention
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="paris:card-A:primary",
            identity_id="identity-A"),
         # An empty primary from another card must NOT be accepted for card-A.
@@ -391,7 +411,7 @@ def test_paris_empty_primary_refuses_foreign_credential_owner_before_network():
         upstream("primary-loan", "primary-edition"),
     ))
     account.unique_id = ""
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="paris:other-card:primary",
            identity_id="identity-A"),
     ]
@@ -480,7 +500,7 @@ def test_paris_rights_core_v2_same_upstream_id_different_credentials_are_isolate
     session, account, client = fixture(digital=(upstream("loan-A", "edition-A"),))
     # Core #3559 v2 returns both credentials. The other credential's row
     # cannot make one legitimate reader look like two ambiguous owners.
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="reader-A", identity_id="identity-A",
            credential_id="card-A", scope_version=2),
         NS(provider_id="paris", account_id="reader-A",
@@ -510,7 +530,7 @@ def test_paris_rights_core_v2_same_upstream_id_different_credentials_are_isolate
 ])
 def test_paris_rights_wrong_credential_or_mixed_v1_v2_refuses_before_get(refs):
     session, account, client = fixture(digital=(upstream("loan-A", "edition-A"),))
-    session.identity_broker.accounts = lambda: refs
+    session.identity_broker.accounts = lambda identity_id=None: refs
     try:
         with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
             session.rights_observation_snapshot(account)

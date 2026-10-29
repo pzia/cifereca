@@ -26,6 +26,14 @@ généralisé, aucun veto à partir d'un titre ou d'un ISBN candidat.
 | `provider-numilog` | `MesLivres` authentifié ; `meslivres` | `numilog:<scope-credential>:<lid>:<variant-hash>` ; pas de rapprochement avec la fiche commerciale | achat, `active`, preuve `numilog.meslivres` | `partial`, pagination non attestée exhaustive, doublons `(lid, variant)` mis en quarantaine | `unknown` au scan normal ; `available` seulement dans le préflight ciblé #3586 sur action signée exacte (et identité #3587), sans exporter l'URL |
 | `provider-kobo` | manifeste Vault personnel ; `personal_manifest` | `product_id` authentifié strict, compte exact ; édition = droit dans le contrat v1 | achat `owned=True`, `active` même si archivé ; `owned=False` non promu ; preuve `kobo.personal_manifest` | `partial`, vignettes catalogue et résultats publics non probants | `unknown` en scan ordinaire ; préflight sélectionné #3592 seulement après droit exact et POST Vault explicite, `available` si candidat HTTPS GET unique admissible, puis revalidation de l’offre exacte avant restitution du descripteur, archive ≠ droit de télécharger |
 | `provider-paris` | prêts DILICOM ; `dilicom` | `Id` ou `HoldingId` **réel** + `RecordId` ; jamais repli titre/UUID | prêt, `unknown` (aucun état actif inféré) ; preuve `paris.dilicom.listloans` | `partial`, pas d'exhaustivité ; branche SYRACUSE physique séparée. Si DILICOM échoue, la PR #3547 (fusionnée) précise `failed/unknown`. | `unknown`, ni ACSM ni PNB déclenché |
+
+**Paris / multi-identités (#3118) :** les lectures d'owner du broker Core
+(`loans`, observations de droits et téléchargement explicite) passent
+l'`identity_id` du compte emprunteur exact à `broker.accounts(identity_id)`.
+Deux identités possédant le même identifiant de compte Paris ne rendent plus
+un propriétaire local ambigu. Les contrôles du credential et de l'instance
+active restent obligatoires, et tout changement pendant une lecture refuse
+le résultat plutôt que de transmettre des droits entre identités.
 | `provider-bnf-pret` | section `active-loans` du HTML authentifié ; `bnf_html` | `loan_id` + `resource_id` exacts, pas de couverture/titre de catalogue comme preuve | prêt `active` observé dans la section active ; preuve `bnf_html.active_loans` | `partial`, même si la page renvoie 0 prêt | `available` seulement si une action signée `reader-acs4` du prêt exact est présente dans le même HTML (#3585) ; sinon `unknown`. GET du jeton distinct et explicitement admis |
 
 Chaque ligne `ProviderRightObservation` rapporte une observation positive

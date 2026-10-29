@@ -13,7 +13,7 @@ from tests.test_p1_3252_rights_observation_snapshot import fixture, upstream, Co
 
 
 @pytest.mark.parametrize("change", [
-    "owner_B", "owner_duplicate", "owner_AB", "broker_ABA", "broker_removed",
+    "owner_B", "owner_duplicate", "broker_ABA", "broker_removed",
 ])
 @pytest.mark.parametrize("entrypoint", ["legacy", "typed_rights"])
 def test_second_paris_branch_get_blocked_after_core_owner_changes(change, entrypoint):
@@ -28,8 +28,6 @@ def test_second_paris_branch_get_blocked_after_core_owner_changes(change, entryp
                 session.identity_broker.identities = ("identity-B",)
             elif change == "owner_duplicate":
                 session.identity_broker.identities = ("identity-A", "identity-A")
-            elif change == "owner_AB":
-                session.identity_broker.identities = ("identity-A", "identity-B")
             elif change == "broker_ABA":
                 session.identity_broker = CoreOwnerBroker()
             else:
@@ -43,6 +41,36 @@ def test_second_paris_branch_get_blocked_after_core_owner_changes(change, entryp
             else:
                 session.rights_observation_snapshot(account)
         assert client.calls == [("DILICOM", "reader-A")]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("entrypoint", ["legacy", "typed_rights"])
+def test_addition_of_foreign_identity_midread_does_not_block_same_borrower(entrypoint):
+    session, account, client = fixture(digital=(
+        upstream("loan-a", "edition-a"),
+    ), physical=(upstream("loan-b", "edition-b"),))
+    original = client.loans
+
+    def first(upstream_name, account_id):
+        rows = original(upstream_name, account_id)
+        if upstream_name == "DILICOM":
+            # Same account ID under a *different* Core identity does not
+            # change the originally pinned owner in identity-A.
+            session.identity_broker.identities = ("identity-A", "identity-B")
+        return rows
+
+    client.loans = first
+    try:
+        if entrypoint == "legacy":
+            assert len(session.loans(account)) == 2
+        else:
+            report = session.rights_observation_snapshot(account)
+            assert [right.right_id for right in report.rights] == ["loan-a"]
+            assert report.scope.identity_id == "identity-A"
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
     finally:
         session.close()
 
@@ -76,7 +104,7 @@ def test_brokerless_legacy_paris_reads_both_branches_but_no_rights_authority():
 
 def test_other_v2_credential_does_not_rebind_same_paris_reader():
     s, account, client = fixture(digital=(upstream("loan-a", "edition-a"),))
-    s.identity_broker.accounts = lambda: [
+    s.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="reader-A",
            identity_id="identity-A", credential_id="card-A", scope_version=2),
         NS(provider_id="paris", account_id="reader-A",

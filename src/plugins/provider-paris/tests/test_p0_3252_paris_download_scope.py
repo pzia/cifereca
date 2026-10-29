@@ -235,7 +235,7 @@ def test_paris_pnb_core_v2_other_credential_on_same_borrower_is_not_a_duplicate(
 ):
     session, account, loan, _client, requested = prepare(tmp_path, monkeypatch)
     from types import SimpleNamespace as NS
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="reader-A", identity_id="identity-A",
            credential_id="card-A", scope_version=2),
         NS(provider_id="paris", account_id="reader-A", identity_id="identity-B",
@@ -257,7 +257,7 @@ def test_paris_pnb_core_v2_foreign_credential_refuses_before_get(
 ):
     session, account, loan, client, requested = prepare(tmp_path, monkeypatch)
     from types import SimpleNamespace as NS
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="reader-A", **credential_version),
     ]
     try:
