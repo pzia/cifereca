@@ -883,11 +883,12 @@ class KoboSession(ProviderSession):
                 kind="purchase",
                 # Archive is a library-management/download state, not a
                 # purchase revocation. This row is still positively owned.
-                # Delivery stays unknown and Core alone decides acquisition.
+                # An explicit archive blocks delivery, never ownership.
                 state="active",
                 evidence_kind="provider_response",
                 evidence_ref="kobo.personal_manifest",
-                observed_at=observed, delivery="unknown",
+                observed_at=observed,
+                delivery="unavailable" if archived is True else "unknown",
             ))
         self._ensure_personal_binding(
             bound, generation, expected_account_id=account_id,
@@ -982,6 +983,10 @@ class KoboSession(ProviderSession):
         if (right is None or right.state != "active"
                 or right.provider_attested is not True):
             raise ProviderCapabilityError("kobo_delivery_offer_right_unobserved")
+        if right.delivery == "unavailable":
+            # Keep the exact positive purchase, but do not POST a descriptor
+            # for a manifest-attested archive (#514).
+            return replace(baseline, rights=(right,))
         # Exactly one POST for the exact attested product, after an explicit
         # selection. Do not fall back to delegated mode on a descriptor 403.
         payload = self.resolve_acquisition(

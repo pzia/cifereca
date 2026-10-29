@@ -75,8 +75,8 @@ def test_real_manifest_bridge_scopes_zero_one_many_and_archived_without_delivery
         assert all(r.kind == "purchase" for r in report.rights)
         assert all(r.provider_attested for r in report.rights)
         assert all(r.evidence_ref == "kobo.personal_manifest" for r in report.rights)
-        assert all(r.delivery == "unknown" and not r.delivery_offer_id
-                   for r in report.rights)
+        assert [r.delivery for r in report.rights] == ["unknown", "unavailable"]
+        assert all(not r.delivery_offer_id for r in report.rights)
         assert all(not r.authorizes_mutation for r in report.rights)
         assert report.exact("book-1", "book-1", "purchase") is report.rights[0]
         assert report.exact("book-1", "book-1", "loan") is None
@@ -278,7 +278,7 @@ def test_archived_kobo_book_is_still_an_active_purchase_not_an_expired_right(
         right = observed.rights[0]
         assert right.kind == "purchase"
         assert right.state == "active"
-        assert right.delivery == "unknown"
+        assert right.delivery == ("unavailable" if archived is True else "unknown")
         assert right.delivery_offer_id == ""
         assert not observed.authorizes_mutation
         assert not observed.authorizes_negative_reconciliation
