@@ -1385,10 +1385,21 @@ class Storage:
                 "AND (placements.provider_id IS NULL OR excluded.provider_id IS NULL "
                 "OR placements.provider_id=excluded.provider_id) "
                 "AND (placements.source_item_id IS NULL OR excluded.source_item_id IS NULL "
-                "OR placements.source_item_id=excluded.source_item_id)",
+                "OR placements.source_item_id=excluded.source_item_id) "
+                # A v0.7 placeholder can coexist with a catalogue already
+                # promoted by an independent scan. Never let the old writer
+                # change its physical claim after the catalogue became
+                # authoritative, even if the placement itself stayed unverified.
+                "AND NOT EXISTS (SELECT 1 FROM catalog_entries AS catalog_guard "
+                "WHERE catalog_guard.placement_id=placements.placement_id AND ("
+                "catalog_guard.metadata_json IS NOT ? OR catalog_guard.local_state<>'local' "
+                "OR catalog_guard.identity_id IS NOT ? OR catalog_guard.provider_id IS NOT ? "
+                "OR catalog_guard.item_id IS NOT ?))",
                 (placement_id, artifact_id, str(Path(local_path).expanduser().resolve()), row.get("identity_id"), row.get("provider_id"),
                  row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
-                 cls._json_dump({"imported_from": "backup_items"})),
+                 cls._json_dump({"imported_from": "backup_items"}),
+                  cls._json_dump({"imported_from": "backup_items"}),
+                  row.get("identity_id"), row.get("provider_id"), row.get("item_id")),
             )
             if placement_cursor.rowcount != 1:
                 # The historical backup projection can contain multiple
@@ -1406,10 +1417,19 @@ class Storage:
                     "ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,catalog_entries.artifact_id),"
                     "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=COALESCE(excluded.media_format,catalog_entries.media_format),"
                     "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
-                    "updated_at=excluded.updated_at",
+                    "updated_at=excluded.updated_at "
+                    # Refresh only a still-owned 0.7 descriptive placeholder.
+                    # Do not overwrite a local catalogue entry promoted by a
+                    # scan, an explicit declaration, or a different account.
+                    "WHERE catalog_entries.placement_id IS excluded.placement_id "
+                    "AND catalog_entries.metadata_json IS ? AND catalog_entries.local_state='local' "
+                    "AND catalog_entries.identity_id IS excluded.identity_id "
+                    "AND catalog_entries.provider_id IS excluded.provider_id "
+                    "AND catalog_entries.item_id IS excluded.item_id",
                     (catalog_id, artifact_id, placement_id, str(row.get("title") or row.get("item_id") or "Sans titre"),
                      row.get("author"), str(row.get("format") or "").lower() or None, row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
-                     "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+                     "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
+                     cls._json_dump({"imported_from": "backup_items"})),
                 )
         acquisition_id = cls._acquisition_id_for(row)
         acquisition_cursor = db.execute(
