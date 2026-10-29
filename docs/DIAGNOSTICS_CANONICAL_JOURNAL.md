@@ -144,3 +144,51 @@ Le cache `Diagnostics._items` et la fonction de projection
 `query_diagnostic_events()` restent présents uniquement pour des contrats
 historiques et leurs tests, mais **ne sont plus appelés par le broker public**.
 Leur suppression physique (et celle des alias) est le prochain lot de #3133.
+
+## #3649 — export brut du jour en ZIP (P0)
+
+Dans **Diagnostics → Journaux**, utiliser **« Exporter le journal brut du jour
+(ZIP)… »** : premier clic = avertissement sur les credentials et données
+personnelles, deuxième clic = sélecteur GTK4 SAVE avec une fenêtre parente
+réelle, puis écriture en tâche de fond. Aucune requête fournisseur ni envoi
+réseau. Le nom proposé est
+`cifereca-journal-brut-YYYYMMDD-HHMMSS.zip`; choisir un nouveau nom si le
+fichier existe déjà. L'action est désactivée si le Core installé ne possède
+pas le broker facultatif `export_today_journal_zip`.
+
+L'archive contient `cifereca-journal-brut.json` (même schéma non masqué que
+l'export JSON existant), `manifest.json` et `README.txt`. Le manifeste
+atteste la date locale, le **nom IANA** du fuseau, le début UTC inclus, la
+fin UTC exclue, le nombre d'événements et l'empreinte SHA-256 des octets JSON.
+Les changements d'heure donnent une durée de 23 ou 25 heures ; il n'y a pas
+d'hypothèse de journée fixe de 24 heures. La date est celle de l'export
+effectif, non du dernier événement enregistré. Les événements antérieurs et
+futurs sont exclus, même s'ils sont encore conservés sur disque. Aucun filtre
+de l'écran (recherche, gravité, fournisseur, pagination) n'est appliqué.
+
+Le ZIP est créé en fichier temporaire `0600`, fermé puis rendu visible en
+une publication **exclusive** ; un ancien fichier ou symlink n'est jamais
+écrasé. Annulation et erreur d'I/O enlèvent le temporaire. Le lecteur source
+garde sa borne de **2 Mo par rotation** ; une rotation absente, inaccessible ou
+trop volumineuse est indiquée explicitement `coverage=partial` avec
+`rotation_gaps`. L'instantané n'est pas atomique face aux nouveaux messages
+(`atomic=false`), et sa rétention ne prouve pas les événements antérieurs
+déjà purgés. Si aucun fuseau IANA n'est disponible, refuser l'export plutôt
+que produire de fausses bornes DST. Les destinations locales sont seules
+prises en charge, sans transfert automatique.
+
+**Ne jamais joindre directement une archive privée à une issue publique.**
+Le ZIP contient des faits bruts, potentiellement passwords, cookies, tokens,
+URL signées, identités et chemins. Vérifier avant tout partage ; une éventuelle
+archive **expurgée** serait une action distincte, non implémentée ici.
+
+L'ancien bouton **« Exporter tout l’historique (JSON)… »** est conservé dans
+**Filtres avancés** pour les usages existants. Il exporte explicitement les
+rotations entières, sans les confondre avec le ZIP du seul jour courant.
+
+Tests : `tests/test_core_p0_3649_diagnostic_daily_zip.py` couvre DST
+(23/25h), zéro événement hors jour, ZIP/manifeste/SHA, secrets inchangés,
+rotations partielles, fichier existant/symlink, concurrence et annulation.
+`src/plugins/diagnostics-page/tests/test_daily_journal_export.py` valide
+la sélection sans Core réseau ; `test_daily_journal_export_gtk.py` exécute
+le sélecteur GTK4 réel lorsqu'un DISPLAY est disponible.
