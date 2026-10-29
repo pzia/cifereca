@@ -15,8 +15,10 @@ le seul ajout de ces contrôles, car leur état de provenance reste distinct.
 
 `SynchronizationBrokerImpl.canonical_acquisition_choices(source_id)` lit
 **uniquement** SQLite : pages de 48 SourceReferences déjà persistées,
-du compte exact, accessibles via un index stable ; notamment pour les
-522 références du compte Kobo observées le 29 octobre. Retour : `reference` (empreinte opaque stable
+du compte exact, accessibles via un index stable. Le journal du 29 octobre
+mentionne **522 éléments du manifeste Kobo historique** ; leur nombre de
+SourceReferences canoniques positives n'est pas attesté. La pagination
+permet néanmoins de gérer un compte de cette taille sans troncature. Retour : `reference` (empreinte opaque stable
 de 64 caractères, **pas** un jeton d'autorisation), `kind` achat/prêt,
 `allowed` et `eligible` booléens. Aucun identifiant fournisseur/credential,
 numéro de prêt, titre privé, URL signée ni chemin n'est exposé dans l'API/UI.
