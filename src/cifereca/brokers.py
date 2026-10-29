@@ -501,13 +501,15 @@ class SynchronizationBrokerImpl:
         self._notify()
         return self._ref(account)
 
-    def canonical_acquisition_choices(self, source_id: str) -> tuple[dict[str, object], ...]:
+    def canonical_acquisition_choices(
+        self, source_id: str, *, page: int = 0,
+    ) -> tuple[dict[str, object], ...]:
         """Optional, offline, exact-right controls for CoreUI (no provider I/O)."""
         if type(source_id) is not str or not source_id.startswith("sync:"):
             raise ValueError("invalid_canonical_source")
         account = self._find_account(source_id)
         from .core.source_acquisition_consent import canonical_acquisition_choices
-        return canonical_acquisition_choices(self.service, account)
+        return canonical_acquisition_choices(self.service, account, page=page)
 
     def set_canonical_acquisition_choice(
         self, source_id: str, reference: str, *, allowed: bool,
