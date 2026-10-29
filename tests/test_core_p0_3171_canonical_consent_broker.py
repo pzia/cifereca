@@ -114,7 +114,7 @@ def test_rebind_or_duplicate_account_refuses_ui_consent(tmp_path, monkeypatch):
         broker, sid = _choices(service, account, snapshot)
         token = broker.canonical_acquisition_choices(sid)[0]["reference"]
         service.accounts.append(account)
-        with pytest.raises(ValueError, match="selection_unavailable"):
+        with pytest.raises(ValueError, match="ambiguous sync source"):
             broker.set_canonical_acquisition_choice(sid, token, allowed=True)
         service.accounts.pop()
         service._account_context_epoch += 1
