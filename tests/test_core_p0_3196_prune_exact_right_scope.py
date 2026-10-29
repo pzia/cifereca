@@ -40,24 +40,66 @@ def _register(storage, *, identity="alice", account="primary"):
     })
 
 
-def test_same_explicit_right_is_inactivated_only_on_authoritative_prune(tmp_path):
+@pytest.mark.parametrize("kind", ["owned", "loan"])
+def test_even_exact_owner_manifest_cannot_revoke_canonical_mirrored_right(
+    tmp_path, kind,
+):
     storage = Storage(tmp_path / "test.sqlite")
     try:
         _register(storage)
-        storage.backup_put(_legacy())
+        legacy = _legacy()
+        if kind == "loan":
+            legacy.update(entitlement_type="loan", loan_id="loan-123")
+        storage.backup_put(legacy)
         right = _right(storage)
         receipt = storage.acquisitions(provider_id="opaque-seller")
         assert right["state"] == "active"
         assert len(receipt) == 1
         assert storage.backup_prune_missing("opaque-seller", "card", set()) == {
-            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 1,
+            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 0,
         }
-        after = _right(storage)
-        assert after["identity_id"] == "alice"
-        assert after["state"] == "inactive"
-        assert after["metadata"]["compatibility_projection_pruned"] is True
+        # Even an exactly bound provider account and complete old manifest
+        # attest only projection membership, not a typed loan return or
+        # purchase revocation. Neither right nor provenance was rewritten.
+        assert _right(storage) == right
         assert storage.acquisitions(provider_id="opaque-seller") == receipt
         assert storage.backup_list("opaque-seller") == []
+    finally:
+        storage.close()
+
+
+def test_projection_prune_preserves_attested_origin_and_physical_file(tmp_path):
+    from tests.test_core_p0_3171_atomic_publication_v14 import (
+        BYTES, SHA, new_source, target, publish, rows,
+    )
+
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        _register(storage)
+        source, snapshot = new_source(
+            "alice", provider="opaque-seller", credential="card",
+            account="primary", edition="book", right="purchase",
+        )
+        root = tmp_path / "EBooks"
+        path = target(tmp_path, "alice")
+        publish(storage, root, path, source, snapshot)
+        legacy = _legacy()
+        legacy.update(local_path=str(path), sha256=SHA, size=len(BYTES))
+        storage.backup_put(legacy)
+        before_right = _right(storage)
+        before_origins = rows(storage)
+        before_placements = storage.placements()
+        before_receipts = storage.acquisitions(provider_id="opaque-seller")
+        assert before_origins == (1, 1, 1, 1)
+        assert storage.backup_prune_missing("opaque-seller", "card", []) == {
+            "pruned": 1, "local_preserved": 1, "entitlements_inactivated": 0,
+        }
+        assert storage.backup_list("opaque-seller") == []
+        assert _right(storage) == before_right
+        assert rows(storage) == before_origins
+        assert storage.placements() == before_placements
+        assert storage.acquisitions(provider_id="opaque-seller") == before_receipts
+        assert path.read_bytes() == BYTES
     finally:
         storage.close()
 

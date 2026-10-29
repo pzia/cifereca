@@ -1689,20 +1689,19 @@ class Storage:
     def backup_prune_missing(
         self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]
     ) -> dict[str, int]:
-        """Prune compatibility rows absent from an authoritative provider manifest.
+        """Prune only the v0.7 compatibility projection after a complete manifest.
 
-        ``backup_items`` is a legacy/current-manifest projection, not durable
-        acquisition history.  Removing a stale projection must never remove a
-        local Artifact, Placement or catalog entry.  The corresponding generic
-        entitlement is merely marked ``inactive`` so provenance/history remains
-        available without claiming a current remote right.
+        A provider manifest admitted by the Kobo compatibility synchronizer
+        may retire obsolete backup_items rows; it cannot attest an exact
+        SourceReference right, an entitlement revocation or removal of bytes.
+        Entitlements/OriginLinks/Placements/acquisition history are never
+        mutated by this obsolete projection. Negative canonical rights require
+        a separately scoped, typed provider contract under #3171/#3197.
         """
         provider = str(provider_id or "").strip()
         credential = str(credential_id or "").strip()
-        # An absence decision is destructive to a source's *current* right.
-        # A malformed/partial caller payload (notably a string, dict or None)
-        # is NOT an authoritative empty manifest. Reject the entire batch
-        # before BEGIN IMMEDIATE rather than silently pruning every right.
+        # A malformed/partial caller payload must never become an empty
+        # manifest. Preserve the existing all-or-nothing admission boundary.
         if type(seen_item_ids) not in (set, list, tuple) or len(seen_item_ids) > 100_000:
             raise ValueError("invalid_authoritative_manifest_item_ids")
         seen: set[str] = set()
@@ -1712,108 +1711,40 @@ class Storage:
                     or any(c in raw_item for c in "\x00\r\n")):
                 raise ValueError("invalid_authoritative_manifest_item_ids")
             seen.add(raw_item.strip())
-        now = int(time.time())
         if not provider or not credential:
             return {"pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0}
 
-        keys = ["provider_id", "credential_id", "item_id", *self._backup_keys()]
         with self._lock, self._connect() as db:
-            # An authoritative snapshot cannot race with a concurrent right
-            # ownership migration or an independent legacy projection update.
+            # A single SQLite transaction protects the manifest projection
+            # against concurrent backup_put and ensures all stale rows retire
+            # together. Nothing in the canonical source/receipt tables is
+            # in this write set.
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT " + ",".join(keys) + " FROM backup_items WHERE provider_id=? AND credential_id=?",
-                (provider, credential),
-            ).fetchall()
-            stale = [dict(zip(keys, row)) for row in rows if str(row[2] or "") not in seen]
-            # A current manifest belongs to the connection registered NOW,
-            # not to an earlier identity/borrower bound to the same v0.7 key.
-            # An old row remains prunable as a compatibility projection, but
-            # cannot revoke the former owner's canonical right after a rebind.
-            active_connections = db.execute(
-                "SELECT identity_id,enabled FROM provider_connections "
+                "SELECT item_id,local_path FROM backup_items "
                 "WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
             ).fetchall()
-            bound_identity = (
-                active_connections[0][0] if len(active_connections) == 1
-                and active_connections[0][1] == 1 else None
-            )
-            bound_accounts = (
-                db.execute(
-                    "SELECT account_id FROM provider_accounts "
-                    "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-                    (bound_identity, provider, credential),
-                ).fetchall() if bound_identity is not None else []
-            )
+            stale = [
+                (item_id, path) for item_id, path in rows
+                if str(item_id or "") not in seen
+            ]
             local_preserved = 0
-            entitlements_inactivated = 0
-            for row in stale:
-                local_path = str(row.get("local_path") or "").strip()
+            for item_id, path in stale:
+                local_path = str(path or "").strip()
                 if local_path and Path(local_path).expanduser().is_file():
                     local_preserved += 1
-
-                entitlement_id = self._entitlement_id_for(row)
-                # The legacy projection primary key omits identity. An old
-                # row can name an entitlement ID now assigned to a different
-                # identity (or still UNKNOWN). A manifest for the projection
-                # does not authorize inactivation of that other owner's right.
-                # Retain the right and canonical acquisition history even
-                # when the obsolete compatibility row itself is pruned.
-                entitlement = db.execute(
-                    "SELECT provider_id,credential_id,account_id,item_id,"
-                    "entitlement_type,loan_id,identity_id,metadata_json "
-                    "FROM entitlements WHERE entitlement_id=?",
-                    (entitlement_id,),
-                ).fetchone()
-                identity = row.get("identity_id")
-                exact_right = (
-                    type(identity) is str and bool(identity)
-                    and identity == bound_identity
-                    and sum(account[0] == row.get("account_id")
-                            for account in bound_accounts) == 1
-                    and entitlement is not None
-                    and entitlement[:7] == (
-                        provider, credential, row.get("account_id"),
-                        str(row.get("item_id") or ""),
-                        str(row.get("entitlement_type") or "owned"),
-                        row.get("loan_id"), identity,
-                    )
-                )
-                if exact_right:
-                    metadata = self._json_load(entitlement[7])
-                    if (
-                        metadata.get("compatibility_projection") == "backup_items"
-                        or metadata.get("imported_from") == "backup_items"
-                    ):
-                        metadata["compatibility_projection_pruned"] = True
-                        metadata["compatibility_projection_pruned_at"] = now
-                        cursor = db.execute(
-                            "UPDATE entitlements SET state='inactive',"
-                            "metadata_json=?,updated_at=? "
-                            "WHERE entitlement_id=? AND identity_id=? "
-                            "AND provider_id=? AND credential_id=? "
-                            "AND account_id IS ? AND item_id=? "
-                            "AND entitlement_type=? AND loan_id IS ?",
-                            (
-                                self._json_dump(metadata), now, entitlement_id,
-                                identity, provider, credential,
-                                row.get("account_id"), str(row.get("item_id") or ""),
-                                str(row.get("entitlement_type") or "owned"),
-                                row.get("loan_id"),
-                            ),
-                        )
-                        entitlements_inactivated += int(cursor.rowcount == 1)
-
                 db.execute(
-                    "DELETE FROM backup_items WHERE provider_id=? AND credential_id=? AND item_id=?",
-                    (provider, credential, str(row.get("item_id") or "")),
+                    "DELETE FROM backup_items WHERE provider_id=? "
+                    "AND credential_id=? AND item_id=?",
+                    (provider, credential, str(item_id or "")),
                 )
-
+            # Retain the old summary field for GUI/caller compatibility.
+            # A legacy manifest can never inactivate any canonical right.
             return {
                 "pruned": len(stale),
                 "local_preserved": local_preserved,
-                "entitlements_inactivated": entitlements_inactivated,
+                "entitlements_inactivated": 0,
             }
 
     def backup_list(self, provider_id: str | None = None, credential_id: str | None = None) -> list[dict[str, Any]]:
