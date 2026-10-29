@@ -569,6 +569,63 @@ class RecipeFixture(unittest.TestCase):
         self.assertNotIn(str(alias), manifest["source_links"])
         recette.destroy(target)
 
+    def test_release_environments_are_excluded_before_following_python_or_secret_links(self):
+        for layout in ("releases", "versions"):
+            for env in (".venv", "venv", "env", ".virtualenv"):
+                with self.subTest(layout=layout, env=env):
+                    version = self.data / "runtime" / layout / "v1"
+                    environment = version / env
+                    (environment / "bin").mkdir(parents=True)
+                    (environment / "bin/python3.12").symlink_to("/usr/bin/python3.12")
+                    (environment / "credentials").symlink_to(self.production / "missing-secret")
+                    (version / "engine").write_bytes(b"runtime data")
+                    current = self.data / "runtime/current"
+                    current.symlink_to(f"{layout}/v1")
+                    before = recette.Copier.link_state(current)
+                    target = self.create_fixture()
+                    manifest = json.loads((target / "manifest.json").read_text())
+                    for relative in (f"runtime/{layout}/v1", "runtime/current"):
+                        self.assertFalse((target / "data/cifereca" / relative / env).exists())
+                        self.assertEqual((target / "data/cifereca" / relative / "engine").read_bytes(), b"runtime data")
+                        self.assertIn(str(self.data / relative / env), manifest["excluded_rebuildable_runtimes"])
+                    self.assertNotIn(str(environment / "bin/python3.12"), manifest["source_links"])
+                    self.assertEqual(recette.Copier.link_state(current), before)
+                    self.assertTrue(recette.verify(target)["ok"])
+                    recette.destroy(target)
+                    current.unlink()
+                    shutil.rmtree(self.data / "runtime")
+
+    def test_environment_aliases_are_excluded_without_resolving_even_broken_targets(self):
+        version = self.data / "runtime/releases/v1"
+        version.mkdir(parents=True)
+        (version / ".venv").symlink_to(self.production / "missing-secret")
+        current = self.data / "runtime/current"
+        current.symlink_to(version)
+        target = self.create_fixture()
+        manifest = json.loads((target / "manifest.json").read_text())
+        self.assertEqual(len(manifest["excluded_rebuildable_runtimes"]), 2)
+        self.assertNotIn(str(version / ".venv"), manifest["source_links"])
+        self.assertTrue(recette.verify(target)["ok"])
+        recette.destroy(target)
+
+    def test_runtime_exclusion_never_hides_external_links_in_books_or_useful_data(self):
+        for source in (self.books / "runtime/releases/v1/.venv",
+                       self.data / "runtime/releases/v1/business-data"):
+            with self.subTest(source=str(source)):
+                source.mkdir(parents=True)
+                (source / "secret").symlink_to(self.production / "outside-secret")
+                with self.assertRaisesRegex(recette.Rejected, "External source symbolic link"):
+                    self.create_fixture()
+                recette.destroy(self.target)
+                shutil.rmtree(source)
+
+    def test_alias_into_excluded_environment_is_refused(self):
+        environment = self.data / "runtime/releases/v1/.venv"
+        environment.mkdir(parents=True)
+        (self.data / "useful-dependency").symlink_to(environment)
+        with self.assertRaisesRegex(recette.Rejected, "targets excluded runtime"):
+            self.create_fixture()
+
     def test_destination_symlinks_and_hardlinks_never_modify_source(self):
         before = self.book.stat()
         alias = self.target / "alias"
@@ -823,11 +880,13 @@ class Storage:
         self.require_sandbox()
         volume = self.base / "volume"
         volume.mkdir(mode=0o700)
-        version = self.data / "runtime/versions/v1"
+        version = self.data / "runtime/releases/v1"
         version.mkdir(parents=True)
         (version / "engine").write_bytes(b"synthetic runtime")
         current = self.data / "runtime/current"
-        current.symlink_to("versions/v1", target_is_directory=True)
+        current.symlink_to("releases/v1", target_is_directory=True)
+        (version / ".venv/bin").mkdir(parents=True)
+        (version / ".venv/bin/python3.12").symlink_to("/usr/bin/python3.12")
         os.utime(current, ns=(1, 1), follow_symlinks=False)
         link_before = current.lstat()
         database = self.data / "library.sqlite3"
@@ -851,6 +910,9 @@ target = r.create(pathlib.Path(sys.argv[2]), root / 'T1', 'main', root=root, no_
 assert r.verify(target)['ok']
 assert (target / 'data/cifereca/runtime/current/engine').read_bytes() == b'synthetic runtime'
 assert not (target / 'data/cifereca/runtime/current').is_symlink()
+assert not (target / 'data/cifereca/runtime/current/.venv').exists()
+assert not (target / 'data/cifereca/runtime/releases/v1/.venv').exists()
+assert len(json.loads((target / 'manifest.json').read_text())['excluded_rebuildable_runtimes']) == 2
 import sqlite3
 with sqlite3.connect(target / 'data/cifereca/library.sqlite3') as db:
     assert db.execute('SELECT local_path FROM books').fetchone()[0] == str(target / 'library/a.epub')
