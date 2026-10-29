@@ -62,6 +62,9 @@ def test_real_httpx_selected_bnf_acsm_to_exact_core_staging(tmp_path):
     session, account, _, calls, get, offer = ready()
     try:
         before_activity = sum(c[0] == "GET" and c[2] == "/my_profile/activity" for c in calls)
+        # Full MockTransport ACSM path must likewise bypass legacy inventory;
+        # exactly two fresh typed reads remain required before the token GET.
+        session.loans = lambda *_a, **_kw: pytest.fail("v1 loans() called by selected candidate")
         path, returned_url = stage(session, account, offer, tmp_path)
         assert path.is_file() and path.parent == tmp_path
         assert path.suffix == ".acsm" and path.read_bytes() == TOKEN
