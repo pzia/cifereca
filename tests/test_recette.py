@@ -878,8 +878,15 @@ class Storage:
 
     def test_real_mounted_alternative_root_create_verify_confine_destroy(self):
         self.require_sandbox()
-        volume = self.base / "volume"
-        volume.mkdir(mode=0o700)
+        mounted = os.environ.get("CIFERECA_RECIPE_MOUNT_ROOT")
+        if not mounted:
+            if os.environ.get("CIFERECA_REQUIRE_SANDBOX_TESTS") == "1":
+                self.fail("CI must supply a private mounted CIFERECA_RECIPE_MOUNT_ROOT")
+            self.skipTest("Requires an administrator-provisioned isolated test mount")
+        volume = Path(mounted)
+        self.assertTrue(volume.is_absolute() and not volume.is_symlink() and os.path.ismount(volume))
+        self.assertEqual(volume.stat().st_uid, os.getuid())
+        self.assertEqual(volume.stat().st_mode & 0o777, 0o700)
         version = self.data / "runtime/releases/v1"
         version.mkdir(parents=True)
         (version / "engine").write_bytes(b"synthetic runtime")
@@ -905,7 +912,7 @@ def install(target):
     (target / 'venv/bin').mkdir(parents=True)
     (target / 'venv/bin/python').write_text('fixture')
 r.export_snapshot = snapshot; r.install = install
-root = pathlib.Path('/media/fixture/KDATAS/cifereca-tests')
+root = pathlib.Path(sys.argv[3]) / 'cifereca-tests'
 target = r.create(pathlib.Path(sys.argv[2]), root / 'T1', 'main', root=root, no_start=True)
 assert r.verify(target)['ok']
 assert (target / 'data/cifereca/runtime/current/engine').read_bytes() == b'synthetic runtime'
@@ -925,11 +932,10 @@ r.destroy(target)
 assert not target.exists()
 """
         before = recette.fingerprint(self.config)
-        command = [shutil.which("bwrap"), "--unshare-all", "--die-with-parent",
-                   "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-                   "--ro-bind", str(self.production), str(self.production), "--tmpfs", "/media",
-                   "--dir", "/media/fixture", "--bind", str(volume), "/media/fixture/KDATAS",
-                   "--", "/usr/bin/python3", "-c", program, str(SCRIPT), str(self.config)]
+        # Run the controller as the normal host user. Nested bwrap bootstrap
+        # inside an already capability-stripped AppArmor child must fail;
+        # the real recipe controller does not need that privilege.
+        command = ["/usr/bin/python3", "-c", program, str(SCRIPT), str(self.config), str(volume)]
         subprocess.run(command, check=True, env=dict(os.environ, XDG_DATA_HOME=str(self.production / "data")), timeout=60)
         self.assertFalse((volume / "cifereca-tests/T1").exists())
         self.assertEqual(recette.fingerprint(self.config), before)

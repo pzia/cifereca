@@ -117,7 +117,7 @@ jobs:
 
           # #3607: mandatory OS confinement and lifecycle proof, synthetic only.
           # Also exercise this route when changing the workflow itself.
-          if matches '^(scripts/recette\.py$|tests/test_recette\.py$|\.github/workflows/pr-ci\.yml$)' && \
+          if matches '^(scripts/recette(-doctor)?\.py$|tests/test_recette(_doctor)?\.py$|\.github/workflows/pr-ci\.yml$)' && \
              [[ -f scripts/recette.py && -f tests/test_recette.py ]]; then
             recette=true
           fi
@@ -190,10 +190,26 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap dbus-x11 xvfb python3-venv
-          # Ephemeral runner only: permit bwrap's unprivileged user namespace.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get install -y bubblewrap dbus-x11 xvfb python3-venv apparmor-profiles apparmor-utils
+          # Keep the Ubuntu global restriction enabled. Use the distribution's
+          # bootstrap/child capability separation, never an unconfined profile.
+          test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          test -f "$profile"
+          ! grep -Eq 'flags=.*(unconfined|complain)|default_allow' "$profile"
+          sudo apparmor_parser --skip-kernel-load --skip-cache "$profile"
+          sudo apparmor_parser --replace "$profile"
+          python3 scripts/recette-doctor.py --require-apparmor --profile "$profile"
+          # A real mounted target, created only on this ephemeral runner.
+          # Do not nest a bootstrap under AppArmor's capability-stripped child.
+          volume="/media/cifereca-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          sudo mkdir -m 0700 "$volume"
+          trap 'sudo umount "$volume"; sudo rmdir "$volume"' EXIT
+          sudo mount -t tmpfs -o "mode=0700,uid=$(id -u),gid=$(id -g)" tmpfs "$volume"
+          export CIFERECA_RECIPE_MOUNT_ROOT="$volume"
+          python3 -m unittest discover -s tests -p test_recette_doctor.py -v
           python3 -m unittest discover -s tests -p test_recette.py -v
+          test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
 
       - uses: actions/setup-python@v6
         if: steps.scope.outputs.python == 'true'
