@@ -171,6 +171,72 @@ def test_existing_canonical_complete_stays_complete_during_first_old_projection(
         storage.close()
 
 
+@pytest.mark.parametrize("passive_status", ["pending", "queued", "unknown"])
+def test_passive_legacy_replay_cannot_poison_any_completed_receipt_field(
+    tmp_path, passive_status,
+):
+    storage = Storage(tmp_path / "test.sqlite3")
+    try:
+        row = _row()
+        storage.backup_put(row)
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET status='complete',"
+                "strategy='canonical_selected_delivery',executor='Core',"
+                "attempt_count=7,last_attempt_at=1800000123,"
+                "artifact_id=?,error_code='canonical_receipt',"
+                "error_message='trusted-status',"
+                "attention_code='trusted-attention',updated_at=1800000999 "
+                "WHERE acquisition_id=?",
+                ("sha256:" + "a" * 64, storage._acquisition_id_for(row)),
+            )
+        receipt = storage.acquisitions(provider_id="kobo")[0]
+        assert receipt["strategy"] == "canonical_selected_delivery"
+        assert receipt["status"] == "complete"
+        assert receipt["updated_at"] == 1800000999
+        for replay in range(2):
+            storage.backup_put({
+                **row, "status": passive_status,
+                "acquisition_strategy": "stale_unverified_strategy",
+                "executor": "legacy_opaque_executor",
+                "attempt_count": 100 + replay,
+                "last_attempt_at": 1900000000 + replay,
+                "error": "stale delivery failure",
+                "attention_code": "stale attention",
+                "updated_at": 2000000000 + replay,
+            })
+            # Only the compatibility projection advances, never the
+            # independently completed receipt or its visible chronology.
+            assert storage.acquisitions(provider_id="kobo")[0] == receipt
+        assert storage.backup_list("kobo")[0]["status"] == passive_status
+    finally:
+        storage.close()
+
+
+def test_active_legacy_restart_after_completion_keeps_forward_updates(tmp_path):
+    storage = Storage(tmp_path / "test.sqlite3")
+    try:
+        row = {**_row(), "status": "complete"}
+        storage.backup_put(row)
+        storage.backup_put({
+            **row, "status": "acquiring",
+            "acquisition_strategy": "explicit_new_attempt",
+            "executor": "kobo_adapter",
+            "attempt_count": 3,
+            "last_attempt_at": 1900000001,
+            "updated_at": 1900000002,
+        })
+        receipt = storage.acquisitions(provider_id="kobo")[0]
+        assert receipt["status"] == "acquiring"
+        assert receipt["strategy"] == "explicit_new_attempt"
+        assert receipt["executor"] == "kobo_adapter"
+        assert receipt["attempt_count"] == 3
+        assert receipt["last_attempt_at"] == 1900000001
+        assert receipt["updated_at"] == 1900000002
+    finally:
+        storage.close()
+
+
 @pytest.mark.parametrize("next_status", ["acquiring", "attention_required", "complete"])
 def test_normal_same_owner_backup_progress_still_updates_canonical_receipt(
     tmp_path, next_status,
