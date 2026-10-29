@@ -236,8 +236,8 @@ def test_multiple_local_candidates_become_conflict_without_deletion(tmp_path: Pa
 def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path: Path):
     service = _service(tmp_path, manifest=[])
     try:
-        # A complete empty manifest can inactivate a legacy right only when
-        # its current credential AND borrower are registered in SQLite.
+        # Even a fully registered credential and borrower do not turn a
+        # v0.7 manifest into a typed, negative provider-right attestation.
         current = next(c for c in service.storage.provider_connections()
                        if c["provider_id"] == "kobo" and c["credential_id"] == "vault-1")
         service.storage.provider_account_put({
@@ -283,9 +283,16 @@ def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path
             "status": "complete",
         })
 
+        before_rights = [
+            row for row in service.storage.entitlements(provider_id="kobo")
+            if row.get("item_id") in {"old-local", "old-remote"}
+        ]
+        assert len(before_rights) == 2
+
         summary = service.sync_kobo_backup()
 
         assert summary["errors"] == 0
+        assert summary["legacy_entitlements_inactivated"] == 0
         assert summary["legacy_pruned"] == 2
         assert summary["legacy_local_preserved"] == 1
         assert service.storage.backup_get("kobo", "vault-1", "old-local") is None
@@ -297,8 +304,8 @@ def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path
             for row in service.storage.entitlements(provider_id="kobo")
             if row.get("item_id") in {"old-local", "old-remote"}
         ]
-        assert stale_entitlements
-        assert {row["state"] for row in stale_entitlements} == {"inactive"}
+        assert stale_entitlements == before_rights
+        assert {row["state"] for row in stale_entitlements} == {"active"}
 
         entries = [
             row
