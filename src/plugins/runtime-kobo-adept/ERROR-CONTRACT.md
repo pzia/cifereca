@@ -78,7 +78,48 @@ et les actions contextualisées Core/UI restent ouverts dans #979.
 
 ---
 
-# Contrat d'erreur Kobo-ADEPT / ACSM (P0 #979)
+# Contrat d'erreur Kobo-ADEPT / ACSM (#979)
+
+## Réception du contrat 1.3 — runtime 1.2.34
+
+Le contrat amont est désormais disponible dans
+[CIFERECA_KOBO_ADEPT_CONTRACT_1.3.md](CIFERECA_KOBO_ADEPT_CONTRACT_1.3.md)
+§4, remis par [#3659](https://github.com/pzia/cifereca/pull/3659).
+Il qualifie les codes structurés suivants, conservés sans interpréter le
+message fournisseur :
+
+| `error.code` | Projection |
+| --- | --- |
+| `invalid_acsm` | Jeton ACSM invalide |
+| `profile_not_found` | Profil introuvable |
+| `adept_profile_required` | Profil requis |
+| `adept_profile_error` | Erreur de profil |
+| `adept_profile_incompatible` | Profil incompatible |
+| `adept_error` | Cause ADEPT précise non confirmée |
+
+La même valeur est conservée dans l'exception typée et le callback
+diagnostic existant. Un exit 10 ne l'efface plus pour les commandes
+`profile`, `acsm`, `loans` ni pour un `download request` explicitement ACSM.
+Le message affichable est local et fixe ; aucune cause n'est déduite de
+stdout/stderr, du XML ou du texte d'erreur.
+
+Hors fulfillment, seul le booléen natif `error.retryable=true` est propagé.
+Une tentative de fulfillment ACSM reste **non réessayable** : le contrat
+générique ne garantit pas qu'une licence à usage unique n'a pas été consommée.
+Cette garde couvre aussi `acsm fetch`, y compris son timeout.
+Ce drapeau n'implémente aucun retry automatique. Une réponse contradictoire
+(succès avec exit non nul) et un code inconnu restent refusés comme avant.
+HTTP/Kobo ne sont pas requalifiés en erreurs de licence Adobe.
+
+Les alias legacy et le code déjà reconnu de licence attribuée à une autre
+identité restent compatibles. Le contrat 1.3 ne qualifie **aucun nouveau code
+détaillé libgourou**. L'historique ci-dessous décrit les anciennes limites ;
+cette section prime pour les six codes documentés seulement.
+
+Tests : `tests/test_contract_13_adept_errors.py`, avec processus simulé.
+Aucune émission réelle de la CLI ni licence Adobe testée par cette réception.
+La projection des actions CoreUI et la qualification de codes supplémentaires
+restent distinctes. Les règles du journal brut du dépôt restent inchangées.
 
 ## État
 Ce document décrit le **contrat consommé par le runtime Cifereca**, pas une
