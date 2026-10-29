@@ -335,3 +335,19 @@ ni idempotence Sync après crash, ni liens exacts avec les fichiers
 ADEPT par identité, SHA/placement atomique, convergence et 2e Sync sans GET
 restent à qualifier séparément, ainsi que la recette d'une offre réelle
 avec un prêt autorisé. #3633 est borné à la candidature avant Core.
+
+### Réception du candidat par Core (#2055 / #3228)
+
+`tests/test_core_candidate_reception.py` raccorde la vraie session BnF et
+son transport HTTPX simulé à `complete_selected_delivery` du Core. SQLite,
+le verrou d'acquisition, la détection ACSM, l'inspection du PDF et le calcul
+SHA sont réels. Le callback ADEPT est **simulé** : il produit un PDF de test,
+sans contacter Adobe ni consommer une licence.
+
+La réception vérifie le prêt/offre exacts, un seul GET du jeton, le profil
+Adobe demandé, le staging sous le profil cible et les reçus Core distincts
+de l'observation fournisseur. Un profil Adobe différent dans le résultat est
+refusé ; une identité réaffectée avant admission ne déclenche aucun GET.
+Ce consommateur ne publie lui-même aucun Placement : la transaction et
+l'idempotence restent au moteur #3171. Ce test ne certifie ni une licence
+réelle, ni l'EPUB manuel préexistant, ni la reprise après crash.
