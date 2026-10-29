@@ -501,6 +501,27 @@ class SynchronizationBrokerImpl:
         self._notify()
         return self._ref(account)
 
+    def canonical_acquisition_choices(self, source_id: str) -> tuple[dict[str, object], ...]:
+        """Optional, offline, exact-right controls for CoreUI (no provider I/O)."""
+        if type(source_id) is not str or not source_id.startswith("sync:"):
+            raise ValueError("invalid_canonical_source")
+        account = self._find_account(source_id)
+        from .core.source_acquisition_consent import canonical_acquisition_choices
+        return canonical_acquisition_choices(self.service, account)
+
+    def set_canonical_acquisition_choice(
+        self, source_id: str, reference: str, *, allowed: bool,
+    ) -> None:
+        """One explicit source/right grant or revocation, never a batch opt-in."""
+        if type(source_id) is not str or not source_id.startswith("sync:"):
+            raise ValueError("invalid_canonical_source")
+        account = self._find_account(source_id)
+        from .core.source_acquisition_consent import set_canonical_acquisition_choice
+        set_canonical_acquisition_choice(
+            self.service, account, reference, allowed=allowed,
+        )
+        self._notify()
+
     def inventory_refresh_schedule(self, source_id: str) -> dict[str, object]:
         """Read the *discover/rights* opt-in, not the acquisition policy."""
         from .core.source_refresh_policy import load_source_refresh_schedule
