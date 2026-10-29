@@ -1,5 +1,45 @@
 # Diagnostics des Placements manquants — #3638
 
+## 29 octobre — réception du contrat Core #3645 par Diagnostics C
+
+Le Core a fusionné le handoff [#3645](https://github.com/pzia/cifereca/pull/3645).
+La projection Diagnostics accepte désormais **l'enveloppe privée attestée**
+`cifereca.placement.observation/1` dans l'événement terminal existant,
+sans nouveau scan, mutation, téléchargement, ni publication côté broker public.
+
+Seuls les faits explicitement fournis par Core sont conservés : profil, IDs
+SQLite, état du probe, motif observé, ancien état SQLite, chemin avec seules
+valeurs de credentials protégées, couverture et borne. Aucun droit/restauration
+n'est déduit du SHA, des dossiers, d'un transfert ponctuel ou d'un identifiant.
+Le validateur rejette une enveloppe de portée invalidée ou malformée, une
+raison/état contradictoires, une identité contenant un credential et une
+autorisation de réparation/acquisition. Les anciens audits sans enveloppe
+restent lisibles comme agrégats.
+
+**Borne de sortie :** le Core remet au plus 256 lignes; C borne en plus le
+détail JSON à 8 500 caractères ASCII échappés pour préserver le journal
+physique (limite 16 KiB). `total_rows` garde la taille attestée du profil;
+`emitted_rows` indique exactement le sous-ensemble publié;
+`truncated=true` documente toute omission. Une ligne omise ou non probée
+ne devient jamais `missing`. La même copie validée traverse la mémoire,
+le journal canonique, la recherche, les détails et l'export brut; le retour
+public du broker Core ne reçoit aucun champ privé.
+
+Régression : `tests/test_diagnostics_p1_3638_placement_handoff.py` et
+`tests/test_core_placement_observation_handoff.py`. Recette locale :
+```sh
+PYTHONPATH=src python -m pytest -q \
+  tests/test_diagnostics_p1_3638_placement_handoff.py \
+  tests/test_core_placement_observation_handoff.py \
+  tests/test_diagnostics_missing_placements.py
+```
+
+La réception C peut être clôturée après preuves CI et intégration; les
+réparations effectives #2847/#3185 et leur recette sur installation isolée
+restent exclusivement à A.
+
+---
+
 Parent #2847 ; contrat directeur #3171 ; mutations #3185 ; recette isolée #3607.
 Audit de `main` a897b446. Ce lot observe les résultats existants : aucun nouveau
 scan, accès fournisseur, moteur de réparation, déplacement ou suppression.
