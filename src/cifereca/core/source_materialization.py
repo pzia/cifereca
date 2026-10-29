@@ -30,7 +30,7 @@ _TTL = 600
 _PROCESS_NONCE = secrets.token_hex(16)
 _BUDGET = 8 * 1024 * 1024
 _COUNTS = ("already_local_linked", "already_local_verified", "needs_reconciliation",
-           "attention_required", "blocked_scope", "blocked_unlinked", "not_downloadable",
+           "attention_required", "skipped_archived", "blocked_scope", "blocked_unlinked", "not_downloadable",
            "candidate_unverified", "potentially_missing", "invalid_manifest_items")
 
 
@@ -286,7 +286,7 @@ def execute(broker, source_id, token, control=None):
         status = {"complete": "success", "attention_required": "blocked", "partial": "partial",
                   "failed": "failed", "aborted": "failed", "cancelled": "cancelled"}.get(state, "partial")
         counts = {}
-        for key in ("downloaded", "unchanged", "skipped", "errors", "pending", "attention_required"):
+        for key in ("downloaded", "unchanged", "skipped", "skipped_archived", "errors", "pending", "attention_required"):
             value = report.get(key)
             _require(type(value) is int and 0 <= value <= 1000000, "invalid_result")
             counts[key] = value

@@ -61,7 +61,7 @@ def qualify_selected_offers(
     if not any(SourceKey(scope, row.edition_id, row.right_id,
                          row.kind, snapshot.branch) in persisted_consent
                for row in snapshot.rights if row.state == "active"
-               and row.provider_attested and row.delivery != "available"):
+               and row.provider_attested and row.delivery == "unknown"):
         return snapshot
     raw_reader = getattr_static(session, "rights_selected_delivery_offer_snapshot", None)
     if raw_reader is None:
@@ -150,7 +150,7 @@ def qualify_selected_offers(
         key = SourceKey(scope, row.edition_id, row.right_id, row.kind,
                         snapshot.branch)
         if (row.state != "active" or not row.provider_attested
-                or row.delivery == "available"
+                or row.delivery != "unknown"
                 or key not in persisted_consent or key in satisfied):
             continue
         if cancelled():
@@ -189,9 +189,7 @@ def qualify_selected_offers(
                 or selected.rights[0].right_id != key.right_id
                 or selected.rights[0].kind != key.kind
                 or selected.rights[0].state != "active"
-                or not selected.rights[0].provider_attested
-                or selected.rights[0].delivery != "available"
-                or not selected.rights[0].delivery_offer_id):
+                or not selected.rights[0].provider_attested):
             continue
         rights[i] = selected.rights[0]
     return replace(snapshot, rights=tuple(rights))

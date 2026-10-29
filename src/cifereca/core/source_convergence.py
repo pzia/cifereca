@@ -15,7 +15,7 @@ from cifereca.plugin_api.provider_rights_observation import (
 
 DecisionState = Literal[
     "present_attested", "present_declared", "needs_reconciliation", "missing_to_download",
-    "pending", "inactive",
+    "pending", "inactive", "skipped_archived",
 ]
 OriginKind = Literal["provider", "manual", "transfer", "cifereca", "adept", "derived"]
 
@@ -313,6 +313,9 @@ def plan_convergence(
             verified = sorted({p.placement_id for p in matching if p.verified})
             if verified:
                 decision("present_attested", "exact_origin_verified_in_profile", tuple(verified))
+                continue
+            if row.delivery_unavailable_reason == "archived":
+                decision("skipped_archived", "delivery_archived")
                 continue
             active_declarations = declared_by_source.get(key, ())
             current = sorted({

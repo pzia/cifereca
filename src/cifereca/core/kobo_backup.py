@@ -412,7 +412,7 @@ def kobo_backup_preview(
     )
     counts = {
         "already_local_linked": 0, "already_local_verified": 0,
-        "needs_reconciliation": 0, "attention_required": 0,
+        "needs_reconciliation": 0, "attention_required": 0, "skipped_archived": 0,
         "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
         "potentially_missing": 0, "invalid_manifest_items": upstream_rejected,
     }
@@ -452,9 +452,9 @@ def kobo_backup_preview(
             "author": _manifest_author(raw) or (current or {}).get("author"),
         }
 
-        reason = ""
+        reason = "skipped_archived" if _manifest_archived(raw, current) else ""
         path_raw = str((current or {}).get("local_path") or "").strip()
-        if path_raw:
+        if path_raw and not reason:
             linked = Path(path_raw)
             if linked.is_symlink():
                 reason = "needs_reconciliation"
@@ -571,12 +571,12 @@ def kobo_backup_preview(
 
         if not reason:
             if bool(raw.get("archived")):
-                reason = "attention_required"
+                reason = "skipped_archived"
             elif raw.get("downloadable") is False:
                 reason = "not_downloadable"
             elif (current and current.get("status") == "attention_required"
                   and current.get("attention_code") not in {
-                      "declared_link_recorded", "declared_links_unavailable",
+                      "declared_link_recorded", "declared_links_unavailable", "archived_book",
                   }):
                 # The previous declaration-only attention is recalculated
                 # above on every preview. A revoked statement must not remain
@@ -755,7 +755,7 @@ def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
     known_item_statuses = {
         "ok", "complete", "error", "pending", "pending_acquisition",
         "acquiring", "attention_required", "reconcile_required",
-        "reconcile_conflict", "archived_book", "unlinked_local_books",
+        "reconcile_conflict", "archived_book", "skipped_archived", "unlinked_local_books",
         "missing", "remote_owned", "unknown",
     }
     known_source_statuses = {
@@ -766,7 +766,7 @@ def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
     source_metrics = {
         "position", "total", "updated_at", "failure_streak", "scanned",
         "attempted", "downloaded", "unchanged", "pending",
-        "attention_required", "errors", "skipped", "remaining",
+        "attention_required", "errors", "skipped", "skipped_archived", "remaining",
         "reconcile_pending", "reconcile_skipped", "items_blocked_by_scope",
         "malformed_manifest_items", "duplicate_manifest_items",
         "provider_rejected_manifest_items",
@@ -876,7 +876,7 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
             key: int(value) for key, value in counts.items()
             if key in {"scanned", "attempted", "downloaded", "unchanged",
                        "pending", "attention_required", "errors", "skipped",
-                       "remaining", "reconcile_pending", "reconcile_skipped",
+                       "skipped_archived", "remaining", "reconcile_pending", "reconcile_skipped",
                        "items_blocked_by_scope", "malformed_manifest_items",
                        "duplicate_manifest_items",
                        "provider_rejected_manifest_items"}
@@ -1165,7 +1165,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "provider_rejected_manifest_items": 0, "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0,
         "already_local_declared": 0, "metadata_refreshed": 0,
-        "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
+        "skipped": 0, "skipped_archived": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "items_blocked_by_scope": 0, "attempts_saved": 0,
         "blocked_non_retryable": 0,
         "vault_errors": 0, "integration_errors": 0, "adept_errors": 0,
@@ -1237,7 +1237,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     prunable_credentials: set[str] = set()
     source_metrics = (
         "scanned", "attempted", "downloaded", "unchanged",
-        "already_local_declared", "pending",
+        "already_local_declared", "pending", "skipped_archived",
         "attention_required", "errors", "remaining", "reconcile_pending",
         "reconcile_skipped", "items_blocked_by_scope", "blocked_non_retryable",
         "malformed_manifest_items", "duplicate_manifest_items",
@@ -1670,7 +1670,7 @@ def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, 
 _KOBO_DIAGNOSTIC_METRICS = frozenset({
     "sessions", "manifests_fetched", "manifest_items", "scanned", "attempted",
     "downloaded", "unchanged", "completed", "pending", "attention_required",
-    "errors", "remaining", "skipped", "metadata_refreshed",
+    "errors", "remaining", "skipped", "skipped_archived", "metadata_refreshed",
     "malformed_manifest_items", "duplicate_manifest_items",
     "provider_rejected_manifest_items", "reconcile_pending", "reconcile_conflicts", "reconcile_skipped",
     "items_blocked_by_scope", "blocked_non_retryable", "attempts_saved",
@@ -1898,9 +1898,36 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
+def _manifest_archived(raw, current):
+    # A fresh explicit unarchive can supersede a prior 409; omission cannot.
+    return raw.get("archived") is True or (
+        raw.get("archived") is not False and current is not None
+        and (current.get("status") == "skipped_archived"
+             or current.get("attention_code") == "archived_book")
+    )
+
+
 def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False, session=None, declared_budget=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
+    # A known archive is a terminal non-error, before reconciliation or any
+    # provider acquisition. A previous 409 is not retried unless a new
+    # manifest explicitly reports archived=False. Never downgrade a local
+    # receipt or discard its path, SHA, rights or placement.
+    archived = _manifest_archived(raw, current)
+    if archived:
+        if not current or current.get("status") not in {
+                "ok", "complete", "reconcile_required", "reconcile_conflict"}:
+            self.storage.backup_put({
+                **(current or {}), **base_record, "status": "skipped_archived",
+                "error": None, "attention_code": None,
+            })
+        summary["skipped_archived"] += 1
+        emit("skipped_archived", current=index + 1, total=total,
+             title=title, item_id=product_id, code="archived_book",
+             message="Livre archivé sur Kobo : acquisition ignorée")
+        return True
+
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
         summary["reconcile_skipped"] += 1
         emit(
@@ -2115,24 +2142,6 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                  title=title, item_id=product_id, code=code, message=message)
             return True
 
-    # Vault 2.3.1 exposes archived items explicitly. Keep an already
-    # acquired local file (handled above), otherwise persist a user
-    # action instead of treating the title as permanently unavailable.
-    if bool(raw.get("archived")):
-        message = "Livre archivé sur Kobo ; restaurez-le dans votre bibliothèque Kobo avant de réessayer"
-        self.storage.backup_put({
-            **base_record,
-            "status": "attention_required",
-            "attention_code": "archived_book",
-            "error": message,
-        })
-        summary["attention_required"] += 1
-        emit(
-            "attention_required", current=index + 1, total=total,
-            title=title, item_id=product_id, code="archived_book", message=message,
-        )
-        return True
-
     if raw.get("downloadable") is False:
         summary["skipped"] += 1
         return True
@@ -2265,22 +2274,17 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
                  code="missing_delegation_scope", message=message)
             return False
         if str(info.get("code") or "") == "archived_book":
-            message = "Livre archivé sur Kobo ; restaurez-le dans votre bibliothèque Kobo avant de réessayer"
             self.storage.backup_put({
-                **base_record,
-                "status": "attention_required",
-                "attention_code": "archived_book",
-                "error": message,
+                **base_record, "status": "skipped_archived",
+                "attention_code": None, "error": None,
                 "attempt_count": attempt_count,
                 "last_attempt_at": attempted_at,
-                "executor": "kobo-adept",
-                "updated_at": int(time.time()),
+                "executor": "kobo-adept", "updated_at": int(time.time()),
             })
-            summary["attention_required"] += 1
-            emit(
-                "attention_required", current=index + 1, total=total,
-                title=title, item_id=product_id, code="archived_book", message=message,
-            )
+            summary["skipped_archived"] += 1
+            emit("skipped_archived", current=index + 1, total=total,
+                 title=title, item_id=product_id, code="archived_book",
+                 message=info.get("message"), status_code=info.get("status_code"))
             return False
         # Provider/Kobo runtime errors and even their code can be attacker
         # controlled. Keep typed phase + bounded HTTP status in TRACE, but

@@ -36,7 +36,7 @@ def _safe_kobo_resume_receipt(summary: dict[str, Any]) -> dict[str, Any]:
     }
     for key in (
         "manifest_items", "scanned", "attempted", "downloaded", "unchanged",
-        "completed", "pending", "attention_required", "errors", "remaining",
+        "completed", "pending", "attention_required", "skipped_archived", "errors", "remaining",
         "reconcile_pending", "reconcile_skipped", "blocked_non_retryable",
         "items_blocked_by_scope", "malformed_manifest_items",
         "duplicate_manifest_items", "provider_rejected_manifest_items",

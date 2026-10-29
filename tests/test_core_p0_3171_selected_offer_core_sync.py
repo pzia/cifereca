@@ -198,3 +198,43 @@ def test_only_consented_source_from_multiple_rights_may_preflight(rig):
     assert result["canonical_execution"]["pending"] == 1
     assert selected_calls == [service.source.right_id]
     assert len(downloads) == 1 and refs(db)[1] == 1
+
+
+@pytest.mark.parametrize("selected_only", [False, True])
+def test_archived_delivery_is_non_error_without_content_get(rig, selected_only):
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    archived = replace(service.snapshot.rights[0], delivery="unavailable",
+                       delivery_offer_id="", delivery_unavailable_reason="archived")
+    selected_calls = []
+    if selected_only:
+        def selected(*_args, **_kw):
+            selected_calls.append(1)
+            return replace(service.snapshot, rights=(archived,), status="partial", coverage="partial")
+        service.session.rights_selected_delivery_offer_snapshot = selected
+    else:
+        service.snapshot = replace(service.snapshot, rights=(archived,))
+        service.session.rights_selected_delivery_offer_snapshot = (
+            lambda *_a, **_kw: pytest.fail("known archive needs no selected offer read"))
+    for _ in range(2):
+        result = synchronize_account_source(service, service.account)
+        counts = result["canonical_execution"]
+        assert counts["skipped_archived"] == 1
+        assert counts["pending"] == counts["blocked"] == counts["failed"] == 0
+        assert counts["downloaded"] == 0
+        assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
+        assert len(refs(db)[0]) == 1  # Positive right retained, not a receipt.
+    assert len(selected_calls) == (2 if selected_only else 0)
+
+
+def test_generic_unavailable_is_not_retried_or_misclassified_as_archived(rig):
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], delivery="unavailable", delivery_offer_id=""),))
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail("unavailable delivery needs no selected read"))
+    result = synchronize_account_source(service, service.account)
+    counts = result["canonical_execution"]
+    assert counts["pending"] == 1 and counts["skipped_archived"] == 0
+    assert counts["failed"] == 0 and downloads == []

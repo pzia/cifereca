@@ -24,13 +24,13 @@ def test_source_done_is_emitted_after_terminal_checkpoint(tmp_path, monkeypatch)
 
     try:
         result = service.sync_kobo_backup_account("vault-1", progress=progress)
-        assert result["status"] == "attention_required"
+        assert result["status"] == "complete"
         assert len(seen) == 1
         event, checkpoint = seen[0]
-        assert event["status"] == checkpoint["status"] == "attention_required"
+        assert event["status"] == checkpoint["status"] == "complete"
         assert event["manifest_items"] == checkpoint["total"] == 1
         assert checkpoint["processed"] == 1
-        assert event["attention_required"] == checkpoint["counts"]["attention_required"] == 1
+        assert event["skipped_archived"] == checkpoint["counts"]["skipped_archived"] == 1
         assert event["remaining"] == checkpoint["counts"]["remaining"] == 0
     finally:
         service.close()

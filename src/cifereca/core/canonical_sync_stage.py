@@ -284,7 +284,9 @@ def observe_canonical_rights_in_sync(
         "attested_active": admitted,
         "source_references_changed": changed,
         "present_attested": sum(d.provider_satisfied for d in plan.decisions),
-        "pending": sum(not d.provider_satisfied for d in plan.decisions),
+        "pending": sum(not d.provider_satisfied and d.state != "skipped_archived"
+                       for d in plan.decisions),
+        "skipped_archived": sum(d.state == "skipped_archived" for d in plan.decisions),
         "read_only_plan": True, "acquisition_authorized": False,
     }
 

@@ -274,7 +274,7 @@ def test_acsm_requiring_kobo_authorization_is_re_resolved_delegated(tmp_path: Pa
         service.close()
 
 
-def test_archived_manifest_requires_attention_without_calling_adept(tmp_path: Path, monkeypatch):
+def test_archived_manifest_is_skipped_without_calling_adept(tmp_path: Path, monkeypatch):
     service, _session = _service(
         tmp_path,
         manifest=[_manifest_row(archived=True, downloadable=False)],
@@ -288,13 +288,14 @@ def test_archived_manifest_requires_attention_without_calling_adept(tmp_path: Pa
     try:
         summary = service.sync_kobo_backup()
 
-        assert summary["attention_required"] == 1
+        assert summary["attention_required"] == 0
+        assert summary["skipped_archived"] == 1
         assert summary["errors"] == 0
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row is not None
-        assert row["status"] == "attention_required"
-        assert row["attention_code"] == "archived_book"
-        assert "restaur" in str(row["error"]).lower()
+        assert row["status"] == "skipped_archived"
+        assert row["attention_code"] is None
+        assert row["error"] is None
     finally:
         service.close()
 
@@ -331,7 +332,7 @@ def test_archived_remote_keeps_existing_complete_local_artifact(tmp_path: Path, 
     try:
         summary = service.sync_kobo_backup()
 
-        assert summary["unchanged"] == 1
+        assert summary["skipped_archived"] == 1
         assert summary["attention_required"] == 0
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row is not None

@@ -1672,7 +1672,9 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
             self._activity_result(
                 f"Synchronisation Kobo ({state_text}) : {summary.get('downloaded', 0)} téléchargé(s), "
                 f"{pending} en attente, {summary.get('unchanged', 0)} à jour, "
-                f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)"
+                f"{summary.get('skipped', 0)} ignoré(s), "
+                f"{summary.get('skipped_archived', 0)} archivé(s) ignoré(s), "
+                f"{attention} action(s), {errors} erreur(s)"
                 f"{remaining_text}",
                 success=success,
                 persistent=not success,

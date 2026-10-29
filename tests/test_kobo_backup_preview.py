@@ -74,7 +74,7 @@ def test_offline_preview_is_readonly_and_requires_live_authority(tmp_path: Path,
         assert result["manifest_items"] == 4
         assert result["counts"] == {
             "already_local_linked": 1, "already_local_verified": 0,
-            "needs_reconciliation": 1, "attention_required": 0,
+            "needs_reconciliation": 1, "attention_required": 0, "skipped_archived": 0,
             "blocked_scope": 1, "blocked_unlinked": 0, "not_downloadable": 0,
             "candidate_unverified": 1, "potentially_missing": 0,
             "invalid_manifest_items": 0,
@@ -124,7 +124,8 @@ def test_refresh_preview_reads_only_manifest_and_handles_malformed_items(tmp_pat
         counts = result["counts"]
         assert counts["already_local_linked"] == 1
         assert counts["potentially_missing"] == 1
-        assert counts["attention_required"] == 1
+        assert counts["attention_required"] == 0
+        assert counts["skipped_archived"] == 1
         assert counts["not_downloadable"] == 1
         assert counts["invalid_manifest_items"] == 3
         assert "new" not in json.dumps(result)

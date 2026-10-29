@@ -72,7 +72,7 @@ def test_item_outcomes_observe_committed_checkpoint_not_previous_item(tmp_path, 
         service.close()
 
 
-def test_attention_result_is_emitted_after_its_checkpoint(tmp_path, monkeypatch):
+def test_archived_result_is_emitted_after_its_checkpoint(tmp_path, monkeypatch):
     rows = [dict(_manifest("archived")[0], archived=True)]
     service, _session = _service(tmp_path, rows)
     monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
@@ -84,20 +84,20 @@ def test_attention_result_is_emitted_after_its_checkpoint(tmp_path, monkeypatch)
     observed = []
 
     def progress(event):
-        if event["event"] == "attention_required":
+        if event["event"] == "skipped_archived":
             checkpoint = json.loads(service.storage.metadata_get(key))
             record = service.storage.backup_get("kobo", "vault-1", "archived")
             observed.append((checkpoint, record))
 
     try:
         result = service.sync_kobo_backup_account("vault-1", progress=progress)
-        assert result["status"] == "attention_required"
+        assert result["status"] == "complete"
         assert len(observed) == 1
         checkpoint, record = observed[0]
         assert checkpoint["status"] == "running"
         assert checkpoint["processed"] == 1
-        assert checkpoint["counts"]["attention_required"] == 1
-        assert record["status"] == "attention_required"
+        assert checkpoint["counts"]["skipped_archived"] == 1
+        assert record["status"] == "skipped_archived"
     finally:
         service.close()
 
