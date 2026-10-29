@@ -401,9 +401,9 @@ class Copier:
             offset = (3 if len(parts) >= 3 and parts[:2] in
                       (("runtime", "releases"), ("runtime", "versions"))
                       else 2 if parts[:2] == ("runtime", "current") else None)
-            if offset is not None and len(parts) > offset and parts[offset] in {
-                    ".venv", "venv", "env", ".virtualenv"}:
-                return True
+            if offset is not None and len(parts) > offset:
+                if parts[offset] in {".venv", "venv", "env", ".virtualenv"} or ".venv" in parts[offset:]:
+                    return True
         return False
 
     @staticmethod
