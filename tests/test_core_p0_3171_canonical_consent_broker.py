@@ -156,7 +156,7 @@ def test_rebind_or_duplicate_account_refuses_ui_consent(tmp_path, monkeypatch):
                 "UPDATE provider_connections SET identity_id='other' "
                 "WHERE provider_id='seller-a' AND credential_id='card-a'"
             )
-        with pytest.raises(ValueError, match="selection_unavailable"):
+        with pytest.raises(ValueError, match="acquisition_consent_scope_changed"):
             broker.set_canonical_acquisition_choice(sid, token, allowed=True)
         assert service.storage.placements() == []
     finally:
