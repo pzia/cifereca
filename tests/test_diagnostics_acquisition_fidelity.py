@@ -218,8 +218,16 @@ def test_real_worker_references_do_not_cross_concurrent_or_reused_workers(journa
     rows = query_journal(journal.path, limit=100)["events"]
     for number, ref in zip((1, 2), refs):
         associated = [row for row in rows if row.get("task_ref") == ref]
-        assert {r["operation"] for r in associated} == {"loan_download_cause", "download_loan"}
-        assert [r for r in associated if r["operation"] == "loan_download_cause"][0]["detail"]["loan_id"] == f"loan-{number}"
+        # Canonical journal now also projects the *existing* Core worker
+        # terminal on this same attested task_ref. It has no business
+        # operation/provider, and must not be confused with a third download.
+        business = [r for r in associated if "operation" in r]
+        assert {r["operation"] for r in business} == {"loan_download_cause", "download_loan"}
+        worker_terminal = [r for r in associated if "operation" not in r]
+        assert len(worker_terminal) == 1
+        assert worker_terminal[0]["status"] == "success"
+        assert "provider_id" not in worker_terminal[0]
+        assert [r for r in business if r["operation"] == "loan_download_cause"][0]["detail"]["loan_id"] == f"loan-{number}"
 
 
 def test_hostile_arguments_never_fall_back_to_unsanitized_formatting(journal):
