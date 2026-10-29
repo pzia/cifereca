@@ -1370,7 +1370,15 @@ class Storage:
                 "metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(path) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,placements.artifact_id),"
                 "provider_id=COALESCE(excluded.provider_id,placements.provider_id),source_item_id=COALESCE(excluded.source_item_id,placements.source_item_id),"
-                "updated_at=excluded.updated_at "
+                # A passive v0.7 replay is not a physical stat/hash. Keep the
+                # original placeholder timestamp when its physical mapping
+                # (SHA claim, supplier, edition) is unchanged; a changed claim
+                # still updates the placeholder, never its verification state.
+                "updated_at=CASE WHEN "
+                "placements.artifact_id IS COALESCE(excluded.artifact_id,placements.artifact_id) "
+                "AND placements.provider_id IS COALESCE(excluded.provider_id,placements.provider_id) "
+                "AND placements.source_item_id IS COALESCE(excluded.source_item_id,placements.source_item_id) "
+                "THEN placements.updated_at ELSE excluded.updated_at END "
                 "WHERE placements.state='unverified' AND placements.metadata_json=? "
                 "AND (placements.identity_id IS NULL OR excluded.identity_id IS NULL "
                 "OR placements.identity_id=excluded.identity_id) "
