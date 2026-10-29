@@ -3,7 +3,7 @@
 Uses an isolated synthetic canonical journal and no provider or private data.
 Run with Xvfb/GTK4; skip only when a graphical runtime is unavailable.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
 import os
@@ -52,7 +52,7 @@ def test_real_gtk_daily_journal_zip_cancel_then_accept(tmp_path, monkeypatch):
     monkeypatch.setattr(page_module, "_readable_raw_export_folder",
                         lambda: str(tmp_path))
     today = datetime.now(ZoneInfo("Europe/Paris"))
-    older = today.date().replace(day=1)
+    older = today.date() - timedelta(days=1)
     active = tmp_path / "cifereca.log"
     active.write_text(
         f"{older} 12:00:00,000 INFO cifereca [Worker] old-event\n"
