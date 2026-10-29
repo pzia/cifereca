@@ -1916,11 +1916,10 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     # receipt or discard its path, SHA, rights or placement.
     archived = _manifest_archived(raw, current)
     if archived:
-        if not current or (not current.get("local_path") and
-                           current.get("status") not in {
-                               "ok", "complete", "reconcile_required", "reconcile_conflict"}):
+        if not current or current.get("status") not in {
+                "ok", "complete", "reconcile_required", "reconcile_conflict"}:
             self.storage.backup_put({
-                **base_record, "status": "skipped_archived",
+                **(current or {}), **base_record, "status": "skipped_archived",
                 "error": None, "attention_code": None,
             })
         summary["skipped_archived"] += 1

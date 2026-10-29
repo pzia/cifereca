@@ -83,5 +83,15 @@ def test_archived_manifest_preserves_received_file_right_and_placement(tmp_path,
             assert [(r["entitlement_id"], r["state"]) for r in service.storage.entitlements()] == [
                 (r["entitlement_id"], r["state"]) for r in rights]
             assert Path(after["local_path"]).read_bytes() == data
+        # Old installations persisted archived_book as attention even with a
+        # local path. Clear that diagnostic classification without losing B.
+        service.storage.backup_put({**after, "status": "attention_required",
+                                    "attention_code": "archived_book", "error": "old archive attention"})
+        summary = service.sync_kobo_backup_account("vault-1")
+        assert summary["skipped_archived"] == 1 and summary["attention_required"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] == "skipped_archived"
+        assert service.storage.placements() == placements
+        assert safe_kobo_backup_report(service.kobo_backup_diagnostic())["attention_count"] == 0
+        assert Path(before["local_path"]).read_bytes() == data
     finally:
         service.close()
