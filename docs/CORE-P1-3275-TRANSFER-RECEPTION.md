@@ -51,7 +51,41 @@ SQLite v14 et les fichiers réels de fixtures. Il couvre :
 
 Les widgets du test de callback sont simulés, les achats et reçus ADEPT aussi.
 Ces tests ne certifient ni une recette GTK native ni un accès fournisseur réel.
-Une interruption **avant le commit canonique** peut encore laisser une copie
-orpheline sans attribution de droit : la reprise de cet intervalle n'est pas
-prouvée par cette tranche. Les bundles et données historiques restent sur
-leur parcours existant ; aucune migration spéculative n'est réalisée.
+Les bundles et données historiques restent sur leur parcours existant ;
+aucune migration spéculative n'est réalisée.
+
+## Copie achevée avant commit canonique
+
+Pour un fichier source canonique, la copie temporaire indépendante est
+flushée, fsyncée et rehashée avant toute publication du nom final. Un
+checkpoint est alors committé dans le journal d'opérations existant
+`acquisition_ledger`, sous le scope interne `cifereca/local` et avec la
+stratégie `local_transfer`. Il conserve le source Placement, les profils,
+le SHA, les chemins et le pin device/inode/taille/mtime de la copie créée.
+Il n'a ni `entitlement_id` ni `artifact_id` de réception ; ses statuts
+`local_transfer_staged/published` ne sont jamais un succès d'acquisition
+fournisseur ou une preuve de présence.
+
+Ensuite seulement, un lien exclusif depuis l'inode temporaire donne le nom
+final à la copie B (jamais un hardlink depuis A). Le répertoire est fsyncé.
+La publication canonique revalide toujours les fichiers et scopes puis écrit
+Placement/SourceReference/OriginLinks dans sa transaction habituelle.
+
+Une nouvelle action explicite « Envoyer » peut reprendre exactement cet
+inode, avant installation du nom final ou après rollback/interruption de la
+transaction canonique. Un fichier préexistant ou remplacé, même à SHA égal,
+n'est pas adopté. Le fichier temporaire n'est supprimé qu'après publication
+et vérification de son pin ; une collision ou un checkpoint contradictoire
+échoue sans suppression/réattribution de fichiers du destinataire.
+
+Un fichier modifié par B après un envoi achevé est conservé : une nouvelle
+action explicite crée une autre copie, sans écrasement. Une suppression chez
+B ne déclenche aucune restauration depuis le journal ; scan et Sync ne
+consomment pas ces checkpoints. Une nouvelle action Envoyer reste possible.
+
+`tests/test_local_transfer_precommit_recovery.py` couvre des arrêts de vrais
+processus avant le lien final, avant la transaction et pendant l'insertion
+du deuxième OriginLink, ainsi que rollback SQL, remplacement d'inode,
+symlinks, altération d'octets/checkpoint et disparition de l'Artifact source.
+Les copies interrompues avant l'enregistrement d'un checkpoint achevé restent
+des temporaires non publiés : elles ne sont ni adoptées ni promues par nom/SHA.

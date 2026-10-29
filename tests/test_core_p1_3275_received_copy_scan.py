@@ -49,6 +49,19 @@ def test_send_scan_resend_preserves_one_b_copy_and_no_rights(tmp_path, bundle):
         assert again["path"] == first["path"]
         assert again["placement_id"] == first["placement_id"]
         assert service.storage.entitlements() == []
-        assert service.storage.acquisitions() == []
+        records = service.storage.acquisitions()
+        if bundle:
+            assert records == []
+        else:
+            # A completed copy checkpoint is operation history, never an
+            # acquisition receipt or a supplier entitlement for the recipient.
+            record, = records
+            assert (record["provider_id"], record["credential_id"],
+                    record["account_id"], record["identity_id"]) == (
+                "cifereca", "local", "alex", "alex",
+            )
+            assert record["status"] == "local_transfer_published"
+            assert record["strategy"] == "local_transfer"
+            assert record["artifact_id"] is None and record["entitlement_id"] is None
     finally:
         service.close()
