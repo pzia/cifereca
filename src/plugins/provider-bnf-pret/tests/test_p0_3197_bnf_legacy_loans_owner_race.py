@@ -120,12 +120,12 @@ class OwnerBroker:
     def __init__(self, identity="identity-A"):
         self.identity = identity
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         from types import SimpleNamespace
         return [SimpleNamespace(
             provider_id="bnf-pret", account_id="credential-A",
             identity_id=self.identity,
-        )]
+        )] if identity_id is None or self.identity == identity_id else []
 
 
 @pytest.mark.parametrize("race", [
@@ -144,9 +144,9 @@ def test_bnf_legacy_loans_refuse_inflight_broker_owner_rebind(race):
         elif race == "broker_swapped_same_owner":
             session.identity_broker = OwnerBroker("identity-A")
         else:
-            broker.accounts = lambda: [
-                *OwnerBroker("identity-A").accounts(),
-                *OwnerBroker("identity-A").accounts(),
+            broker.accounts = lambda identity_id=None: [
+                *OwnerBroker("identity-A").accounts(identity_id),
+                *OwnerBroker("identity-A").accounts(identity_id),
             ]
         return response
 

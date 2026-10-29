@@ -46,13 +46,16 @@ class CoreOwnerBroker:
     def __init__(self, identities=("identity-A",)):
         self.identities = identities
         self.calls = 0
+        self.requests = []
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         self.calls += 1
+        self.requests.append(identity_id)
         return [
             NS(provider_id="bnf-pret", account_id="credential-A",
                identity_id=identity)
             for identity in self.identities
+            if identity_id is None or identity == identity_id
         ]
 
 
@@ -191,8 +194,7 @@ def test_bnf_account_copy_rebinding_during_get_cannot_publish_rights(change):
 
 
 @pytest.mark.parametrize("owners", [
-    (), ("identity-B",), ("identity-A", "identity-B"),
-    ("identity-A", "identity-A"),
+    (), ("identity-B",), ("identity-A", "identity-A"),
 ])
 def test_bnf_owner_missing_foreign_or_ambiguous_is_refused_before_activity(owners):
     session, account, client = fixture(activity(("edition-1", "loan-1")))
@@ -201,6 +203,44 @@ def test_bnf_owner_missing_foreign_or_ambiguous_is_refused_before_activity(owner
         with pytest.raises(ProviderCapabilityError, match="bnf_rights_owner_unverified"):
             session.rights_observation_snapshot(account)
         assert client.calls == ["login"]  # no private activity GET
+    finally:
+        session.close()
+
+
+def test_bnf_rights_foreign_identity_sharing_upstream_account_is_not_ambiguous():
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    broker = session.identity_broker
+    broker.identities = ("identity-A", "identity-B")
+    try:
+        rights = session.rights_observation_snapshot(account)
+        assert [(right.edition_id, right.right_id) for right in rights.rights] == [
+            ("edition-1", "loan-1"),
+        ]
+        assert rights.scope.identity_id == "identity-A"
+        assert broker.requests and set(broker.requests) == {"identity-A"}
+        assert client.calls == ["login", "activity"]
+        assert not rights.authorizes_negative_reconciliation
+    finally:
+        session.close()
+
+
+def test_bnf_foreign_identity_arriving_during_activity_preserves_exact_scope():
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    broker = session.identity_broker
+    original = client.activity
+
+    def arrival():
+        html = original()
+        broker.identities = ("identity-A", "identity-B")
+        return html
+
+    client.activity = arrival
+    try:
+        report = session.rights_observation_snapshot(account)
+        assert [right.right_id for right in report.rights] == ["loan-1"]
+        assert report.scope.identity_id == "identity-A"
+        assert set(broker.requests) == {"identity-A"}
+        assert client.calls == ["login", "activity"]
     finally:
         session.close()
 
@@ -283,7 +323,7 @@ def test_bnf_plugin_activation_injects_core_identity_broker_into_new_sessions():
 @pytest.mark.parametrize("foreign_owner", ["identity-A", "identity-B"])
 def test_bnf_rights_core_v2_filters_same_upstream_account_by_credential(foreign_owner):
     session, account, client = fixture(activity(("edition-A", "loan-A")))
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="bnf-pret", account_id="credential-A",
            identity_id="identity-A", credential_id="credential-A",
            scope_version=2),
@@ -317,7 +357,7 @@ def test_bnf_rights_core_v2_filters_same_upstream_account_by_credential(foreign_
 ])
 def test_bnf_rights_v2_foreign_or_mixed_credential_refuses_before_get(refs):
     session, account, client = fixture(activity(("edition-A", "loan-A")))
-    session.identity_broker.accounts = lambda: refs
+    session.identity_broker.accounts = lambda identity_id=None: refs
     try:
         with pytest.raises(ProviderCapabilityError, match="bnf_rights_owner_unverified"):
             session.rights_observation_snapshot(account)
@@ -329,7 +369,7 @@ def test_bnf_rights_v2_foreign_or_mixed_credential_refuses_before_get(refs):
 def test_bnf_rights_v2_credential_rebound_during_get_refuses_published_loan():
     session, account, client = fixture(activity(("edition-A", "loan-A")))
     broker_credential = ["credential-A"]
-    session.identity_broker.accounts = lambda: [
+    session.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="bnf-pret", account_id="credential-A",
            identity_id="identity-A", credential_id=broker_credential[0],
            scope_version=2),

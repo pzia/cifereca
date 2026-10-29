@@ -18,11 +18,12 @@ class ExactOwner:
     def __init__(self, identities=("profile-a",)):
         self.identities = identities
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         return [
             NS(provider_id="bnf-pret", account_id="credential-a",
                identity_id=identity)
             for identity in self.identities
+            if identity_id is None or identity == identity_id
         ]
 
 

@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.8.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.13.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -19,6 +19,18 @@ Dans Configuration, ajouter une connexion **BnF Prêt** au bon profil Cifereca,
 saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
+
+## Scoping du propriétaire du prêt (#3252, 0.3.13)
+
+Les gardes de lecture du manifeste, d'observation de droits, de sélection
+d'offre et de téléchargement explicite interrogent désormais le broker Core
+par `broker.accounts(identity_id)` pour l'identité emprunteuse *épinglée*
+au début de l'opération. Le même identifiant de compte BnF peut exister chez
+deux identités sans rendre ambiguë la propriétaire exacte. L'absence de
+binding ou deux bindings pour la même identité restent bloquants ; le
+contrôle de credential, l'epoch et les gardes après GET restent inchangés.
+La façade legacy sans broker reste en lecture positive seule, sans preuve
+négative. Les tests sont synthétiques, sans compte BnF réel.
 
 ## Authentification et limites connues
 
