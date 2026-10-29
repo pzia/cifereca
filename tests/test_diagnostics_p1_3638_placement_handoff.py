@@ -68,9 +68,14 @@ def test_real_scoped_broker_projection_journal_search_and_exports(
         ("foreign-b", "artifact-shared", root / "b" / "absent.epub", "bob", "missing"),
     ])
     service.diagnostics = Diagnostics()
-    before = filesystem(tmp_path)
+    # The *diagnostic journal* is intentionally appended. Only business
+    # SQLite and books must remain byte-for-byte unchanged by the audit.
+    def business_files():
+        return {name: stamp for name, stamp in filesystem(tmp_path).items()
+                if name != journal.path.name}
+    before = business_files()
     public = library_audit_broker.LibraryReconciliationReadBrokerImpl(service).audit(identity_id="alice")
-    assert filesystem(tmp_path) == before
+    assert business_files() == before
     assert "placement_observations" not in public
     detail = service.diagnostics.snapshot()[-1]["detail"]
     batch = detail["placement_observations"]
