@@ -1,3 +1,18 @@
+## 0.1.28 — Export ZIP local du seul jour courant (#3649)
+
+Dans **Diagnostics → Journaux**, l'action principale « Exporter le journal
+brut du jour (ZIP)… » ouvre après confirmation un sélecteur GTK4 SAVE. Le Core
+produit une archive locale privée à la date du jour en fuseau IANA, sans
+filtre d'écran ni masquage, avec JSON des événements, manifeste SHA-256, bornes
+UTC réelles (DST) et limites de rotation explicites. Permissions 0600,
+publication exclusive sans écrasement, annulation sans ZIP partiel ; aucune
+lecture fournisseur ni transfert réseau. L'ancien export de toutes les
+rotations JSON est distinct et placé sous Filtres avancés. Un Core plus ancien
+ne présente pas l'action ZIP comme fonctionnelle.
+
+Tests déterministes Core, UI sans GTK et GTK4 réel (sous DISPLAY).
+Voir `docs/DIAGNOSTICS_CANONICAL_JOURNAL.md`.
+
 ## 0.1.20 — Fournisseur attesté et filtre exact (#2900)
 
 Le champ « Fournisseur » filtre les événements avant pagination, séparément
