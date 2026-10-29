@@ -10,9 +10,8 @@ import logging
 
 import pytest
 
-from cifereca.core.convergence_execution import CompletedDelivery
 from cifereca.core.sync_coordination import synchronize_account_source
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA, rows
+from tests.test_core_p0_3171_atomic_publication_v14 import rows
 from tests.test_core_p0_3171_canonical_sync_stage import rig as source_rig
 from tests.test_core_p0_3171_convergence_execution import (
     rig as executor_rig, run, fake_delivery,
