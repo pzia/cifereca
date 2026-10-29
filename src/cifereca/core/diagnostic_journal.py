@@ -207,6 +207,28 @@ def _make_event(match, identity, offset):
                 and 0 < len(detail["loan_id"]) <= 4096):
             event["provider_id"] = legacy_provider
             event["provider_id_origin"] = "legacy_opening_loan_sync"
+    elif (match["logger"] == "cifereca"
+          and category == "NUMILOG"
+          and operation == "startup_materialization"):
+        # The validated Core Numilog startup diagnostic is provider-scoped
+        # even though its closed schema intentionally carries no provider_id.
+        # It is a *preflight/materialization observation*, not a confirmed
+        # download or right. An arbitrary NUMILOG message or plugin line
+        # cannot acquire this association.
+        from .numilog_startup_diagnostics import public_fields as numilog_fields
+        checked = numilog_fields(detail)
+        expected = {
+            "failed": ("error", "error"),
+            "partial": ("error", "warning"),
+            "blocked": ("warning", "warning"),
+            "complete": ("ok", "info"),
+            "not_due": ("ok", "info"),
+            "running": ("ok", "info"),
+        }
+        if (checked and checked == detail
+                and (status, level) == expected.get(checked["status"])):
+            event["provider_id"] = "numilog"
+            event["provider_id_origin"] = "core_numilog_startup_observation"
     if task_ref:
         event["task_ref"] = task_ref
     if duration_ms is not None:
