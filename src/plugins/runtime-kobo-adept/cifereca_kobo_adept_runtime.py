@@ -78,10 +78,23 @@ _KNOWN_NON_ACSM_ERRORS = {
     'invalid_profile': 'Profil Kobo-Adept invalide.',
 }
 
+# Contract cifereca 1.3 §4 (Kobo-Adept 0.13.5/0.13.6): structured
+# ADEPT/profile errors are qualified independently of process exit 10.
+# Messages remain consumer-owned; never parse stderr or the vendor message.
+_CONTRACT_ADEPT_ERRORS = {
+    'invalid_acsm': 'Le jeton ACSM est invalide.',
+    'profile_not_found': 'Profil Kobo-Adept introuvable.',
+    'adept_profile_required': 'Un profil ADEPT est requis.',
+    'adept_profile_error': 'Le profil ADEPT ne permet pas cette opération.',
+    'adept_profile_incompatible': 'Le profil ADEPT est incompatible avec cette opération.',
+    'adept_error': "Échec ADEPT ; la cause Adobe précise n'est pas confirmée.",
+}
+
 # Diagnostics must carry a CLOSED public vocabulary, not vendor JSON values,
 # stderr fragments or arbitrary exception.code. Only codes produced by our
 # own run_json failure classifier can cross the support/export boundary.
 _RUNTIME_DIAGNOSTIC_FAILURE_CODES = frozenset({
+    *_CONTRACT_ADEPT_ERRORS,
     'adept_error',
     'adept_license_already_fulfilled_by_another_user',
     'profile_missing', 'invalid_profile',
@@ -126,11 +139,24 @@ def _public_inventory_error(exc):
     return {'code': _INVENTORY_FALLBACK_ERROR, 'message': _INVENTORY_FALLBACK_MESSAGE}
 
 
+def _acsm_fulfillment(args, payload):
+    """Recognize explicit fulfillment commands, never an exit/message guess."""
+    if type(args) not in (list, tuple) or len(args) < 2:
+        return False
+    if args[0] == 'acsm' and args[1] == 'fetch':
+        return True
+    return (
+        args[0] == 'download' and args[1] == 'request'
+        and type(payload) is dict and type(payload.get('source')) is dict
+        and payload['source'].get('type') == 'acsm'
+    )
+
+
 def classified_adept_failure(error, exit_code):
     """Classify a FAILED, proven ACSM download request only.
 
-    Caller must independently establish that payload.source.type == 'acsm'
-    on the download/request operation. Do not use exit code 10, vendor
+    Caller must independently establish an explicit ACSM download/request
+    or acsm/fetch operation. Do not use exit code 10, vendor
     messages or libgourou stderr to *infer* which operation failed.
     Unknown/legacy ACSM failures are fixed and non-retryable; an exact
     machine-readable license enum is the sole more specific diagnosis.
@@ -147,6 +173,10 @@ def classified_adept_failure(error, exit_code):
             "Le prêt ACSM est déjà associé à une autre identité Adobe. Vérifiez l'identité d'origine.",
             False,
         )
+    if code in _CONTRACT_ADEPT_ERRORS:
+        # An ACSM attempt may have consumed a one-shot licence before failure.
+        # The generic retryable flag does not attest a safe new fulfillment.
+        return code, _CONTRACT_ADEPT_ERRORS[code], False
     # Never relay unknown vendor fields, raw XML or a potentially sensitive
     # message. Even exit 1 / unknown code is an opaque ACSM error.
     return (
@@ -315,15 +345,8 @@ class KoboAdeptRuntime:
             # one-time license upstream. Never advertise an automatic retry:
             # inspect the exact local artifact/receipt before any new attempt.
             # This is a transport uncertainty, NOT an Adobe error diagnosis.
-            acsm_fulfillment = (
-                type(args) in (list, tuple) and len(args) >= 2
-                and args[0] == 'download' and args[1] == 'request'
-                and type(payload) is dict
-                and type(payload.get('source')) is dict
-                and payload['source'].get('type') == 'acsm'
-            )
             fail("Kobo-Adept a dépassé le délai d'exécution.",
-                 'kobo_adept_timeout', retryable=not acsm_fulfillment)
+                 'kobo_adept_timeout', retryable=not _acsm_fulfillment(args, payload))
         except OSError:
             # Exception subclass names are not a closed diagnostic vocabulary;
             # even a local launch error may carry sensitive path/profile data.
@@ -410,22 +433,23 @@ class KoboAdeptRuntime:
                  'kobo_adept_invalid_response', returncode=proc.returncode)
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
-            acsm_request = (
-                len(args) >= 2 and args[0] == 'download' and args[1] == 'request'
-                and isinstance(payload, dict)
-                and isinstance(payload.get('source'), dict)
-                and payload['source'].get('type') == 'acsm'
-            )
             # Legacy 0.13.6 may publish code/message at the JSON root.
             # Only a PROVEN ACSM request can interpret these as an ADEPT
             # failure. Never classify unrelated commands by exit 10 alone.
-            if acsm_request:
+            if _acsm_fulfillment(args, payload):
                 if not error and isinstance(value.get('code'), str):
                     error = value
                 code, public_message, retryable = classified_adept_failure(
                     error, proc.returncode,
                 )
                 fail(public_message, code, returncode=proc.returncode, retryable=retryable)
+            vendor_code = error.get('code')
+            if (args and args[0] in {'profile', 'acsm', 'loans'}
+                    and type(vendor_code) is str
+                    and vendor_code in _CONTRACT_ADEPT_ERRORS):
+                fail(_CONTRACT_ADEPT_ERRORS[vendor_code], vendor_code,
+                     returncode=proc.returncode,
+                     retryable=error.get('retryable') is True)
             # An Adobe-specific enum from a non-ACSM command is contradictory.
             # Exit 10 also has no certified meaning for other operations.
             # Neither case is permission to echo opaque vendor messages.

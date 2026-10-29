@@ -149,3 +149,31 @@ exercent la lecture physique, les rotations, le rejet des faux positifs et
 le regroupement GTK sur cette référence exacte sans inférer de causalité
 par heure/message. Cette réparation est **synthétique** : le P0 #2888
 reste ouvert pour la recette fournisseur réelle explicitement autorisée.
+
+## 29 octobre 2026 — filtre fournisseur des avis de prêts historiques (#2888)
+
+La fenêtre **29 octobre uniquement** du ZIP d'investigation contient trois
+occurrences `ACQUISITION / loan sync` émises par le Core : leurs données
+`detail.provider=paris` et `detail.status=attention_required` sont
+effectivement enregistrées ; l'ancien lecteur ne filtrait que
+`detail.provider_id` et les perdait lors de `provider_id=paris`.
+Les deux refus automatiques `cross_identity_loan` observés sont une famille
+distincte, sans fournisseur canonique attesté par leur seule trace.
+
+Le journal conserve le détail original et indexe **seulement** l'ancien
+`ACQUISITION/loan sync` du logger exact `cifereca`, avec la cohérence
+`warning/attention_required` ou `error/retryable_error`, un code et un
+identifiant de prêt réellement présents, et `provider` égal au slug
+`paris` ou `bnf-pret`. Le champ ajouté
+`provider_id_origin=legacy_opening_loan_sync` évite de présenter cette
+observation historique comme une nouvelle attestation de droit ou une
+identité de compte. Les messages libres, faux logger, opération différente,
+code invalide, état incohérent, ADEPT et causes d'admission automatiques
+n'acquièrent aucun fournisseur par ressemblance.
+
+`query_journal(provider_id=...)`, le broker, la recherche, les détails et
+les exports réutilisent **la même occurrence physique**, jamais un second
+événement ni un GET. Tests synthétiques :
+`tests/test_diagnostics_p0_2888_legacy_loan_provider.py`.
+Aucune expérience fournisseur réelle n'est revendiquée : #2888 demeure
+ouvert pour la recette explicite Paris/BnF.

@@ -135,6 +135,7 @@ def test_primary_zip_confirmation_is_independent_of_journal_filters(setup):
     assert callable(kwargs["cancelled"])
     assert dialog.destroyed and s.controller.chooser is None
     assert "exporté en ZIP" in s.host.toast.call_args.args[0]
+    assert str(s.tmp / "custom.zip") in s.host.toast.call_args.args[0]
 
 
 @pytest.mark.parametrize("change", ["cancel", "detached", "closed", "invalid_suffix", "cancelled_worker"])
@@ -194,3 +195,27 @@ def test_unsupported_core_disables_zip_without_removing_legacy_json(setup):
     s.controller.clicked(s.button)
     s.broker.export_raw_journal.assert_not_called()
     assert s.controller.chooser is None
+
+
+def test_unconfirmed_destination_never_gets_success_receipt(setup):
+    s = setup
+    # A broker that returns an unexpected location cannot attest that the
+    # chosen file was published. No alternate private path is displayed.
+    s.broker.export_today_journal_zip.return_value = "unused"
+    s.broker.export_today_journal_zip.side_effect = None
+    dialog = chooser(s)
+    dialog.output = str(s.tmp / "chosen.zip")
+    s.controller.chose_file(dialog, 1)
+    s.tasks.run()
+    assert "exporté en ZIP :" not in s.host.toast.call_args.args[0]
+    assert str(s.tmp / "chosen.zip") not in s.host.toast.call_args.args[0]
+
+
+def test_failed_or_cancelled_export_never_displays_destination(setup):
+    s = setup
+    s.broker.export_today_journal_zip.side_effect = OSError("synthetic failure")
+    dialog = chooser(s)
+    dialog.output = str(s.tmp / "not-published.zip")
+    s.controller.chose_file(dialog, 1)
+    s.tasks.run()
+    assert str(s.tmp / "not-published.zip") not in s.host.toast.call_args.args[0]
