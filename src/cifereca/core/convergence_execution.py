@@ -49,7 +49,7 @@ class CompletedDelivery:
 
 
 OutcomeStatus = Literal[
-    "present_attested", "downloaded", "recovered", "pending", "blocked", "failed", "cancelled", "skipped_archived",
+    "present_attested", "downloaded", "recovered", "pending", "blocked", "failed", "cancelled", "skipped_archived", "inactive",
 ]
 
 
@@ -233,6 +233,11 @@ def execute_admitted_convergence(
             results.append(
                 ConvergenceOutcome(key, "present_attested", "exact_verified_origin")
             )
+            continue
+
+        if row.provider_attested and row.state == "inactive":
+            # Descriptive history only: no acquisition and no negative write.
+            results.append(ConvergenceOutcome(key, "inactive", "right_inactive"))
             continue
 
         # A stale/unknown right, unsigned delivery, missing configured

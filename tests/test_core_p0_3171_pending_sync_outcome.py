@@ -67,3 +67,59 @@ def test_explicit_completed_convergence_and_second_sync_remain_successful(explic
         assert result['canonical_execution'][expected] == 1
         assert result['canonical_execution']['pending'] == 0
     assert calls == [service.source] and len(db.placements()) == 1
+
+
+def _right_state(snapshot, state):
+    snapshot = successful(snapshot, offer=False)
+    if state == 'empty':
+        return replace(snapshot, rights=())
+    row = snapshot.rights[0]
+    if state == 'inactive':
+        row = replace(row, state='inactive')
+    elif state == 'archived':
+        row = replace(row, delivery='unavailable', delivery_unavailable_reason='archived')
+    return replace(snapshot, rights=(row,))
+
+
+@pytest.mark.parametrize('state', ['active', 'inactive', 'empty', 'archived'])
+def test_no_delivery_route_reports_unsatisfied_right_without_false_pending(explicit_rig, state):
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    service, db, root = explicit_rig
+    persist_attested_source_references(db, service.snapshot)
+    service.snapshot = _right_state(service.snapshot, state)
+    result = synchronize_account_source(service, service.account)
+    assert 'canonical_execution' not in result
+    assert result['canonical_rights']['status'] == 'success'
+    assert result['canonical_rights']['pending'] == (1 if state == 'active' else 0)
+    assert result['status'] == ('partial' if state == 'active' else 'ok')
+    with db._lock, db._connect() as sql:
+        assert sql.execute('SELECT state FROM source_references').fetchall() == [('active',)]
+    assert db.placements() == []
+
+
+@pytest.mark.parametrize('state', ['active', 'inactive', 'empty', 'archived'])
+def test_opening_without_route_uses_plan_without_counting_inactive_history(tmp_path, monkeypatch, state):
+    service, account, source, snapshot, session, reads = opening_rig(tmp_path, monkeypatch)
+    _lock_paths(monkeypatch, tmp_path)
+    session.rights_observation_snapshot = lambda _: _right_state(snapshot, state)
+    try:
+        result = service.opening_sync()
+        own = next(row for row in result['identities'] if row['identity_id'] == 'default')
+        assert 'canonical_execution' not in own
+        assert own['errors'] == 0
+        assert own['status'] == ('partial' if state == 'active' else 'success')
+        assert service.storage.placements() == []
+    finally:
+        service.close()
+
+
+def test_executor_reports_attested_inactive_right_as_history_not_pending(explicit_rig):
+    service, db, root = explicit_rig
+    service.snapshot = _right_state(service.snapshot, 'inactive')
+    service._canonical_persisted_consent = lambda _: frozenset()
+    service._canonical_right_delivery = lambda *_: pytest.fail('inactive right cannot GET')
+    result = synchronize_account_source(service, service.account)
+    assert result['status'] == 'ok'
+    assert result['canonical_execution']['inactive'] == 1
+    assert result['canonical_execution']['pending'] == 0
+    assert db.placements() == []
