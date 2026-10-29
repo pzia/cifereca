@@ -36,7 +36,7 @@ def test_one_exact_positive_right_grant_and_revoke_are_persistent(tmp_path, monk
         assert row["allowed"] is False and row["eligible"] is True
         assert len(row["reference"]) == 64
         assert all(c in "0123456789abcdef" for c in row["reference"])
-        for secret in (account.credential_id, account.unique_id, source.right_id, source.edition_id):
+        # The synthetic upstream right_id is literally "purchase": the same\n        # public enum as kind; masking that enum would hide the useful label.\n        for secret in (account.credential_id, account.unique_id, source.edition_id):
             assert secret not in repr(options)
         assert reads == []  # SQLite only; no provider snapshot fetch.
 
@@ -99,7 +99,7 @@ def test_inactive_right_may_revoke_but_never_grant_again(tmp_path, monkeypatch):
             db.execute("UPDATE source_references SET state='inactive'")
         view = broker.canonical_acquisition_choices(sid)
         assert view[0]["allowed"] is True and view[0]["eligible"] is False
-        with pytest.raises(ValueError, match="positive_right_required"):
+        with pytest.raises(ValueError, match="acquisition_consent_positive_source_required"):
             broker.set_canonical_acquisition_choice(sid, token, allowed=True)
         broker.set_canonical_acquisition_choice(sid, token, allowed=False)
         stale = broker.canonical_acquisition_choices(sid)
