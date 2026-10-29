@@ -549,7 +549,11 @@ class BnfProviderSession(ProviderSession):
                     )):
                 raise ProviderCapabilityError('bnf_selected_delivery_owner_changed')
             epoch = self._epoch
-            loans = self.loans(live)
+            # #3197: selected canonical acquisition cannot delegate its
+            # authorization to the overridable, compatibility-only v1 loans()
+            # façade. The typed inventory and this preflight share the same
+            # guarded private HTML reader, with one activity GET here.
+            loans = self._read_live_loans_locked(live)
             if (self._closed or not self.connected or epoch != self._epoch
                     or len(self._accounts) != 1 or self._accounts[0] is not live
                     or (account.identity_id, account.provider_id,
