@@ -376,6 +376,8 @@ class Copier:
         self.databases: set[Path] = set()
         self.copied: set[Path] = set()
         self.excluded: list[str] = []
+        self.runtime_roots: set[Path] = set()
+        self.excluded_runtimes: set[str] = set()
         self.content_roots: set[Path] = set()
         self.links: dict[str, dict] = {}
         self.directories: dict[str, dict] = {}
@@ -383,6 +385,26 @@ class Copier:
     @staticmethod
     def excluded_name(name: str) -> bool:
         return name.lower() in SESSION_PARTS or name.lower().startswith(("cookies.", "session.", "storage_state."))
+
+    def excluded_runtime(self, path: Path) -> bool:
+        """Only rebuildable environments inside the approved app runtime.
+
+        Match lexically before resolving/opening an environment, including
+        the current alias. Never apply this rule to a book/content root.
+        """
+        if any(path.is_relative_to(root) for root in self.content_roots):
+            return False
+        for root in self.runtime_roots:
+            if not path.is_relative_to(root):
+                continue
+            parts = path.relative_to(root).parts
+            offset = (3 if len(parts) >= 3 and parts[:2] in
+                      (("runtime", "releases"), ("runtime", "versions"))
+                      else 2 if parts[:2] == ("runtime", "current") else None)
+            if offset is not None and len(parts) > offset and parts[offset] in {
+                    ".venv", "venv", "env", ".virtualenv"}:
+                return True
+        return False
 
     @staticmethod
     def directory_state(path: Path) -> dict:
@@ -463,6 +485,8 @@ class Copier:
                 resolved = relative if relative.is_absolute() else prefix.parent / relative
                 if self.mapped(resolved) is None:
                     raise Rejected(f"External source symbolic link refused: {prefix}")
+                if self.excluded_runtime(resolved):
+                    raise Rejected(f"Symbolic link targets excluded runtime: {prefix}")
                 for root in self.mapping:
                     if resolved.is_relative_to(root) and any(
                             self.excluded_name(part) for part in resolved.relative_to(root).parts):
@@ -503,6 +527,9 @@ class Copier:
         if not destination.is_relative_to(self.target) or ".." in destination.parts:
             raise Rejected("Copy destination outside recipe")
         if logical in self.copied:
+            return
+        if self.excluded_runtime(source) or self.excluded_runtime(logical):
+            self.excluded_runtimes.add(str(logical))
             return
         is_content = any(logical.is_relative_to(root) for root in self.content_roots)
         if not is_content and self.excluded_name(source.name):
@@ -927,6 +954,7 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool,
         copier.register(data_source, target / "data/cifereca")
         copier.register(library_source, target / "library")
         copier.content_roots.add(library_source)
+        copier.runtime_roots.add(data_source)
         # Runtime caches, browser profiles and installed old plugin code are
         # never copied. Packages come from the frozen source tree instead.
         copier.sources[str(config_source)] = fingerprint(config_source)
@@ -995,7 +1023,9 @@ def create(config_path: Path, target: Path | None, ref: str, *, no_start: bool,
                     "sources": copier.sources, "path_map": {str(k): str(v) for k, v in copier.mapping.items()},
                     "source_links": copier.links, "source_directories": copier.directories,
                     "databases": [str(p.relative_to(target)) for p in sorted(copier.databases)],
-                    "excluded_sessions": copier.excluded, "files": inventory(target)}
+                    "excluded_sessions": copier.excluded,
+                    "excluded_rebuildable_runtimes": sorted(copier.excluded_runtimes),
+                    "files": inventory(target)}
         write_json(target / "manifest.json", manifest)
         verify(target, initial=True)
         reservation.close()  # The runtime supervisor now owns the same lock.

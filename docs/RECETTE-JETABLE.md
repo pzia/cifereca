@@ -97,6 +97,17 @@ Aucun lien, permission ou dossier de production n'est à modifier.
   copie déjà approuvées. Leur contenu est **matérialisé en fichiers et dossiers
   indépendants au chemin remappé** : aucun symlink/hardlink vers la production
   ne subsiste dans la recette. Les liens de production restent intacts.
+  Les environnements Python reconstruisibles `.venv`, `venv`, `env` et
+  `.virtualenv` directement sous `data/cifereca/runtime/releases/<release>/`
+  ou `runtime/versions/<release>/`, ainsi que sous l'alias `runtime/current/`,
+  sont exclus **avant toute résolution/lecture de leur contenu**. Cela couvre
+  les symlinks Python vers `/usr/bin` et les environnements eux-mêmes externes
+  ou cassés. Le manifeste atteste leurs chemins dans
+  `excluded_rebuildable_runtimes`. L'environnement de recette est reconstruit
+  depuis le code figé ; le reste de la release, SQLite et les livres suivent
+  les protections habituelles. Cette exclusion ne s'applique jamais à la
+  bibliothèque, même pour un dossier portant ces noms. Un autre lien utile
+  vers un environnement exclu est refusé, sans suivre sa cible.
   Cible externe/non approuvée, cassée, cyclique, contenant `..`, ou visant une
   session exclue : refus ciblé avant lecture de cette cible. Une entrée de
   session exclue est ignorée et attestée, même si c'est un lien cassé/externe,
