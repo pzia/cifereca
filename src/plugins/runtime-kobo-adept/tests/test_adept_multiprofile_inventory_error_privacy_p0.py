@@ -8,7 +8,7 @@ import pytest
 
 from cifereca.plugin_api import AttentionRequired
 from cifereca_kobo_adept_runtime import (
-    KoboAdeptRuntime, _INVENTORY_PUBLIC_ERRORS, _INVENTORY_FALLBACK_ERROR,
+    KoboAdeptError, KoboAdeptRuntime, _INVENTORY_PUBLIC_ERRORS, _INVENTORY_FALLBACK_ERROR,
     _INVENTORY_FALLBACK_MESSAGE,
 )
 
@@ -89,6 +89,93 @@ def test_no_error_str_or_vendor_traceback_was_consulted():
         "profile": "broken", "code": "kobo_adept_failed",
         "message": _INVENTORY_PUBLIC_ERRORS["kobo_adept_failed"],
     }]
+
+
+
+
+@pytest.mark.parametrize("code", (
+    "profile_not_found", "adept_profile_error",
+    "adept_profile_incompatible", "adept_error",
+))
+@pytest.mark.parametrize("native_retryable", (False, True, "true", 1, None))
+def test_contract_13_profile_inventory_retains_exact_safe_reason_and_retry(
+    code, native_retryable,
+):
+    r = runtime()
+    def failed_read(profile, *, expired=False):
+        raise KoboAdeptError(
+            " ".join(SENSITIVE), code=code, retryable=native_retryable,
+            technical_detail=" ".join(SENSITIVE),
+        )
+    r._loan_inventory = failed_read
+
+    result = r.loan_inventories(["profile-with-private-error"])
+    assert result == {
+        "profiles": [],
+        "errors": [{
+            "profile": "profile-with-private-error",
+            "code": code,
+            "message": _INVENTORY_PUBLIC_ERRORS[code],
+            "retryable": native_retryable is True,
+        }],
+        "complete": False,
+    }
+    assert all(secret not in repr(result) for secret in SENSITIVE)
+
+
+@pytest.mark.parametrize("code", (
+    "profile_not_found", "adept_profile_error", "adept_profile_incompatible",
+))
+def test_real_runtime_failure_classifier_feeds_scoped_inventory(
+    monkeypatch, code,
+):
+    import json
+    import subprocess
+    import cifereca_kobo_adept_runtime as module
+
+    r = runtime()
+    cli_error = {
+        "ok": False,
+        "error": {
+            "code": code, "message": SENSITIVE[0] + " " + SENSITIVE[1],
+            "retryable": True,
+        },
+    }
+    monkeypatch.setattr(
+        module.subprocess, "run",
+        lambda *_a, **_kw: subprocess.CompletedProcess(
+            ["synthetic"], 10, json.dumps(cli_error).encode(),
+            SENSITIVE[2].encode(),
+        ),
+    )
+    result = r.loan_inventories(["synthetic-profile"])
+    assert result["profiles"] == []
+    assert result["complete"] is False
+    assert result["errors"] == [{
+        "profile": "synthetic-profile",
+        "code": code,
+        "message": _INVENTORY_PUBLIC_ERRORS[code],
+        "retryable": True,
+    }]
+    assert r.last_run_diagnostic["error_code"] == code
+    assert r.last_run_diagnostic["retryable"] is True
+    assert all(secret not in repr(result) for secret in SENSITIVE)
+
+
+def test_acsm_specific_code_in_readonly_inventory_is_not_a_profile_diagnosis():
+    r = runtime()
+    def failed_read(profile, *, expired=False):
+        raise KoboAdeptError(
+            SENSITIVE[0], code="invalid_acsm", retryable=True,
+        )
+    r._loan_inventory = failed_read
+    result = r.loan_inventories(["synthetic-profile"])
+    assert result["errors"] == [{
+        "profile": "synthetic-profile",
+        "code": _INVENTORY_FALLBACK_ERROR,
+        "message": _INVENTORY_FALLBACK_MESSAGE,
+    }]
+    assert not result["complete"]
 
 
 def test_valid_empty_or_healthy_inventories_remain_complete():

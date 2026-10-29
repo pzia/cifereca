@@ -114,6 +114,13 @@ _MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
 # neither vendor text nor arbitrary error.code may enter persisted receipts.
 _INVENTORY_PUBLIC_ERRORS = {
     'adept_profile_required': 'Profil ADEPT requis.',
+    # Contract 1.3 §4: these typed profile/registry failures remain
+    # distinguishable in a per-profile read-only loan inventory. They are
+    # never inferred from a process exit, exception text or an ACSM payload.
+    'profile_not_found': 'Profil Kobo-Adept introuvable.',
+    'adept_profile_error': 'Le profil ADEPT ne permet pas cette opération.',
+    'adept_profile_incompatible': 'Le profil ADEPT est incompatible avec cette opération.',
+    'adept_error': "Échec ADEPT ; la cause Adobe précise n'est pas confirmée.",
     'kobo_adept_missing': 'Exécutable Kobo-Adept indisponible.',
     'kobo_adept_timeout': 'Inventaire ADEPT : délai dépassé.',
     'kobo_adept_launch_error': 'Exécution Kobo-Adept impossible.',
@@ -135,7 +142,13 @@ def _public_inventory_error(exc):
     except Exception:
         code = None
     if type(code) is str and code in _INVENTORY_PUBLIC_ERRORS:
-        return {'code': code, 'message': _INVENTORY_PUBLIC_ERRORS[code]}
+        result = {'code': code, 'message': _INVENTORY_PUBLIC_ERRORS[code]}
+        # Only our typed, closed-code CLI error conveys a qualified retry
+        # decision. Arbitrary UserFacingError subclasses have no authority
+        # to supply retry semantics, even when they spoof a known code.
+        if isinstance(exc, KoboAdeptError):
+            result['retryable'] = exc.retryable is True
+        return result
     return {'code': _INVENTORY_FALLBACK_ERROR, 'message': _INVENTORY_FALLBACK_MESSAGE}
 
 
