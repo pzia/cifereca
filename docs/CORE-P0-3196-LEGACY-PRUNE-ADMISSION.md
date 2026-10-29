@@ -1,17 +1,13 @@
-# Core P0 #3196 — frontière du prune historique Kobo
+# Core P0 #3196 — admission du prune historique Kobo
 
-La méthode `Storage.backup_prune_missing(provider, credential, seen_item_ids)` peut désactiver l'entitlement miroir d'un livre devenu absent **uniquement** après un inventaire amont complet. Elle reste transitoire : `backup_items` n'est ni un témoin d'octets, ni un OriginLink, ni une autorité de provenance.
+`Storage.backup_prune_missing(provider, credential, seen_item_ids)` **ne modifie plus les droits**, même si l'identité, le compte et le manifest fournisseur sont parfaitement concordants. `backup_items` est une projection transitoire v0.7 et n'atteste ni la complétude d'un inventaire canonique, ni un retour de prêt, ni une révocation d'achat. Les entitlements miroirs, SourceReferences, OriginLinks, Artifacts, Placements et reçus historiques sont conservés. L'ancien champ de bilan `entitlements_inactivated` reste présent avec la valeur **0** pour la compatibilité des consommateurs.
 
-## Admission du manifeste
+## Frontière de prune
 
-La liste exacte des IDs observés doit être un `set`, une `list` ou un `tuple`, borné à 100 000 entrées, comprenant exclusivement des chaînes d'IDs non vides (au plus 1 024 caractères, sans NUL/CR/LF). Les entrées incorrectes rejettent le **lot entier avant SQL** par `invalid_authoritative_manifest_item_ids`. En particulier `None`, une chaîne isolée, un itérateur, un dictionnaire et un mélange d'IDs valides/invalides ne valent jamais attestation d'inventaire vide.
+Le synchroniseur Kobo ne peut éliminer les lignes de **projection** absentes qu'après son inventaire admis comme complet. À la frontière SQLite, les IDs doivent rester un `set`, `list` ou `tuple` de 100 000 éléments au plus, exclusivement des chaînes non vides de 1 024 caractères au plus sans NUL/CR/LF. Un manifeste partiel ou malformé (`None`, chaîne, dictionnaire, itérateur ou mélange invalide) est rejeté **avant toute mutation**. Un ensemble vide valide peut vider la projection sans jamais toucher aux droits.
 
-Une collection vide **valide** reste un inventaire vide potentiellement complet et conserve la sémantique existante de prune **après** admission par le synchroniseur Kobo ; cette méthode ne peut pas elle-même certifier la complétude fournisseur. Les droits d'un autre compte/identité et les Placements restent inchangés.
+L'opération est atomique sous `BEGIN IMMEDIATE`. Les fichiers sont seulement constatés pour le compteur `local_preserved`, jamais effacés ni promus en preuves vérifiées. Un renouvellement d'acquisition doit être attribué par des preuves positives typées `#3171` et une éventuelle conclusion négative dépend de son **propre** contrat exhaustif et scoper `#3197`, non d'un prune v0.7.
 
-## Recette
+## Recette / limites
 
-`tests/test_core_p0_3196_prune_exact_right_scope.py` exerce les entrées invalides, les trois types autorisés, le comportement vide explicite, les refus d'usurpation d'identité et la conservation de l'historique. La CI Core/Plugins fournit la preuve de régression ; aucune authentification réelle et aucune migration destructrice de `backup_items` n'est revendiquée.
-
-## Non couvert
-
-Retrait des writers `backup_put`, des lecteurs Kobo hérités, migration 0.7/0.8, publication des reçus live et reprise crash : **#3196 reste ouvert**. Aucun travail Plugins #3252 ni P2.
+`tests/test_core_p0_3196_prune_exact_right_scope.py` couvre les achats et prêts sous owner exact, les collisions, les rebonds d'identité/compte, la conservation des reçus et les manifestes invalides. Il ne s'agit ni d'une migration des writers `backup_put`, ni d'une preuve fournisseur live. La migration et reprise crash 0.7/0.8 restent nécessaires. Aucun DROP TABLE.
