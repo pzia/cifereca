@@ -76,7 +76,7 @@ def test_brokerless_legacy_paris_reads_both_branches_but_no_rights_authority():
 
 def test_other_v2_credential_does_not_rebind_same_paris_reader():
     s, account, client = fixture(digital=(upstream("loan-a", "edition-a"),))
-    s.identity_broker.accounts = lambda: [
+    s.identity_broker.accounts = lambda identity_id=None: [
         NS(provider_id="paris", account_id="reader-A",
            identity_id="identity-A", credential_id="card-A", scope_version=2),
         NS(provider_id="paris", account_id="reader-A",
