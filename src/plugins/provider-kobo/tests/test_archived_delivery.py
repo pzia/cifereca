@@ -20,9 +20,30 @@ def test_archived_purchase_stays_active_without_descriptor(downloadable):
             right = report.exact("book-1", "book-1", "purchase")
             assert right.state == "active" and right.provider_attested
             assert right.delivery == "unavailable" and not right.delivery_offer_id
+            assert right.delivery_unavailable_reason == "archived"
             assert report.coverage == "partial"
             assert not report.authorizes_negative_reconciliation
         assert vault.calls == 2 and posts == []
+    finally:
+        session.close()
+
+
+def test_selected_archived_right_is_a_non_error_without_post():
+    session, vault, broker, account, posts = setup()
+    vault.rows[0]["archived"] = True
+    try:
+        result = session.rights_selected_delivery_offer_snapshot(
+            account, edition_id="book-1", right_id="book-1",
+            kind="purchase", branch="personal_manifest",
+            explicit_user_action=True,
+        )
+        assert len(result.rights) == 1
+        right = result.rights[0]
+        assert right.state == "active"
+        assert right.delivery == "unavailable"
+        assert right.delivery_unavailable_reason == "archived"
+        assert right.delivery_offer_id == ""
+        assert vault.calls == 1 and posts == []
     finally:
         session.close()
 
@@ -59,7 +80,9 @@ def test_archive_is_scoped_to_account_not_product_id():
         archived = first[0].rights_observation_snapshot(first[3])
         available = second[0].rights_observation_snapshot(other)
         assert archived.rights[0].delivery == "unavailable"
+        assert archived.rights[0].delivery_unavailable_reason == "archived"
         assert available.rights[0].delivery == "unknown"
+        assert available.rights[0].delivery_unavailable_reason == ""
         assert archived.rights[0].state == available.rights[0].state == "active"
         assert archived.scope != available.scope
         assert first[4] == second[4] == []

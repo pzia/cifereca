@@ -2,7 +2,10 @@
 
 Le snapshot de droits conserve l'achat exact en état `active` avec sa preuve
 fournisseur. Le booléen amont strict `archived=true` donne
-`delivery=unavailable`, sans offre. Le nom de collection seul ne remplace pas
+`delivery=unavailable` et `delivery_unavailable_reason=archived`, sans offre.
+La raison est émise uniquement lorsque le manifeste authentifié signale
+`archived` comme booléen strict `True`, jamais à partir de `collection`,
+`downloadable=False`, du titre ou d'une erreur réseau. Le nom de collection seul ne remplace pas
 ce booléen ; une valeur mal typée n'est pas une preuve positive admissible.
 
 La sélection d'une offre relit le manifest du compte exact puis renvoie ce
@@ -21,8 +24,9 @@ les flags de livraison contradictoires, le changement après sélection et deux
 comptes distincts. Les suites existantes préservent les clôtures de session,
 les gardes de propriétaire et le refus des flags mal typés.
 
-Le bilan `skipped_archived`, son compteur dédié et la normalisation non-erreur
-d'un `409 archived_book` appartiennent encore au consommateur Core. Le client
-Vault conserve le code fournisseur exact ; aucun retry n'est ajouté.
-**Le ticket #514 reste ouvert tant que cette tranche Core n'est pas reçue.**
+Le Core fusionné via #3662 consomme la raison `archived` comme statut
+`skipped_archived` non-erreur, compte séparément les archives, et normalise le
+`409 archived_book` sans relance. Le client Vault conserve ce code fournisseur.
+Une recette fournisseur réelle et les contrôles CI/install sur cette intégration
+restent requis avant de fermer #514.
 Les tests Plugins sont synthétiques, sans accès à un compte réel.

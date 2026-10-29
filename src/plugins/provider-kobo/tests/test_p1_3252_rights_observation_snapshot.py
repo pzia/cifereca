@@ -76,6 +76,7 @@ def test_real_manifest_bridge_scopes_zero_one_many_and_archived_without_delivery
         assert all(r.provider_attested for r in report.rights)
         assert all(r.evidence_ref == "kobo.personal_manifest" for r in report.rights)
         assert [r.delivery for r in report.rights] == ["unknown", "unavailable"]
+        assert [r.delivery_unavailable_reason for r in report.rights] == ["", "archived"]
         assert all(not r.delivery_offer_id for r in report.rights)
         assert all(not r.authorizes_mutation for r in report.rights)
         assert report.exact("book-1", "book-1", "purchase") is report.rights[0]

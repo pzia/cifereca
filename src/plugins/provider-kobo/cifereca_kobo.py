@@ -889,6 +889,9 @@ class KoboSession(ProviderSession):
                 evidence_ref="kobo.personal_manifest",
                 observed_at=observed,
                 delivery="unavailable" if archived is True else "unknown",
+                # This exact manifest flag is a delivery fact, not a revoked
+                # purchase. Core #3662 consumes it as skipped_archived.
+                delivery_unavailable_reason="archived" if archived is True else "",
             ))
         self._ensure_personal_binding(
             bound, generation, expected_account_id=account_id,
