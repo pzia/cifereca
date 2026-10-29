@@ -51,8 +51,8 @@ class JournalBroker(SelectionBroker):
         now = datetime.now()
         yesterday = now - timedelta(days=1)
         self.raw_log.write_text(
-            f"{yesterday:%Y-%m-%d %H:%M:%S},000 INFO cifereca [Worker] old-event\\n"
-            f"{now:%Y-%m-%d %H:%M:%S},000 ERROR cifereca [Worker] today-private-token=SYNTHETIC\\n",
+            f"{yesterday:%Y-%m-%d %H:%M:%S},000 INFO cifereca [Worker] old-event\n"
+            f"{now:%Y-%m-%d %H:%M:%S},000 ERROR cifereca [Worker] today-private-token=SYNTHETIC\n",
             encoding="utf-8",
         )
 
