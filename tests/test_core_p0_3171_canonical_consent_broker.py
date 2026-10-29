@@ -102,8 +102,41 @@ def test_inactive_right_may_revoke_but_never_grant_again(tmp_path, monkeypatch):
         with pytest.raises(ValueError, match="positive_right_required"):
             broker.set_canonical_acquisition_choice(sid, token, allowed=True)
         broker.set_canonical_acquisition_choice(sid, token, allowed=False)
-        assert broker.canonical_acquisition_choices(sid) == ()
+        stale = broker.canonical_acquisition_choices(sid)
+        assert stale[0]["allowed"] is False and stale[0]["eligible"] is False
         assert read_source_acquisition_consent(service, account) == frozenset()
+    finally:
+        service.close()
+
+
+def test_large_positive_library_is_paged_and_late_right_can_be_granted(tmp_path, monkeypatch):
+    """Kobo-like 60 rights exceed a single GTK page; no silent truncation."""
+    service, account, source, snapshot, session, reads = rig(tmp_path, monkeypatch)
+    try:
+        rights = tuple(
+            replace(snapshot.rights[0],
+                    edition_id=f"edition-{number}",
+                    right_id=f"purchase-{number}")
+            for number in range(60)
+        )
+        many = replace(snapshot, rights=rights)
+        broker, sid = _choices(service, account, many)
+        first = broker.canonical_acquisition_choices(sid, page=0)
+        second = broker.canonical_acquisition_choices(sid, page=1)
+        assert len(first) == 48 and len(second) == 12
+        tokens = {row["reference"] for row in (*first, *second)}
+        assert len(tokens) == 60
+        late = second[-1]
+        broker.set_canonical_acquisition_choice(sid, late["reference"], allowed=True)
+        granted = read_source_acquisition_consent(service, account)
+        assert len(granted) == 1
+        assert late["reference"] not in {row["reference"] for row in first}
+        assert all(row["allowed"] is False for row in broker.canonical_acquisition_choices(sid, page=0))
+        assert len(broker.canonical_acquisition_choices(sid, page=1)) == 12
+        with pytest.raises(ValueError, match="invalid_canonical_consent_page"):
+            broker.canonical_acquisition_choices(sid, page=-1)
+        with pytest.raises(ValueError, match="invalid_canonical_consent_page"):
+            broker.canonical_acquisition_choices(sid, page=True)
     finally:
         service.close()
 
