@@ -20,7 +20,7 @@ def rig():
     session = session_with_vault(vault)
     session._accounts[0].identity_id = "identity-A"
     broker = NS(owner="identity-A")
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         NS(provider_id="kobo", account_id="alice",
            credential_id=session.credential_id, scope_version=2,
            identity_id=broker.owner),
@@ -48,9 +48,9 @@ def test_kobo_backup_projection_rebind_never_returns_stale_manifest(
                 session.identity_broker = newer
             elif race == "owner_duplicated":
                 original_accounts = broker.accounts
-                broker.accounts = lambda: original_accounts() * 2
+                broker.accounts = lambda identity_id=None: original_accounts() * 2
             else:
-                broker.accounts = lambda: [
+                broker.accounts = lambda identity_id=None: [
                     NS(provider_id="kobo", account_id="alice",
                        credential_id="other-credential", scope_version=2,
                        identity_id="identity-A"),

@@ -194,7 +194,7 @@ def test_kobo_acquisition_inflight_rebind_cannot_publish_old_descriptor_or_denia
     vault = FakeVault([])
     session = session_with_vault(vault)
     broker = NS(owner="identity-A")
-    broker.accounts = lambda: [
+    broker.accounts = lambda identity_id=None: [
         NS(provider_id="kobo", account_id="alice", identity_id=broker.owner,
            credential_id=session.credential_id, scope_version=2)
     ]

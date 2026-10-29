@@ -72,7 +72,7 @@ def test_archive_is_scoped_to_account_not_product_id():
     # Two independent account scopes can own the same product, one archived.
     second[0]._accounts[0].unique_id = "bob"
     second[1].rows = [dict(second[1].rows[0], account_id="bob")]
-    second[2].accounts = lambda: [type("Ref", (), dict(
+    second[2].accounts = lambda identity_id=None: [type("Ref", (), dict(
         provider_id="kobo", account_id="bob", identity_id="identity-B",
     ))()]
     other = replace(second[3], unique_id="bob", identity_id="identity-B")

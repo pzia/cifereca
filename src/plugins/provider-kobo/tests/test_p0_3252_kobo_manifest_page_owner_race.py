@@ -51,7 +51,7 @@ def test_kobo_real_manifest_stops_before_page_2_if_scope_changes(reader, race):
             elif race == "broker_same_owner_aba":
                 session.identity_broker = type(broker)(("identity-A",))
             elif race == "credential_v2_rebound":
-                broker.accounts = lambda: [
+                broker.accounts = lambda identity_id=None: [
                     NS(provider_id="kobo", account_id="alice",
                        identity_id="identity-A", credential_id="foreign",
                        scope_version=2),
