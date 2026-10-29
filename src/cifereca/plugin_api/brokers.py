@@ -154,7 +154,9 @@ class DiagnosticsBroker(Protocol):
     def active_checks(self) -> tuple[HealthCheckResult, ...]: ...
     def export_raw_journal(self) -> bytes: ...
 
-    def export_today_journal_zip(self, destination: str) -> str:
+    def export_today_journal_zip(
+        self, destination: str, *, cancelled: Callable[[], bool] | None = None,
+    ) -> str:
         """Optional #3649 local-only Diagnostics capability.
 
         Creates a 0600 ZIP of the current local day without UI filters or
