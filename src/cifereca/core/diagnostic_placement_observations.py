@@ -44,7 +44,8 @@ def _row(value: object) -> dict | None:
         return None
     state = value.get("state")
     reason = value.get("reason")
-    if state not in _STATES or reason not in _REASONS[state]:
+    if (type(state) is not str or type(reason) is not str
+            or state not in _STATES or reason not in _REASONS[state]):
         return None
     if value.get("observation_source") != "core_stored_paths":
         return None
