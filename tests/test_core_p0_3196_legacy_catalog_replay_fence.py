@@ -74,7 +74,10 @@ def test_promoted_catalogue_stops_legacy_physical_replay(tmp_path, promotion):
         assert store.backup_get("kobo", "credential-A", "edition-A")["title"] == "New manifest"
         assert _physical(store) == before
         assert store.placements()[0]["artifact_id"] == "sha256:" + "a" * 64
-        assert store.acquisitions(provider_id="kobo")[0]["artifact_id"] is None
+        # The old claim-only receipt remains; no new SHA is asserted.
+        assert store.acquisitions(provider_id="kobo")[0]["artifact_id"] == (
+            "sha256:" + "a" * 64
+        )
         assert not path.exists()
     finally:
         store.close()
