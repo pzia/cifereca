@@ -154,6 +154,8 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
     if (right is None or right.state != "active"
             or right.provider_attested is not True):
         raise ProviderCapabilityError("kobo_candidate_purchase_unobserved")
+    if right.delivery == "unavailable":
+        raise ProviderCapabilityError("kobo_candidate_delivery_unavailable")
 
     payload = session.resolve_acquisition(
         right_id, mode="descriptor", expected_offer_id=delivery_offer_id,
