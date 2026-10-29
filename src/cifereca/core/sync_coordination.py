@@ -4,6 +4,8 @@ Facade-owned sessions, acquisition helpers, locks and storage remain unique;
 no widgets or additional remote calls are introduced."""
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import time
 import hashlib
 import json
@@ -16,6 +18,10 @@ from typing import Any, Callable
 from ..diagnostics import _core_journal_record
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
+
+_OPENING_CANONICAL_LEASE: ContextVar[InterProcessLock | None] = ContextVar(
+    'cifereca.opening.canonical.lease', default=None,
+)
 from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
@@ -256,6 +262,107 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     return result
 
 
+def _run_observed_canonical_convergence(
+    self, account: Account, admitted_snapshots: list, *,
+    admitted_epoch: int, sync_lease: InterProcessLock,
+    cancelled_for_rights: Callable[[], bool],
+) -> dict[str, int] | None:
+    """Run the SAME canonical A→B executor for explicit and opening Sync.
+
+    The caller must already hold the real global acquisition lease. Only one
+    freshly admitted typed source snapshot can supply A. No legacy backup
+    preference, v1 list, catalog match or opening event grants consent: the
+    persisted exact SourceKey authorization and session/offers are checked by
+    the original executor, under that same lock, before and after network I/O.
+    """
+    if (type(admitted_snapshots) is not list or len(admitted_snapshots) != 1
+            or type(sync_lease) is not InterProcessLock
+            or sync_lease._handle is None
+            or sync_lease.path.resolve() != acquisition_lock_file().resolve()):
+        return None
+    from ..plugin_api import Cancelled
+    # An optional provider-neutral candidate ABI is now
+    # available on installed BnF/Numilog sessions. Core owns
+    # its *finalization* callback; the provider never emits
+    # a CompletedDelivery or OriginLink. No compatibility
+    # fallback or implied consent for older sessions.
+    delivery = getattr(self, "_canonical_right_delivery", None)
+    consent_reader = getattr(self, "_canonical_persisted_consent", None)
+    if (delivery is None and admitted_snapshots
+            and callable(consent_reader)):
+        from inspect import getattr_static
+        try:
+            candidate_session = self._session_for_account(account)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            candidate_session = None
+        if (candidate_session is not None and callable(
+                getattr_static(candidate_session,
+                               "rights_selected_delivery_candidate", None))):
+            from .canonical_selected_delivery import complete_selected_delivery
+            delivery = lambda key, offer: complete_selected_delivery(
+                self, account, candidate_session, key, offer,
+                library_root=self.library_dir(), shared_lock=sync_lease,
+            )
+    if (admitted_snapshots and callable(delivery)
+            and callable(consent_reader)):
+        from .convergence_execution import execute_admitted_convergence
+        from .source_convergence import SourceKey
+
+        try:
+            consent = consent_reader(account)
+        except Exception:
+            logging.getLogger("cifereca").exception(
+                "TRACE canonical Sync consent read failed provider_id=%s "
+                "credential_id=%s", account.provider_id, account.credential_id,
+            )
+            consent = frozenset()
+        if type(consent) is not frozenset or any(
+            type(source) is not SourceKey for source in consent
+        ):
+            consent = frozenset()
+
+        def current_consent(key: SourceKey) -> bool:
+            # Called by the Core executor both before GET and
+            # after GET, rejecting consent revoked in flight.
+            latest = consent_reader(account)
+            return (type(latest) is frozenset
+                    and key in latest
+                    and all(type(x) is SourceKey for x in latest))
+
+        # The optional selected-offer preflight is permitted
+        # only under the already held lock, exact persisted
+        # consent and the registered Core delivery route.
+        # It returns A only; the executor still owns all GET,
+        # receipt, revalidation and atomic B publication.
+        from .canonical_selected_offers import qualify_selected_offers
+        session = self._session_for_account(account)
+        root = self.library_dir()
+        qualified_snapshot = qualify_selected_offers(
+            self, account, session, admitted_snapshots[0],
+            admitted_epoch=admitted_epoch, shared_lock=sync_lease,
+            library_root=root, persisted_consent=consent,
+            consent_still_current=current_consent,
+            cancelled=cancelled_for_rights,
+        )
+        outcomes = execute_admitted_convergence(
+            self, account, session, qualified_snapshot,
+            admitted_epoch=admitted_epoch,
+            shared_lock=sync_lease, library_root=root,
+            persisted_consent=consent,
+            consent_still_current=current_consent,
+            deliver=delivery, cancelled=cancelled_for_rights,
+            publication_guard=getattr(
+                self, "_canonical_publication_consent_current", None,
+            ),
+        )
+        counts = {
+            status: sum(row.status == status for row in outcomes)
+            for status in ("downloaded", "recovered", "present_attested",
+                           "pending", "blocked", "failed", "cancelled")
+        }
+        return counts
+
+
 def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
     from .public_provider_diagnostics import registered_public_provider_id
     from ..plugin_api import Cancelled
@@ -311,93 +418,18 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                             # complete refresh or of any negative right.
                             result["status"] = "partial"
 
-                    # An optional provider-neutral candidate ABI is now
-                    # available on installed BnF/Numilog sessions. Core owns
-                    # its *finalization* callback; the provider never emits
-                    # a CompletedDelivery or OriginLink. No compatibility
-                    # fallback or implied consent for older sessions.
-                    delivery = getattr(self, "_canonical_right_delivery", None)
-                    consent_reader = getattr(self, "_canonical_persisted_consent", None)
-                    if (delivery is None and admitted_snapshots
-                            and callable(consent_reader)):
-                        from inspect import getattr_static
-                        try:
-                            candidate_session = self._session_for_account(account)
-                        except (AttributeError, KeyError, TypeError, ValueError):
-                            candidate_session = None
-                        if (candidate_session is not None and callable(
-                                getattr_static(candidate_session,
-                                               "rights_selected_delivery_candidate", None))):
-                            from .canonical_selected_delivery import complete_selected_delivery
-                            delivery = lambda key, offer: complete_selected_delivery(
-                                self, account, candidate_session, key, offer,
-                                library_root=self.library_dir(), shared_lock=sync_lease,
-                            )
-                    if (admitted_snapshots and callable(delivery)
-                            and callable(consent_reader)):
-                        from .convergence_execution import execute_admitted_convergence
-                        from .source_convergence import SourceKey
-
-                        try:
-                            consent = consent_reader(account)
-                        except Exception:
-                            logging.getLogger("cifereca").exception(
-                                "TRACE canonical Sync consent read failed provider_id=%s "
-                                "credential_id=%s", account.provider_id, account.credential_id,
-                            )
-                            consent = frozenset()
-                        if type(consent) is not frozenset or any(
-                            type(source) is not SourceKey for source in consent
-                        ):
-                            consent = frozenset()
-
-                        def current_consent(key: SourceKey) -> bool:
-                            # Called by the Core executor both before GET and
-                            # after GET, rejecting consent revoked in flight.
-                            latest = consent_reader(account)
-                            return (type(latest) is frozenset
-                                    and key in latest
-                                    and all(type(x) is SourceKey for x in latest))
-
-                        # The optional selected-offer preflight is permitted
-                        # only under the already held lock, exact persisted
-                        # consent and the registered Core delivery route.
-                        # It returns A only; the executor still owns all GET,
-                        # receipt, revalidation and atomic B publication.
-                        from .canonical_selected_offers import qualify_selected_offers
-                        session = self._session_for_account(account)
-                        root = self.library_dir()
-                        qualified_snapshot = qualify_selected_offers(
-                            self, account, session, admitted_snapshots[0],
-                            admitted_epoch=admitted_epoch, shared_lock=sync_lease,
-                            library_root=root, persisted_consent=consent,
-                            consent_still_current=current_consent,
-                            cancelled=cancelled_for_rights,
-                        )
-                        outcomes = execute_admitted_convergence(
-                            self, account, session, qualified_snapshot,
-                            admitted_epoch=admitted_epoch,
-                            shared_lock=sync_lease, library_root=root,
-                            persisted_consent=consent,
-                            consent_still_current=current_consent,
-                            deliver=delivery, cancelled=cancelled_for_rights,
-                            publication_guard=getattr(
-                                self, "_canonical_publication_consent_current", None,
-                            ),
-                        )
-                        counts = {
-                            status: sum(row.status == status for row in outcomes)
-                            for status in ("downloaded", "recovered", "present_attested",
-                                           "pending", "blocked", "failed", "cancelled")
-                        }
+                    counts = _run_observed_canonical_convergence(
+                        self, account, admitted_snapshots,
+                        admitted_epoch=admitted_epoch, sync_lease=sync_lease,
+                        cancelled_for_rights=cancelled_for_rights,
+                    )
+                    if counts is not None:
                         result["canonical_execution"] = counts
                         if counts["cancelled"]:
                             raise Cancelled("canonical_sync_cancelled")
                         if counts["failed"] or counts["blocked"]:
                             result["status"] = "partial"
                         if counts["downloaded"]:
-                            # Changed is physical materialization, not merely
-                            # new positive SourceReference observations.
                             result["files_materialized"] = (
                                 int(result.get("files_materialized") or 0)
                                 + counts["downloaded"]
@@ -445,7 +477,11 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
     lock = lock_factory(lock_path())
     try:
         with lock:
-            result = self._opening_sync_locked(progress=progress, deep=deep)
+            lease_token = _OPENING_CANONICAL_LEASE.set(lock)
+            try:
+                result = self._opening_sync_locked(progress=progress, deep=deep)
+            finally:
+                _OPENING_CANONICAL_LEASE.reset(lease_token)
         for summary in result.get("identities", ()) if isinstance(result, dict) else ():
             if not isinstance(summary, dict):
                 continue
@@ -712,6 +748,7 @@ def _cache_validated_typed_loan_observation(
 
 def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, logger) -> dict[str, Any]:
     from ..brokers import SynchronizationBrokerImpl
+    from ..plugin_api import Cancelled
     source_status = SynchronizationBrokerImpl(self)
 
     def emit(event: str, **detail: Any) -> None:
@@ -883,7 +920,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # reconciliation orchestration or automatic delivery
                     # permissions are invented by the startup path.
                     from .canonical_sync_stage import observe_canonical_rights_in_sync
-                    canonical = observe_canonical_rights_in_sync(self, account)
+                    admitted_epoch = self._account_context_epoch
+                    admitted_snapshots = []
+                    canonical = observe_canonical_rights_in_sync(
+                        self, account, snapshot_sink=admitted_snapshots.append,
+                    )
                     if canonical is not None:
                         rights_detail = detail.setdefault("canonical_rights", {
                             "sources": 0, "observed": 0,
@@ -900,6 +941,28 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             provider_errors.append({
                                 "code": "canonical_rights_observation_failed",
                             })
+                    # The outer opening Sync already holds the global lock.
+                    # Never acquire it a second time or create a parallel
+                    # materialization/reconciliation worker. Older providers
+                    # and accounts without exact persisted consent remain
+                    # inventory-only, with zero selected-offer or candidate GET.
+                    counts = _run_observed_canonical_convergence(
+                        self, account, admitted_snapshots,
+                        admitted_epoch=admitted_epoch,
+                        sync_lease=_OPENING_CANONICAL_LEASE.get(),
+                        cancelled_for_rights=lambda: False,
+                    )
+                    if counts is not None:
+                        completed = detail.setdefault("canonical_execution", {
+                            status: 0 for status in counts
+                        })
+                        for key, count in counts.items():
+                            completed[key] += count
+                        if counts["cancelled"]:
+                            raise Cancelled("canonical_opening_cancelled")
+                        if counts["blocked"] or counts["failed"]:
+                            inventory_partial = True
+                        new_acquisitions += counts["downloaded"]
                     source_outcomes[source_id] = (
                         "partial" if inventory_partial else "success"
                     )
