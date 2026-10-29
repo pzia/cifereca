@@ -194,6 +194,9 @@ def _choices(service, account):
     storage, scope, current = _context(service, account)
     if not current():
         return (), current
+    # Source enablement reads Storage metadata: keep it OUTSIDE Storage._lock
+    # (which is deliberately non-reentrant). The real write repeats the gate.
+    enabled = service.sync_source_enabled(account) is True
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
         if not current() or not _bound(db, scope, enabled=False):
@@ -222,7 +225,7 @@ def _choices(service, account):
             ).fetchone()
             opted_in = saved is not None and _payload_allowed(saved[0], source)
             admissible = (
-                bound_for_grant and service.sync_source_enabled(account) is True
+                bound_for_grant and enabled
                 and state == "active" and synchronizable == 1
                 and evidence_kind == "provider_response"
                 and _attested(source, evidence_ref, observed_at)
