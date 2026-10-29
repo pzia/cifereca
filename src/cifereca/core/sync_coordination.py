@@ -311,9 +311,10 @@ def _run_observed_canonical_convergence(
         try:
             consent = consent_reader(account)
         except Exception:
-            logging.getLogger("cifereca").exception(
-                "TRACE canonical Sync consent read failed provider_id=%s "
-                "credential_id=%s", account.provider_id, account.credential_id,
+            # A consent backend exception may serialize private credentials.
+            # Deny delivery and publish a closed, scope-free diagnostic.
+            logging.getLogger("cifereca").warning(
+                "TRACE canonical Sync code=canonical_consent_read_failed"
             )
             consent = frozenset()
         if type(consent) is not frozenset or any(

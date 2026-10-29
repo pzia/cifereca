@@ -198,11 +198,9 @@ def execute_admitted_convergence(
             return consent_still_current(key) is True
         except Exception:
             # Revoked/malformed/unavailable consent state never grants GET.
-            _LOG.exception(
-                "TRACE convergence consent lookup failed provider_id=%s "
-                "credential_id=%s right_id=%s",
-                key.scope.provider_id, key.scope.credential_id, key.right_id,
-            )
+            # The exception can carry a full private consent key or a
+            # backend error containing credentials. Emit only a stable code.
+            _LOG.warning("TRACE convergence code=canonical_consent_lookup_failed")
             return False
 
     if cancelled():
@@ -330,10 +328,7 @@ def execute_admitted_convergence(
             except Exception:
                 # The provider OriginLink and verified Placement, NOT the
                 # operation journal, are authoritative after commit.
-                _LOG.exception(
-                    "TRACE canonical intake state update failed provider_id=%s "
-                    "right_id=%s", scope.provider_id, key.right_id,
-                )
+                _LOG.warning("TRACE convergence code=canonical_intake_state_update_failed")
             # B is now atomically committed. A targeted descriptive index
             # makes this Placement visible without waiting for a full scan.
             # An indexing failure cannot revoke the already valid provider
@@ -345,14 +340,10 @@ def execute_admitted_convergence(
                 )
                 if type(indexed) is not dict or indexed.get("status") != "indexed":
                     _LOG.warning(
-                        "TRACE canonical catalog projection deferred provider_id=%s "
-                        "code=canonical_catalog_index_deferred", scope.provider_id,
+                        "TRACE convergence code=canonical_catalog_index_deferred"
                     )
             except Exception:
-                _LOG.exception(
-                    "TRACE canonical catalog projection failed provider_id=%s "
-                    "code=canonical_catalog_index_failed", scope.provider_id,
-                )
+                _LOG.warning("TRACE convergence code=canonical_catalog_index_failed")
             results.append(ConvergenceOutcome(
                 key,
                 "recovered" if was_recovered else (
@@ -366,12 +357,9 @@ def execute_admitted_convergence(
             results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
             break
         except Exception:
-            # Journal retains the unmodified exception and traceback; the
-            # result code itself is bounded and not a fabricated receipt.
-            _LOG.exception(
-                "TRACE convergence delivery failed provider_id=%s "
-                "credential_id=%s account_id=%s right_id=%s",
-                scope.provider_id, scope.credential_id, scope.account_id, key.right_id,
-            )
+            # A transport/ACSM exception may contain signed URLs, tokens
+            # or subscriber identifiers. Neither the message nor traceback
+            # crosses the Core log boundary; the outcome stays fail-closed.
+            _LOG.warning("TRACE convergence code=canonical_delivery_or_commit_failed")
             results.append(ConvergenceOutcome(key, "failed", "delivery_or_commit_failed"))
     return tuple(results)
