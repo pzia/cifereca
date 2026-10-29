@@ -83,6 +83,9 @@ class DoctorTests(unittest.TestCase):
             report = doctor.diagnose()
         self.assertIn("parent_namespaces_unavailable", report["failures"])
         self.assertIn("restricted proc", report["namespace_error"])
+        self.assertIn("bubblewrap_features_unverified", report["failures"])
+        self.assertNotIn("ro_bind_fd_unavailable_for_source_symlinks", report["failures"])
+        self.assertEqual(report["checks"]["bwrap_help"]["stderr"], "denied")
 
     def test_profile_validation_is_syntax_only_without_cache_or_kernel_write(self):
         report, commands = self.diagnose(profile=Path("/test/profile"))

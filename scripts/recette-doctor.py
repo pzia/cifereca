@@ -95,7 +95,11 @@ def diagnose(*, require_apparmor: bool = False, kernel_audit: bool = False,
         failures.append("bubblewrap_not_installed")
     else:
         checks["bwrap_help"] = command([bwrap, "--help"])
-        if "--ro-bind-fd" not in checks["bwrap_help"].get("stdout", ""):
+        features_known = checks["bwrap_help"].get("returncode") == 0
+        has_fd_bind = features_known and "--ro-bind-fd" in checks["bwrap_help"].get("stdout", "")
+        if not features_known:
+            failures.append("bubblewrap_features_unverified")
+        elif not has_fd_bind:
             failures.append("ro_bind_fd_unavailable_for_source_symlinks")
         try:
             parent = {kind: os.readlink("/proc/self/ns/" + kind) for kind in ("user", "net", "mnt", "pid")}
@@ -118,7 +122,7 @@ def diagnose(*, require_apparmor: bool = False, kernel_audit: bool = False,
                 checks["child"] = child
             except (ValueError, KeyError, TypeError):
                 failures.append("invalid_bootstrap_evidence")
-        if "ro_bind_fd_unavailable_for_source_symlinks" not in failures:
+        if has_fd_bind:
             with tempfile.TemporaryDirectory(prefix="cifereca-doctor-") as directory:
                 source = Path(directory) / "alias"
                 source.symlink_to("synthetic-target")
