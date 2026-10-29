@@ -748,6 +748,7 @@ def _cache_validated_typed_loan_observation(
 
 def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, logger) -> dict[str, Any]:
     from ..brokers import SynchronizationBrokerImpl
+    from ..plugin_api import Cancelled
     source_status = SynchronizationBrokerImpl(self)
 
     def emit(event: str, **detail: Any) -> None:
