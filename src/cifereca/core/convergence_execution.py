@@ -8,6 +8,8 @@ deliver bytes after a positive scoped offer; they never write Core SQLite.
 """
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 from dataclasses import dataclass
 import logging
 import sqlite3
@@ -118,7 +120,7 @@ def execute_admitted_convergence(
     def current_memory() -> bool:
         """No database I/O: safe inside canonical publication's SQL lock."""
         try:
-            if (service._account_context_epoch != admitted_epoch
+            if (source_context_epoch(service) != admitted_epoch
                     or service.accounts is not registered_accounts
                     or service._sessions is not sessions
                     or service.storage is not initial_storage):

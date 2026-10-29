@@ -170,7 +170,7 @@ def test_changed_epoch_during_offer_preflight_refuses_entire_old_session(rig):
     _, downloads = _enabled(service, root)
 
     def selected(*_args, **_kwargs):
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
         return _selected(service)
 
     service.session.rights_selected_delivery_offer_snapshot = selected

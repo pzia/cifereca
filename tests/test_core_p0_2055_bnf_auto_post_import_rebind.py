@@ -37,7 +37,7 @@ def test_bnf_auto_import_cannot_publish_stale_positive_claim(
         elif change == "provider_reconnected":
             service._sessions[service._session_key("bnf-pret", account.credential_id)] = NS(connected=False, close=lambda: None)
         else:
-            service._account_context_epoch += 1
+            service._source_context_epoch += 1
         return {"status": "complete", "acquisition_id": "synthetic-claim"}
 
     monkeypatch.setattr(service, "import_acsm", import_during_rebind)

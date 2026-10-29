@@ -34,7 +34,7 @@ def test_in_flight_registry_rebind_rolls_back_whole_positive_A_batch(
 
     def mutate():
         if mutation == "epoch":
-            service._account_context_epoch += 1
+            service._source_context_epoch += 1
         elif mutation == "registry_object":
             service.accounts[0] = Account(
                 identity_id="A", provider_id="seller-a",
@@ -70,7 +70,7 @@ def test_in_flight_registry_rebind_rolls_back_whole_positive_A_batch(
             conn.create_function("synthetic_rebind_context", 0, None)
         service.accounts[0] = original_account
         service._sessions[service._session_key("seller-a", "card-a")] = original_session
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
 
     # The next correctly bound Sync may persist the entire source in one
     # transaction, rather than leaving a partial first row behind.
@@ -96,7 +96,7 @@ def test_epoch_rebind_while_refreshing_existing_A_cannot_commit_partial_update(
     service.snapshot = replace(service.snapshot, rights=(observed,))
 
     def change_epoch():
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
         return 0
 
     with db._lock, db._connect() as conn:

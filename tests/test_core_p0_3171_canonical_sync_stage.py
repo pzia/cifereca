@@ -30,7 +30,7 @@ class Service:
             credential_id="card-a", unique_id="buyer-a",
         )
         self.accounts = [self.account]
-        self._account_context_epoch = 1
+        self._source_context_epoch = 1
         self.enabled = True
         self._sessions = {}
         self.events = []
@@ -183,7 +183,7 @@ def test_missing_optional_producer_leaves_existing_source_sync_unchanged(rig):
 def test_rebound_during_provider_read_cannot_publish_new_reference(rig):
     service, db, root = rig
     def rebound(_account):
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
         return service.snapshot
     service.session.rights_observation_snapshot = rebound
     with pytest.raises(ValueError, match="canonical_rights_source_rebound"):

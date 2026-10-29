@@ -33,7 +33,7 @@ def test_mid_publication_core_rebind_rolls_back_all_B_but_keeps_durable_receipt(
 
     def invalidate():
         if mutation == "epoch":
-            service._account_context_epoch += 1
+            service._source_context_epoch += 1
         elif mutation == "session":
             service._sessions[("seller-a", "card-A")] = NS(
                 provider_id="seller-a", credential_id="card-A",
@@ -69,7 +69,7 @@ def test_mid_publication_core_rebind_rolls_back_all_B_but_keeps_durable_receipt(
             db.create_function("mutate_sql_publication_context", 0, None)
         service.accounts[0] = original_account
         service._sessions[("seller-a", "card-A")] = original_session
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
 
     second = run(
         service, account, snapshot, root, lock_path, {source},

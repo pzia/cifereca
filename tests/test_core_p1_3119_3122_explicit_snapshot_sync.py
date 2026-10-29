@@ -124,7 +124,7 @@ def test_typed_source_never_persists_unverified_or_stale_batch(
                     capabilities=session.capabilities,
                 )
             elif fault == "epoch_changed":
-                service._account_context_epoch += 1
+                service._source_context_epoch += 1
             elif fault == "source_disabled":
                 service.storage.metadata_set(
                     "sync.source.enabled." + service.sync_source_id(primary), "0",

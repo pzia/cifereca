@@ -8,6 +8,8 @@ Absent legacy support is a no-op, not a second reconciliation subsystem.
 """
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 from inspect import getattr_static
 import logging
 from pathlib import Path
@@ -142,7 +144,7 @@ def observe_canonical_rights_in_sync(
         return None
     if service.sync_source_enabled(account) is not True:
         raise ValueError("canonical_rights_source_disabled")
-    before_epoch = service._account_context_epoch
+    before_epoch = source_context_epoch(service)
     registered_accounts = service.accounts
     registered_sessions = service._sessions
     original_storage = service.storage
@@ -193,7 +195,7 @@ def observe_canonical_rights_in_sync(
                     and getattr(session, "credential_id", None) == scope.credential_id
                 )
             return (
-                service._account_context_epoch == before_epoch
+                source_context_epoch(service) == before_epoch
                 and service.accounts is registered_accounts
                 and service._sessions is registered_sessions
                 and service.storage is original_storage

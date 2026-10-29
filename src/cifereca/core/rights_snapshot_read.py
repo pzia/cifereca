@@ -7,6 +7,8 @@ rechecked after provider I/O; a stale result is discarded in full.
 """
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 from inspect import getattr_static
 import logging
 
@@ -39,7 +41,7 @@ def read_account_rights_snapshot(service, account: Account, *,
         return ProviderRightsSnapshot(scope=scope, status=status)
 
     try:
-        epoch = service._account_context_epoch
+        epoch = source_context_epoch(service)
         accounts = service.accounts
         sessions = service._sessions
         storage = service.storage
@@ -69,7 +71,7 @@ def read_account_rights_snapshot(service, account: Account, *,
     session = registered[0]
 
     def still_bound() -> bool:
-        if service._account_context_epoch != epoch:
+        if source_context_epoch(service) != epoch:
             return False
         if service.accounts is not accounts or service._sessions is not sessions:
             return False

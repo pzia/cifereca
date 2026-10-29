@@ -198,7 +198,7 @@ def test_changed_session_epoch_during_candidate_get_refuses_old_owner(rig):
 
     def candidate(*args, **kwargs):
         completed = _native(*args, **kwargs)
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
         return completed
 
     service.session.rights_selected_delivery_candidate = candidate

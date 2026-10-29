@@ -5,6 +5,7 @@ one already selected file under the acquisition lock; no global scan, network,
 file movement, rights write or currently selected GUI identity is involved.
 """
 from dataclasses import dataclass
+from .source_context import source_context_epoch
 import logging
 import sqlite3
 from contextlib import nullcontext
@@ -59,7 +60,7 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
         storage, config = service.storage, service.config
         data = config.data
         accounts, identities = service.accounts, service.identities
-        epoch = service._account_context_epoch
+        epoch = source_context_epoch(service)
         identity = service.identity_by_id(identity_id)
         roots = configured_identity_roots(config, identity_id)[identity_id]
 
@@ -67,7 +68,7 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
             return (service.storage is storage and service.config is config
                     and config.data is data
                     and service.accounts is accounts and service.identities is identities
-                    and service._account_context_epoch == epoch
+                    and source_context_epoch(service) == epoch
                     and identity is not None
                     and service.identity_by_id(identity_id) is identity
                     and _account_current(service.accounts, scope)

@@ -4,6 +4,8 @@ Manifest authority remains provider.kobo; acquisition execution remains the
 negotiated kobo-adept contract. State is owned by the service facade."""
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 import time
 import os
 import re
@@ -337,7 +339,7 @@ def kobo_backup_preview(
     # A fresh remote manifest must remain attached to this *same* Core
     # account/session throughout the subsequent local projection. The
     # offline checkpoint preview is intentionally still usable disconnected.
-    core_epoch = self._account_context_epoch
+    core_epoch = source_context_epoch(self)
     provider_epoch = getattr(session, "_epoch", None)
     # Multiple borrowers are legitimate diagnostic inputs: the existing
     # preview must classify their rights as attention_required rather than
@@ -354,7 +356,7 @@ def kobo_backup_preview(
             return bool(
                 session is not None
                 and session.connected is True
-                and self._account_context_epoch == core_epoch
+                and source_context_epoch(self) == core_epoch
                 and self._sessions.get(self._session_key("kobo", credential_id)) is session
                 and getattr(session, "_epoch", None) == provider_epoch
                 and len(session.accounts) == len(accounts)

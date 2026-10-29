@@ -152,7 +152,7 @@ def test_rebind_or_duplicate_account_refuses_ui_consent(tmp_path, monkeypatch):
         with pytest.raises(ValueError, match="ambiguous sync source"):
             broker.set_canonical_acquisition_choice(sid, token, allowed=True)
         service.accounts.pop()
-        service._account_context_epoch += 1
+        service._source_context_epoch += 1
         with service.storage._lock, service.storage._connect() as db:
             db.execute(
                 "UPDATE provider_connections SET identity_id='other' "

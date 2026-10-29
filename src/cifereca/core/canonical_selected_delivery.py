@@ -7,6 +7,8 @@ the final file within the current profile and witnesses a completed callback.
 """
 from __future__ import annotations
 
+from .source_context import source_context_epoch
+
 import hashlib
 from inspect import getattr_static
 import json
@@ -59,7 +61,7 @@ def complete_selected_delivery(
     if raw is None or not callable(raw):
         raise ValueError("canonical_delivery_candidate_contract_unavailable")
 
-    epoch = service._account_context_epoch
+    epoch = source_context_epoch(service)
     accounts, sessions, storage = service.accounts, service._sessions, service.storage
 
     def bound() -> bool:
@@ -76,7 +78,7 @@ def complete_selected_delivery(
             return (
                 service.accounts is accounts and service._sessions is sessions
                 and service.storage is storage
-                and service._account_context_epoch == epoch
+                and source_context_epoch(service) == epoch
                 and (account.identity_id, account.provider_id,
                      account.credential_id, account.unique_id) == coords
                 and sum(type(x) is Account and x is account for x in accounts) == 1

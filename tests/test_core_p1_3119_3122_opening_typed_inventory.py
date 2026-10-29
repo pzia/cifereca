@@ -175,7 +175,7 @@ def test_opening_typed_reader_change_during_network_discards_positive_batch(
             calls.append(selected)
             positive = snapshot(a, [loan(a)])
             if fault == "epoch":
-                service._account_context_epoch += 1
+                service._source_context_epoch += 1
             elif fault == "session_swapped":
                 service._sessions[service._session_key(a.provider_id, a.credential_id)] = NS(
                     provider_id=a.provider_id, credential_id=a.credential_id,
