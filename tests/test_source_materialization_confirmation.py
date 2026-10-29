@@ -275,14 +275,17 @@ def test_confirmation_snapshots_release_sqlite_savepoint_on_budget_failure(
     def reject_after_sql_read(condition, reason):
         if reason == "evidence_budget_exhausted":
             checked.append(True)
-            raise materialize._Rejected(reason)
+            # _evidence checks the legacy backup budget *before* SQL.
+            # Fail on the first SELECT budget check inside the SAVEPOINT.
+            if len(checked) == 2:
+                raise materialize._Rejected(reason)
         return original_require(condition, reason)
 
     with monkeypatch.context() as patch:
         patch.setattr(materialize, "_require", reject_after_sql_read)
         with pytest.raises(materialize._Rejected, match="evidence_budget_exhausted"):
             materialize._evidence(case.service, account, manifest)
-    assert checked
+    assert len(checked) == 2
     assert not db.in_transaction
     assert materialize._evidence(case.service, account, manifest)[0]
 
