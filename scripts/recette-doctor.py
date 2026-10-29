@@ -68,6 +68,34 @@ print(json.dumps({'namespaces': namespaces, 'apparmor_label': label, 'cap_eff': 
 '''
 
 
+CAPABILITY_CHILD = r'''
+import ctypes, errno, json, os, pathlib
+label = pathlib.Path('/proc/self/attr/current').read_text().strip()
+libc = ctypes.CDLL(None, use_errno=True)
+libc.unshare.argtypes = [ctypes.c_int]
+libc.unshare.restype = ctypes.c_int
+# A fresh user namespace grants namespace-local capabilities even after
+# --cap-drop ALL. Test their use; never mount, map IDs, or change host files.
+result = {'status': 'allowed', 'stage': 'mount_namespace', 'errno': 0}
+for stage, flag in (('user_namespace', 0x10000000), ('mount_namespace', 0x00020000)):
+    if libc.unshare(flag) != 0:
+        code = ctypes.get_errno()
+        result = {'status': 'denied' if code in (errno.EPERM, errno.EACCES) else 'unverified',
+                  'stage': stage, 'errno': code, 'error': os.strerror(code)}
+        break
+print(json.dumps({'apparmor_label': label, **result}))
+'''
+
+
+def capability_denial_verified(result: dict) -> bool:
+    """Permission denial is evidence; unsupported syscalls/limits are not."""
+    return (isinstance(result, dict) and result.get("status") == "denied"
+            and type(result.get("errno")) is int and result["errno"] in (1, 13)
+            and result.get("stage") in {"user_namespace", "mount_namespace"}
+            and isinstance(result.get("apparmor_label"), str)
+            and "unpriv_bwrap" in result["apparmor_label"] and "enforce" in result["apparmor_label"])
+
+
 def diagnose(*, require_apparmor: bool = False, kernel_audit: bool = False,
              profile: Path | None = None) -> dict:
     report = {"schema": "cifereca.recette.doctor/1", "os_release": read("/etc/os-release"),
@@ -122,6 +150,17 @@ def diagnose(*, require_apparmor: bool = False, kernel_audit: bool = False,
                 checks["child"] = child
             except (ValueError, KeyError, TypeError):
                 failures.append("invalid_bootstrap_evidence")
+            if require_apparmor:
+                probe = command(sandbox_command(bwrap, ["/usr/bin/python3", "-I", "-B", "-c", CAPABILITY_CHILD]))
+                checks["child_capability_probe"] = probe
+                try:
+                    evidence = json.loads(probe.get("stdout", ""))
+                    checks["child_capability_result"] = evidence
+                    verified = probe.get("returncode") == 0 and capability_denial_verified(evidence)
+                except (ValueError, TypeError):
+                    verified = False
+                if not verified:
+                    failures.append("child_capability_denial_unverified")
         if has_fd_bind:
             with tempfile.TemporaryDirectory(prefix="cifereca-doctor-") as directory:
                 source = Path(directory) / "alias"
