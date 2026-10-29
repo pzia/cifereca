@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.ui.page.diagnostics",
-    "version": "0.1.27",
+    "version": "0.1.28",
     "name": "Cifereca Diagnostics",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
@@ -17,7 +17,7 @@
       "priority": 80,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
-      "version": "0.1.27",
+      "version": "0.1.28",
       "help_text": "Affiche l’état système, l’inventaire de versions et les diagnostics via le broker public `diagnostics`, avec pseudonymisation de login/mot de passe seulement dans l’IHM. La sélection filtrée multi-page couvre jusqu’à 200 événements / 96 Ko sur 8 pages par niveau, contrôle gravité/source/module/période et contenu expurgé de la première page, avec refus explicite si incohérent ou au-delà des plafonds ; la sélection manuelle garde 50 événements / 24 Ko par page. La vérification active consomme uniquement ce broker ; l’état Kobo-Adept est lu via `runtime_diagnostic()` borné, sans accès aux streams/processus bruts. L’exécution est déportée via le broker tasks.",
       "capabilities": [
         "ui.page",
