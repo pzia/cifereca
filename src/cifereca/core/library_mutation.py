@@ -170,8 +170,9 @@ def _materialize_to_identity_locked(
     for row in self.storage.placements():
         meta = row.get("metadata") or {}
         if (row.get("identity_id") == target_identity_id
-                and row.get("provider_id") == provider
-                and str(row.get("source_item_id") or "") == str(item_id or "")
+                and row.get("provider_id") in (None, provider)
+                and (row.get("source_item_id") is None
+                     or str(row.get("source_item_id") or "") == str(item_id or ""))
                 and row.get("artifact_id") == artifact_id
                 and row.get("state") == "present"
                 and type(meta) is dict
@@ -226,11 +227,16 @@ def _materialize_to_identity_locked(
             status = "complete"
         else:
             publish_canonical_send(dest)
-            return {
-                "status": "unchanged", "path": str(dest),
-                "placement_id": existing["placement_id"],
-                "target_identity_id": target_identity_id, "provider_id": provider,
-            }
+            if any(row.get("placement_id") == existing["placement_id"]
+                   for row in self.storage.catalog_entries()):
+                return {
+                    "status": "unchanged", "path": str(dest),
+                    "placement_id": existing["placement_id"],
+                    "target_identity_id": target_identity_id, "provider_id": provider,
+                }
+            # Canonical publication survived, but its descriptive projection
+            # did not. Repair it below using the SAME verified copy.
+            status = "unchanged"
     else:
         dest = dest_dir / src.name
         stem, suffix = dest.stem, dest.suffix

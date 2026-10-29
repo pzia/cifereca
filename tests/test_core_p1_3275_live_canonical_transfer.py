@@ -9,11 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import sqlite3
+import json
+import subprocess
+import sys
 
 import pytest
 
 from tests.test_core0925_open_destinations import _placement, _service
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+from tests.test_core_p0_3171_atomic_publication_v14 import new_source, publish, register
 
 
 def prepare(tmp_path):
@@ -152,5 +156,218 @@ def test_altered_source_artifact_hash_never_mints_transfer_origin(tmp_path):
         assert canon_rows(service.storage)["placements"] == 1
         assert service.storage.entitlements() == []
         assert not (root / "bob" / "local" / "book.pdf").exists()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("failure_at", ["placement", "catalog"])
+@pytest.mark.parametrize("source_projection", ["complete", "missing"])
+def test_retry_after_canonical_commit_repairs_projection_without_second_copy(
+    tmp_path, monkeypatch, failure_at, source_projection,
+):
+    service, root, a, placement_a, artifact = prepare(tmp_path)
+    if source_projection == "missing":
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("UPDATE placements SET provider_id=NULL,source_item_id=NULL "
+                       "WHERE placement_id=?", (placement_a,))
+    lock = tmp_path / "global-acquisition.lock"
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock)
+    monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: lock)
+    method = "placement_put" if failure_at == "placement" else "catalog_entry_put"
+    original = getattr(service.storage, method)
+    armed = True
+
+    def fail_projection(row, *args, **kwargs):
+        nonlocal armed
+        if armed and row.get("identity_id") == "bob":
+            armed = False
+            raise RuntimeError("synthetic_projection_interruption")
+        return original(row, *args, **kwargs)
+
+    monkeypatch.setattr(service.storage, method, fail_projection)
+    try:
+        with pytest.raises(RuntimeError, match="synthetic_projection_interruption"):
+            service.materialize_to_identity(placement_a, "bob")
+        assert canon_rows(service.storage)["origin_links"] == 2
+        b = root / "bob" / ("shared" if source_projection == "missing" else "local") / "book.pdf"
+        inode = b.stat().st_ino
+        retry = service.materialize_to_identity(placement_a, "bob")
+        assert Path(retry["path"]) == b
+        assert b.stat().st_ino == inode
+        assert list(b.parent.iterdir()) == [b]
+        assert canon_rows(service.storage)["placements"] == 2
+        assert canon_rows(service.storage)["origin_links"] == 2
+        entries = [e for e in service.storage.catalog_entries()
+                   if e.get("identity_id") == "bob"]
+        assert len(entries) == 1
+        assert entries[0]["placement_id"] == retry["placement_id"]
+        assert service.materialize_to_identity(placement_a, "bob")["status"] == "unchanged"
+        assert service.storage.entitlements() == []
+        assert a.read_bytes() == b.read_bytes() == BYTES
+    finally:
+        service.close()
+
+
+def _send_from_controller(service, placement_id, target):
+    """Actual action callback + worker + LibraryService; widgets are test doubles."""
+    from cifereca.gui.local_book_action_controller import add_local_book_actions
+    from tests.test_core_ui_1129_local_book_actions import _environment
+
+    placement = service.storage.placement_get(placement_id)
+    item = dict(placement_id=placement_id, identity_id=placement["identity_id"],
+                provider_id=placement["provider_id"], item_id=placement["source_item_id"])
+    window, item, detail, actions, events, submitted, _, deps = _environment(item=item)
+    window.service = service
+    service.current_identity = service.identity_by_id(placement["identity_id"])
+    add_local_book_actions(window, detail, item, **deps)
+    assert submitted == []
+    action = next(a for a in actions if a._cifereca_action_id == "send-local:" + target)
+    action.click()
+    args, kwargs = submitted.pop()
+    assert kwargs["kind"] == "materialize"
+    result = args[1]()
+    args[2](result)
+    assert ("activity", "Livre envoyé") in events
+    return result
+
+
+def test_action_A_to_B_independent_purchase_B_then_B_to_C_keeps_eight_origins(
+    tmp_path, monkeypatch,
+):
+    service, root, a, placement_a, artifact = prepare(tmp_path)
+    service.config.set("identities", service.config.identities() + [
+        {"id": "carol", "label": "Carol", "directory_name": "carol"},
+    ])
+    service._sync_identity_configuration()
+    lock = tmp_path / "global-acquisition.lock"
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock)
+    monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: lock)
+    try:
+        register(service.storage, "alice", "kobo", "card-A", account="buyer-A")
+        source_a, observed_a = new_source(
+            "alice", provider="kobo", credential="card-A", account="buyer-A",
+        )
+        publish(service.storage, root, a, source_a, observed_a, adept_receipt_ref="adept-A")
+        ab = _send_from_controller(service, placement_a, "bob")
+        b = Path(ab["path"])
+        with service.storage._lock, service.storage._connect() as db:
+            history_before = db.execute(
+                "SELECT metadata_json FROM source_references "
+                "WHERE identity_id='bob' AND reference_kind='internal'"
+            ).fetchone()[0]
+        historical = json.loads(history_before)
+        assert historical["from_identity_id"] == "alice"
+        assert historical["from_placement_id"] == placement_a
+        assert sorted(o["origin_kind"] for o in historical["historical_origins"]) == ["adept", "provider"]
+        assert all(o["credential_id"] == "card-A" for o in historical["historical_origins"])
+        # The snapshot is history, not a new provider reference/delivery grant.
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute("SELECT count(*) FROM source_references "
+                              "WHERE identity_id='bob' AND reference_kind='purchase'").fetchone() == (0,)
+        register(service.storage, "bob", "kobo", "card-B", account="buyer-B")
+        source_b, observed_b = new_source(
+            "bob", provider="kobo", credential="card-B", account="buyer-B",
+        )
+        publish(service.storage, root, b, source_b, observed_b, adept_receipt_ref="adept-B")
+        assert service.materialize_to_identity(placement_a, "bob")["status"] == "unchanged"
+        bc = _send_from_controller(service, ab["placement_id"], "carol")
+        c = Path(bc["path"])
+        assert len({p.stat().st_ino for p in (a, b, c)}) == 3
+        assert all(p.read_bytes() == BYTES for p in (a, b, c))
+        assert canon_rows(service.storage) == {
+            "artifacts": 1, "placements": 3, "source_references": 4,
+            "origin_links": 8, "entitlements": 0,
+        }
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute("SELECT metadata_json FROM source_references "
+                              "WHERE identity_id='bob' AND reference_kind='internal'").fetchone()[0] == history_before
+            assert db.execute("SELECT identity_id,synchronizable FROM source_references "
+                              "WHERE reference_kind='internal' ORDER BY identity_id").fetchall() == [("bob", 0), ("carol", 0)]
+            assert db.execute("SELECT count(*) FROM source_references WHERE "
+                              "identity_id='carol' AND reference_kind!='internal'").fetchone() == (0,)
+        assert service.materialize_to_identity(ab["placement_id"], "carol")["status"] == "unchanged"
+        c.unlink()
+        service.catalog_scan()
+        assert not c.exists()
+        assert a.read_bytes() == b.read_bytes() == BYTES
+        assert canon_rows(service.storage)["origin_links"] == 8
+    finally:
+        service.close()
+
+
+def test_replay_does_not_rewrite_history_after_donor_acquires_a_new_origin(
+    tmp_path, monkeypatch,
+):
+    service, root, a, placement_a, artifact = prepare(tmp_path)
+    lock = tmp_path / "global-acquisition.lock"
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock)
+    monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: lock)
+    try:
+        first = service.materialize_to_identity(placement_a, "bob")
+        with service.storage._lock, service.storage._connect() as db:
+            before = db.execute("SELECT metadata_json FROM source_references "
+                                "WHERE reference_kind='internal'").fetchone()[0]
+        assert json.loads(before)["historical_origins"] == []
+        register(service.storage, "alice", "seller", "card-A", account="buyer-A")
+        source, snapshot = new_source(
+            "alice", provider="seller", credential="card-A", account="buyer-A",
+        )
+        publish(service.storage, root, a, source, snapshot, adept_receipt_ref="later-adept")
+        replay = service.materialize_to_identity(placement_a, "bob")
+        assert replay["placement_id"] == first["placement_id"]
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute("SELECT metadata_json FROM source_references "
+                              "WHERE reference_kind='internal'").fetchone()[0] == before
+        assert canon_rows(service.storage)["origin_links"] == 4
+    finally:
+        service.close()
+
+
+def test_process_exit_after_commit_reopens_same_copy_and_repairs_notice(
+    tmp_path, monkeypatch,
+):
+    script = r'''
+import os, sys
+from pathlib import Path
+from tests.test_core_p1_3275_live_canonical_transfer import prepare
+import cifereca.paths as paths
+import cifereca.core.canonical_transfer as transfer
+root = Path(sys.argv[1])
+paths.acquisition_lock_file = lambda: root / "shared.lock"
+transfer.acquisition_lock_file = paths.acquisition_lock_file
+service, library, source, placement, artifact = prepare(root)
+original = service.storage.placement_put
+def interrupted(row):
+    if row.get("identity_id") == "bob":
+        os._exit(37)
+    return original(row)
+service.storage.placement_put = interrupted
+service.materialize_to_identity(placement, "bob")
+raise AssertionError("process did not hit the post-commit boundary")
+'''
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+        timeout=30,
+    )
+    assert process.returncode == 37, process.stderr
+    service = _service(tmp_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: tmp_path / "shared.lock")
+    monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: tmp_path / "shared.lock")
+    try:
+        root = tmp_path / "EBooks"
+        a, b = root / "alice/local/book.pdf", root / "bob/local/book.pdf"
+        placement = service.storage.placement_for_path(a)
+        inode = b.stat().st_ino
+        assert canon_rows(service.storage)["origin_links"] == 2
+        assert not any(e.get("identity_id") == "bob"
+                       for e in service.storage.catalog_entries())
+        result = service.materialize_to_identity(placement["placement_id"], "bob")
+        assert Path(result["path"]) == b and b.stat().st_ino == inode
+        assert list(b.parent.iterdir()) == [b]
+        assert a.read_bytes() == b.read_bytes() == BYTES
+        assert canon_rows(service.storage)["origin_links"] == 2
+        assert len([e for e in service.storage.catalog_entries()
+                    if e.get("identity_id") == "bob"]) == 1
     finally:
         service.close()
