@@ -32,24 +32,24 @@ def _lock_paths(monkeypatch, tmp_path):
     return path
 
 
-def _selected_offer(service, *, callback=None):
+def _selected_offer(snapshot, *, callback=None):
     observations = []
     def selected(account, **kwargs):
         observations.append(kwargs)
         if callback is not None:
             callback()
         return replace(
-            service.snapshot,
+            snapshot,
             rights=(replace(
-                service.snapshot.rights[0],
+                snapshot.rights[0],
                 delivery="available", delivery_offer_id="synthetic-selected-offer",
             ),),
         )
     return selected, observations
 
 
-def _grant(service, account, source):
-    persist_attested_source_references(service.storage, service.snapshot)
+def _grant(service, account, source, snapshot):
+    persist_attested_source_references(service.storage, snapshot)
     set_source_acquisition_consent(service, account, source, allowed=True)
 
 
@@ -57,8 +57,8 @@ def test_opening_consent_get_and_second_opening_are_idempotent(tmp_path, monkeyp
     service, account, source, snapshot, session, reads = rig(tmp_path, monkeypatch)
     _lock_paths(monkeypatch, tmp_path)
     try:
-        _grant(service, account, source)
-        selected, preflights = _selected_offer(service)
+        _grant(service, account, source, snapshot)
+        selected, preflights = _selected_offer(snapshot)
         session.rights_selected_delivery_offer_snapshot = selected
         gets = []
         file = service.library_dir() / "hugues" / "canonically-delivered.pdf"
@@ -130,11 +130,11 @@ def test_opening_consent_revoked_during_offer_read_never_downloads(tmp_path, mon
     service, account, source, snapshot, session, reads = rig(tmp_path, monkeypatch)
     _lock_paths(monkeypatch, tmp_path)
     try:
-        _grant(service, account, source)
+        _grant(service, account, source, snapshot)
         def revoke():
             set_source_acquisition_consent(service, account, source, allowed=False)
         session.rights_selected_delivery_offer_snapshot, offers = _selected_offer(
-            service, callback=revoke,
+            snapshot, callback=revoke,
         )
         service._canonical_right_delivery = lambda *_a, **_kw: pytest.fail(
             "revoked consent cannot issue a provider GET"
@@ -156,7 +156,7 @@ def test_opening_standalone_locked_method_does_not_invent_lease(tmp_path, monkey
     service, account, source, snapshot, session, reads = rig(tmp_path, monkeypatch)
     _lock_paths(monkeypatch, tmp_path)
     try:
-        _grant(service, account, source)
+        _grant(service, account, source, snapshot)
         session.rights_selected_delivery_offer_snapshot = lambda *_a, **_kw: pytest.fail(
             "without the outer lease there is no selected offer"
         )
