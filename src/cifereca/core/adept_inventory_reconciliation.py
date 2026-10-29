@@ -7,6 +7,31 @@ imports the path matcher at call time and injects exception/clock seams.
 """
 
 
+def _return_capability_for_batch(service, runtime, cache):
+    """Reuse only a positive flag in this read-only reconciliation batch.
+
+    This is presentation/readiness, never permission to return a loan. The
+    explicit return path independently reads fresh capabilities and registry.
+    Failures/negative results are not cached, and no cache crosses Sync calls.
+    """
+    try:
+        same_runtime = service._kobo_adapter() is runtime
+    except Exception:
+        same_runtime = False
+    prior = cache.get("return_capability")
+    if same_runtime and prior is not None and prior[0] is runtime:
+        return True
+    available = service._adept_return_capability()
+    if available is True and same_runtime:
+        # Do not label a replacement runtime's capability as this instance's.
+        try:
+            if service._kobo_adapter() is runtime:
+                cache["return_capability"] = (runtime, True)
+        except Exception:
+            pass
+    return available
+
+
 def reconcile_adept_acquisition(
     self, row, *, profile_references=None, cache=None,
     match_local_book, AttentionRequired, time,
@@ -58,7 +83,7 @@ def reconcile_adept_acquisition(
                 adept_loan_id=loan["id"], loan_state=state, token_present=loan["token_present"],
                 expired=loan["expired"], validity=loan.get("validity"), inventory_status="resolved",
                 inventory_checked_at=int(time.time()), return_verification=("verification_failed" if loan["token_present"] else "confirmed") if returned else "active_confirmed", binding_source=binding.get("binding_source") if binding.get("binding_source") == "manual_selection" else "public_inventory",
-                return_available=bool(not returned and not loan["expired"] and loan["token_present"] and self._adept_return_capability()))
+                return_available=bool(not returned and not loan["expired"] and loan["token_present"] and _return_capability_for_batch(self, runtime, cache)))
     if status != "resolved":
         # Keep historical IDs and files, record absence/ambiguity separately.
         binding.update(inventory_status=status, inventory_checked_at=int(time.time()), return_available=False, return_verification="verification_failed")
