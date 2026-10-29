@@ -153,7 +153,11 @@ personnelles, deuxième clic = sélecteur GTK4 SAVE avec une fenêtre parente
 réelle, puis écriture en tâche de fond. Aucune requête fournisseur ni envoi
 réseau. Le nom proposé est
 `cifereca-journal-brut-YYYYMMDD-HHMMSS.zip`; choisir un nouveau nom si le
-fichier existe déjà. L'action est désactivée si le Core installé ne possède
+fichier existe déjà. **Après une publication confirmée par le broker Core,
+la notification affiche le chemin absolu exact du ZIP enregistré.** Une
+annulation ou un échec ne présente jamais un chemin choisi comme un fichier
+réussi ; le chemin ne quitte pas la session IHM ni ne s'ajoute au journal.
+L'action est désactivée si le Core installé ne possède
 pas le broker facultatif `export_today_journal_zip`.
 
 L'archive contient `cifereca-journal-brut.json` (même schéma non masqué que
