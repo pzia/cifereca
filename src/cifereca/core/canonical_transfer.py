@@ -8,6 +8,7 @@ permissions; it is NOT a source of ongoing Sync replication.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import stat
@@ -153,10 +154,13 @@ def publish_completed_local_transfer(
         if existing_artifact != (sha, before_a.st_size):
             raise ValueError("canonical_transfer_source_artifact_missing")
         original_placement = db.execute(
-            "SELECT artifact_id,identity_id,state FROM placements WHERE path=?",
+            "SELECT artifact_id,identity_id,state,placement_id,provider_id,"
+            "source_item_id FROM placements WHERE path=?",
             (str(original),),
         ).fetchone()
-        if original_placement != (artifact_id, from_identity_id, "present"):
+        if original_placement is None or original_placement[:3] != (
+            artifact_id, from_identity_id, "present",
+        ):
             raise ValueError("canonical_transfer_source_placement_unattested")
         if not _same_file(original, before_a) or not _same_file(received, before_b):
             raise ValueError("canonical_transfer_copy_changed")
@@ -172,14 +176,38 @@ def publish_completed_local_transfer(
             (internal_id,),
         ).fetchone()
         if ref is None:
+            # Freeze the donor's existing provenance, never its authority.
+            # References remain scoped to the donor; B only receives an
+            # internal, non-synchronizable history. Replays do not rewrite
+            # this snapshot after a later independent donor purchase.
+            columns = (
+                "origin_link_id", "origin_kind", "source_reference_id",
+                "evidence_ref", "from_identity_id", "provider_id",
+                "credential_id", "account_id", "edition_id", "right_id",
+                "reference_kind",
+            )
+            historical = db.execute(
+                "SELECT o.origin_link_id,o.origin_kind,o.source_reference_id,"
+                "o.evidence_ref,o.from_identity_id,s.provider_id,"
+                "s.credential_id,s.account_id,s.edition_id,s.right_id,"
+                "s.reference_kind FROM origin_links o LEFT JOIN "
+                "source_references s ON s.source_reference_id=o.source_reference_id "
+                "WHERE o.identity_id=? AND o.artifact_id=? ORDER BY o.origin_link_id",
+                (from_identity_id, artifact_id),
+            ).fetchall()
+            history = json.dumps({
+                "from_identity_id": from_identity_id,
+                "from_placement_id": original_placement[3],
+                "historical_origins": [dict(zip(columns, row)) for row in historical],
+            }, ensure_ascii=False, sort_keys=True)
             db.execute(
                 "INSERT INTO source_references(source_reference_id,identity_id,"
                 "provider_id,credential_id,account_id,branch_id,edition_id,"
                 "right_id,reference_kind,state,synchronizable,evidence_kind,"
-                "evidence_ref,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "evidence_ref,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (internal_id, *coordinates, "unknown", 0,
-                 "completed_local_transfer", transfer_receipt_ref, now, now),
+                 "completed_local_transfer", transfer_receipt_ref, history, now, now),
             )
             changed = True
         elif ref != coordinates:
@@ -190,12 +218,23 @@ def publish_completed_local_transfer(
             "WHERE path=?", (str(received),),
         ).fetchone()
         if existing_placement is None:
+            # This copy must already be recognizable if the process stops
+            # before the separate catalogue projection is written.
+            placement_metadata = json.dumps({
+                "relative_path": str(received.relative_to(library_root.resolve())),
+                "mtime_ns": before_b.st_mtime_ns,
+                "file_size": before_b.st_size,
+                "materialized_from": original_placement[3],
+                "artifact_kind": "file", "transfer_kind": "local_copy",
+                "file_origin_identity_id": from_identity_id,
+            }, sort_keys=True)
             db.execute(
-                "INSERT INTO placements(placement_id,artifact_id,path,identity_id,"
+                "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,"
                 "state,last_seen_at,metadata_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (placement_id, artifact_id, str(received), to_identity_id,
-                 "present", now, "{}", now, now),
+                 original_placement[4], original_placement[5],
+                 "present", now, placement_metadata, now, now),
             )
             changed = True
         else:
