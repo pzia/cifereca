@@ -27,7 +27,7 @@ _DIAGNOSTIC_PREFIX = "DIAG_JSON "
 # another logger or a severity/status contradiction is NOT a task reference.
 _TASK_CORRELATION = re.compile(
     r"TRACE task correlation task_ref=([0-9a-f]{12}) "
-    r"status=(success|failed|cancelled)\\Z", re.ASCII,
+    r"status=(success|failed|cancelled)", re.ASCII,
 )
 _TASK_SEVERITY = {"success": "info", "failed": "error", "cancelled": "warning"}
 
