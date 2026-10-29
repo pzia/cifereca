@@ -10,6 +10,8 @@ from pathlib import Path
 import os
 import sqlite3
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -317,5 +319,55 @@ def test_replay_does_not_rewrite_history_after_donor_acquires_a_new_origin(
             assert db.execute("SELECT metadata_json FROM source_references "
                               "WHERE reference_kind='internal'").fetchone()[0] == before
         assert canon_rows(service.storage)["origin_links"] == 4
+    finally:
+        service.close()
+
+
+def test_process_exit_after_commit_reopens_same_copy_and_repairs_notice(
+    tmp_path, monkeypatch,
+):
+    script = r'''
+import os, sys
+from pathlib import Path
+from tests.test_core_p1_3275_live_canonical_transfer import prepare
+import cifereca.paths as paths
+import cifereca.core.canonical_transfer as transfer
+root = Path(sys.argv[1])
+paths.acquisition_lock_file = lambda: root / "shared.lock"
+transfer.acquisition_lock_file = paths.acquisition_lock_file
+service, library, source, placement, artifact = prepare(root)
+original = service.storage.placement_put
+def interrupted(row):
+    if row.get("identity_id") == "bob":
+        os._exit(37)
+    return original(row)
+service.storage.placement_put = interrupted
+service.materialize_to_identity(placement, "bob")
+raise AssertionError("process did not hit the post-commit boundary")
+'''
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+        timeout=30,
+    )
+    assert process.returncode == 37, process.stderr
+    service = _service(tmp_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: tmp_path / "shared.lock")
+    monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: tmp_path / "shared.lock")
+    try:
+        root = tmp_path / "EBooks"
+        a, b = root / "alice/local/book.pdf", root / "bob/local/book.pdf"
+        placement = service.storage.placement_for_path(a)
+        inode = b.stat().st_ino
+        assert canon_rows(service.storage)["origin_links"] == 2
+        assert not any(e.get("identity_id") == "bob"
+                       for e in service.storage.catalog_entries())
+        result = service.materialize_to_identity(placement["placement_id"], "bob")
+        assert Path(result["path"]) == b and b.stat().st_ino == inode
+        assert list(b.parent.iterdir()) == [b]
+        assert a.read_bytes() == b.read_bytes() == BYTES
+        assert canon_rows(service.storage)["origin_links"] == 2
+        assert len([e for e in service.storage.catalog_entries()
+                    if e.get("identity_id") == "bob"]) == 1
     finally:
         service.close()

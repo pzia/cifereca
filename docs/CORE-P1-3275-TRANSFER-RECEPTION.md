@@ -40,6 +40,8 @@ SQLite v14 et les fichiers réels de fixtures. Il couvre :
 
 - interruptions après commit canonique, avant enrichissement du Placement ou
   de la notice, puis reprise sans second fichier ni nouveau lien ;
+- arrêt brutal réel d'un processus après le commit, puis réouverture SQLite
+  dans un nouveau service : même inode destinataire, notice réparée, deux liens ;
 - coordonnées descriptives initialement absentes et réparation de projection ;
 - callbacks CoreUI « Envoyer » A→B et B→C, achat B indépendant au même SHA :
   un Artifact, trois copies/inodes distincts, huit OriginLinks, aucune licence
