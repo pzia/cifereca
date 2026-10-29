@@ -224,6 +224,13 @@ def from_audit_result(report: object, duration_ms: object = None) -> dict:
     fields["phase_calls"] = calls
     if "stored_paths" in value:
         fields["stored_paths"] = _path_summary(value, reasons)
+    # Core sends this envelope only in the private Diagnostics handoff. No
+    # path/identity is reconstructed from the aggregate broker response.
+    if "placement_observations" in value and "stored_paths" in fields:
+        from .diagnostic_placement_observations import placement_batch
+        observations = placement_batch(value["placement_observations"], allowed_reasons=_REASONS)
+        if observations is not None and fields["stored_paths"]["scope"] != "invalidated":
+            fields["placement_observations"] = observations
     return fields
 
 
@@ -276,6 +283,13 @@ def public_fields(value: object) -> dict:
         if not stored:
             return {}
         output["stored_paths"] = stored
+    if "placement_observations" in value:
+        from .diagnostic_placement_observations import placement_batch
+        observations = placement_batch(value["placement_observations"], allowed_reasons=_REASONS)
+        if (observations is None or observations != value["placement_observations"]
+                or "stored_paths" not in output or output["stored_paths"]["scope"] == "invalidated"):
+            return {}
+        output["placement_observations"] = observations
     if "task_ref" in value:
         reference = value["task_ref"]
         if type(reference) is not str or re.fullmatch(r"[0-9a-f]{12}", reference) is None:
