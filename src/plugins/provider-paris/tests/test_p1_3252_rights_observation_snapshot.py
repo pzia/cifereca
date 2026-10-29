@@ -219,9 +219,6 @@ def test_paris_copy_of_bound_borrower_remains_compatible_after_instance_pin():
         session.close()
 
 
-@pytest.mark.parametrize("identities", [
-    (), ("identity-B",), ("identity-A", "identity-A"),
-])
 def test_paris_owner_is_scoped_to_target_identity_with_shared_upstream_id():
     session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
     broker = session.identity_broker
@@ -240,6 +237,9 @@ def test_paris_owner_is_scoped_to_target_identity_with_shared_upstream_id():
         session.close()
 
 
+@pytest.mark.parametrize("identities", [
+    (), ("identity-B",), ("identity-A", "identity-A"),
+])
 def test_paris_unverified_core_owner_never_calls_private_loan_branches(identities):
     session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
     session.identity_broker.identities = identities
