@@ -131,9 +131,11 @@ class CoreOwnerBroker:
         self.identity_id = identity_id
         self.calls = 0
 
-    def accounts(self):
+    def accounts(self, identity_id=None):
         from types import SimpleNamespace as NS
         self.calls += 1
+        if identity_id is not None and identity_id != self.identity_id:
+            return []
         return [NS(provider_id="bnf-pret", account_id=self.account_id,
                    identity_id=self.identity_id)]
 
