@@ -116,6 +116,156 @@ class DummyTool:
             self.run_finished.set()
 
 
+def _native_transfer_fixture(root):
+    from datetime import datetime, timezone
+    from cifereca.config import Config
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+    from cifereca.core.source_convergence import SourceKey
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.plugin_api import ProviderRightObservation, ProviderRightsScope, ProviderRightsSnapshot
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+
+    config = Config(root / 'config.json')
+    library = root / 'library'
+    config.set('library.directory', str(library))
+    config.set('providers.accounts', [])
+    config.set('identities', [
+        {'id': 'alice', 'label': 'Alice', 'directory_name': 'alice'},
+        {'id': 'bob', 'label': 'Bob', 'directory_name': 'bob'},
+    ])
+    service = LibraryService(config, Storage(root / 'state.sqlite'), Diagnostics())
+    source = library / 'alice/local/book.pdf'
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'%PDF-1.7\nSynthetic native Send acceptance\n')
+    scope = ProviderRightsScope('alice', 'fixture.vendor', 'card-A', 'buyer-A')
+    connection = service.storage.provider_connection_put({
+        'identity_id': scope.identity_id, 'provider_id': scope.provider_id,
+        'credential_id': scope.credential_id, 'label': 'Synthetic account A',
+    })
+    service.storage.provider_account_put({
+        'identity_id': scope.identity_id, 'provider_id': scope.provider_id,
+        'credential_id': scope.credential_id, 'connection_id': connection,
+        'account_id': scope.account_id, 'label': 'Synthetic buyer A',
+    })
+    observed = ProviderRightObservation(
+        'book', 'purchase-A', 'purchase', state='active',
+        evidence_kind='provider_response', evidence_ref='synthetic-source-A',
+        observed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    snapshot = ProviderRightsSnapshot(scope, (observed,), status='partial',
+                                      coverage='partial', branch='purchases')
+    published = publish_completed_acquisition(
+        service.storage, library_root=library, path=source,
+        source=SourceKey(scope, 'book', 'purchase-A', 'purchase', 'purchases'),
+        snapshot=snapshot, final_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        delivery_receipt_ref='synthetic-native-delivery-A',
+        adept_receipt_ref='synthetic-native-adept-A',
+    )
+    service.storage.catalog_entry_put({
+        'identity_id': 'alice', 'provider_id': scope.provider_id, 'item_id': 'book',
+        'artifact_id': published.artifact_id, 'placement_id': published.placement_id,
+        'title': 'Synthetic native transfer', 'media_format': 'pdf',
+        'local_state': 'local', 'metadata': {'path': str(source)},
+    })
+    return service, source, published.placement_id
+
+
+def exercise_native_transfer(*, parent, Gtk, Adw, device, until, report, capture, done):
+    import tempfile
+    from gi.repository import Gio
+    from cifereca.gui.book_actions import identity_has_attested_possession
+    from cifereca.gui.local_book_action_controller import add_local_book_actions
+    from cifereca.plugin_api import ArtifactRouteRequest
+    from cifereca.gui.task_runner import TaskPriority
+
+    temporary = tempfile.TemporaryDirectory()
+    service, source, placement = _native_transfer_fixture(Path(temporary.name))
+    host = Adw.Window(transient_for=parent, modal=True, title='Envoi local — recette #3275')
+    host.set_default_size(650, 260)
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    for side in ('top', 'bottom', 'start', 'end'):
+        getattr(content, 'set_margin_' + side)(24)
+    content.append(Gtk.Label(label='Fichier source Alice → copie indépendante Bob'))
+    status = Gtk.Label(label='Aucun envoi effectué')
+    content.append(status)
+    actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    content.append(actions)
+    host.set_content(content)
+    host.service, host.runner = service, parent.runner
+    host.plugin_manager, host.diagnostics, host._closed = None, service.diagnostics, False
+    host.action_button = parent.action_button
+    host._activity_result = status.set_text
+    host.refresh_recent = lambda: None
+    host.refresh_library = lambda _fast: None
+    host._add_catalogue_action = lambda *_: (_ for _ in ()).throw(
+        AssertionError('Native send unexpectedly fell back to catalogue'))
+    host.show_error = lambda text, *_: status.set_text('Échec : ' + text)
+    detail = SimpleNamespace(add_actions=lambda buttons: [actions.append(b) for b in buttons])
+    add_local_book_actions(
+        host, detail, dict(placement_id=placement, identity_id='alice',
+                           provider_id='fixture.vendor', item_id='book'),
+        Gtk=Gtk, Gio=Gio, ArtifactRouteRequest=ArtifactRouteRequest,
+        TaskPriority=TaskPriority,
+        identity_has_attested_possession=identity_has_attested_possession,
+    )
+    buttons = []
+    child = actions.get_first_child()
+    while child is not None:
+        buttons.append(child)
+        child = child.get_next_sibling()
+    send = next(b for b in buttons if getattr(b, '_cifereca_action_id', '') == 'send-local:bob')
+
+    def start():
+        assert len(service.storage.placements()) == 1
+        capture('08-native-send-before')
+        device.click_widget(send)
+        until(lambda: status.get_text() == 'Livre envoyé', finished)
+
+    def finished():
+        recipients = [p for p in service.storage.placements() if p['identity_id'] == 'bob']
+        assert len(recipients) == 1
+        received = Path(recipients[0]['path'])
+        assert received.read_bytes() == source.read_bytes()
+        assert (source.stat().st_dev, source.stat().st_ino) != (
+            received.stat().st_dev, received.stat().st_ino)
+        assert recipients[0]['metadata']['file_origin_identity_id'] == 'alice'
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute("SELECT origin_kind FROM origin_links WHERE identity_id='bob' "
+                              "ORDER BY origin_kind").fetchall() == [('cifereca',), ('transfer',)]
+            assert db.execute("SELECT reference_kind,synchronizable FROM source_references "
+                              "WHERE identity_id='bob'").fetchall() == [('internal', 0)]
+        assert service.storage.entitlements() == []
+        report['checks']['P1_3275_native_send_taskrunner_copy_origins'] = True
+        capture('09-native-send-after')
+        host._closed = True
+        host.destroy()
+        service.close()
+        temporary.cleanup()
+        done()
+
+    def ready():
+        if not send.get_mapped() or not send.get_sensitive():
+            return False
+        ok, box = send.compute_bounds(host)
+        if not ok or box.get_width() <= 0 or box.get_height() <= 0:
+            return False
+        picked = host.pick(box.get_x() + box.get_width()/2,
+                           box.get_y() + box.get_height()/2, Gtk.PickFlags.DEFAULT)
+        while picked is not None and picked is not send:
+            picked = picked.get_parent()
+        if picked is not send:
+            return False
+        try:
+            x, y = device.widget_point(send)
+            return x >= 0 and y >= 0
+        except RuntimeError:
+            return False
+
+    host.present()
+    until(ready, start)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
@@ -688,6 +838,14 @@ def main():
                  checkpoint=gtk_phase_2027, done=finish_declaration)
 
     def finish_declaration():
+        if args.width in (1366, 1600):
+            exercise_native_transfer(parent=window[0], Gtk=Gtk, Adw=Adw,
+                                     device=device[0], until=until, report=report,
+                                     capture=capture, done=finish_transfer)
+        else:
+            finish_transfer()
+
+    def finish_transfer():
         gtk_phase_2027("maint_done")
         report["status"] = "PASS"
         result[0] = 0
