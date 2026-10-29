@@ -38,7 +38,7 @@ def rig(*, allowed=False, eligible=True, malformed=False):
     choices = {"reference": "a" * 64, "kind": "purchase",
                "allowed": allowed, "eligible": eligible}
     if malformed: choices["secret"] = "PRIVATE"
-    broker.canonical_acquisition_choices = lambda _sid: (choices,)
+    broker.canonical_acquisition_choices = lambda _sid, *, page=0: (choices,)
     changed = []
     broker.set_canonical_acquisition_choice = (
         lambda sid, token, *, allowed: changed.append((sid, token, allowed))
