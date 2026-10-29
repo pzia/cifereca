@@ -81,7 +81,7 @@ def test_today_is_exact_local_half_open_range_across_rotations(tmp_path, paris_c
     assert manifest["event_count"] == 3
     assert manifest["date_local"] == "2026-10-29"
     assert manifest["timezone"] == "Europe/Paris"
-    assert manifest["utc_start"] == "2026-10-28T22:00:00+00:00"
+    assert manifest["utc_start"] == "2026-10-28T23:00:00+00:00"
     assert manifest["utc_end_exclusive"] == "2026-10-29T23:00:00+00:00"
     assert manifest["coverage"] == "available" and raw["atomic"] is False
     assert manifest["ui_filters_applied"] is False
