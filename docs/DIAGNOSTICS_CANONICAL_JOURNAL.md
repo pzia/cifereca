@@ -59,9 +59,24 @@ Les filtres `domain`/`reason_code` des projections héritées sont refusés :
 ils ne sauraient être attestés à partir des journaux bruts. Un `provider_id`
 explicitement présent dans le `detail` structuré est également exposé au
 premier niveau pour le filtrage exact et l'UI ; il n'est jamais inféré du
-message ni du nom du logger. L'ancien module
-`core.diagnostic_event_feed` subsiste uniquement pour les tests/consommateurs
-historiques à retirer séparément.
+message ni du nom du logger. Deux exceptions **strictement bornées à des
+formats émis par Core**, sans autorité de droit ni nouvelle acquisition,
+réparent la recherche sur les faits du 29 octobre (#2888) :
+
+- `ACQUISITION/loan sync` du logger exact `cifereca`, uniquement
+  `warning/attention_required` ou `error/retryable_error`, avec
+  `loan_id`, `code` et `detail.provider=paris|bnf-pret` observés :
+  `provider_id_origin=legacy_opening_loan_sync`.
+- `NUMILOG/startup_materialization` du même logger avec le
+  schéma fermé validé par Core et la gravité réellement cohérente :
+  `provider_id=numilog`,
+  `provider_id_origin=core_numilog_startup_observation`.
+  Un `preflight_failed` avec `attempted=0` n'est **pas un GET raté**.
+
+Ces marqueurs exposent la **provenance de projection diagnostique** ;
+ils ne convertissent pas une Notice ou un message libre en SourceReference.
+L'ancien module `core.diagnostic_event_feed` subsiste uniquement pour les
+tests/consommateurs historiques à retirer séparément.
 
 ## Migration des producteurs Core attestés — lot #3155
 

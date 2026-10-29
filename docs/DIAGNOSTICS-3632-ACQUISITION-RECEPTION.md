@@ -177,3 +177,29 @@ les exports réutilisent **la même occurrence physique**, jamais un second
 `tests/test_diagnostics_p0_2888_legacy_loan_provider.py`.
 Aucune expérience fournisseur réelle n'est revendiquée : #2888 demeure
 ouvert pour la recette explicite Paris/BnF.
+
+## 29 octobre — préflight Numilog visible dans le filtre fournisseur (#2888)
+
+Le même journal du 29 octobre contient **12 observations structurées**
+`NUMILOG/startup_materialization`, dont un état terminal
+`code=preflight_failed`, `status=blocked` et
+`attempted=downloaded=0`. Ce refus conservatoire **n'est pas un
+téléchargement raté** ; l'ancien filtre `provider_id=numilog` l'écartait
+car le schéma fermé Numilog ne publie volontairement pas ce champ.
+
+Le journal accepte désormais `provider_id=numilog` avec la provenance
+`provider_id_origin=core_numilog_startup_observation` uniquement pour
+`logger=cifereca`, `category=NUMILOG`,
+`operation=startup_materialization`, détail satisfaisant le validateur
+Core `numilog_startup_diagnostics.public_fields` et correspondance exacte
+du statut et de la gravité physique du producteur. Aucun module/plugin,
+texte arbitraire, statut contradictoire ou détail malformé ne gagne ce
+rattachement. Le contenu, `event_id`, la phase, la cause, les compteurs
+et le `task_ref` déjà observés sont inchangés ; aucune requête, aucun
+droit, aucun GET ne sont ajoutés.
+
+`tests/test_diagnostics_p0_2888_numilog_startup_provider.py` exerce le
+**vrai producteur Core**, le journal physique, le filtre global avant
+pagination, le broker, les exports et les contre-exemples. #2888 ne peut
+toujours être clos sans une tentative explicitement autorisée sur fournisseur
+réel Paris/BnF et sa recette.
