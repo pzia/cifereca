@@ -36,7 +36,9 @@ def test_one_exact_positive_right_grant_and_revoke_are_persistent(tmp_path, monk
         assert row["allowed"] is False and row["eligible"] is True
         assert len(row["reference"]) == 64
         assert all(c in "0123456789abcdef" for c in row["reference"])
-        # The synthetic upstream right_id is literally "purchase": the same\n        # public enum as kind; masking that enum would hide the useful label.\n        for secret in (account.credential_id, account.unique_id, source.edition_id):
+        # The synthetic right_id equals the public "purchase" kind enum.
+        # The selector must not reveal the private coordinates.
+        for secret in (account.credential_id, account.unique_id, source.edition_id):
             assert secret not in repr(options)
         assert reads == []  # SQLite only; no provider snapshot fetch.
 
