@@ -35,6 +35,11 @@ def rig(*, allowed=False, eligible=True, malformed=False):
     source = _source(identity_id="alice", source_id="kobo-one",
                      provider_id="kobo", enabled=True)
     window, broker, _calls, _build, _page = _fixture(sources=[source])
+    # The real Sync renderer has a separate GTK/E2E suite. This isolated
+    # callback test must not construct native Adw widgets inside its fake host.
+    window._refresh_sync_page = lambda: setattr(
+        window, "_sync_preview_generation", window._sync_preview_generation + 1,
+    )
     choices = {"reference": "a" * 64, "kind": "purchase",
                "allowed": allowed, "eligible": eligible}
     if malformed: choices["secret"] = "PRIVATE"
