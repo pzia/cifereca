@@ -1,3 +1,30 @@
+## 1.2.35 — motifs ADEPT 1.3 et retryabilité des inventaires multi-profils (#979 P1)
+
+La CLI fournit déjà une erreur typée et expurgée via `run_json()`,
+mais `loan_inventories()` perdait certaines causes de contrat 1.3 :
+`profile_not_found`, `adept_profile_error`,
+`adept_profile_incompatible` et `adept_error` devenaient
+`adept_inventory_unavailable`. Le projectionnaire de l'inventaire
+conserve désormais ces quatre **codes fermés** et leurs messages
+**constants**, sans reprendre `error.message`, stdout, stderr, XML,
+certificats ou URL privée.
+
+Quand l'échec provient de `KoboAdeptError`, le résultat par profil inclut
+`retryable` booléen strict (seul `True` natif signifie vrai).
+Les exceptions tierces `UserFacingError` n'autorisent ni transfert
+du message ni inférence de retry ; elles gardent le format historique.
+Les codes inconnus ou non pertinents pour l'inventaire (par exemple
+`invalid_acsm`) restent `adept_inventory_unavailable`, sans champ
+`retryable`. Aucune relance automatique ni changement de fulfillment
+n'est ajouté ; un prêt/périmètre incomplet reste `complete=false`.
+
+Tests : `tests/test_adept_multiprofile_inventory_error_privacy_p0.py`,
+avec projection de codes, injections de secrets et processus CLI simulé.
+Cette tranche n'atteste **pas** l'émission réelle par `kobo-adept-next`
+des causes Adobe/libgourou et ne clôt pas #979.
+
+---
+
 ## 1.2.30 — famille de lancement OS expurgée (#979 P0)
 
 Un échec de lancement de sous-processus (OSError, hors FileNotFoundError)
