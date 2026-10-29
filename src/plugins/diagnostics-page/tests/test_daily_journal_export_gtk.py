@@ -118,6 +118,7 @@ def test_real_gtk_daily_journal_zip_cancel_then_accept(tmp_path, monkeypatch):
         chooser.emit("response", Gtk.ResponseType.ACCEPT)
         spin_until(target.exists)
         assert broker.exports == 1
+        assert any(str(target) in text and "exporté en ZIP" in text for text in host.toasts)
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
         with ZipFile(target) as archive:
             assert archive.testzip() is None
