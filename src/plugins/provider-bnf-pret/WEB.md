@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.14.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.15.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -19,6 +19,29 @@ Dans Configuration, ajouter une connexion **BnF Prêt** au bon profil Cifereca,
 saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
+
+## Diagnostic des miniatures observées (#3104, 0.3.15)
+
+La lecture existante de la page d'activité produit un événement canonique
+`COVER / BnF loan metadata`, phase `provider_projection`, dans Diagnostics et
+le journal habituel. Il porte le scope identité/provider/credential/compte,
+`observed_count` et, pour chaque prêt projeté, `loan_id`, `resource_id`, titre,
+`thumbnail_url` exacte ou `null` et `thumbnail_status=observed|unknown`.
+L'inventaire reste `coverage=partial`, y compris lorsqu'il est vide.
+
+Pour les deux livres de #3104, rechercher cet événement après la Sync : une URL
+non vide en sortie provider permet à CoreUI de comparer cache, BookListItem et
+chargement GTK ; `unknown` signifie seulement que le parseur n'a pas attesté de
+miniature dans la carte exacte. Il ne prouve ni absence d'image côté BnF ni
+échec de téléchargement. Comparer séparément la source `cover_resolution` de
+Bibliothèque, qui peut provenir de l'EPUB ou d'une notice persistée.
+
+Cette trace n'effectue aucune lecture supplémentaire, aucun GET image/ACSM,
+aucune capture HTML et aucune modification de droit. Elle ne contient pas les
+actions signées de la page. Sans broker Diagnostics, elle utilise le même
+canal `DIAG_JSON` du journal canonique. Un sink défaillant n'efface pas les
+prêts ; un changement de session/identité pendant son callback invalide le
+résultat avant publication. Les tests sont synthétiques, pas une recette live.
 
 ## Retrait du lecteur v1 dans l'acquisition canonique (#3197, 0.3.14)
 

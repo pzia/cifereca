@@ -135,6 +135,37 @@ class BnfProviderSession(ProviderSession):
         scope = ProfileScope(self.credential_id, self.credential_id, self._epoch)
         return parse_loans(html, page_url=ACTIVITY, expected=scope, observed=scope)
 
+    def _report_loan_metadata(self, scope, loans):
+        """Record the actual provider projection, without another HTTP read.
+
+        Unknown thumbnails are not missing books or failed image downloads.
+        No signed action, HTML, token or inferred cover enters this event.
+        """
+        detail = {
+            'provider_id': scope[2], 'credential_id': scope[3],
+            'account_id': scope[0], 'identity_id': scope[1],
+            'phase': 'provider_projection', 'coverage': 'partial',
+            'observed_count': len(loans),
+            'loans': [{
+                'loan_id': loan.id, 'resource_id': loan.record_id,
+                'title': loan.title, 'thumbnail_url': loan.thumbnail_url,
+                'thumbnail_status': 'observed' if loan.thumbnail_url else 'unknown',
+            } for loan in loans],
+        }
+        try:
+            if self.diagnostics is not None:
+                self.diagnostics.add('COVER', 'BnF loan metadata', 'ok', detail=detail)
+            else:
+                payload = dict(
+                    schema_version=1, category='COVER', operation='BnF loan metadata',
+                    message='BnF loan metadata', status='ok', detail=detail,
+                )
+                logging.getLogger('cifereca').info(
+                    'DIAG_JSON %s', json.dumps(payload, ensure_ascii=False),
+                )
+        except Exception:
+            pass  # A diagnostic sink cannot make an observed loan disappear.
+
     def connect(self):
         with self._lock:
             self.connected = False
@@ -226,10 +257,7 @@ class BnfProviderSession(ProviderSession):
                 or (broker is not None and
                     self._core_owner_binding(caller_scope[0], caller_scope[1]) != owner)):
             raise ProviderConfigurationError('account_scope_mismatch')
-        # A partial/empty page cannot close historical rights; nevertheless
-        # it must not authorize token downloads from stale observations.
-        self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
-        return [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
+        loans = [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
                      record_id=row.resource_id, title=row.title or 'Prêt BnF',
                      author=', '.join(row.authors) or None,
                      thumbnail_url=row.thumbnail_url,
@@ -247,6 +275,21 @@ class BnfProviderSession(ProviderSession):
                          } if (row.loan_id, row.resource_id) in offered_pairs
                          else {}),
                      }) for row in snapshot.loans]
+        self._report_loan_metadata(caller_scope, loans)
+        # Optional host diagnostics can run callbacks. Do not publish loans
+        # (or token eligibility) after a reconnect/rebind during that callback.
+        if (self._closed or epoch != self._epoch or not self.connected
+                or len(self._accounts) != 1 or account is not self._accounts[0]
+                or (account.unique_id, account.identity_id,
+                    account.provider_id, account.credential_id) != caller_scope
+                or self.identity_broker is not broker
+                or (broker is not None and
+                    self._core_owner_binding(caller_scope[0], caller_scope[1]) != owner)):
+            raise ProviderConfigurationError('account_scope_mismatch')
+        # A partial/empty page cannot close historical rights; nevertheless
+        # it must not authorize token downloads from stale observations.
+        self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
+        return loans
 
     def loan_inventory_snapshot(self, account):
         # Keep the loan GET, the active account and its typed envelope under
