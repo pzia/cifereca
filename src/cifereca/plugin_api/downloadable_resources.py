@@ -157,7 +157,7 @@ class ResourceSnapshot:
     def __post_init__(self) -> None:
         if (type(self.scope) is not ProviderRightsScope
                 or self.schema_version != DOWNLOADABLE_RESOURCE_CONTRACT
-                or not _token(self.branch)
+                or not _token(self.branch, empty=True)
                 or type(self.resources) is not tuple
                 or len(self.resources) > _MAX_ROWS
                 or any(type(x) is not ResourceObservation for x in self.resources)
@@ -182,6 +182,8 @@ class ResourceSnapshot:
             raise ValueError("unproven_downloadable_completeness")
         if self.status != "partial" and self.resume_cursor:
             raise ValueError("invalid_downloadable_resume")
+        if not self.branch and self.resources:
+            raise ValueError("downloadable_branch_required")
         seen: set[tuple[str, str, str]] = set()
         for observation in self.resources:
             source = observation.source
@@ -252,12 +254,12 @@ def from_legacy_rights_snapshot(snapshot: ProviderRightsSnapshot) -> ResourceSna
             ),
             evidence_ref=item.evidence_ref,
             observed_at=item.observed_at,
-            right=OptionalRightMetadata(state=item.state),
+            right=OptionalRightMetadata(state=item.state, right_id=item.right_id),
         ))
     full_attestation = len(resources) == len(snapshot.rights)
     return ResourceSnapshot(
         scope=snapshot.scope,
-        branch=snapshot.branch or "unobserved",
+        branch=snapshot.branch,
         resources=tuple(resources),
         status=snapshot.status,
         coverage=snapshot.coverage if full_attestation else "unknown",
