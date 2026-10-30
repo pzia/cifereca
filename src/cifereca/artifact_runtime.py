@@ -861,94 +861,106 @@ class LibraryMaintenanceBrokerImpl:
             row=self.service.storage.placement_get(str(result.get("placement_id") or ""))
             return LibraryMutationResult(True,1,plan.summary,(_placement_ref(row),) if row else (),facts=result)
         if request.operation == "delete_duplicate":
-            row=self.service.storage.placement_get(request.placement_id)
-            if row is None: return LibraryMutationResult(True,0,"Placement déjà absent")
-            keep=self.service.storage.placement_get(request.keep_placement_id)
-            if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
-                raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable")
-            from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
-            if candidate_has_active_dependencies(
-                self.service.storage, placement_id=row["placement_id"], path=row["path"],
-            ):
-                raise Conflict("Le fichier est référencé par des données actives")
-            # A stale SHA in SQLite does not authorize unlinking an arbitrary
-            # replaced file, even when its placement owner still matches.
-            # Hash BOTH actual files under the user's explicit maintenance
-            # action. Never follow a symbolic link or remove a non-regular path.
-            path = Path(row["path"])
-            kept_path = Path(keep["path"])
-            evidence = self.service.storage.artifact_get(row["artifact_id"])
-            digest = evidence.get("sha256") if type(evidence) is dict else None
-            size = evidence.get("size") if type(evidence) is dict else None
-            if (type(digest) is not str or len(digest) != 64
-                    or type(size) is not int or size < 0
-                    or path.is_symlink() or kept_path.is_symlink()
-                    or not path.is_file() or not kept_path.is_file()):
-                raise Conflict("Octets du doublon non vérifiés")
+            # The destructive operation must use the same non-blocking,
+            # interprocess acquisition lock as Sync. Revalidate and hash
+            # BOTH paths while it is held; release only after the optional
+            # unlink, never queue a stale maintenance plan behind a GET.
+            from .locking import InterProcessLock, LockBusyError
+            from .paths import acquisition_lock_file
             try:
-                deleted_stat = os.stat(path, follow_symlinks=False)
-                kept_stat = os.stat(kept_path, follow_symlinks=False)
-                if (not stat.S_ISREG(deleted_stat.st_mode)
-                        or not stat.S_ISREG(kept_stat.st_mode)
-                        or deleted_stat.st_size != size or kept_stat.st_size != size
-                        or sha256_file(path) != digest
-                        or sha256_file(kept_path) != digest):
-                    raise Conflict("Octets du doublon non vérifiés")
-                fingerprint = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-                for selected, expected in ((path, deleted_stat), (kept_path, kept_stat)):
-                    now = os.stat(selected, follow_symlinks=False)
-                    if any(getattr(now, key) != getattr(expected, key) for key in fingerprint):
-                        raise Conflict("Octets du doublon non vérifiés")
-            except OSError:
-                raise Conflict("Octets du doublon non vérifiés") from None
-            # Commit removal of the unreferenced placement FIRST. A failed
-            # SQLite transaction leaves both verified physical paths intact;
-            # a crash afterwards leaves an extra, recoverable duplicate, not
-            # a 'present' SQLite row pointing at an already deleted book.
-            try:
-                self.service.storage.placement_retire_duplicate_atomic(
-                    placement_id=str(row["placement_id"]),
-                    keep_placement_id=str(keep["placement_id"]),
-                    candidate_path=str(path), kept_path=str(kept_path),
-                    artifact_id=str(row["artifact_id"]),
-                    identity_id=str(row["identity_id"]),
-                    provider_id=str(row["provider_id"]),
-                    source_item_id=row.get("source_item_id"),
-                )
-            except ValueError as exc:
-                raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable") from exc
-            # The old file is now an optional cleanup target. Never unlink a
-            # name that was replaced or rebound while SQLite committed, and
-            # never destroy the remaining copy after its inode changed.
-            cleanup_pending = True
-            try:
-                if (not candidate_has_active_dependencies(
-                    self.service.storage,
-                    placement_id=request.placement_id,
-                    path=str(path),
-                ) and self.service.storage.placement_for_path(path) is None):
-                    current_deleted = os.stat(path, follow_symlinks=False)
-                    current_kept = os.stat(kept_path, follow_symlinks=False)
-                    if (
-                        stat.S_ISREG(current_deleted.st_mode)
-                        and stat.S_ISREG(current_kept.st_mode)
-                        and all(
-                            getattr(current_deleted, key) == getattr(deleted_stat, key)
-                            and getattr(current_kept, key) == getattr(kept_stat, key)
-                            for key in fingerprint
-                        )
+                with InterProcessLock(acquisition_lock_file()):
+                    row=self.service.storage.placement_get(request.placement_id)
+                    if row is None: return LibraryMutationResult(True,0,"Placement déjà absent")
+                    keep=self.service.storage.placement_get(request.keep_placement_id)
+                    if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
+                        raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable")
+                    from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
+                    if candidate_has_active_dependencies(
+                        self.service.storage, placement_id=row["placement_id"], path=row["path"],
                     ):
-                        path.unlink()
-                        cleanup_pending = False
-            except OSError:
-                pass
-            return LibraryMutationResult(
-                True, 1, plan.summary,
-                warnings=(
-                    ("Fichier doublon conservé : nettoyage local à vérifier.",)
-                    if cleanup_pending else ()
-                ),
-            )
+                        raise Conflict("Le fichier est référencé par des données actives")
+                    # A stale SHA in SQLite does not authorize unlinking an arbitrary
+                    # replaced file, even when its placement owner still matches.
+                    # Hash BOTH actual files under the user's explicit maintenance
+                    # action. Never follow a symbolic link or remove a non-regular path.
+                    path = Path(row["path"])
+                    kept_path = Path(keep["path"])
+                    evidence = self.service.storage.artifact_get(row["artifact_id"])
+                    digest = evidence.get("sha256") if type(evidence) is dict else None
+                    size = evidence.get("size") if type(evidence) is dict else None
+                    if (type(digest) is not str or len(digest) != 64
+                            or type(size) is not int or size < 0
+                            or path.is_symlink() or kept_path.is_symlink()
+                            or not path.is_file() or not kept_path.is_file()):
+                        raise Conflict("Octets du doublon non vérifiés")
+                    try:
+                        deleted_stat = os.stat(path, follow_symlinks=False)
+                        kept_stat = os.stat(kept_path, follow_symlinks=False)
+                        if (not stat.S_ISREG(deleted_stat.st_mode)
+                                or not stat.S_ISREG(kept_stat.st_mode)
+                                or deleted_stat.st_size != size or kept_stat.st_size != size
+                                or sha256_file(path) != digest
+                                or sha256_file(kept_path) != digest):
+                            raise Conflict("Octets du doublon non vérifiés")
+                        fingerprint = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                        for selected, expected in ((path, deleted_stat), (kept_path, kept_stat)):
+                            now = os.stat(selected, follow_symlinks=False)
+                            if any(getattr(now, key) != getattr(expected, key) for key in fingerprint):
+                                raise Conflict("Octets du doublon non vérifiés")
+                    except OSError:
+                        raise Conflict("Octets du doublon non vérifiés") from None
+                    # Commit removal of the unreferenced placement FIRST. A failed
+                    # SQLite transaction leaves both verified physical paths intact;
+                    # a crash afterwards leaves an extra, recoverable duplicate, not
+                    # a 'present' SQLite row pointing at an already deleted book.
+                    try:
+                        self.service.storage.placement_retire_duplicate_atomic(
+                            placement_id=str(row["placement_id"]),
+                            keep_placement_id=str(keep["placement_id"]),
+                            candidate_path=str(path), kept_path=str(kept_path),
+                            artifact_id=str(row["artifact_id"]),
+                            identity_id=str(row["identity_id"]),
+                            provider_id=str(row["provider_id"]),
+                            source_item_id=row.get("source_item_id"),
+                        )
+                    except ValueError as exc:
+                        raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable") from exc
+                    # The old file is now an optional cleanup target. Never unlink a
+                    # name that was replaced or rebound while SQLite committed, and
+                    # never destroy the remaining copy after its inode changed.
+                    cleanup_pending = True
+                    try:
+                        if (not candidate_has_active_dependencies(
+                            self.service.storage,
+                            placement_id=request.placement_id,
+                            path=str(path),
+                        ) and self.service.storage.placement_for_path(path) is None):
+                            current_deleted = os.stat(path, follow_symlinks=False)
+                            current_kept = os.stat(kept_path, follow_symlinks=False)
+                            if (
+                                stat.S_ISREG(current_deleted.st_mode)
+                                and stat.S_ISREG(current_kept.st_mode)
+                                and all(
+                                    getattr(current_deleted, key) == getattr(deleted_stat, key)
+                                    and getattr(current_kept, key) == getattr(kept_stat, key)
+                                    for key in fingerprint
+                                )
+                            ):
+                                path.unlink()
+                                cleanup_pending = False
+                    except OSError:
+                        pass
+                    return LibraryMutationResult(
+                        True, 1, plan.summary,
+                        warnings=(
+                            ("Fichier doublon conservé : nettoyage local à vérifier.",)
+                            if cleanup_pending else ()
+                        ),
+                    )
+            except LockBusyError as exc:
+                raise Conflict(
+                    "Bibliothèque occupée : nettoyage des doublons indisponible"
+                ) from exc
         if request.operation == "replace_cover":
             if not request.book_id or not request.cover_artifact_id: raise ValueError("book_id and cover_artifact_id required")
             cover=self.service.storage.artifact_get(request.cover_artifact_id)
