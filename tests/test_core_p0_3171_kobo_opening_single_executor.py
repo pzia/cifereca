@@ -15,7 +15,11 @@ from tests.test_kobo_backup_guard import _service
 
 def _ready_source(tmp_path):
     service = _service(tmp_path)
-    account = next(a for a in service.accounts if a.provider_id == "kobo")
+    # The fixture connects its fake provider but does not synchronize the
+    # LibraryService account registry; opening Sync uses the latter.
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    account = session.accounts[0]
+    service.accounts = [account]
     service.storage.metadata_set(policy_key(service.sync_source_id(account)), "1")
     assert [s.credential_id for s in kobo_on_start_sessions(service)] == [
         account.credential_id
