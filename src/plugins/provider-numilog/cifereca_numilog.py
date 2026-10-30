@@ -1710,12 +1710,13 @@ class NumilogSession(ProviderSession):
                                         self._validate_download_owner(
                                             owner, owner_scope=owner_scope,
                                         )
+                                    staged_path = selected_candidate_path(acsm)
                                     trace.success('acsm_candidate')
                                     trace.event(
                                         'artifact_validation', 'acsm_candidate',
                                         hops=hop+1,
                                     )
-                                    return selected_candidate_path(acsm), self.library_url
+                                    return staged_path, self.library_url
                                 except BaseException:
                                     acsm.unlink(missing_ok=True)
                                     raise
@@ -1751,12 +1752,13 @@ class NumilogSession(ProviderSession):
                                     self._validate_download_owner(
                                         owner, owner_scope=owner_scope,
                                     )
+                                staged_path = selected_candidate_path(candidate)
                                 trace.success('epub_candidate')
                                 trace.event(
                                     'artifact_validation', 'epub_candidate',
                                     hops=hop+1,
                                 )
-                                return selected_candidate_path(candidate), self.library_url
+                                return staged_path, self.library_url
                             except BaseException:
                                 candidate.unlink(missing_ok=True)
                                 raise
