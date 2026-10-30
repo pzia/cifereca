@@ -240,7 +240,7 @@ def recover_completed_delivery(
                 receipt_ref=raw["receipt"],
                 adept_receipt_ref=raw["adept_receipt"],
             )
-        except (ValueError, TypeError, KeyError, OSError):
+        except (ValueError, TypeError, KeyError, OSError, RecursionError):
             return None
     try:
         _path_verified(
