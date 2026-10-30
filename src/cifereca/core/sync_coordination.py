@@ -309,6 +309,14 @@ def _run_observed_canonical_convergence(
             and callable(consent_reader)):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
+        from .source_auto_consent_bridge import (
+            numilog_generation, numilog_generation_in_transaction,
+        )
+        # Numilog's durable generation changes at every revoke/re-enable.
+        # Pin it AROUND the consent read so an ON→OFF→ON transition cannot
+        # revive an in-flight GET merely because the final mode is ON.
+        numilog_scope = admitted_snapshots[0].scope
+        initial_generation = numilog_generation(self.storage, numilog_scope)
 
         try:
             consent = consent_reader(account)
@@ -323,14 +331,25 @@ def _run_observed_canonical_convergence(
             type(source) is not SourceKey for source in consent
         ):
             consent = frozenset()
+        if (numilog_scope.provider_id == "numilog"
+                and numilog_generation(self.storage, numilog_scope)
+                    != initial_generation):
+            consent = frozenset()
 
         def current_consent(key: SourceKey) -> bool:
             # Called by the Core executor both before GET and
             # after GET, rejecting consent revoked in flight.
+            if (key.scope.provider_id == "numilog"
+                    and numilog_generation(self.storage, key.scope)
+                        != initial_generation):
+                return False
             latest = consent_reader(account)
             return (type(latest) is frozenset
                     and key in latest
-                    and all(type(x) is SourceKey for x in latest))
+                    and all(type(x) is SourceKey for x in latest)
+                    and (key.scope.provider_id != "numilog"
+                         or numilog_generation(self.storage, key.scope)
+                             == initial_generation))
 
         # The optional selected-offer preflight is permitted
         # only under the already held lock, exact persisted
@@ -347,6 +366,21 @@ def _run_observed_canonical_convergence(
             consent_still_current=current_consent,
             cancelled=cancelled_for_rights,
         )
+        existing_publisher_guard = getattr(
+            self, "_canonical_publication_consent_current", None,
+        )
+
+        def publication_consent_current(db, key: SourceKey) -> bool:
+            # Core holds BEGIN IMMEDIATE while executing this guard: never
+            # recurse into Storage here. Compare the frozen generation with
+            # the same database snapshot that publishes OriginLink/Placement.
+            if (key.scope.provider_id == "numilog"
+                    and numilog_generation_in_transaction(db, key)
+                        != initial_generation):
+                return False
+            return (existing_publisher_guard(db, key) is True
+                    if callable(existing_publisher_guard) else True)
+
         outcomes = execute_admitted_convergence(
             self, account, session, qualified_snapshot,
             admitted_epoch=admitted_epoch,
@@ -354,9 +388,7 @@ def _run_observed_canonical_convergence(
             persisted_consent=consent,
             consent_still_current=current_consent,
             deliver=delivery, cancelled=cancelled_for_rights,
-            publication_guard=getattr(
-                self, "_canonical_publication_consent_current", None,
-            ),
+            publication_guard=publication_consent_current,
         )
         counts = {
             status: sum(row.status == status for row in outcomes)
