@@ -3,6 +3,9 @@
 Real SQLite and canonical A->B executor, synthetic authenticated provider.
 """
 from dataclasses import replace
+import sqlite3
+
+import pytest
 
 from cifereca.core import source_auto_consent_bridge as bridge
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
@@ -94,3 +97,26 @@ def test_kobo_off_on_while_delivery_in_flight_never_publishes_old_get(rig):
     assert db.placements() == []
     with db._lock, db._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
+
+
+def test_policy_and_generation_commit_or_rollback_as_one_sqlite_unit(rig):
+    service, db, root, policy = _kobo(rig)
+    revision = policy + ".revision"
+    db.metadata_set_with_revision(policy, "1", revision)
+    before = (db.metadata_get(policy), db.metadata_get(revision))
+    with db._lock, db._connect() as conn:
+        conn.execute(
+            "CREATE TRIGGER refuse_toggle BEFORE UPDATE ON metadata "
+            "WHEN OLD.key='" + policy + "' "
+            "BEGIN SELECT RAISE(ABORT,'synthetic_toggle_failure'); END"
+        )
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic_toggle_failure"):
+            db.metadata_set_with_revision(policy, "0", revision)
+        assert (db.metadata_get(policy), db.metadata_get(revision)) == before
+        assert read_source_acquisition_consent(service, service.account) == frozenset({
+            service.source,
+        })
+    finally:
+        with db._lock, db._connect() as conn:
+            conn.execute("DROP TRIGGER refuse_toggle")
