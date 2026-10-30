@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
