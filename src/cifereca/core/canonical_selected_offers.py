@@ -19,6 +19,7 @@ from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.errors import Cancelled
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
+from ..plugin_api.downloadable_resources import ResourceSnapshot, as_legacy_rights_snapshot
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 
@@ -65,7 +66,12 @@ def qualify_selected_offers(
                for row in snapshot.rights if row.provider_attested
                and row.delivery == "unknown"):
         return snapshot
-    raw_reader = getattr_static(session, "rights_selected_delivery_offer_snapshot", None)
+    reader_name = (
+        "downloadable_selected_offer_snapshot"
+        if getattr_static(session, "downloadable_selected_offer_snapshot", None) is not None
+        else "rights_selected_delivery_offer_snapshot"
+    )
+    raw_reader = getattr_static(session, reader_name, None)
     if raw_reader is None:
         return snapshot
     if not callable(raw_reader):
@@ -161,8 +167,11 @@ def qualify_selected_offers(
         if not consent_current(key):
             continue
         try:
-            selected = session.rights_selected_delivery_offer_snapshot(
-                account, edition_id=key.edition_id, right_id=key.right_id,
+            selected = getattr(session, reader_name)(
+                account, edition_id=key.edition_id,
+                **({"resource_id": key.right_id}
+                   if reader_name == "downloadable_selected_offer_snapshot"
+                   else {"right_id": key.right_id}),
                 kind=key.kind, branch=key.branch, explicit_user_action=True,
             )
         except Cancelled:
@@ -181,6 +190,10 @@ def qualify_selected_offers(
             raise ValueError("canonical_offer_source_rebound")
         if not consent_current(key):
             continue
+        if reader_name == "downloadable_selected_offer_snapshot":
+            if type(selected) is not ResourceSnapshot:
+                continue
+            selected = as_legacy_rights_snapshot(selected)
         if (type(selected) is not ProviderRightsSnapshot
                 or selected.scope != scope or selected.branch != snapshot.branch
                 or selected.status not in ("partial", "success")

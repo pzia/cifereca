@@ -306,9 +306,11 @@ def _run_observed_canonical_convergence(
             candidate_session = self._session_for_account(account)
         except (AttributeError, KeyError, TypeError, ValueError):
             candidate_session = None
-        if (candidate_session is not None and callable(
-                getattr_static(candidate_session,
-                               "rights_selected_delivery_candidate", None))):
+        if candidate_session is not None and any(
+            callable(getattr_static(candidate_session, name, None))
+            for name in ("downloadable_selected_delivery_candidate",
+                         "rights_selected_delivery_candidate")
+        ):
             from .canonical_selected_delivery import complete_selected_delivery
             delivery = lambda key, offer: complete_selected_delivery(
                 self, account, candidate_session, key, offer,

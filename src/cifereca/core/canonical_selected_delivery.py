@@ -24,6 +24,7 @@ from ..locking import InterProcessLock
 from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightObservation
+from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReference
 from .canonical_publication import _physical_target, _same_file
 from .convergence_execution import CompletedDelivery
 from .source_convergence import SourceKey
@@ -57,7 +58,12 @@ def complete_selected_delivery(
     if (account.identity_id, account.provider_id,
             account.credential_id, account.unique_id) != coords:
         raise ValueError("canonical_delivery_scope_mismatch")
-    raw = getattr_static(session, "rights_selected_delivery_candidate", None)
+    reader_name = (
+        "downloadable_selected_delivery_candidate"
+        if getattr_static(session, "downloadable_selected_delivery_candidate", None) is not None
+        else "rights_selected_delivery_candidate"
+    )
+    raw = getattr_static(session, reader_name, None)
     if raw is None or not callable(raw):
         raise ValueError("canonical_delivery_candidate_contract_unavailable")
 
@@ -132,14 +138,27 @@ def complete_selected_delivery(
     attempt.mkdir(mode=0o700)
     if not bound():
         raise ValueError("canonical_delivery_source_rebound")
-    candidate = session.rights_selected_delivery_candidate(
-        account, edition_id=source.edition_id, right_id=source.right_id,
+    candidate = getattr(session, reader_name)(
+        account, edition_id=source.edition_id,
+        **({"resource_id": source.right_id,
+            "selected_offer_id": offer.delivery_offer_id}
+           if reader_name == "downloadable_selected_delivery_candidate"
+           else {"right_id": source.right_id,
+                 "delivery_offer_id": offer.delivery_offer_id}),
         kind=source.kind, branch=source.branch,
-        delivery_offer_id=offer.delivery_offer_id,
         target_dir=attempt, explicit_user_action=True,
     )
     if not bound():
         raise ValueError("canonical_delivery_source_rebound_after_get")
+    if reader_name == "downloadable_selected_delivery_candidate":
+        expected = SourceReference(
+            scope, source.branch, source.edition_id, source.right_id, source.kind,
+        )
+        if (type(candidate) is not DeliveryCandidate
+                or candidate.source != expected
+                or candidate.selected_offer_id != offer.delivery_offer_id):
+            raise ValueError("canonical_delivery_candidate_scope_mismatch")
+        candidate = (candidate.path, candidate.provider_hint)
     if (type(candidate) is not tuple or len(candidate) != 2
             or (type(candidate[0]) is not str
                 and not isinstance(candidate[0], Path))

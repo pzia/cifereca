@@ -144,7 +144,10 @@ def observe_canonical_rights_in_sync(
         )
     except (AttributeError, KeyError, ValueError, TypeError):
         return None
-    if session is None or getattr_static(session, "rights_observation_snapshot", None) is None:
+    if session is None or all(
+        getattr_static(session, name, None) is None
+        for name in ("downloadable_resource_snapshot", "rights_observation_snapshot")
+    ):
         return None
     if service.sync_source_enabled(account) is not True:
         raise ValueError("canonical_rights_source_disabled")
