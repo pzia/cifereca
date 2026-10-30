@@ -673,7 +673,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._dispose_maintenance_lines()
         clear_box(box)
 
-        services = self.plugin_manager.services("maintenance.tool")        services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
+        services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
             label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
             add_css(label, "dim-label"); box.append(label); return
@@ -695,7 +695,6 @@ class MainWindow(Adw.ApplicationWindow):
             row.add_suffix(cancel)
             group.add(row)
             active_cancel = {"control": None, "ticket": None}
-            line_feedback = None
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
             activity_labels = {
@@ -745,7 +744,7 @@ class MainWindow(Adw.ApplicationWindow):
             )
             self._maintenance_result_views.append(result_view)
 
-            def request_cancel(            def request_cancel(_cancel_button, cancellation_state=active_cancel,
+            def request_cancel(_cancel_button, cancellation_state=active_cancel,
                                feedback=line_feedback):
                 active = cancellation_state["control"]
                 if active is not None:
@@ -763,10 +762,8 @@ class MainWindow(Adw.ApplicationWindow):
                 result_view=result_view,
             ):
                 if self._closed or _button.get_root() is None:
-                if self._closed or _button.get_root() is None:
                     return
                 result_view.clear()
-                identity = self.service.current_identity
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
@@ -797,7 +794,7 @@ class MainWindow(Adw.ApplicationWindow):
                     return
                 cancellation_state["ticket"] = ticket
 
-                def maintenance_worker(                def maintenance_worker(callback, failure_message, worker_cancel_control=None):
+                def maintenance_worker(callback, failure_message, worker_cancel_control=None):
                     # TaskRunner records errors in global activity before the
                     # row callback. Sanitize at the worker boundary as well.
                     try:
@@ -889,7 +886,7 @@ class MainWindow(Adw.ApplicationWindow):
                     if meta.scope == "identity" and identity is not None:
                         scope += f" · {identity.label}"
                     sections = [
-                        "Résumé :\n" + (str(plan.summary or "").strip()                        "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
+                        "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
                         "Changements prévus :\n" + (
                             "\n".join("• " + str(value) for value in plan.changes[:20])
                             if plan.changes else "• Aucun changement prévu"
@@ -957,7 +954,6 @@ class MainWindow(Adw.ApplicationWindow):
                                 feedback.report(ticket, current=current, total=total, message=message)
 
                         worker_control = MaintenanceCancelControl(
-                        worker_control = MaintenanceCancelControl(
                             # Core's broker already checks the private
                             # full scope cooperatively inside the worker. Do
                             # not rehash all configured roots for every EPUB
@@ -967,7 +963,6 @@ class MainWindow(Adw.ApplicationWindow):
                             on_progress=report_progress if feedback is not None else None,
                         )
                         cancellation_state["control"] = worker_control
-                        can_cancel = getattr(meta, "cancellable", False) is True
                         can_cancel = getattr(meta, "cancellable", False) is True
                         cancel_button.set_visible(can_cancel)
                         cancel_button.set_sensitive(can_cancel)
@@ -1003,7 +998,6 @@ class MainWindow(Adw.ApplicationWindow):
                             )
 
                         def failed(exc) -> None:
-                            if not finish_maintenance():
                             if not finish_maintenance():
                                 return
                             if feedback is not None:
