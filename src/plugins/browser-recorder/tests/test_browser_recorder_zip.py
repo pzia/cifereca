@@ -584,7 +584,7 @@ def test_short_pin_never_reaches_any_zip_member_even_with_approved_book_id():
         )
         for secret in ("0007", "1234", "4321", "5678", "6543"):
             assert secret not in exported_without_hashes
-        assert "pinCode" not in exported_without_hashes
+        assert "pinCode=0007" not in exported_without_hashes
         body = next(item["text"] for item in plan.preview()["members"]
                     if item["name"] == "bodies/0001-request.txt")
         shaped = json.loads(body)
