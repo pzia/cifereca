@@ -301,10 +301,9 @@ def plan_convergence(
             if not row.provider_attested:
                 decision("pending", "provider_right_unattested")
                 continue
-            if row.state != "active":
-                decision("inactive" if row.state == "inactive" else "pending",
-                         "right_inactive" if row.state == "inactive" else "right_unconfirmed")
-                continue
+            # Rights are descriptive. A current authenticated downloadable
+            # offer is not vetoed by state=unknown/inactive; nor can a right
+            # state invalidate an exact SHA/OriginLink physical proof.
             hashes = origins_by_source.get(key, set())
             matching = [
                 placement for sha in hashes
@@ -316,6 +315,11 @@ def plan_convergence(
                 continue
             if row.delivery_unavailable_reason == "archived":
                 decision("skipped_archived", "delivery_archived")
+                continue
+            if row.state != "active" and not row.delivery_attested:
+                decision("inactive" if row.state == "inactive" else "pending",
+                         "delivery_not_offered" if row.state == "inactive"
+                         else "delivery_unconfirmed")
                 continue
             active_declarations = declared_by_source.get(key, ())
             current = sorted({
