@@ -66,6 +66,27 @@ def test_kobo_explicit_not_owned_without_downloadable_flag_is_not_a_file():
         session.close()
 
 
+@pytest.mark.parametrize("field,bad", [
+    ("owned", "false"), ("owned", 0), ("downloadable", "true"),
+    ("downloadable", 1),
+])
+def test_kobo_malformed_manifest_permission_flags_never_become_file_capability(
+    field, bad,
+):
+    session, vault, broker, account, posts = setup()
+    vault.rows[0][field] = bad
+    try:
+        inventory = session.rights_observation_snapshot(account)
+        assert inventory.exact("book-1", "book-1", "purchase") is None
+        with pytest.raises(ProviderCapabilityError, match="right_unobserved"):
+            session.rights_selected_delivery_offer_snapshot(
+                account, **select(),
+            )
+        assert posts == []
+    finally:
+        session.close()
+
+
 def test_selected_kobo_one_right_one_preflight():
     session, vault, broker, account, posts = setup()
     try:
