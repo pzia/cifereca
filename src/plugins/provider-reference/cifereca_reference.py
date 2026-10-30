@@ -33,7 +33,7 @@ DESCRIPTOR = ProviderDescriptor(
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True, multiple_credentials=True, linked_accounts=True,
-        personal_library=True, direct_download=True,
+        # Selected delivery ABI is not the legacy library()/download_direct().
     ),
     notes=("Simulation CI uniquement ; aucun paiement, authentification ni droit réel.",
            "Le Core seul autorise l'acquisition et publie les fichiers canoniques."),
