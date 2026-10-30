@@ -177,3 +177,49 @@ def test_kobo_exact_source_opt_in_not_legacy_global_backup_pref(policy):
     with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, kobo) == "off"
     assert bridge.configured_kind("kobo", "loan") is False
+
+
+def test_unknown_right_but_downloadable_provider_resource_runs_canonical_get(
+    policy,
+):
+    from cifereca.core.convergence_execution import CompletedDelivery
+    from cifereca.core.sync_coordination import synchronize_account_source
+    from cifereca.services import LibraryService
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service, db, switch = policy
+    service.snapshot = replace(
+        service.snapshot, rights=(replace(
+            service.snapshot.rights[0], state="unknown",
+            delivery="available", delivery_offer_id="current-provider-offer",
+        ),),
+    )
+    db.metadata_set(switch, "1")
+    service._canonical_persisted_consent = (
+        lambda account: LibraryService._canonical_persisted_consent(service, account)
+    )
+    service._canonical_publication_consent_current = (
+        lambda conn, source: LibraryService._canonical_publication_consent_current(
+            service, conn, source,
+        )
+    )
+    calls = []
+    def delivery(key, offer):
+        calls.append(key)
+        path = service.root / "A" / "current.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(
+            key, offer.delivery_offer_id, path, SHA,
+            "exact-provider-delivery-receipt",
+        )
+    service._canonical_right_delivery = delivery
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert calls == [service.source]
+    assert db.entitlements() == []
+    assert len(db.placements()) == 1
+    again = synchronize_account_source(service, service.account)
+    assert again["canonical_execution"]["present_attested"] == 1
+    assert again["canonical_execution"]["downloaded"] == 0
+    assert calls == [service.source]
