@@ -12,10 +12,19 @@ inclus dans l'export.
 
 ## Comportement visé
 
-- Le précontrôle passif ne crée pas de droit. Le manifeste privé authentifié
-  et l'entitlement exact `(identité, credential, compte, item, édition)`
-  restent requis. Une offre non téléchargeable ou un consentement `on_start`
-  absent/révoqué ne peut jamais lancer de GET.
+- **Arbitrage propriétaire du 30/10/2026** : l'ensemble des fichiers à
+  synchroniser découle des références **effectivement téléchargeables**
+  présentées par la bibliothèque authentifiée du fournisseur. Un droit
+  (entitlement) local peut être absent, périmé ou inconnu ; ce n'est **pas**
+  une permission supplémentaire, ni un veto sur un GET admis. Ne jamais
+  fabriquer une preuve de droit à partir d'un SHA, d'un titre ou d'un dossier.
+  L'offre et son compte/credential/édition exacts, le consentement
+  persistant `on_start`, les restrictions amont et l'intégrité demeurent
+  obligatoires.
+- La projection des entitlements est **best effort** et son anomalie est
+  diagnostiquée séparément de la livraison ; elle ne transforme pas une
+  offre valide en `preflight_failed`. La capacité `downloadable=False`
+  ou inconnue bloque en revanche **seulement la référence concernée**.
 - Une preuve complète (reçu, Placement physique et SHA final du bon profil)
   fait **zéro GET** ; un changement d'emplacement n'est pas une modification
   d'identité bibliographique. Un SHA identique d'un autre compte n'attribue
@@ -29,8 +38,10 @@ inclus dans l'export.
   revalidations session/droit/compte/consentement avant et après le fournisseur,
   le traitement ADEPT, le SHA final et la publication. Le nouveau reçu
   `numilog-materialization-recovery` ne remplace **jamais** le reçu historique.
-  Un nom cible déjà occupé entraîne une destination bornée
-  `numilog/recovery-<hash>`; aucun fichier existant n'est remplacé.
+  Toute Sync automatique livre dans un sous-répertoire isolé par identifiant
+  exact (`numilog/delivery-<hash>` ou `numilog/recovery-<hash>`).
+  Les noms anciens et sous-répertoires `acsm-*` sont laissés intacts,
+  indépendamment de leur indexation ; aucun fichier existant n'est remplacé.
 - Une reprise ambiguë, un reçu inachevé/index_pending, un compte étranger,
   un placement d'un autre profil ou un index en échec sont signalés par
   des **codes fermés**, uniquement pour l'achat en question. Les acquisitions
@@ -65,3 +76,21 @@ le résultat par position, le nombre de GET, les états de reçus, OriginLinks,
 Placements et SHA (localement, sans secrets), puis une seconde Sync avec
 zéro téléchargement inutile. Conserver le journal avant/après et les
 preuves de rollback. Ne pas fermer #2797 avant cette réception.
+
+
+## Garde d'acquisition vs métadonnées descriptives
+
+| Observation | Décision Core |
+| --- | --- |
+| Offre authentifiée, downloadable=true, droit local absent/inconnu | tenter GET si consentement ON |
+| Offre authentifiée, downloadable=true, droit local désynchronisé | rapprochement puis repli GET |
+| Droit SQLite actif, offre absente ou non téléchargeable | aucun GET ; refus localisé |
+| Fichier déjà présent avec provenance vérifiée, SHA valide | aucun GET ; présence attestée |
+| Fichier candidat sous `acsm-*`, `manual`, `other` sans provenance vérifiée | conserver ; aucune attribution implicite, aucun veto sur GET |
+| Compte/credential/édition incohérents, révocation, ADEPT/DRM refusé | aucun commit ; motif exact |
+
+Le chemin Numilog legacy reste un adaptateur transitoire : il ne constitue
+pas un moteur de rapprochement transverse concurrent de #3171. Le chantier
+commun `SourceReference→Artifact/Placement/OriginLink` et le consentement
+global par fournisseur/type restent pilotés par #3171/#3196 ; aucune
+convergence multi-fournisseur complète n'est revendiquée par cette PR.
