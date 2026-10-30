@@ -82,7 +82,7 @@ def test_preflight_sql_queries_right_ledger_and_placement_in_one_snapshot(tmp_pa
         service.close()
 
 
-def test_startup_skips_conflicting_placement_without_consuming_signed_delivery(
+def test_startup_recovers_conflicting_same_owner_placement_without_overwrite(
     tmp_path,
 ):
     service, account, session, calls, broker, sid = _setup(tmp_path)
@@ -90,9 +90,11 @@ def test_startup_skips_conflicting_placement_without_consuming_signed_delivery(
         _authorize(broker, sid)
         row = _row(account.credential_id, 0)
         session.library = lambda: [row]
-        session.download_direct = lambda *_a, **_kw: pytest.fail(
-            "Existing placement must never trigger a vendor request"
-        )
+        requests = []
+        def unavailable(*_a, **_kw):
+            requests.append(True)
+            raise RuntimeError("synthetic delivery unavailable")
+        session.download_direct = unavailable
         target = tmp_path / "PRIVATE_OLD_PLACEMENT.epub"
         target.write_bytes(b"FAKE_UNVERIFIED_FILE")
         service.storage.placement_put({
@@ -101,12 +103,13 @@ def test_startup_skips_conflicting_placement_without_consuming_signed_delivery(
             "state": "present",
         })
         first = execute(broker, account.identity_id, "startup")
-        assert first.facts["attempted"] == 0
+        assert first.facts["attempted"] == 1
         assert first.facts["downloaded"] == 0
-        assert not first.ok and first.facts["status"] == "blocked"
+        assert not first.ok and first.facts["status"] == "failed"
         assert first.facts["skipped"] == 0
-        assert first.facts["blocked"] == 1
-        assert first.facts["failed"] == 0
+        assert first.facts["blocked"] == 0
+        assert first.facts["failed"] == 1
+        assert requests == [True]
         assert target.read_bytes() == b"FAKE_UNVERIFIED_FILE"
         assert service.storage.acquisitions(provider_id="numilog") == []
         assert calls == []
