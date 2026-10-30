@@ -361,8 +361,7 @@ def test_selected_offer_revoked_on_same_value_live_account_replacement(tmp_path)
 def test_v2_downloadable_resource_contract_when_core_abi_is_installed(tmp_path):
     # During the A/B split PR #3730 owns publication of this public module.
     # This test activates automatically once A lands the ABI on main.
-    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
-    from cifereca.plugin_api.downloadable_resources import (
+    from cifereca.plugin_api import (
         DOWNLOADABLE_RESOURCE_CONTRACT, ResourceSnapshot, DeliveryCandidate,
     )
     session, (a, b) = fixture()
@@ -415,7 +414,6 @@ def test_v2_downloadable_resource_contract_when_core_abi_is_installed(tmp_path):
 
 
 def test_v2_bulk_pagination_when_core_abi_is_installed():
-    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
     session, (a, _) = fixture(scenario="bulk", bulk_count=351)
     try:
         cursor = ""
