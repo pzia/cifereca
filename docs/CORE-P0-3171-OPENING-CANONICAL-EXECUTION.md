@@ -44,6 +44,17 @@ acquisition. Identité, credential, compte, branche, édition, session et
 licence ADEPT demeurent contrôlés ; présence locale attestée uniquement par
 Placement physique vérifié et OriginLink exact.
 
+### Transition BnF-Prêt — ne pas doubler l'acquisition
+
+La politique `bnf_auto` est bien la source de consentement globale pour les
+prêts du compte. **Tant que le matérialiseur BnF legacy porte seul la
+vérification des associations locales déclarées**, lorsque cette politique
+est ON, le coordinateur Core conserve cette route et **n'exécute pas une
+seconde livraison canonique pour les mêmes prêts**. Cette exception évite
+un double ACSM/ADEPT et protège les compteurs de présence déclarée.
+La migration de ces preuves et reçus vers l'unique pipeline A→B reste
+un critère **ouvert de #3171/#3196**, pas une preuve d'achèvement.
+
 La Sync d'ouverture conserve le compteur `canonical_rights` et ajoute
 `canonical_execution` (statuts bornés) ainsi que les acquisitions
 physiquement publiées à `new_acquisitions`. Un `failed/blocked` rend la source
