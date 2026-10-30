@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.maintenance.library-audit",
-    "version": "0.2.9",
+    "version": "0.2.10",
     "name": "Cifereca Library Audits",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -14,7 +14,7 @@
       "entrypoint": "cifereca_library_audits:COVER_AUDIT",
       "display_name": "Vérifier les couvertures",
       "description": "Audit en lecture seule des couvertures connues du catalogue local.",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "priority": 50,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
@@ -37,7 +37,7 @@
       "entrypoint": "cifereca_library_audits:LANGUAGE_AUDIT",
       "display_name": "Vérifier les langues",
       "description": "Audit en lecture seule des tags de langue et de leur forme canonique.",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "priority": 49,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
@@ -60,7 +60,7 @@
       "entrypoint": "cifereca_library_audits:INTEGRITY_AUDIT",
       "display_name": "Vérifier l’intégrité des fichiers",
       "description": "Audit read-only des fichiers locaux : présence, taille, SHA-256 et structure EPUB/PDF.",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "priority": 48,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
@@ -84,7 +84,7 @@
       "entrypoint": "cifereca_library_audits:NAMING_AUDIT",
       "display_name": "Auditer les noms de fichiers",
       "description": "Compare, lorsque les métadonnées publiques le permettent, le nom actuel avec la politique Core.",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "priority": 48,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
@@ -108,7 +108,7 @@
       "entrypoint": "cifereca_library_audits:NAMING_REPAIR",
       "display_name": "Renormaliser les noms de fichiers",
       "description": "Renomme transactionnellement les placements de bibliothèque selon la politique de nommage Core.",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "priority": 47,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
@@ -134,7 +134,7 @@
       "entrypoint": "cifereca_library_audits:DUPLICATE_CLEANUP",
       "display_name": "Nettoyer les doublons physiques",
       "description": "Supprime uniquement les placements de bibliothèque vérifiés comme doublons du même artefact SHA-256.",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "priority": 46,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
@@ -150,29 +150,6 @@
         "metadata",
         "library.read",
         "library.maintenance"
-      ],
-      "requires_contracts": []
-    },
-    {
-      "id": "maintenance.audit.reconciliation",
-      "type": "maintenance.tool",
-      "entrypoint": "cifereca_library_reconciliation:RECONCILIATION_AUDIT",
-      "display_name": "Réconciliation de bibliothèque",
-      "description": "Inventaire local hors réseau et comparaison des fichiers avec les preuves de bibliothèque, sans réparation.",
-      "version": "0.2.9",
-      "priority": 51,
-      "instantiation": "singleton_public",
-      "enabled_by_default": true,
-      "help_text": "Analyse bornée et annulable de l’identité active. Résultats expurgés ; un SHA ou un ISBN ne prouve pas un droit. Aucune acquisition, interrogation ADEPT ou réparation.",
-      "capabilities": [
-        "maintenance.audit",
-        "maintenance.audit.reconciliation"
-      ],
-      "requires": [],
-      "recommends": [],
-      "system_requires": [],
-      "requires_brokers": [
-        "library.reconciliation.read"
       ],
       "requires_contracts": []
     }

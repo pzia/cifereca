@@ -85,7 +85,6 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
-from .library_inspection_view import LocalInspectionController
 from .maintenance_result_view import MaintenanceResultView
 from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
 from .maintenance_line_widgets import build_maintenance_line
@@ -166,9 +165,6 @@ class MainWindow(Adw.ApplicationWindow):
         self._account_changing = False
         self._identity_changing = False
         self._identity_context_generation = 0
-        # Session memory only: never serialize private reconciliation reports.
-        self._maintenance_reconciliation_report = None
-        self._maintenance_reconciliation_run = None
         self._account_context_generation = 0
         self._cached_book_request_generation = 0
         self._cached_book_context = None
@@ -371,11 +367,6 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close_request(self, *_args) -> bool:
-        self._maintenance_reconciliation_report = None
-        live = getattr(self, "_maintenance_reconciliation_run", None)
-        self._maintenance_reconciliation_run = None
-        if type(live) is dict and live.get("control") is not None:
-            live["control"].cancel()
         self._dispose_maintenance_lines()
         return close_window_resources(self, source_remove=GLib.source_remove)
 
@@ -664,25 +655,14 @@ class MainWindow(Adw.ApplicationWindow):
         scroll.set_child(outer); return scroll
 
     def _dispose_maintenance_lines(self) -> None:
-        # Navigation, identity changes and teardown invalidate cache callbacks
-        # even while their row is still attached to the window's widget tree.
-        retained = getattr(self, "_maintenance_reconciliation_run", None)
-        for old_feedback, old_state in getattr(self, "_maintenance_line_rows", ()):
-            old_feedback.dispose()
-            control = old_state["control"]
-            # Only a running, read-only audit outlives its presentation row.
-            if control is not None and not (
-                type(retained) is dict and retained.get("control") is control
-                and not control.cancelled()
-            ):
+        # All Maintenance rows are widget-scoped. A refresh or identity switch
+        # cancels their workers and revokes any pending result display.
+        for feedback, state in getattr(self, "_maintenance_line_rows", ()):
+            feedback.dispose()
+            control = state["control"]
+            if control is not None:
                 control.cancel()
         self._maintenance_line_rows = []
-        for readiness in getattr(self, "_maintenance_readiness_states", ()):
-            readiness["active"] = False
-            source = readiness.get("timer")
-            if source is not None:
-                GLib.source_remove(source)
-        self._maintenance_readiness_states = []
         for view in getattr(self, "_maintenance_result_views", ()):
             view.clear()
         self._maintenance_result_views = []
@@ -692,37 +672,6 @@ class MainWindow(Adw.ApplicationWindow):
         if box is None: return
         self._dispose_maintenance_lines()
         clear_box(box)
-
-        def reconciliation_scope():
-            """Immutable session comparison keys; never persist paths or books."""
-            service = self.service
-            config = getattr(service, "config", None)
-            storage = getattr(service, "storage", None)
-            identity = getattr(service, "current_identity", None)
-            identity_id = getattr(identity, "identity_id", None)
-            roots_stamp = None
-            if config is not None and identity_id is not None:
-                # The config object can be modified in place without an
-                # identity-generation change. Compare only a fingerprint of
-                # Core-normalized root capabilities; keep paths private.
-                try:
-                    from hashlib import sha256
-                    from cifereca.core.library_audit_roots import configured_identity_roots
-                    selected = configured_identity_roots(config, identity_id)
-                    normalized = selected[identity_id]
-                    roots_stamp = sha256(
-                        "\0".join(str(path) for path in normalized).encode("utf-8")
-                    ).hexdigest()[:24]
-                except Exception:
-                    roots_stamp = "scope_unavailable"
-            return (
-                id(service),
-                getattr(identity, "identity_id", None),
-                getattr(self, "_identity_context_generation", None),
-                getattr(service, "_account_context_epoch", None),
-                id(config), id(getattr(config, "data", None)), roots_stamp,
-                id(storage), getattr(storage, "path", None),
-            )
 
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
@@ -738,8 +687,7 @@ class MainWindow(Adw.ApplicationWindow):
                 continue
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
-            label = ("Préparer l’analyse…" if getattr(info, "id", None) == "library.reconciliation.audit"
-                     else "Prévisualiser…" if info.supports_dry_run else "Exécuter…")
+            label = "Prévisualiser…" if info.supports_dry_run else "Exécuter…"
             run = self.action_button(label, info.icon_name)
             row.add_suffix(run)
             cancel = Gtk.Button(label="Annuler")
@@ -747,20 +695,9 @@ class MainWindow(Adw.ApplicationWindow):
             row.add_suffix(cancel)
             group.add(row)
             active_cancel = {"control": None, "ticket": None}
-            readiness = {"active": True, "token": None, "timer": None,
-                         "status": "indeterminate"}
-            is_reconciliation = getattr(info, "id", None) == "library.reconciliation.audit"
-            # Older/inert Core environments without a readiness-capable
-            # service retain the existing controlled-attempt behavior.
-            can_check_readiness = (is_reconciliation
-                                   and hasattr(self.service, "config")
-                                   and hasattr(self.service, "storage"))
-            if can_check_readiness:
-                self._maintenance_readiness_states.append(readiness)
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
             activity_labels = {
-                "library.reconciliation.audit": "Réconciliation",
                 "core.cache.cleanup": "Purge",
                 "covers.audit": "Vérification des couvertures",
                 "languages.audit": "Vérification des langues",
@@ -801,160 +738,11 @@ class MainWindow(Adw.ApplicationWindow):
                     and getattr(self, "_identity_context_generation", None) == scope["generation"]
                 )
 
-            inspector = (LocalInspectionController(parent=self, Gtk=Gtk, Adw=Adw, Pango=Pango,
-                                                   GLib=GLib, alive=result_alive)
-                         if getattr(info, "id", None) == "library.reconciliation.audit" else None)
-            inspection_row = None
-            last_report_row = None
-            if inspector is not None:
-                # A previous partial audit is not the current inspection:
-                # give each its own status line and independent controls.
-                last_report_row = Adw.ActionRow()
-                last_report_row.set_title("Dernière analyse : aucune")
-                last_report_row.set_subtitle("Aucun rapport local consultable.")
-                group.add(last_report_row)
-                # The previous audit may be incomplete while a *new* private
-                # case inspection is running. These are different operations:
-                # never put their competing status/cancel widgets on one row.
-                inspection_row = Adw.ActionRow()
-                inspection_row.set_title("Inspection détaillée des cas")
-                inspection_row.set_subtitle(
-                    "À ouvrir depuis les résultats · vérification locale distincte."
-                )
-                group.add(inspection_row)
             result_view = MaintenanceResultView(
                 Gtk=Gtk, Adw=Adw, Pango=Pango, parent=self,
-                row=last_report_row if last_report_row is not None else row,
-                title=info.title, alive=result_alive, inspector=inspector,
-                inspection_row=inspection_row,
+                row=row, title=info.title, alive=result_alive,
             )
             self._maintenance_result_views.append(result_view)
-            if is_reconciliation:
-                saved = getattr(self, "_maintenance_reconciliation_report", None)
-                current_scope = reconciliation_scope()
-                if (type(saved) is dict and saved.get("scope") == current_scope
-                        and type(saved.get("text")) is str):
-                    line_scope.update(
-                        active=True, identity=current_scope[1],
-                        generation=current_scope[2],
-                    )
-                    result_view.restore_text(
-                        saved["text"], state=saved.get("state"),
-                    )
-                else:
-                    # No fallback to a report from another identity/context.
-                    self._maintenance_reconciliation_report = None
-                live = getattr(self, "_maintenance_reconciliation_run", None)
-                if type(live) is dict:
-                    old_control = live.get("control")
-                    if (live.get("scope") != current_scope or old_control is None
-                            or old_control.cancelled()):
-                        if old_control is not None:
-                            old_control.cancel()
-                        self._maintenance_reconciliation_run = None
-                    elif line_feedback is not None:
-                        line_scope.update(
-                            active=True, identity=current_scope[1],
-                            generation=current_scope[2],
-                        )
-                        live_ticket = line_feedback.begin()
-                        line_feedback.confirmation(live_ticket)
-                        line_feedback.running(live_ticket)
-                        live["progress_target"] = (line_feedback, live_ticket)
-                        live["view"] = result_view
-                        live["controls"] = (active_cancel, cancel, run)
-                        active_cancel.update(control=old_control, ticket=live_ticket)
-                        cancel.set_visible(True)
-                        cancel.set_sensitive(True)
-                        run.set_sensitive(False)
-
-            def update_readiness(*, button=run, action=row, info=info,
-                                 scope=readiness, local_gate=can_check_readiness):
-                if not local_gate or not scope["active"] or self._closed:
-                    return
-                current = self.service.current_identity
-                expected_identity = current.identity_id if current is not None else None
-                generation = getattr(self, "_identity_context_generation", None)
-                captured_service = self.service
-                captured_storage = self.service.storage
-                captured_config = self.service.config
-                captured_database_path = str(captured_storage.path)
-                token = object()
-                scope["token"] = token
-                scope["status"] = "initializing"
-                button.set_sensitive(False)
-                action.set_subtitle("Vérification de la disponibilité locale…")
-
-                def read():
-                    from cifereca.core.library_reconciliation_readiness import (
-                        local_reconciliation_readiness,
-                    )
-                    return local_reconciliation_readiness(self.service, expected_identity)
-
-                def current_scope():
-                    now = self.service.current_identity
-                    return (scope["active"] and scope["token"] is token
-                            and not self._closed
-                            and self.service is captured_service
-                            and self.service.storage is captured_storage
-                            and self.service.config is captured_config
-                            and str(captured_storage.path) == captured_database_path
-                            and (now.identity_id if now is not None else None) == expected_identity
-                            and getattr(self, "_identity_context_generation", None) == generation)
-
-                def apply(report):
-                    if not current_scope():
-                        return
-                    labels = {
-                        "local_ready": "Prêt pour l’analyse hors réseau · synchronisation fournisseur non requise.",
-                        "identity_missing": "Choisissez une identité avant de réconcilier.",
-                        "identity_not_active": "L’identité active a changé ; actualisez les outils.",
-                        "identity_configuration": "Configuration locale des identités indisponible.",
-                        "storage_initializing": "Initialisation de la bibliothèque locale en cours…",
-                        "storage_invalid": "Fichier de base locale non utilisable.",
-                        "migration_pending": "Migration locale en cours : analyse momentanément indisponible.",
-                        "storage_unchecked": "État du stockage non vérifiable : tentative contrôlée possible.",
-                        "migration_unchecked": "Migration non vérifiable : tentative contrôlée possible.",
-                        "configuration_unchecked": "Configuration non vérifiable : tentative contrôlée possible.",
-                    }
-                    status = getattr(report, "status", "indeterminate")
-                    reason = getattr(report, "reason", "storage_unchecked")
-                    enabled = bool(getattr(report, "enabled", True))
-                    if status not in ("ready_offline", "initializing", "blocked",
-                                      "temporarily_busy", "indeterminate"):
-                        status, reason, enabled = "indeterminate", "storage_unchecked", True
-                    scope["status"] = status
-                    subtitle = labels.get(reason, labels["storage_unchecked"])
-                    action.set_subtitle(subtitle)
-                    button.set_sensitive(enabled)
-                    if hasattr(button, "set_tooltip_text"):
-                        button.set_tooltip_text(subtitle)
-                    # Keep this timer light: each retry dispatches a single
-                    # worker check. GTK never queries SQLite or provider APIs.
-                    if (not enabled and status in ("initializing", "temporarily_busy")
-                            and scope["timer"] is None
-                            and hasattr(GLib, "timeout_add_seconds")):
-                        def retry():
-                            scope["timer"] = None
-                            if current_scope():
-                                update_readiness(button=button, action=action,
-                                                 info=info, scope=scope,
-                                                 local_gate=local_gate)
-                            return False
-                        scope["timer"] = GLib.timeout_add_seconds(3, retry)
-
-                def failed(_error):
-                    # Unknown conditions must not strand the user indefinitely.
-                    from cifereca.core.library_reconciliation_readiness import (
-                        ReconciliationReadiness,
-                    )
-                    apply(ReconciliationReadiness("indeterminate", "storage_unchecked"))
-
-                self.runner.submit(
-                    "État local de la réconciliation", read, apply, failed,
-                    control=button, priority=TaskPriority.MAINTENANCE,
-                    kind="maintenance-plan",
-                )
 
             def request_cancel(_cancel_button, cancellation_state=active_cancel,
                                feedback=line_feedback):
@@ -970,30 +758,18 @@ class MainWindow(Adw.ApplicationWindow):
             def prepare(
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
-                feedback=line_feedback, progress_scope=line_scope, result_view=result_view,
-                local_gate=can_check_readiness, readiness_scope=readiness,
+                feedback=line_feedback, progress_scope=line_scope,
+                result_view=result_view,
             ):
                 if self._closed or _button.get_root() is None:
                     return
-                if (getattr(meta, "id", None) == "library.reconciliation.audit"
-                        and getattr(self, "_maintenance_reconciliation_run", None) is not None):
-                    return  # No overlapping read-only audit attempts.
-                if local_gate and (not readiness_scope["active"] or
-                                   readiness_scope["status"] in (
-                                       "initializing", "temporarily_busy", "blocked"
-                                   )):
-                    return
-                # Keep the previous, already published reconciliation report
-                # visible while a new attempt is planned/runs/cancels.
-                if getattr(meta, "id", None) != "library.reconciliation.audit":
-                    result_view.clear()
+                result_view.clear()
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
                 # Each enabled line owns safe, literal error wording. Never
                 # display provider exceptions, which may contain private paths.
                 preview_error = {
-                    "library.reconciliation.audit": "Préparation de la réconciliation impossible.",
                     "covers.audit": "Analyse des couvertures impossible.",
                     "languages.audit": "Analyse des langues impossible.",
                     "library.integrity.audit": "Préparation de l’intégrité impossible.",
@@ -1002,7 +778,6 @@ class MainWindow(Adw.ApplicationWindow):
                     "library.duplicates.cleanup": "Analyse des doublons impossible.",
                 }.get(getattr(meta, "id", None), "Analyse des caches impossible.")
                 execution_error = {
-                    "library.reconciliation.audit": "Réconciliation locale impossible.",
                     "covers.audit": "Vérification des couvertures impossible.",
                     "languages.audit": "Vérification des langues impossible.",
                     "library.integrity.audit": "Audit d’intégrité impossible.",
@@ -1018,17 +793,6 @@ class MainWindow(Adw.ApplicationWindow):
                 if feedback is not None and not feedback.valid(ticket):
                     return
                 cancellation_state["ticket"] = ticket
-
-                def check_local_gate(callback):
-                    if local_gate:
-                        from cifereca.core.library_reconciliation_readiness import (
-                            local_reconciliation_readiness,
-                        )
-                        if not local_reconciliation_readiness(
-                            self.service, context.identity_id,
-                        ).enabled:
-                            raise RuntimeError("Réconciliation locale non prête.")
-                    return callback()
 
                 def maintenance_worker(callback, failure_message, worker_cancel_control=None):
                     # TaskRunner records errors in global activity before the
@@ -1057,7 +821,6 @@ class MainWindow(Adw.ApplicationWindow):
                 # The worker emits *only bounded counters* to this Core-owned
                 # row. Provider prose is discarded: no book title, path,
                 # account ID or URL can reach GTK via a progress message.
-                # Reconciliation already owns a separate progress protocol.
                 def preview_progress(current, total, _private_message):
                     if feedback is None or ticket is None:
                         return
@@ -1073,8 +836,7 @@ class MainWindow(Adw.ApplicationWindow):
                     previous_control.cancel()
                 planning_control = MaintenanceCancelControl(
                     owner_closed=lambda: self._closed,
-                    on_progress=(preview_progress if feedback is not None
-                                 and not is_reconciliation else None),
+                    on_progress=(preview_progress if feedback is not None else None),
                 )
                 cancellation_state["control"] = planning_control
                 can_cancel_preview = getattr(meta, "cancellable", False) is True
@@ -1124,11 +886,6 @@ class MainWindow(Adw.ApplicationWindow):
                     if meta.scope == "identity" and identity is not None:
                         scope += f" · {identity.label}"
                     sections = [
-                        *(
-                            ["L’analyse n’a pas encore commencé. Cliquez sur « Exécuter » pour "
-                             "lire les preuves SQLite et vérifier les fichiers locaux en lecture seule."]
-                            if getattr(meta, "id", None) == "library.reconciliation.audit" else []
-                        ),
                         "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
                         "Changements prévus :\n" + (
                             "\n".join("• " + str(value) for value in plan.changes[:20])
@@ -1192,21 +949,9 @@ class MainWindow(Adw.ApplicationWindow):
                         if feedback is not None:
                             feedback.running(ticket)
 
-                        reconciliation = getattr(meta, "id", None) == "library.reconciliation.audit"
-                        run_state = ({
-                            "scope": reconciliation_scope(),
-                            "progress_target": (feedback, ticket),
-                            "view": result_view,
-                            "controls": (cancellation_state, cancel_button, _button),
-                        } if reconciliation else None)
-
                         def report_progress(current, total, message):
-                            target = (run_state.get("progress_target")
-                                      if run_state is not None else (feedback, ticket))
-                            if target is not None and target[0] is not None:
-                                target[0].report(
-                                    target[1], current=current, total=total, message=message,
-                                )
+                            if feedback is not None:
+                                feedback.report(ticket, current=current, total=total, message=message)
 
                         worker_control = MaintenanceCancelControl(
                             # Core's broker already checks the private
@@ -1218,9 +963,6 @@ class MainWindow(Adw.ApplicationWindow):
                             on_progress=report_progress if feedback is not None else None,
                         )
                         cancellation_state["control"] = worker_control
-                        if run_state is not None:
-                            run_state["control"] = worker_control
-                            self._maintenance_reconciliation_run = run_state
                         can_cancel = getattr(meta, "cancellable", False) is True
                         cancel_button.set_visible(can_cancel)
                         cancel_button.set_sensitive(can_cancel)
@@ -1240,54 +982,6 @@ class MainWindow(Adw.ApplicationWindow):
                             return feedback is None or feedback.valid(ticket)
 
                         def completed(result) -> None:
-                            if run_state is not None:
-                                # One terminal receipt, owned by the session
-                                # rather than the possibly detached GTK row.
-                                if self._maintenance_reconciliation_run is not run_state:
-                                    return
-                                self._maintenance_reconciliation_run = None
-                                # Reset current buttons after an explicit
-                                # cancel too; scope changes never reenable
-                                # controls for an invalidated identity.
-                                if reconciliation_scope() != run_state["scope"]:
-                                    return
-                                controls = run_state.get("controls")
-                                if controls is not None:
-                                    controls[0]["control"] = None
-                                    if not self._closed and controls[2].get_root() is not None:
-                                        controls[1].set_visible(False)
-                                        controls[2].set_sensitive(True)
-                                if worker_control.cancelled():
-                                    return
-                                target = run_state.get("progress_target")
-                                if target is not None and target[0] is not None:
-                                    target[0].finish(
-                                        target[1], "success" if result.ok else "error",
-                                    )
-                                from cifereca.gui.maintenance_result_view import result_text
-                                safe_text = result_text(result)
-                                state = (
-                                    "incomplète" if safe_text.startswith("Analyse incomplète.")
-                                    else "terminée" if getattr(result, "ok", None) is True
-                                    else "indisponible"
-                                )
-                                self._maintenance_reconciliation_report = {
-                                    "scope": run_state["scope"], "text": safe_text,
-                                    "state": state,
-                                }
-                                view = run_state.get("view")
-                                if view is not None and view.alive():
-                                    view.publish(result)
-                                    # A refresh must not force an unexpected
-                                    # dialog over a newly navigated page.
-                                    if view is result_view:
-                                        view.open(None)
-                                self._activity_result(
-                                    result.summary or ("Analyse terminée" if result.ok else "Analyse incomplète"),
-                                    success=bool(result.ok),
-                                    persistent=not bool(result.ok),
-                                )
-                                return
                             # Other Maintenance tools remain widget-scoped.
                             if feedback is not None and worker_control.cancelled():
                                 failed(MaintenanceCancelledError("Opération de maintenance annulée"))
@@ -1304,36 +998,6 @@ class MainWindow(Adw.ApplicationWindow):
                             )
 
                         def failed(exc) -> None:
-                            if run_state is not None:
-                                if self._maintenance_reconciliation_run is not run_state:
-                                    return
-                                self._maintenance_reconciliation_run = None
-                                if reconciliation_scope() != run_state["scope"]:
-                                    return
-                                controls = run_state.get("controls")
-                                if controls is not None:
-                                    controls[0]["control"] = None
-                                    if not self._closed and controls[2].get_root() is not None:
-                                        controls[1].set_visible(False)
-                                        controls[2].set_sensitive(True)
-                                if worker_control.cancelled():
-                                    return
-                                target = run_state.get("progress_target")
-                                if target is not None and target[0] is not None:
-                                    target[0].finish(
-                                        target[1], "cancelled" if isinstance(
-                                            exc, MaintenanceCancelledError
-                                        ) else "error",
-                                    )
-                                # Keep the previous valid result, never expose
-                                # an arbitrary plugin/runtime exception.
-                                self.show_error(
-                                    "Analyse interrompue." if isinstance(
-                                        exc, MaintenanceCancelledError
-                                    ) else execution_error,
-                                    meta.title,
-                                )
-                                return
                             if not finish_maintenance():
                                 return
                             if feedback is not None:
@@ -1357,9 +1021,9 @@ class MainWindow(Adw.ApplicationWindow):
                         self.runner.submit(
                             meta.title,
                             lambda: maintenance_worker(
-                                lambda: check_local_gate(lambda: execute_maintenance_tool(
+                                lambda: execute_maintenance_tool(
                                     service, context, plan, worker_control, destructive=destructive,
-                                )),
+                                ),
                                 execution_error, worker_control,
                             ),
                             completed,
@@ -1391,9 +1055,9 @@ class MainWindow(Adw.ApplicationWindow):
                 self.runner.submit(
                     f"Analyse : {meta.title}",
                     lambda: maintenance_worker(
-                        lambda: check_local_gate(lambda: preview_maintenance_tool(
+                        lambda: preview_maintenance_tool(
                             service, context, destructive=destructive, control=planning_control,
-                        )),
+                        ),
                         preview_error, planning_control,
                     ),
                     present_preview,
@@ -1403,8 +1067,6 @@ class MainWindow(Adw.ApplicationWindow):
                     kind="maintenance-plan",
                 )
             run.connect("clicked", prepare)
-            if can_check_readiness:
-                update_readiness()
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
         return sync_controller.run_opening_sync(self, control, deep=deep)

@@ -157,6 +157,14 @@ Références techniques : [format et verrous WAL SQLite](https://sqlite.org/walf
 [VFS APSW](https://rogerbinns.github.io/apsw/vfs.html).
 Le mode exclusif concerne exclusivement les copies privées en mémoire.
 
+## Statut actuel (30/10/2026)
+
+La section suivante documente le **contrat historique de lecture**, conservé
+uniquement pour compatibilité. Le tool Maintenance
+`maintenance.audit.reconciliation` a été retiré en 0.2.10 : ne plus le présenter
+comme une entrée disponible dans les outils ou comme le moteur Sync.
+Les audits locaux en lecture seule et les garanties d’intégrité restent valables.
+
 ## Facette publique de lecture pour Maintenance
 
 Le broker optionnel `library.reconciliation.read` expose seulement

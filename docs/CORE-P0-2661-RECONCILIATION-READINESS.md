@@ -1,3 +1,5 @@
+> **Archivé — 30/10/2026 (#3185).** Le tool Maintenance « Réconciliation de bibliothèque » et sa readiness dédiée ont été retirés. Ce document décrit l’ancien parcours uniquement ; il ne définit plus une interface ou un prérequis de Sync. Les contrôles de présence, les audits d’intégrité et la lecture des preuves SQLite conservés par le Core ne sont pas supprimés.
+
 # P0 #2661 — Disponibilité locale de la réconciliation
 
 **Périmètre :** Core/CoreUI, hors réseau, sans mutation et sans réparation.
