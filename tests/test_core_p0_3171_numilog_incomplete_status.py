@@ -30,7 +30,7 @@ def test_unresolved_owned_purchase_never_counts_as_complete(tmp_path, monkeypatc
         )
         result = execute(broker, account.identity_id, "startup")
         assert not result.ok
-        recoverable = reason == "needs_reconciliation"
+        recoverable = reason in {"needs_reconciliation", "purchase_unproven"}
         assert result.facts["status"] == ("failed" if recoverable else "blocked")
         assert result.facts["downloaded"] == 0
         assert result.facts["attempted"] == int(recoverable)
