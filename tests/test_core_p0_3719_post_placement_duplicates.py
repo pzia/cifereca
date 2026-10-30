@@ -264,8 +264,8 @@ def test_stale_checkpoint_is_cleared_only_after_last_present_duplicate_exits(
             "SELECT key FROM metadata WHERE key LIKE "
             "'core.canonical-dedup-pending.v1.%'",
         ).fetchone()[0]
-        # The second placement has been deindexed, but neither file was
-        # removed and the other profile still contains the same SHA.
+        # Deindex the second placement first, then simulate actual
+        # physical cleanup before the advisory marker is reconciled.
         db.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
                    (second.placement_id,))
     assert store.metadata_get(key) is not None
@@ -276,7 +276,8 @@ def test_stale_checkpoint_is_cleared_only_after_last_present_duplicate_exits(
     )
     assert store.metadata_get(key) is None
     assert rows(store) == (1, 3, 3, 3)
-    assert all(path.read_bytes() == BYTES for path in paths)
+    assert not paths[1].exists()
+    assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
     assert store.placement_get(foreign.placement_id)["state"] == "present"
 
 
