@@ -257,6 +257,42 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             len(row.get("acquisition_statuses", ())) > 1
             for row in exposures_for_loan
         )
+        # Advisory-only, closed vocabulary for a dedicated human review.
+        # These codes are never interpreted as permission to change bindings,
+        # replay an ACSM, or return a license. One Paris loan ID alone cannot
+        # prove that two entries represent the same transaction.
+        reasons: list[str] = []
+        if multiple_items:
+            reasons.append("paris_loan_id_reused")
+        if recorded_profile_conflict:
+            reasons.append("recorded_adobe_profiles_conflict")
+        if loan_reference_disagreement:
+            reasons.append("recorded_adobe_loan_refs_conflict")
+        if inconsistent:
+            reasons.append("source_binding_unverified")
+        if ledger_status_ambiguous:
+            reasons.append("acquisition_receipts_conflict")
+        if configured_vs_recorded_difference:
+            reasons.append("configured_vs_recorded_profile_differs")
+        if shared:
+            reasons.append("multiple_paris_connections")
+        has_recorded_claim = bool(recorded or loan_refs)
+        if has_recorded_claim and origin_resolution == "unknown":
+            reasons.append("historical_adobe_origin_incomplete")
+        if multiple_items or recorded_profile_conflict or loan_reference_disagreement:
+            next_review = "compare_exact_loan_and_adobe_transactions"
+        elif inconsistent:
+            next_review = "inspect_paris_account_binding"
+        elif ledger_status_ambiguous or (
+            has_recorded_claim and origin_resolution == "unknown"
+        ):
+            next_review = "inspect_historical_adobe_inventory"
+        elif configured_vs_recorded_difference:
+            next_review = "compare_configured_vs_historical_profile"
+        elif shared:
+            next_review = "check_cross_connection_loan_visibility"
+        else:
+            next_review = "none"
         groups.append({
             "loan_id": loan_id,
             "multiple_connections": shared,
@@ -266,11 +302,9 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             "configured_vs_recorded_difference": configured_vs_recorded_difference,
             "adept_loan_reference_disagreement": loan_reference_disagreement,
             "origin_resolution": origin_resolution,
-            "requires_attention": (
-                shared or inconsistent or profiles_in_conflict
-                or ledger_status_ambiguous or loan_reference_disagreement
-                or origin_resolution == "conflicting_records"
-            ),
+            "review_reasons": reasons,
+            "next_read_only_review": next_review,
+            "requires_attention": bool(reasons) or profiles_in_conflict,
             "ledger_status_ambiguous": ledger_status_ambiguous,
             "multiple_item_ids": multiple_items,
             "exposures": exposures_for_loan,
