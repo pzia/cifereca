@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.paris",
-    "version": "1.2.36",
+    "version": "1.2.37",
     "name": "Bibliothèques de Paris",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
@@ -21,7 +21,7 @@
           "version": ">=1,<2"
         }
       ],
-      "version": "1.2.36",
+      "version": "1.2.37",
       "help_text": "Recherche et compte lecteur des Bibliothèques de Paris : emprunts, réservations et récupération des prêts numériques PNB. Les redirections Eden Livres/Cantook observées sont prises en charge. Le traitement ACSM nécessite un profil ADE autorisé lié à votre identité ; ce plugin ne choisit pas ce profil à votre place. Les résultats du catalogue numérique publient un `AcquisitionOfferSet` uniquement à partir de formats fichier explicitement attestés ; les codes de notice MONE/MONO/EXTL restent de la provenance bibliographique et ne deviennent jamais des formats. Accepte les destinations PNB ACS4 exactes acs4.edelivres.fr et acs4.cantook.net en HTTPS/443 ; chaque saut reste contrôlé. Au niveau trace, journalise hôte cible, statut et durée sans URL signée ; un refus persistant nécessite un diagnostic, pas une répétition aveugle. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Chaque emprunt et retour fournisseur dispose de traces structurelles corrélées, sans URLs signées ; voir la recette deux tests Paris livrée. Les tentatives d'emprunt PNB publient un état de phase expurgé (holdings, découverte du lien, redirection, confirmation) pour diagnostiquer les échecs sans URL signée ni identifiant fournisseur. Un compte explicitement désactivé, bloqué, suspendu ou expiré est arrêté dès la connexion, avant synchronisation et acquisition ADEPT. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
       "capabilities": [
         "catalog.search",
