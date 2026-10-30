@@ -146,56 +146,53 @@ def source_refresh_due(
 
 
 def inventory_source_eligible(service: Any, account: Any) -> bool:
-    """Check one exact private-inventory binding, independently of provider.
+    """Admit an inventory refresh using the SAME private source binding as Sync.
 
-    This passive check grants neither acquisition nor a schedule. A live
-    profile, one account, one enabled persisted connection and one connected
-    personal-library session must all agree on the same opaque coordinates.
-    No selected UI identity, public result or backup capability is authority.
+    Scheduling is a passive observation only: it never grants acquisition.
+    Keep its explicit persisted enablement check and strict nonempty schedule
+    coordinates, then delegate profile/account/session ownership to the
+    provider-neutral lease validator shared with source Sync and opening.
     """
     try:
-        provider = getattr(account, "provider_id", None)
-        identity = getattr(account, "identity_id", None)
-        credential = getattr(account, "credential_id", None)
-        account_id = getattr(account, "unique_id", None)
-        if not all(type(value) is str and value.strip() and "\x00" not in value
-                   for value in (provider, identity, credential, account_id)):
+        scope = (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+        if not all(
+            type(value) is str and value.strip() and "\x00" not in value
+            for value in scope
+        ):
             return False
-        accounts = [
-            row for row in service.accounts
-            if getattr(row, "provider_id", None) == provider
-            and getattr(row, "credential_id", None) == credential
-        ]
-        if len(accounts) != 1 or accounts[0] is not account:
-            return False
-        if (service.identity_by_id(identity) is None
-                or service.sync_source_enabled(account) is not True):
-            return False
+
+        # An absent legacy schedule switch is not new consent. A malformed
+        # explicit preference must deny the automatic private network read.
         from ..brokers import SynchronizationBrokerImpl
         source_id = SynchronizationBrokerImpl._source_id(account)
         enabled = service.storage.metadata_get("sync.source.enabled." + source_id)
         if enabled is not None and enabled not in {"1", "true", "yes", "on"}:
             return False
-        if service.storage.identity_for_connection(provider, credential) != identity:
-            return False
-        bindings = [
-            row for row in service.storage.provider_connections(identity_id=identity)
-            if row.get("provider_id") == provider
-            and row.get("credential_id") == credential
-        ]
-        if len(bindings) != 1 or bindings[0].get("enabled") is not True:
-            return False
+
         sessions = [
             session for session in service._sessions.values()
-            if getattr(session, "provider_id", None) == provider
-            and getattr(session, "credential_id", None) == credential
+            if getattr(session, "provider_id", None) == scope[1]
+            and getattr(session, "credential_id", None) == scope[2]
         ]
-        if len(sessions) != 1 or getattr(sessions[0], "connected", False) is not True:
+        if len(sessions) != 1:
             return False
-        caps = getattr(sessions[0], "capabilities", None)
-        return getattr(caps, "personal_library", False) is True
+        session = sessions[0]
+        if getattr(getattr(session, "capabilities", None),
+                   "personal_library", None) is not True:
+            return False
+
+        from .private_inventory_binding import private_inventory_binding_current
+        from .source_context import source_context_epoch
+        return private_inventory_binding_current(
+            service, account, session, scope=scope,
+            epoch=source_context_epoch(service),
+        )
     except Exception:
-        # Permission failures never grant automatic private network access.
+        # Never grant a scheduled private read when persistence or the live
+        # source context cannot be proved.
         return False
 
 
