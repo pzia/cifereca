@@ -89,6 +89,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             # profile or token before the operation failed. It is diagnostic
             # status, not a successful historical fulfillment claim. Never
             # let it create or conflict with recorded origin evidence.
+            # A receipt with an unknown status must remain explicitly
+            # ambiguous even if another receipt for the same scope completed.
             if status != "complete":
                 return
             metadata = row.get("metadata")
@@ -255,6 +257,7 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             origin_resolution = "unknown"
         ledger_status_ambiguous = any(
             len(row.get("acquisition_statuses", ())) > 1
+            or "unknown" in row.get("acquisition_statuses", ())
             for row in exposures_for_loan
         )
         # Advisory-only, closed vocabulary for a dedicated human review.
