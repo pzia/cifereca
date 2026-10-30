@@ -1,0 +1,74 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.reference",
+    "version": "0.1.0",
+    "name": "Reference Provider (synthetic)",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4.1,<2"
+  },
+  "plugins": [
+    {
+      "id": "provider.reference",
+      "type": "provider.library",
+      "entrypoint": "cifereca_reference:PLUGIN",
+      "version": "0.1.0",
+      "display_name": "Reference Provider — fictif",
+      "description": "Fournisseur fictif hors réseau pour la conformité de synchronisation canonique.",
+      "priority": 95,
+      "enabled_by_default": false,
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "scenario": {
+            "type": "string",
+            "enum": [
+              "mixed",
+              "empty",
+              "bulk"
+            ],
+            "default": "mixed",
+            "title": "Scénario synthétique"
+          },
+          "accounts": {
+            "type": "string",
+            "enum": [
+              "one",
+              "two"
+            ],
+            "default": "two",
+            "title": "Nombre de comptes fictifs"
+          },
+          "bulk_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 350,
+            "title": "Ressources du scénario bulk"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50,
+            "title": "Taille de page"
+          }
+        }
+      },
+      "help_text": "EXCLUSIVEMENT POUR TESTS. Comptes et EPUB locaux entièrement fictifs, aucun endpoint distant, aucun paiement ni authentification réelle. Source désactivée par défaut. Le Core reste l'unique propriétaire des consentements, droits, SHA, Placements, OriginLinks et synchronisations.",
+      "capabilities": [
+        "catalog.personal",
+        "acquisition.download"
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [
+        "identities"
+      ],
+      "requires_contracts": [],
+      "system_requires": []
+    }
+  ]
+}
