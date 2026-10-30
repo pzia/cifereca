@@ -145,14 +145,13 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
 
     if not bound():
         raise ProviderCapabilityError("kobo_candidate_owner_changed")
-    # An opaque offer string alone cannot bootstrap a purchase: recheck the
-    # attested personal manifest before initiating another private POST.
+    # An opaque offer string alone cannot bootstrap a file: recheck the
+    # exact scoped personal manifest before initiating another private POST.
     inventory = session.rights_observation_snapshot(account)
     if not bound():
         raise ProviderCapabilityError("kobo_candidate_owner_changed")
     right = inventory.exact(edition_id, right_id, "purchase")
-    if (right is None or right.state != "active"
-            or right.provider_attested is not True):
+    if (right is None or right.provider_attested is not True):
         raise ProviderCapabilityError("kobo_candidate_purchase_unobserved")
     if right.delivery == "unavailable":
         raise ProviderCapabilityError("kobo_candidate_delivery_unavailable")

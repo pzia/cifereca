@@ -69,6 +69,12 @@ def test_startup_records_exact_existing_gate_and_keeps_download_decision(case, c
             status="attention_required",
         ))
     before = (storage.acquisitions(), storage.placements(), rights_scope(storage))
+    # A missing or changed file no longer vetoes a separately consented
+    # provider offer. Test a safe failed GET, not an obsolete zero-GET rule.
+    if damage in {"missing", "changed_bytes"}:
+        case.session.download_direct = lambda *_a: (_ for _ in ()).throw(
+            RuntimeError("synthetic provider delivery unavailable")
+        )
     caplog.set_level(logging.INFO, logger="cifereca")
     with diagnostic_task_scope():
         task = diagnostic_task_reference()
@@ -83,7 +89,8 @@ def test_startup_records_exact_existing_gate_and_keeps_download_decision(case, c
     assert (detail["identity_id"], detail["credential_id"], detail["account_id"]) == (
         case.account.identity_id, case.account.credential_id, case.account.unique_id,
     )
-    assert result.facts["attempted"] == result.facts["downloaded"] == 0
+    assert result.facts["downloaded"] == 0
+    assert result.facts["attempted"] == int(damage in {"missing", "changed_bytes"})
     assert result.ok == (damage in {"none", "nested"})
     assert (storage.acquisitions(), storage.placements(), rights_scope(storage)) == before
     if damage in {"none", "nested", "changed_bytes", "missing"}:

@@ -192,7 +192,7 @@ def test_stale_file_does_not_count_as_presence_or_initiate_download():
 ])
 def test_unconfirmed_or_inactive_right_cannot_request_download(state, evidence, expected):
     snap, key = source(state=state, evidence_kind=evidence,
-                     delivery="available" if evidence != "legacy_unverified" and state == "active" else "unknown")
+                     delivery="available" if evidence == "provider_response" and state == "active" else "unknown")
     result = plan(snap, scans=(scan("A"),), consent=(key,))
     assert result.decisions[0].state == expected
     assert not result.acquisition_authorized

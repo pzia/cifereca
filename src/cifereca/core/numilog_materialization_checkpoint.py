@@ -101,19 +101,28 @@ def _check_resume(value, code):
         raise NumilogIndexResumeRejected(code)
 
 
-def _record(service, item, target_dir, identity_id, account_id, fingerprint):
+def _record(service, item, target_dir, identity_id, account_id, fingerprint, *, recovery=False):
     """Caller holds the global acquisition lock and has rechecked admission."""
     digest, size, absolute = fingerprint
-    acquisition_id = stable_id('numilog-materialization', identity_id,
-                               item.source_credential, account_id, item.record_id)
+    from .numilog_recovery import recovery_id, recovery_gate
+    acquisition_id = (recovery_id(identity_id, item.source_credential, account_id, item.record_id)
+        if recovery else stable_id('numilog-materialization', identity_id,
+                               item.source_credential, account_id, item.record_id))
     # Existing receipts (including failures/completed) are never overwritten.
     _require(service.storage.acquisition_get(acquisition_id) is None)
     evidence = service.storage.numilog_purchase_preflight_evidence(
         identity_id=identity_id, credential_id=item.source_credential,
         account_id=account_id, item_id=item.record_id,
     )
-    _require(evidence.get('acquisitions') == []
-             and evidence.get('placement_conflict') is False)
+    if recovery:
+        _require(recovery_gate(
+            service.storage, identity_id=identity_id,
+            credential_id=item.source_credential, account_id=account_id,
+            item_id=item.record_id,
+        ) == 'recoverable')
+    else:
+        _require(evidence.get('acquisitions') == []
+                 and evidence.get('placement_conflict') is False)
     # A placement might have appeared after the earlier locked admission
     # snapshot. Never persist an index-pending receipt over a competing local
     # Numilog placement, including one without an acquisition ledger row.
@@ -156,7 +165,7 @@ def _record(service, item, target_dir, identity_id, account_id, fingerprint):
     return acquisition_id
 
 
-def record(service, item, path, target_dir, identity_id, account_id, *, validate):
+def record(service, item, path, target_dir, identity_id, account_id, *, validate, recovery=False):
     try:
         fingerprint = _read_hash_within(str(path), (target_dir,))
         _require(fingerprint is not None)
@@ -168,7 +177,7 @@ def record(service, item, path, target_dir, identity_id, account_id, *, validate
     # Recheck source/rights after hashing, without replacing their precise code.
     validate()
     try:
-        return _record(service, item, target_dir, identity_id, account_id, fingerprint)
+        return _record(service, item, target_dir, identity_id, account_id, fingerprint, recovery=recovery)
     except Cancelled:
         raise
     except Exception:
@@ -176,14 +185,19 @@ def record(service, item, path, target_dir, identity_id, account_id, *, validate
 
 
 def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, verify_file=True):
-    _check_resume(type(acquisition_id) is str and re.fullmatch(r'numilog-materialization:[0-9a-f]{32}', acquisition_id), "invalid_target")
+    _check_resume(type(acquisition_id) is str and re.fullmatch(
+        r'numilog-materialization(?:-recovery)?:[0-9a-f]{32}', acquisition_id), "invalid_target")
     row = service.storage.acquisition_get(acquisition_id)
     _check_resume(type(row) is dict and row.get('provider_id') == 'numilog', "receipt_missing")
     identity_id, credential, account, item = (row.get(k) for k in
         ('identity_id', 'credential_id', 'account_id', 'item_id'))
     _check_resume(all(type(v) is str and v for v in (identity_id, credential, account, item)), "receipt_scope_invalid")
     _check_resume(_scoped_record_id(item, credential) is not None, "receipt_scope_invalid")
-    _check_resume(acquisition_id == stable_id('numilog-materialization', identity_id, credential, account, item), "receipt_scope_invalid")
+    from .numilog_recovery import recovery_id
+    is_recovery = acquisition_id.startswith('numilog-materialization-recovery:')
+    expected_id = (recovery_id(identity_id, credential, account, item)
+                   if is_recovery else stable_id('numilog-materialization', identity_id, credential, account, item))
+    _check_resume(acquisition_id == expected_id, "receipt_scope_invalid")
     if selected:
         _check_resume(getattr(service.current_identity, 'identity_id', None) == identity_id, "selected_identity_changed")
     if expected is not None:
@@ -198,10 +212,16 @@ def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, 
         identity_id=identity_id, credential_id=credential, account_id=account, item_id=item,
     )
     ledgers = evidence.get('acquisitions')
-    _check_resume(type(ledgers) is list and len(ledgers) == 1
-             and ledgers[0].get('acquisition_id') == acquisition_id
-             and ledgers[0].get('identity_id') == identity_id
-             and ledgers[0].get('account_id') == account, "receipt_conflict")
+    _check_resume(type(ledgers) is list and len(ledgers) <= (2 if is_recovery else 1)
+             and any(r.get('acquisition_id') == acquisition_id
+                     and r.get('identity_id') == identity_id
+                     and r.get('account_id') == account for r in ledgers)
+             and all(r.get('identity_id') == identity_id
+                     and r.get('account_id') == account
+                     and r.get('item_id') == item
+                     and (r.get('acquisition_id') == acquisition_id or
+                          (is_recovery and r.get('status') == 'complete'))
+                     for r in ledgers), "receipt_conflict")
 
     _check_resume(not service.storage.metadata_get('identity-directory-migration-v1'), "directory_migration_pending")
     roots = _identity_root(service, identity_id)
@@ -344,8 +364,16 @@ def target_for_entry(service, entry):
             account_id=right['account_id'], item_id=right['item_id'])
         _require(len(evidence['entitlements']) == 1
                  and right.get('metadata', {}).get('source') == 'numilog.authenticated_library')
-        aid = stable_id('numilog-materialization', owner, right['credential_id'],
-                        right['account_id'], right['item_id'])
+        # Recovery keeps the legacy complete receipt intact. Its own
+        # index-pending receipt is the actionable offline resume target.
+        from .numilog_recovery import recovery_id
+        recovery = recovery_id(
+            owner, right['credential_id'], right['account_id'], right['item_id'],
+        )
+        aid = recovery if service.storage.acquisition_get(recovery) is not None else (
+            stable_id('numilog-materialization', owner, right['credential_id'],
+                      right['account_id'], right['item_id'])
+        )
         row, _path = _checked_receipt(service, aid, selected=True, verify_file=False)
         _require(row['status'] == 'attention_required' and row['metadata']['phase'] == _PENDING)
         return _resume_target(row)

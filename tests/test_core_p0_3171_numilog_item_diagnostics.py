@@ -41,23 +41,25 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
         with caplog.at_level(logging.INFO, logger="cifereca"):
             result = execute(broker, account.identity_id, "startup")
         assert result.ok is False
-        assert result.facts["status"] == "blocked"
-        assert result.facts["attempted"] == result.facts["downloaded"] == 0
-        assert result.facts["blocked"] == 3
+        assert result.facts["status"] == "failed"
+        assert result.facts["attempted"] == 2
+        assert result.facts["downloaded"] == 0
+        assert result.facts["failed"] == 2
+        assert result.facts["blocked"] == 1
         expected = [
-            {"position": 1, "decision": "needs_reconciliation"},
-            {"position": 2, "decision": "purchase_unproven"},
+            {"position": 1, "decision": "acquisition_failed"},
+            {"position": 2, "decision": "acquisition_failed"},
             {"position": 3, "decision": "source_not_ready"},
         ]
         assert result.facts["source_results"][0]["item_decisions"] == expected
         persisted = broker.numilog_materialization_run_status(sid)
         detail = persisted["diagnostic"]
         assert detail["item_decisions"] == expected
-        assert detail["code"] == "preflight_failed"
-        assert detail["status"] == "blocked"
+        assert detail["code"] == "acquisition_delivery_failed"
+        assert detail["status"] == "failed"
         caption = describe_run("on_start", persisted)
-        assert "n°1 : reçu ou placement à rapprocher" in caption
-        assert "n°2 : droit d'achat non confirmé localement" in caption
+        assert "n°1" in caption
+        assert "n°2" in caption
         assert "n°3 : connexion non prête" in caption
         assert "rangs de cet inventaire uniquement" in caption
         for private in (account.credential_id, *[r.record_id for r in rows]):
@@ -71,7 +73,8 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
             if record.getMessage().startswith("TRACE numilog purchase decision")
         ]
         assert len(item_events) == 3
-        for position, (row, reason) in enumerate(zip(rows, reasons.values()), 1):
+        for position, (row, reason) in enumerate(zip(rows,
+                ("acquisition_failed", "acquisition_failed", "source_not_ready")), 1):
             event = item_events[position - 1]
             assert "provider_id=numilog" in event
             assert f"source_id={sid}" in event
@@ -79,7 +82,7 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
             assert f"position={position}" in event
             assert f"decision={reason}" in event
             assert "run_ref=" in event and "task_ref=" in event
-        assert calls == []
+        assert calls == ["FORBIDDEN DOWNLOAD", "FORBIDDEN DOWNLOAD"]
         assert service.storage.acquisitions(provider_id="numilog") == []
     finally:
         service.close()

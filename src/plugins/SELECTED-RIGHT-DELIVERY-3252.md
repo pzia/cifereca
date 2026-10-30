@@ -20,7 +20,9 @@ session.rights_selected_delivery_offer_snapshot(
 
 L'appelant Core sélectionne **un seul** `SourceKey` après validation
 identité × fournisseur × credential × compte × branche × édition × droit × type
-et **consentement persistant déjà autorisé**. Le booléen
+et **consentement persistant déjà autorisé**. La coordonnée `right_id`
+est une clé opaque de ressource dans le contrat v1, **pas une preuve de droit
+nécessaire pour télécharger** ; la livraison est qualifiée indépendamment. Le booléen
 `explicit_user_action` est un garde défensif d'appel explicite, **pas**
 une attestation de consentement ; l'adaptateur ne lit jamais la base Core.
 
@@ -37,8 +39,8 @@ Les deux renvoient un `ProviderRightsSnapshot` positif, partiel,
 `authorizes_mutation=False` et
 `authorizes_negative_reconciliation=False`, avec au plus une observation.
 L'offre reste `unknown` si la preuve de l'action exécutable n'existe pas ;
-un droit non observé/refus de portée produit une exception, **jamais**
-un droit inventé. Les URLs signées ne sont pas exposées.
+une ressource non identifiée précisément ou un refus de portée produit
+une exception, **jamais** une offre ou un droit inventé. Les URLs signées ne sont pas exposées.
 
 ## Garanties et limites
 
@@ -86,8 +88,8 @@ et **rejoue les contrôles fournisseurs existants** : Numilog
 `library() → download_direct(..., expected_offer_id, expected_identity_id,
   stage_acsm_only=True)`,
 BnF `loans() → download_digital(..., expected_offer_id,
-explicit_user_action=True)`. Un changement de propriétaire, un droit
-disparu ou une offre signée supprimée/refusée arrête la livraison ;
+explicit_user_action=True)`. Un changement de propriétaire, une ressource exacte non retrouvée au nouveau contrôle ou une offre signée
+supprimée/refusée arrête la livraison ;
 aucune autre édition n'est choisie par titre.
 
 **Résultat :** la paire historique `(path, source_url)` est seulement un
@@ -130,8 +132,9 @@ La session Kobo expose désormais **également**
 `rights_selected_delivery_candidate(account, *, edition_id, right_id, kind,
 branch, delivery_offer_id, target_dir, explicit_user_action)` pour les
 achats exacts `personal_manifest`. Ce chemin n'est pas une acquisition
-automatique : Core doit d'abord avoir admis le droit et relu le
-**consentement SQLite exact**, puis choisi un staging de profil neuf.
+automatique : Core doit d'abord avoir admis la ressource/capacité de livraison et relu
+**le consentement de Sync SQLite exact**, puis choisi un staging de profil neuf.
+Le champ `state=unknown` ne constitue pas un veto à cette admission.
 
 La facette relit le manifeste positif de **l'édition sélectionnée**,
 fait un nouveau POST `descriptor` sous identité/credential/compte actuels
@@ -156,8 +159,7 @@ Toute erreur supprime le fichier partiel. Le plugin ne fournit **aucun**
 Core #3171 reste seul responsable de l'inspection structurelle définitive,
 du traitement ADEPT d'un ACSM, de la preuve finale, du rehash du Placement,
 de l'`OriginLink` et de la seconde Sync sans nouveau GET. Les chemins
-KDRM/non HTTP restent **refusés**. Paris reste `state=unknown` tant
-qu'un prêt actif n'est pas prouvé ; aucune promotion automatique.
+KDRM/non HTTP restent **refusés**. Paris conserve `state=unknown` mais projette `delivery=available` uniquement si le prêt DILICOM exact expose son `EbookUrl` authentifié. L'adaptateur offre un préflight sélectionné et un candidat PNB sous staging Core, sans GET pendant l'observation, sans POST d'emprunt implicite, sans URL signée en sortie et sans forger de droit actif. La relecture avant GET refuse une ressource disparue ou un lien absent ; les 403 de livraison sont des échecs de transfert, pas des révocations présumées.
 
 ### Pourquoi différer l'ADEPT Numilog dans la voie canonique
 

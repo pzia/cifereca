@@ -889,10 +889,11 @@ class KoboSession(ProviderSession):
             observed_rights.append(ProviderRightObservation(
                 edition_id=row.record_id, right_id=row.record_id,
                 kind="purchase",
-                # Archive is a library-management/download state, not a
-                # purchase revocation. This row is still positively owned.
-                # An explicit archive blocks delivery, never ownership.
-                state="active",
+                # A missing upstream 'owned' flag is not proof of a right:
+                # personal-library membership identifies this exact file,
+                # and its delivery can still be qualified independently.
+                # Archive limits delivery, never grants or revokes ownership.
+                state="active" if meta.get("owned") is True else "unknown",
                 evidence_kind="provider_response",
                 evidence_ref="kobo.personal_manifest",
                 observed_at=observed,
@@ -991,8 +992,7 @@ class KoboSession(ProviderSession):
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         right = baseline.exact(right_id, right_id, "purchase")
-        if (right is None or right.state != "active"
-                or right.provider_attested is not True):
+        if (right is None or right.provider_attested is not True):
             raise ProviderCapabilityError("kobo_delivery_offer_right_unobserved")
         if right.delivery == "unavailable":
             # Keep the exact positive purchase, but do not POST a descriptor
@@ -1092,8 +1092,7 @@ class KoboSession(ProviderSession):
                 or offer.status != "partial" or offer.coverage != "partial"):
             raise ProviderCapabilityError("kobo_selected_offer_scope_changed")
         selected = offer.exact(edition_id, right_id, kind)
-        if (selected is None or selected.state != "active"
-                or not selected.provider_attested):
+        if (selected is None or not selected.provider_attested):
             raise ProviderCapabilityError("kobo_selected_offer_right_unobserved")
         return offer
 

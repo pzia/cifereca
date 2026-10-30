@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from cifereca.plugin_api import ProviderConfigurationError
+from cifereca.plugin_api import ProviderCapabilityError, ProviderConfigurationError
 from tests.test_p0_3252_paris_download_scope import SIGNED, prepare
 
 
@@ -173,3 +173,132 @@ def test_selected_loan_without_fresh_ebook_link_never_posts_new_pnb_borrow(
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
+
+# 30/10 owner arbitration: file acquisition is independent from right status.
+
+def test_pnb_link_qualifies_file_even_with_unknown_right(tmp_path, monkeypatch):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan()]
+    try:
+        report = session.rights_observation_snapshot(account)
+        right = report.exact("edition-1", "loan-1", "loan")
+        assert right is not None and right.state == "unknown"
+        assert right.delivery_attested
+        assert right.delivery_offer_id.startswith("paris.pnb:")
+        assert gets == []
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, edition_id="edition-1", right_id="loan-1",
+            kind="loan", branch="dilicom", explicit_user_action=True,
+        )
+        assert selected.rights[0].delivery_attested
+        assert selected.rights[0].state == "unknown"
+        assert selected.rights[0].delivery_offer_id == right.delivery_offer_id
+        assert gets == []
+    finally:
+        session.close()
+
+
+def test_paris_candidate_gets_only_fresh_pnb_url_with_unknown_right(
+    tmp_path, monkeypatch,
+):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan()]
+    try:
+        right = session.rights_observation_snapshot(account).rights[0]
+        fresh_url = SIGNED.replace("synthetic=1", "synthetic=2")
+        client.digital = [raw_loan(fresh_url)]
+        path, receipt = session.rights_selected_delivery_candidate(
+            account, edition_id="edition-1", right_id="loan-1",
+            kind="loan", branch="dilicom",
+            delivery_offer_id=right.delivery_offer_id,
+            target_dir=tmp_path, explicit_user_action=True,
+        )
+        assert path.is_file() and path.read_bytes().startswith(b"%PDF-")
+        assert receipt == "" and gets == [fresh_url]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("link", [
+    "", "javascript:alert(1)", "file:///private/loan",
+    "//foreign.example/item", "https://user:password@example.com/secret",
+    "https://example.com/injected\nheader",
+])
+def test_paris_no_positive_offer_without_safe_dilicom_link(link, tmp_path, monkeypatch):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan(link)]
+    try:
+        right = session.rights_observation_snapshot(account).rights[0]
+        assert right.state == "unknown"
+        assert right.delivery == "unknown" and right.delivery_offer_id == ""
+        assert not right.delivery_attested
+        assert gets == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("change,reads", [
+    ({"explicit_user_action": False}, 0),
+    ({"kind": "purchase"}, 0), ({"branch": "other"}, 0),
+    ({"edition_id": "not-this-edition"}, 2),
+    ({"right_id": "not-this-loan"}, 2),
+])
+def test_paris_invalid_selection_never_gets_content(
+    change, reads, tmp_path, monkeypatch,
+):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan()]
+    request = dict(edition_id="edition-1", right_id="loan-1", kind="loan",
+                   branch="dilicom", explicit_user_action=True)
+    request.update(change)
+    try:
+        with pytest.raises(ProviderCapabilityError):
+            session.rights_selected_delivery_offer_snapshot(account, **request)
+        assert gets == [] and len(client.calls) == reads
+    finally:
+        session.close()
+
+
+def test_paris_missing_link_never_uses_borrow_post_for_candidate(
+    tmp_path, monkeypatch,
+):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan(url="")]
+    posted = []
+    client.pnb_preferences = lambda: posted.append("PREFS")
+    client.download_digital_document = lambda *_: posted.append("POST")
+    try:
+        with pytest.raises(ProviderCapabilityError):
+            session.rights_selected_delivery_candidate(
+                account, edition_id="edition-1", right_id="loan-1",
+                kind="loan", branch="dilicom",
+                delivery_offer_id="paris.pnb:" + "0" * 64,
+                target_dir=tmp_path, explicit_user_action=True,
+            )
+        assert gets == [] and posted == []
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()
+
+
+def test_paris_supplier_tls_allowlist_applies_before_offer_claim(tmp_path, monkeypatch):
+    from cifereca_paris_client import ParisClient
+
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    # In production this is the same validator used immediately before GET.
+    client._validate_pnb_redirect_url = (
+        lambda url: ParisClient._validate_pnb_redirect_url(client, url)
+    )
+    try:
+        client.digital = [raw_loan("https://external.invalid/secret.epub")]
+        denied = session.rights_observation_snapshot(account).rights[0]
+        assert denied.state == "unknown"
+        assert denied.delivery == "unknown"
+        client.digital = [raw_loan(SIGNED)]
+        allowed = session.rights_observation_snapshot(account).rights[0]
+        assert allowed.state == "unknown"
+        assert allowed.delivery_attested
+        assert gets == []
+    finally:
+        session.close()
+

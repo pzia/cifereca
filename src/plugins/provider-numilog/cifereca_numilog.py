@@ -774,7 +774,7 @@ class NumilogSession(ProviderSession):
         right = selected.exact(edition_id, right_id, kind)
         if (selected.branch != branch or observed_scope != expected_scope
                 or len(selected.rights) != 1 or right is None
-                or not right.provider_attested or right.state != 'active'
+                or not right.provider_attested
                 or (account.identity_id, account.provider_id,
                     account.credential_id, account.unique_id) != pinned):
             raise ProviderCapabilityError('numilog_selected_offer_scope_changed')

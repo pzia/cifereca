@@ -62,7 +62,7 @@ def test_manual_numilog_acquire_locks_source_and_discards_signed_url(tmp_path, m
 
 
 @pytest.mark.parametrize("mutation", [
-    "public_catalog", "owned_false", "owned_missing", "downloadable_false",
+    "public_catalog", "downloadable_false",
     "wrong_scenario", "wrong_credential", "bad_item_id",
     "mismatched_ids", "stale_search", "disabled_source", "disabled_connection",
     "detached_identity", "disconnected", "capability_off", "duplicate_account",
@@ -384,5 +384,23 @@ def test_manual_numilog_revalidates_artifact_after_post_download_hook(tmp_path, 
             service.acquire_direct_item(item)
         assert foreign.read_bytes()==b'outside admitted identity'
         assert records[-1][1]['facts']=={'private_item':True,'error':'ProviderConfigurationError'}
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("owned_metadata", [False, None])
+def test_authenticated_offer_downloadability_supersedes_owned_label(
+    tmp_path, monkeypatch, owned_metadata,
+):
+    """#3171: an optional right flag is not the acquisition authority."""
+    service, account, session, item, calls, _records = _rig(tmp_path, monkeypatch)
+    try:
+        item.owned = owned_metadata
+        item.downloadable = True
+        acquired = service.acquire_direct_item(item)
+        assert acquired.account_id == account.unique_id
+        assert acquired.metadata["identity_id"] == account.identity_id
+        assert acquired.path.is_file()
+        assert calls == [item.record_id, "post_download"]
     finally:
         service.close()
