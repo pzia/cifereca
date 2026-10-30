@@ -45,8 +45,15 @@ def persist_attested_source_references(
     now = __import__("time").time_ns() // 1_000_000_000
     admitted = [
         row for row in snapshot.rights
-        if row.provider_attested and row.state == "active"
+        if row.provider_attested and (
+            row.state == "active"
+            or (row.state == "unknown" and row.delivery == "available")
+        )
     ]
+    # SourceReference.state is the operational sync state of an exact provider
+    # resource, NOT an independent legal/ownership entitlement. An observed
+    # downloadable offer may be synchronized even if descriptive rights
+    # metadata are missing, while a right marked inactive remains excluded.
     if not admitted:
         return 0
     written = 0
