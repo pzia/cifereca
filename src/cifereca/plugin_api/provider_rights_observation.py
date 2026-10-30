@@ -1,7 +1,8 @@
 """#3252: optional provider-neutral rights observation contract, not an action API.
 
-A right reported by a provider, a historical receipt, a catalogue notice and
-local bytes are different kinds of evidence. This transport envelope is only
+A right reported by a provider, an exact available file-delivery offer,
+a historical receipt, a catalogue notice and local bytes are different kinds
+of evidence. A delivery offer does not require a declared active right. This transport envelope is only
 a *claim* from the scoped producer. Core owns permission, persistence, consent,
 artifact verification, sync epochs and idempotent transaction decisions.
 """
@@ -61,7 +62,9 @@ class ProviderRightObservation:
 
     The provider owns the exact source item and right identifiers. A row with
     'legacy_unverified' is never attested, even when state='active'.
-    'available' describes an observed delivery *offer*, not downloaded bytes.
+    'available' describes an observed provider delivery *offer*, not downloaded
+    bytes. The right state is descriptive and may be 'unknown' even when an
+    exact, currently usable offer is known.
     """
 
     edition_id: str
@@ -107,14 +110,22 @@ class ProviderRightObservation:
                 or (self.delivery_unavailable_reason and (
                     self.delivery != "unavailable" or not self.provider_attested))):
             raise ValueError("invalid_rights_delivery_reason")
-        if self.delivery == "available" and (
-                self.evidence_kind == "legacy_unverified" or self.state != "active"):
+        # The provider's *delivery capacity* is independent from optional
+        # purchase/loan-state metadata. An exact, fresh provider response may
+        # offer a file even when the right state is unknown/inactive. Never
+        # turn a historical/legacy assertion into a positive remote offer.
+        if self.delivery == "available" and self.evidence_kind != "provider_response":
             raise ValueError("unproven_rights_delivery")
 
     @property
     def provider_attested(self) -> bool:
         """A referenced observation; still NOT an ownership adjudication."""
         return self.evidence_kind == "provider_response"
+
+    @property
+    def delivery_attested(self) -> bool:
+        """Exact scoped provider offer, independent of optional right state."""
+        return self.provider_attested and self.delivery == "available" and bool(self.delivery_offer_id)
 
     @property
     def authorizes_mutation(self) -> bool:
