@@ -182,6 +182,44 @@ def read(storage, source_id):
         return {}
 
 
+def local_proof(account, source_id, item_id, gate, *, exc_info=False, **evidence):
+    """Journal an existing local check, never fetch or classify new evidence.
+
+    Raw facts stay separate from the bounded legacy UI counters. The exact
+    purchase and task reference correlate this check without a new operation,
+    guessed owner, retry or acquisition permission.
+    """
+    try:
+        from ..diagnostics import _core_journal_record
+        fields = dict(
+            schema_version=1, operation_kind="local_presence_check", gate=gate,
+            provider_id="numilog", source_id=source_id, item_id=item_id,
+            identity_id=account.identity_id, credential_id=account.credential_id,
+            account_id=account.unique_id, **evidence,
+        )
+        reference = numilog_task_reference()
+        if reference is not None:
+            fields["task_ref"] = reference
+        # These are business check outcomes, visible at normal verbosity;
+        # a TRACE prefix would be discarded by the real journal filter.
+        message = "Numilog local_presence_check " + json.dumps(
+            fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        _LOG.log(
+            logging.INFO if gate in {"verified", "file_fingerprint_verified"}
+            else logging.WARNING, "%s", message,
+            exc_info=exc_info,
+            extra=_core_journal_record(
+                "NUMILOG", "local_presence_check",
+                "ok" if gate in {"verified", "file_fingerprint_verified"} else "warning", message, fields,
+            ),
+        )
+    except Cancelled:
+        raise
+    except Exception:
+        pass  # Optional diagnostics must never grant or refuse acquisition.
+
+
 class StartupTrace:
     def __init__(self, service, source_id):
         self.service, self.source_id = service, source_id

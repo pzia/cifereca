@@ -13,7 +13,7 @@ from typing import Any
 
 from ..models import SearchResult
 from ..plugin_api import Cancelled, SyncResult
-from .numilog_startup_diagnostics import StartupTrace
+from .numilog_startup_diagnostics import StartupTrace, local_proof
 from .numilog_local_preview import _item_id
 from .numilog_materialization_checkpoint import index_delivered
 from .numilog_manifest_rights import mirror_numilog_manifest_rights
@@ -49,10 +49,12 @@ def _completed_local_purchase_verified(
 
     A prior ledger alone is not proof of a local EPUB. Refuse foreign,
     duplicate, incomplete or changed receipts and recheck SQLite after the
-    physical hash; no public IDs or new provider calls are produced.
+    physical hash. Existing local facts are journaled per purchase; no new
+    provider call or acquisition permission is produced.
     """
     try:
         if not source_current():
+            local_proof(account, source_id, item_id, "source_changed")
             return False
         storage = broker.service.storage
         options = dict(
@@ -65,6 +67,9 @@ def _completed_local_purchase_verified(
         if type(rights) is not list or len(rights) != 1 or (
             type(ledger) is not list or len(ledger) != 1
         ):
+            local_proof(account, source_id, item_id, "rights_or_receipt_ambiguous",
+                        right_count=len(rights) if type(rights) is list else None,
+                        receipt_count=len(ledger) if type(ledger) is list else None)
             return False
         right, receipt = rights[0], ledger[0]
         if (type(right) is not dict or type(receipt) is not dict
@@ -73,6 +78,14 @@ def _completed_local_purchase_verified(
                 or receipt.get("account_id") != account.unique_id
                 or receipt.get("item_id") != item_id
                 or receipt.get("entitlement_id") != right.get("entitlement_id")):
+            local_proof(account, source_id, item_id, "receipt_incomplete_or_scope_mismatch",
+                        acquisition_id=receipt.get("acquisition_id") if type(receipt) is dict else None,
+                        receipt_status=receipt.get("status") if type(receipt) is dict else None,
+                        receipt_identity_id=receipt.get("identity_id") if type(receipt) is dict else None,
+                        receipt_account_id=receipt.get("account_id") if type(receipt) is dict else None,
+                        receipt_item_id=receipt.get("item_id") if type(receipt) is dict else None,
+                        receipt_entitlement_id=receipt.get("entitlement_id") if type(receipt) is dict else None,
+                        expected_entitlement_id=right.get("entitlement_id") if type(right) is dict else None)
             return False
         from .numilog_local_preview import preview
         check = preview(
@@ -83,15 +96,27 @@ def _completed_local_purchase_verified(
         if (check.ok is not True or type(counts) is not dict
                 or counts.get("owned_purchases") != 1
                 or counts.get("already_local_verified") != 1):
+            local_proof(account, source_id, item_id, "local_presence_unverified",
+                        preview_status=check.facts.get("status"), preview_counts=counts)
             return False
         # A verified file from a previous account/session or a changed right
         # never becomes a successful presence just because bytes match.
-        return source_current() and before == storage.numilog_purchase_preflight_evidence(
-            **options,
-        ) and source_current()
+        if not source_current():
+            local_proof(account, source_id, item_id, "source_changed")
+            return False
+        after = storage.numilog_purchase_preflight_evidence(**options)
+        if before != after:
+            local_proof(account, source_id, item_id, "evidence_changed_after_file_check")
+            return False
+        if not source_current():
+            local_proof(account, source_id, item_id, "source_changed")
+            return False
+        local_proof(account, source_id, item_id, "verified")
+        return True
     except Cancelled:
         raise
     except Exception:
+        local_proof(account, source_id, item_id, "verification_failed", exc_info=True)
         return False
 
 
@@ -409,6 +434,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             skipped += 1
                             trace.record_item(position, 'already_local_verified', item_id=row.record_id)
                             continue
+                    else:
+                        local_proof(account, source_id, row.record_id, "verification_budget_exhausted")
                 # The fresh authenticated inventory is authoritative for
                 # delivery capability. SQLite's older owned right may omit
                 # 'downloadable'; a permissive preflight must never override
