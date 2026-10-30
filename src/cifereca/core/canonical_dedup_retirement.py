@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import sqlite3
 from pathlib import Path
 import stat
 
@@ -129,18 +130,25 @@ def retire_verified_canonical_duplicate(
     keeper_path, keeper_stat = observations[1]
     removed = False
     try:
+        keeper_now = storage.placement_get(keeper_placement_id)
         if (storage.placement_for_path(copy_path) is None
                 and not candidate_has_active_dependencies(
                     storage, placement_id=candidate_placement_id,
                     path=str(copy_path),
                 )
-                and storage.placement_get(keeper_placement_id) is not None
-                and storage.placement_get(keeper_placement_id).get("state") == "present"
+                and keeper_now is not None
+                and keeper_now.get("state") == "present"
+                and keeper_now.get("path") == str(keeper_path)
+                and keeper_now.get("identity_id") == identity_id
+                and keeper_now.get("artifact_id") == artifact_id
+                and keeper_now.get("provider_id") is None
+                and keeper_now.get("source_item_id") is None
                 and _same_file(copy_path, copy_stat)
                 and _same_file(keeper_path, keeper_stat)):
             copy_path.unlink()
             removed = True
-    except OSError:
+    except (OSError, sqlite3.Error):
+        # SQL already committed; a post-commit inspection error is advisory.
         pass
     return CanonicalRetirementResult(
         retired_placement=True,
