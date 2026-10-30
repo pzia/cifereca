@@ -3,7 +3,8 @@
 Référence : 28 octobre 2026. Ce document qualifie les **faits attestés par les
 adaptateurs fournisseurs**, jamais la décision d'acquérir ni une preuve de
 fichier final. Le contrat public reste
-`cifereca.rights.observation/1`. A = droit observé par le fournisseur ;
+`cifereca.rights.observation/1`. A = ressource personnelle observée et
+capacité de livraison qualifiée, avec état de droit facultatif ;
 B = octets finaux validés, SHA et Placement avec OriginLink Core ;
 C = Notice descriptive. A ne prouve pas B.
 
@@ -13,7 +14,7 @@ C = Notice descriptive. A ne prouve pas B.
 |---|---|---|---|
 | Numilog | `meslivres`, achat positif `lid+variant` exact, identité/credential/compte attestés | Scan ordinaire `unknown`, préflight explicite sélectionné `rights_selected_delivery_offer_snapshot` (#3605), carte `OwnedDelivery` actuelle et identifiant d'offre opaque | `rights_selected_delivery_candidate` (#3606) relit l'offre et ne livre que l'EPUB direct ou l'**ACSM brut** (#3616) dans le staging demandé, sans import ADEPT legacy ; le download manuel reste inchangé. Broker exact et identité `default` historique contrôlée (#3612). |
 | BnF Prêt | `bnf_html`, section `active-loans`, identifiants prêt + ressource exacts | Action signée `reader-acs4` unique, active et liée au prêt ; préflight optionnel #3605, `unknown` sans preuve | `rights_selected_delivery_candidate` (#3606) et `download_digital` exact produisent un **ACSM candidat** sous staging Core. Aucune activation ADEPT ni EPUB final attesté côté plugin. |
-| Kobo | `personal_manifest`, achat du produit exact, archives conservées | Scan ordinaire `unknown` ; préflight ciblé #3610 : manifeste positif + POST `descriptor`, offre HTTPS opaque unique (EPUB/PDF/ACSM), DRM/format cohérents (#3602/#3621), KDRM et contradictions exclus | `rights_selected_delivery_candidate` (#3618) relit le droit et l'offre, puis livre le candidat sous staging Core via client public à peer épinglé, sans proxy, cookie Vault ou redirect. Propriétaire revalidé et URL signée jamais retournée ; **Core seul** inspecte/re-hashe/ADEPT et publie. |
+| Kobo | `personal_manifest`, produit exact du compte (état de droit `unknown` si `owned` absent), archives conservées | Scan ordinaire `unknown` ; préflight ciblé #3610 : manifeste positif + POST `descriptor`, offre HTTPS opaque unique (EPUB/PDF/ACSM), DRM/format cohérents (#3602/#3621), KDRM et contradictions exclus | `rights_selected_delivery_candidate` (#3618) relit la ressource exacte et l'offre, puis livre le candidat sous staging Core via client public à peer épinglé, sans proxy, cookie Vault ou redirect. Propriétaire revalidé et URL signée jamais retournée ; **Core seul** inspecte/re-hashe/ADEPT et publie. |
 | Paris | `dilicom`, identifiants Id/HoldingId + RecordId et emprunteur exacts, **état toujours `unknown`** | Aucune offre automatique `available` depuis `EbookUrl` tant que ListLoans ne prouve pas l'activité du droit | #3596 fusionnée : le téléchargement PNB explicitement sélectionné relit le prêt exact et son URL actuelle ; pas de POST d'emprunt de secours sans lien et aucun reçu canonique attribué. La voie historique reste distincte. |
 
 **Source d'autorité :** seule la réponse privée authentifiée, sous le bon
@@ -34,9 +35,11 @@ n'affirme **jamais** la disparition d'un droit depuis un snapshot partiel.
    lien de téléchargement ; BnF réutilise le même HTML d'inventaire.
 3. `delivery=available` indique uniquement un **chemin de livraison
    observable** : il ne prouve ni fichier final, ni ADEPT, ni permission Core.
-   Vérifier `state=active`, `provider_response`, scope complet,
-   `delivery_offer_id` non vide, autorisation et consentement persisté par
-   `SourceKey` avant tout GET de contenu ; revalider après réseau.
+   Vérifier `provider_response`, scope complet, `delivery_offer_id` non vide,
+   capacité positive d'acquisition, consentement persistant pour la source,
+   et absence de refus fournisseur explicite ; **ne pas exiger `state=active`**.
+   Un droit déclaré `active` avec offre indisponible ne déclenche rien.
+   Revalider ces conditions après réseau.
 4. Relire la même offre **sur la session actuelle** avant GET signé ; refuser
    les rebinds A→B et A→A, changement de credential/compte, action signée
    supprimée ou identité d'offre différente. Ne jamais sérialiser les URLs
