@@ -48,13 +48,40 @@ def acquire_numilog_direct(
             stage = "acquisition_local_conflict"
             if reconcile_pending:
                 from .numilog_recovery import recovery_gate
-                if (_admission is None or item.owned is not True
-                        or item.downloadable is not True
-                        or recovery_gate(
+                from .numilog_materialization_consent import mode
+                from ..brokers import SynchronizationBrokerImpl
+                recovery_broker = SynchronizationBrokerImpl(service)
+                matching = [account for account in service.accounts
+                    if account.provider_id == 'numilog'
+                    and account.credential_id == item.source_credential
+                    and account.identity_id == identity.identity_id
+                    and account.unique_id == pinned_account_id]
+                recovery_source_id = (
+                    recovery_broker._source_id(matching[0]) if len(matching) == 1
+                    else None
+                )
+                recovery_epoch = (
+                    service.storage.numilog_materialization_consent_revision(recovery_source_id)
+                    if recovery_source_id is not None else None
+                )
+                def recovery_authorized():
+                    # An internal recovery flag alone is never permission to
+                    # download; the exact persisted opt-in must still exist.
+                    return bool(
+                        recovery_epoch is not None
+                        and mode(recovery_broker, recovery_source_id) == 'on_start'
+                        and service.storage.numilog_materialization_consent_revision(
+                            recovery_source_id,
+                        ) == recovery_epoch
+                        and recovery_gate(
                             service.storage, identity_id=identity.identity_id,
                             credential_id=item.source_credential,
                             account_id=pinned_account_id, item_id=item.record_id,
-                        ) != 'recoverable'):
+                        ) == 'recoverable'
+                    )
+                if (_admission is None or item.owned is not True
+                        or item.downloadable is not True
+                        or not recovery_authorized()):
                     raise ProviderConfigurationError('Numilog : reprise non attestée')
             from .library_declared_links import has_active_declared_link
             if has_active_declared_link(
@@ -118,11 +145,7 @@ def acquire_numilog_direct(
             # inspection and immediately before any provider I/O.
             stage = "acquisition_admission_failed"
             item = readmit()
-            if reconcile_pending and recovery_gate(
-                    service.storage, identity_id=identity.identity_id,
-                    credential_id=item.source_credential,
-                    account_id=pinned_account_id, item_id=item.record_id,
-            ) != 'recoverable':
+            if reconcile_pending and not recovery_authorized():
                 raise ProviderConfigurationError('Numilog : preuves modifiées pendant la reprise')
             stage = "acquisition_delivery_failed"
             try:
@@ -139,9 +162,11 @@ def acquire_numilog_direct(
                     "Numilog : livraison indisponible ; réessayer manuellement"
                 ) from None
             # The provider may release its per-session lock before
-            # returning. A reconnect/rebind during HTTP or ADEPT must
-            # not be committed under a different identity.
+            # returning. A reconnect/rebind or revoked recovery opt-in during
+            # HTTP/ADEPT cannot be committed under a different identity.
             stage = "acquisition_admission_failed"
+            if reconcile_pending and not recovery_authorized():
+                raise ProviderConfigurationError('Numilog : consentement de reprise révoqué')
             readmit()
             refreshed = require_source(service, item, session=pinned_session)
             if (refreshed[0].identity_id != identity.identity_id
