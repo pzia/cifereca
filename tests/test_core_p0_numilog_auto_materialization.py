@@ -224,7 +224,7 @@ def test_startup_keeps_max_eight_fresh_downloads_and_skips_reconciliations(
             SynchronizationBrokerImpl, "preflight_numilog_purchase",
             lambda self, _sid, item: preflight(_sid, item),
         )
-        def acquire(row, *, _admission=None):
+        def acquire(row, *, _admission=None, _numilog_recovery=False):
             assert _admission() is row
             seen.append(row.record_id)
             return NS(metadata={"numilog_checkpoint_id":"FICTIONAL"})
@@ -234,14 +234,15 @@ def test_startup_keeps_max_eight_fresh_downloads_and_skips_reconciliations(
             lambda *_a, **_kw: None,
         )
         result = execute(broker, account.identity_id, "startup")
-        # One item needs reconciliation and five are still deferred by the
-        # eight-download quota: eight downloads cannot be 'complete'.
+        # A single unresolved local candidate is not a veto on a freshly
+        # authenticated, consented purchase. The remaining six are deferred
+        # by the eight-download quota, so the batch cannot be complete.
         assert not result.ok and result.changed == 8
         assert result.facts["status"] == "partial"
         assert result.facts["attempted"] == 8
         assert result.facts["skipped"] == 0
-        assert result.facts["blocked"] == 2
-        assert seen == [r.record_id for r in books[1:9]]
+        assert result.facts["blocked"] == 1
+        assert seen == [r.record_id for r in books[:8]]
         assert calls == []
     finally:
         service.close()

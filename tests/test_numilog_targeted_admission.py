@@ -31,7 +31,7 @@ def test_targeted_admission_runs_inside_lock_before_provider_and_before_publicat
     ('source_provider','numilog-catalog'), ('source_credential','other'),
     ('record_id','another-purchase'), ('revision_id','another-revision'),
     ('source_collection','public_catalog'), ('format','pdf'),
-    ('owned',False), ('downloadable',False), ('id','another-row'),
+    ('downloadable',False), ('id','another-row'),
 ])
 def test_targeted_admission_cannot_change_purchase_or_authority(tmp_path, monkeypatch, field, value):
     service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)

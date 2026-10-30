@@ -1,7 +1,7 @@
-"""P0 #2131: a private Numilog manifest is not backed up until rights were mirrored.
+"""P0 #3171: rights mirroring is advisory for a fresh downloadable offer.
 
-Network, ACSM and ADEPT operations are forbidden; only Core's actual startup
-worker and SQLite diagnostic receipts are exercised.
+A private authenticated provider delivery must not be blocked solely because
+an optional local rights projection could not persist.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from tests.test_core_p0_1862_numilog_store_mirror import _row
 
 
 @pytest.mark.parametrize("ack", [0, None, True, -1, 2, "1"])
-def test_incomplete_or_untyped_mirror_ack_blocks_download_and_marks_failure(
+def test_incomplete_or_untyped_mirror_ack_does_not_veto_download(
     tmp_path, monkeypatch, ack,
 ):
     service, account, session, calls, broker, sid = _setup(tmp_path)
@@ -27,22 +27,16 @@ def test_incomplete_or_untyped_mirror_ack_blocks_download_and_marks_failure(
             "cifereca.core.numilog_materialization_startup.mirror_numilog_manifest_rights",
             lambda *_args, **_kwargs: ack,
         )
-        monkeypatch.setattr(
-            service, "acquire_direct_item",
-            lambda *_args, **_kwargs: pytest.fail(
-                "never acquire a purchase not confirmed by the local rights mirror"
-            ),
-        )
+        acquired = _safe_mock_downloads(monkeypatch, service)
         result = execute(broker, account.identity_id, "startup")
-        assert not result.ok and result.facts["status"] == "failed"
-        assert result.facts["downloaded"] == result.facts["attempted"] == 0
-        assert result.facts["failed"] == 1
+        assert result.ok and result.facts["status"] == "complete"
+        assert result.facts["downloaded"] == result.facts["attempted"] == 1
+        assert result.facts["failed"] == 0
         durable = broker.numilog_materialization_run_status(sid)
-        assert durable["status"] == "failed"
-        assert durable["diagnostic"]["cause_phase"] == "rights_mirror"
-        assert durable["diagnostic"]["code"] == "rights_mirror_failed"
-        assert durable["attempted"] == 0 and durable["downloaded"] == 0
-        session.library = lambda: pytest.fail("failed startup must not blindly re-fetch")
+        assert durable["status"] == "complete"
+        assert durable["attempted"] == durable["downloaded"] == 1
+        assert len(acquired) == 1
+        session.library = lambda: pytest.fail("throttled startup must not re-fetch")
         assert execute(broker, account.identity_id, "startup").facts["status"] == "not_due"
         assert calls == []
     finally:
@@ -85,14 +79,16 @@ def test_bad_mirror_of_first_account_does_not_starve_second_valid_account(
         monkeypatch.setattr(startup, "mirror_numilog_manifest_rights", selective_mirror)
         acquired = _safe_mock_downloads(monkeypatch, service)
         result = execute(broker, "default", "startup")
-        assert not result.ok and result.facts["status"] == "partial"
-        assert result.facts["attempted"] == result.facts["downloaded"] == 1
-        assert result.facts["failed"] == 1
-        assert [row.source_credential for row in acquired] == [b.credential_id]
+        assert result.ok and result.facts["status"] == "complete"
+        assert result.facts["attempted"] == result.facts["downloaded"] == 2
+        assert result.facts["failed"] == 0
+        assert [row.source_credential for row in acquired] == [
+            a.credential_id, b.credential_id,
+        ]
         left = broker.numilog_materialization_run_status(sid_a)
         right = broker.numilog_materialization_run_status(sid_b)
-        assert left["status"] == "failed"
-        assert left["diagnostic"]["code"] == "rights_mirror_failed"
+        assert left["status"] == "complete"
+        assert left["downloaded"] == 1
         assert right["status"] == "complete"
         assert right["downloaded"] == 1
         assert calls_a == calls_b == []

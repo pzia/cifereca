@@ -17,6 +17,7 @@ from .numilog_startup_diagnostics import StartupTrace, local_proof
 from .numilog_local_preview import _item_id
 from .numilog_materialization_checkpoint import index_delivered
 from .numilog_manifest_rights import mirror_numilog_manifest_rights
+from .numilog_recovery import recovery_gate, recovery_id
 from .numilog_materialization_consent import (
     _binding, _same_binding, _MAX_ITEMS_PER_OPENING, mode,
 )
@@ -64,14 +65,84 @@ def _completed_local_purchase_verified(
         before = storage.numilog_purchase_preflight_evidence(**options)
         rights = before.get("entitlements")
         ledger = before.get("acquisitions")
-        if type(rights) is not list or len(rights) != 1 or (
-            type(ledger) is not list or len(ledger) != 1
-        ):
+        if (type(rights) is not list or len(rights) > 1
+                or type(ledger) is not list or not 1 <= len(ledger) <= 2):
             local_proof(account, source_id, item_id, "rights_or_receipt_ambiguous",
                         right_count=len(rights) if type(rights) is list else None,
                         receipt_count=len(ledger) if type(ledger) is list else None)
             return False
-        right, receipt = rights[0], ledger[0]
+        right = rights[0] if rights else None
+        from ..acquisition_engine import stable_id
+        from .numilog_recovery import recovery_id
+        from .numilog_materialization_checkpoint import _checked_receipt
+        original_id = stable_id(
+            "numilog-materialization", account.identity_id,
+            account.credential_id, account.unique_id, item_id,
+        )
+        retry_id = recovery_id(
+            account.identity_id, account.credential_id,
+            account.unique_id, item_id,
+        )
+        checkpoint = [r for r in ledger if type(r) is dict
+                      and r.get("acquisition_id") in (original_id, retry_id)]
+        # The old preview verifies legacy receipts with an exact right; new
+        # Core delivery checkpoints can be verified without a cached right.
+        new_delivery = [r for r in checkpoint
+                        if r.get("acquisition_id") == retry_id or right is None]
+        if len(new_delivery) == 1:
+            receipt = new_delivery[0]
+            if (receipt.get("status") != "complete"
+                    or (right is not None and
+                        receipt.get("entitlement_id") not in (
+                            None, right.get("entitlement_id")))
+                    or any(type(other) is not dict
+                           or other.get("identity_id") != account.identity_id
+                           or other.get("account_id") != account.unique_id
+                           or other.get("item_id") != item_id
+                           or (other is not receipt and other.get("status") != "complete")
+                           for other in ledger)):
+                local_proof(account, source_id, item_id, "receipt_incomplete_or_scope_mismatch")
+                return False
+            try:
+                checked, path = _checked_receipt(
+                    broker.service, receipt["acquisition_id"],
+                )
+                placement = storage.placement_for_path(path)
+                sha = checked["metadata"]["sha256"]
+                artifact = storage.artifact_get("sha256:" + sha)
+                verified = bool(
+                    source_current()
+                    and placement is not None
+                    and placement.get("identity_id") == account.identity_id
+                    and placement.get("provider_id") == "numilog"
+                    and placement.get("source_item_id") == item_id
+                    and placement.get("state") == "present"
+                    and placement.get("artifact_id") == "sha256:" + sha
+                    and artifact is not None
+                    and artifact.get("sha256") == sha
+                    and artifact.get("size") == checked["metadata"]["size"]
+                    and before == storage.numilog_purchase_preflight_evidence(**options)
+                    and source_current()
+                )
+                local_proof(account, source_id, item_id,
+                            "verified" if verified else "local_presence_unverified")
+                return verified
+            except Cancelled:
+                raise
+            except Exception:
+                local_proof(account, source_id, item_id, "verification_failed", exc_info=True)
+                return False
+        if right is None:
+            # Legacy rows without an exact acquisition checkpoint cannot
+            # establish current physical presence, but this observation alone
+            # is never a veto on an authorized provider re-download.
+            local_proof(account, source_id, item_id, "receipt_incomplete_or_scope_mismatch")
+            return False
+        if len(ledger) != 1:
+            local_proof(account, source_id, item_id, "rights_or_receipt_ambiguous",
+                        right_count=len(rights), receipt_count=len(ledger))
+            return False
+        receipt = ledger[0]
         if (type(right) is not dict or type(receipt) is not dict
                 or receipt.get("status") != "complete"
                 or receipt.get("identity_id") != account.identity_id
@@ -270,18 +341,15 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 row.record_id for row in raw if type(row.record_id) is str
             )
             if (any(
-                type(row.owned) is not bool
-                or type(row.downloadable) is not bool
+                (row.owned is not None and type(row.owned) is not bool)
+                or (row.downloadable is not None and type(row.downloadable) is not bool)
                 or (
-                    row.owned is True
-                    and (
                         type(row.id) is not str
                         or type(row.record_id) is not str
                         or row.id != row.record_id
                         or not _item_id(row.record_id, account.credential_id)
                         or count[row.record_id] != 1
                     )
-                )
                 for row in raw
             )):
                 trace.fail("manifest_invalid")
@@ -303,21 +371,28 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # performs its own account/session re-admission before writing.
             # This is still NOT permission to acquire: each edition passes
             # preflight plus the locked admission after this read.
-            mirrored = mirror_numilog_manifest_rights(
-                broker.service, raw,
-                identity_id=identity_id,
-                credential_id=account.credential_id,
-                account_id=account.unique_id,
-            )
-            # The authenticated inventory is the authority for the number
-            # of owned editions. An account rebind, collision or silent mirror
-            # refusal is not a successful empty backup; never acquire until
-            # every attested purchase has been recorded as a local right.
+            try:
+                mirrored = mirror_numilog_manifest_rights(
+                    broker.service, raw,
+                    identity_id=identity_id,
+                    credential_id=account.credential_id,
+                    account_id=account.unique_id,
+                )
+            except Cancelled:
+                raise
+            except Exception:
+                # Metadata projection is best effort. Preserve the reason in
+                # the local journal; the fresh downloadable offer stays valid.
+                from .numilog_startup_diagnostics import mirror_observation_error
+                mirror_observation_error(source_id)
+                mirrored = None
+            # A cached entitlement is informational, not a mandatory
+            # predecessor to provider delivery (#3171/2026-10-30).
+            # Failed metadata mirroring must not veto an independently
+            # admitted, account-scoped downloadable offer.
             expected_rights = sum(row.owned is True for row in raw)
             if type(mirrored) is not int or mirrored != expected_rights:
-                trace.fail("rights_mirror_failed")
-                failures += 1
-                continue
+                trace.event("rights_mirror", "rights_mirror_incomplete")
             if (
                 not same_source()
                 or mode(broker, source_id) != "on_start"
@@ -337,7 +412,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and row.source_credential == account.credential_id
                 and row.source_collection == "library"
                 and row.scenario == "NUMILOG_LIBRARY"
-                and row.owned is True
                 and row.id == row.record_id
                 and _item_id(row.record_id, account.credential_id)
                 and count[row.record_id] == 1
@@ -369,14 +443,14 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 if prior.facts.get('status') == 'declared_link_recorded':
                     from .library_declared_presence import verify_declared_presence
                     if presence_seconds_remaining <= 0:
-                        blocked += 1
+                        # A verification budget is not a download permission
+                        # veto; the declared link remains only an observation.
+                        prior_status = 'needs_reconciliation'
                         declared_pending += 1
-                        trace.record_item(position, 'declared_needs_review', item_id=row.record_id)
-                        trace.fail('preflight_failed')
-                        continue
-                    presence_started = monotonic()
-                    try:
-                        presence = verify_declared_presence(
+                    else:
+                        presence_started = monotonic()
+                        try:
+                            presence = verify_declared_presence(
                             broker.service, identity_id=account.identity_id,
                             provider_id='numilog', credential_id=account.credential_id,
                             account_id=account.unique_id, item_id=row.record_id,
@@ -388,28 +462,31 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             cancelled=lambda: bool(control is not None
                                 and callable(getattr(control, 'cancelled', None)) and control.cancelled()),
                             seconds=presence_seconds_remaining,
-                        )
-                    finally:
-                        presence_seconds_remaining = max(0.0, presence_seconds_remaining
-                            - max(0.0, monotonic() - presence_started))
-                    if control is not None and callable(getattr(control, 'check_cancelled', None)):
-                        control.check_cancelled()
-                    if presence.status == 'declared_current':
-                        declared_local += 1
-                        skipped += 1
-                        trace.record_item(position, 'already_local_declared', item_id=row.record_id)
-                        continue
-                    blocked += 1
-                    declared_pending += 1
-                    trace.record_item(position, 'declared_needs_review', item_id=row.record_id)
-                    trace.fail('preflight_failed')
-                    continue
+                            )
+                        finally:
+                            presence_seconds_remaining = max(0.0, presence_seconds_remaining
+                                - max(0.0, monotonic() - presence_started))
+                        if control is not None and callable(getattr(control, 'check_cancelled', None)):
+                            control.check_cancelled()
+                        if presence.status == 'declared_current':
+                            declared_local += 1
+                            skipped += 1
+                            trace.record_item(position, 'already_local_declared', item_id=row.record_id)
+                            continue
+                        # Invalid/obsolete declaration stays historical.
+                        declared_pending += 1
+                        prior_status = 'needs_reconciliation'
+                else:
+                    prior_status = prior.facts.get('status')
                 # The offline preflight conservatively reports *any*
                 # existing receipt as needs_reconciliation. A previous
                 # completed purchase must nevertheless count as present if
                 # the existing exact receipt, placement and current SHA all
                 # agree. Unknown/foreign/damaged evidence remains blocked.
-                if prior.facts.get('status') == 'needs_reconciliation':
+                is_recovery = False
+                if prior_status in {
+                    'needs_reconciliation', 'purchase_unproven', 'not_downloadable',
+                }:
                     if presence_seconds_remaining > 0:
                         proof_started = monotonic()
                         try:
@@ -434,8 +511,32 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             skipped += 1
                             trace.record_item(position, 'already_local_verified', item_id=row.record_id)
                             continue
+                    # A legacy complete receipt or same-owner placement is
+                    # not proof of a current file. It must not veto a fresh
+                    # purchase already authorized by the persisted policy.
+                    gate = recovery_gate(
+                        broker.service.storage, identity_id=account.identity_id,
+                        credential_id=account.credential_id,
+                        account_id=account.unique_id, item_id=row.record_id,
+                    )
+                    # A fresh delivery without an existing receipt/placement
+                    # can use the normal checkpoint. Legacy files or receipts
+                    # use the isolated recovery receipt, never overwriting.
+                    evidence = broker.service.storage.numilog_purchase_preflight_evidence(
+                        identity_id=account.identity_id,
+                        credential_id=account.credential_id,
+                        account_id=account.unique_id, item_id=row.record_id,
+                    )
+                    conflicts = bool(evidence.get('acquisitions')
+                                     or evidence.get('placement_conflict')
+                                     or prior_status == 'needs_reconciliation')
+                    if gate == 'recoverable':
+                        is_recovery = conflicts
                     else:
-                        local_proof(account, source_id, row.record_id, "verification_budget_exhausted")
+                        blocked += 1
+                        trace.record_item(position, gate, item_id=row.record_id)
+                        trace.fail('preflight_failed')
+                        continue
                 # The fresh authenticated inventory is authoritative for
                 # delivery capability. SQLite's older owned right may omit
                 # 'downloadable'; a permissive preflight must never override
@@ -445,8 +546,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     trace.record_item(position, 'not_downloadable', item_id=row.record_id)
                     trace.fail('preflight_failed')
                     continue
-                if (prior.ok is not True
-                        or prior.facts.get("status") != "candidate_unverified"):
+                if (not is_recovery and
+                        prior_status not in {"candidate_unverified", "purchase_unproven",
+                                              "not_downloadable"}):
                     # A prior receipt, conflicting placement, missing proof or
                     # non-downloadable purchased title does not attest a
                     # local file. Keep it pending instead of counting a
@@ -479,8 +581,28 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         trace.fail("consent_revoked")
                         raise ValueError("numilog_auto_consent_revoked")
                     check = broker.preflight_numilog_purchase(source_id, row.record_id)
-                    if (check.ok is not True
-                            or check.facts.get("status") != "candidate_unverified"):
+                    if is_recovery:
+                        status_ok = (
+                            check.facts.get('status') in {
+                                'needs_reconciliation', 'declared_link_recorded',
+                                'purchase_unproven', 'not_downloadable',
+                            }
+                            and recovery_gate(
+                                broker.service.storage,
+                                identity_id=account.identity_id,
+                                credential_id=account.credential_id,
+                                account_id=account.unique_id,
+                                item_id=row.record_id,
+                            ) == 'recoverable'
+                        )
+                    else:
+                        status_ok = (
+                            check.facts.get('status') in {
+                                'candidate_unverified', 'purchase_unproven',
+                                'not_downloadable',
+                            }
+                        )
+                    if not status_ok:
                         trace.fail("preflight_failed")
                         raise ValueError("numilog_auto_purchase_changed")
                     return row
@@ -488,7 +610,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 attempts += 1
                 observe("acquisition")
                 try:
-                    with trace.acquisition():
+                    from contextlib import nullcontext
+                    from .numilog_recovery import recovery_request, automatic_delivery_request
+                    with trace.acquisition(), automatic_delivery_request(), (recovery_request() if is_recovery else nullcontext()):
                         acquired = broker.service.acquire_direct_item(
                             row, _admission=admission,
                         )

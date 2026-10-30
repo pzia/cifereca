@@ -16,13 +16,14 @@ def acquire_numilog_direct(
     service: Any, item: Any, *, _admission: Any, session: Any,
     InterProcessLock: Any, acquisition_lock_file: Any,
     LockBusyError: type[Exception], ProviderConfigurationError: type[Exception],
-    hashlib: Any,
+    hashlib: Any, reconcile_pending: bool = False,
 ) -> Any:
     # Even an explicit UI click is not permission to download from a
     # detached account or to race an existing manual/materialize run.
     # Numilog resolves delivery URLs afresh *inside* download_direct.
     from .numilog_manual_acquisition import require_source
     from .numilog_startup_diagnostics import acquisition_refusal
+    from .numilog_recovery import automatic_delivery_requested
     from ..plugin_api import Cancelled
     # Only the *first* failed boundary is recorded by the opt-in startup
     # trace. These closed values never expose the error's private contents.
@@ -46,8 +47,50 @@ def acquire_numilog_direct(
                 )
 
             stage = "acquisition_local_conflict"
+            automatic = automatic_delivery_requested() and callable(_admission)
+            if reconcile_pending or automatic:
+                from .numilog_recovery import recovery_gate
+                from .numilog_materialization_consent import mode
+                from ..brokers import SynchronizationBrokerImpl
+                recovery_broker = SynchronizationBrokerImpl(service)
+                matching = [account for account in service.accounts
+                    if account.provider_id == 'numilog'
+                    and account.credential_id == item.source_credential
+                    and account.identity_id == identity.identity_id
+                    and account.unique_id == pinned_account_id]
+                recovery_source_id = (
+                    recovery_broker._source_id(matching[0]) if len(matching) == 1
+                    else None
+                )
+                recovery_epoch = (
+                    service.storage.numilog_materialization_consent_revision(recovery_source_id)
+                    if recovery_source_id is not None else None
+                )
+                def startup_authorized():
+                    # No telemetry, ContextVar flag or local right is a
+                    # permission. The configured opt-in must belong to THIS
+                    # validated identity, credential and upstream account.
+                    return bool(
+                        recovery_epoch is not None
+                        and mode(recovery_broker, recovery_source_id) == 'on_start'
+                        and service.storage.numilog_materialization_consent_revision(
+                            recovery_source_id,
+                        ) == recovery_epoch
+                    )
+
+                def recovery_authorized():
+                    return (startup_authorized() and recovery_gate(
+                        service.storage, identity_id=identity.identity_id,
+                        credential_id=item.source_credential,
+                        account_id=pinned_account_id, item_id=item.record_id,
+                    ) == 'recoverable')
+
+                if (_admission is None or item.downloadable is not True
+                        or not startup_authorized()
+                        or (reconcile_pending and not recovery_authorized())):
+                    raise ProviderConfigurationError('Numilog : autorisation automatique indisponible')
             from .library_declared_links import has_active_declared_link
-            if has_active_declared_link(
+            if not reconcile_pending and has_active_declared_link(
                 service.storage, identity_id=identity.identity_id,
                 provider_id='numilog', credential_id=item.source_credential,
                 account_id=pinned_account_id, item_id=item.record_id,
@@ -55,7 +98,7 @@ def acquire_numilog_direct(
                 raise ProviderConfigurationError(
                     "Numilog : association locale déclarée ; vérifier le fichier avant de télécharger"
                 )
-            if service.storage.numilog_purchase_has_local_conflict(
+            if not reconcile_pending and service.storage.numilog_purchase_has_local_conflict(
                 credential_id=item.source_credential,
                 item_id=item.record_id,
             ):
@@ -81,21 +124,73 @@ def acquire_numilog_direct(
             ).hexdigest()[:32] + ".epub"
             expected_path = target_dir / expected_name
             stage = "acquisition_file_conflict"
-            if expected_path.exists() or expected_path.is_symlink():
-                raise ProviderConfigurationError(
-                    "Numilog : fichier local candidat ; rapprochement requis"
-                )
+            # Unlike a diagnostic trace, this flag is entered ONLY by the
+            # validated startup worker. It never authorizes GET by itself.
+            automatic = automatic_delivery_requested() and callable(_admission)
+            # Automatic acquisition works in an exclusive, exact-purchase
+            # staging namespace. Old files in numilog/ or acsm-*/ are NEVER
+            # interpreted as rights and are NEVER overwritten. No directory
+            # scan/legacy placement is required to make a safe provider GET.
+            if automatic:
+                label = "recovery-" if reconcile_pending else "delivery-"
+                prefix = label + hashlib.sha256(
+                    item.record_id.encode("utf-8"),
+                ).hexdigest()[:32]
+                provider_target = None
+                # An interrupted pre-checkpoint GET may have left a directory
+                # without a receipt. Never overwrite those bytes or make the
+                # first orphan a permanent veto: allocate a bounded new slot.
+                for slot in range(1, 9):
+                    candidate = target_dir / (
+                        prefix if slot == 1 else prefix + "-" + str(slot)
+                    )
+                    try:
+                        candidate.mkdir(mode=0o700, exist_ok=False)
+                    except FileExistsError:
+                        continue
+                    if not candidate.is_dir() or candidate.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : destination de récupération non sûre"
+                        )
+                    provider_target = candidate
+                    break
+                if provider_target is None:
+                    raise ProviderConfigurationError(
+                        "Numilog : destinations épuisées ; reprise locale nécessaire"
+                    )
+            else:
+                provider_target = target_dir
+                if expected_path.exists() or expected_path.is_symlink():
+                    if not reconcile_pending:
+                        raise ProviderConfigurationError(
+                            "Numilog : fichier local candidat ; rapprochement requis"
+                        )
+                    provider_target = target_dir / ("recovery-" + hashlib.sha256(
+                        item.record_id.encode("utf-8"),
+                    ).hexdigest()[:32])
+                    if provider_target.exists() or provider_target.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : reprise déjà matérialisée à vérifier"
+                        )
             from .numilog_publication_guard import require_tracked_publications
             stage = "acquisition_publication_guard"
-            require_tracked_publications(service, identity.identity_id, target_dir)
+            if not automatic and not reconcile_pending:
+                require_tracked_publications(service, identity.identity_id, target_dir)
+            # A recovery cannot claim any historical file by name or by SHA.
+            # A fresh provider GET is permitted ONLY into its otherwise empty
+            # exact destination; no existing byte is overwritten or removed.
             # Recheck the exact caller/source after bounded filesystem
             # inspection and immediately before any provider I/O.
             stage = "acquisition_admission_failed"
             item = readmit()
+            if automatic and not startup_authorized():
+                raise ProviderConfigurationError('Numilog : consentement automatique révoqué')
+            if reconcile_pending and not recovery_authorized():
+                raise ProviderConfigurationError('Numilog : preuves modifiées pendant la reprise')
             stage = "acquisition_delivery_failed"
             try:
                 path, _private_url = pinned_session.download_direct(
-                    item, target_dir,
+                    item, provider_target,
                 )
             except Exception as exc:
                 from ..plugin_api import Cancelled
@@ -107,9 +202,13 @@ def acquire_numilog_direct(
                     "Numilog : livraison indisponible ; réessayer manuellement"
                 ) from None
             # The provider may release its per-session lock before
-            # returning. A reconnect/rebind during HTTP or ADEPT must
-            # not be committed under a different identity.
+            # returning. A reconnect/rebind or revoked recovery opt-in during
+            # HTTP/ADEPT cannot be committed under a different identity.
             stage = "acquisition_admission_failed"
+            if automatic and not startup_authorized():
+                raise ProviderConfigurationError('Numilog : consentement automatique révoqué')
+            if reconcile_pending and not recovery_authorized():
+                raise ProviderConfigurationError('Numilog : consentement de reprise révoqué')
             readmit()
             refreshed = require_source(service, item, session=pinned_session)
             if (refreshed[0].identity_id != identity.identity_id
@@ -134,6 +233,10 @@ def acquire_numilog_direct(
                 clean_item, path, "", target_dir,
             )
             def final_admission():
+                if automatic and not startup_authorized():
+                    raise ProviderConfigurationError('Numilog : consentement automatique révoqué')
+                if reconcile_pending and not recovery_authorized():
+                    raise ProviderConfigurationError('Numilog : preuves de reprise modifiées')
                 readmit()
                 refreshed = require_source(service, item, session=pinned_session)
                 if (refreshed[0].identity_id != identity.identity_id
@@ -149,7 +252,7 @@ def acquire_numilog_direct(
             stage = "acquisition_receipt_failed"
             checkpoint_id = record(
                 service, item, path, target_dir, identity.identity_id, pinned_account_id,
-                validate=final_admission,
+                validate=final_admission, recovery=reconcile_pending,
             )
             # A provider-returned URL may contain single-use ACSM
             # signatures. Never persist it as Acquisition.source_url.

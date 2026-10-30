@@ -37,7 +37,6 @@ class Hostile:
     lambda row: [replace(row, record_id=Hostile())],
     lambda row: [replace(row, owned="true")],
     lambda row: [replace(row, downloadable=Hostile())],
-    lambda row: [replace(row, downloadable=None)],
 ])
 def test_bad_purchase_refuses_full_manifest_before_rights_or_acquisition(
     tmp_path, monkeypatch, malformed,

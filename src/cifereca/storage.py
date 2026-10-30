@@ -3762,9 +3762,10 @@ class Storage:
                         (identity, credential, account, item_id))
                     or _scoped_record_id(item_id, credential) is None
                     or status not in {"acquiring", "retryable_error", "attention_required"}
-                    or acquisition_id != self._stable_id(
-                        "numilog-materialization", identity, credential, account, item_id,
-                    )):
+                    or acquisition_id not in {
+                        self._stable_id("numilog-materialization", identity, credential, account, item_id),
+                        self._stable_id("numilog-materialization-recovery", identity, credential, account, item_id),
+                    }):
                 return refused("receipt_scope_invalid")
             receipt = self._json_load(receipt_raw)
             if (type(receipt) is not dict
@@ -3781,7 +3782,21 @@ class Storage:
                 return refused("receipt_root_invalid")
             path = Path(expected_path)
             parent = path.parent
-            if (not path.is_absolute() or str(parent.parent) != source_root
+            recovering = acquisition_id == self._stable_id(
+                "numilog-materialization-recovery", identity, credential, account, item_id,
+            )
+            purchase_digest = hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:32]
+            stage_name = ("recovery-" if recovering else "delivery-") + purchase_digest
+            # Only one of eight bounded, exact-purchase Core staging slots.
+            # A prior uncheckpointed attempt cannot cause an overwrite;
+            # arbitrary nested paths remain invalid.
+            approved_stage = (
+                str(parent.parent.parent) == source_root
+                and re.fullmatch(re.escape(stage_name) + r"(?:-[2-8])?",
+                                 parent.parent.name) is not None
+            )
+            approved_parent = str(parent.parent) == source_root or approved_stage
+            if (not path.is_absolute() or not approved_parent
                     or re.fullmatch(r"acsm-([0-9a-f]{64})", parent.name) is None):
                 return refused("path_not_canonical")
             acsm_sha = parent.name[5:]
@@ -3838,21 +3853,37 @@ class Storage:
             # placement and its exact catalogue row, never the shared artifact
             # ownership or another profile's provenance. Still reject another
             # sourced placement of the same owner, or an unresolvable owner.
+            # A fresh, same-owner, exact purchase delivery justifies an
+            # independent OriginLink even if another source has these bytes.
+            # Preserve both Placements; an unknown owner remains a refusal.
+            ambiguous_owners = (
+                "NOT EXISTS (SELECT 1 FROM identities AS i WHERE i.identity_id=p.identity_id)"
+                if recovering else
+                "(p.identity_id=? OR NOT EXISTS (SELECT 1 FROM identities AS i "
+                "WHERE i.identity_id=p.identity_id))"
+            )
             other = db.execute(
                 "SELECT 1 FROM placements AS p WHERE p.artifact_id=? AND p.path<>? "
-                "AND p.source_item_id IS NOT NULL AND (p.identity_id=? OR "
-                "NOT EXISTS (SELECT 1 FROM identities AS i "
-                "WHERE i.identity_id=p.identity_id)) LIMIT 1",
+                "AND p.source_item_id IS NOT NULL AND " + ambiguous_owners + " LIMIT 1",
+                (artifact_id, expected_path) if recovering else
                 (artifact_id, expected_path, identity),
             ).fetchone()
             if other is not None:
                 return refused("artifact_shared_elsewhere")
             competitors = db.execute(
-                "SELECT acquisition_id FROM acquisition_ledger WHERE "
-                "provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
+                "SELECT acquisition_id,identity_id,account_id,status FROM acquisition_ledger WHERE "
+                "provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 3",
                 (credential, item_id),
             ).fetchall()
-            if len(competitors) != 1 or competitors[0][0] != acquisition_id:
+            recovering = acquisition_id == self._stable_id(
+                "numilog-materialization-recovery", identity, credential, account, item_id,
+            )
+            if (not competitors or len(competitors) > (2 if recovering else 1)
+                    or sum(row[0] == acquisition_id for row in competitors) != 1
+                    or any(row[1] != identity or row[2] != account
+                           or (row[0] != acquisition_id
+                               and (not recovering or row[3] != 'complete'))
+                           for row in competitors)):
                 return refused("competing_receipts")
             # Both provenance rows change together. A crash/SQL error cannot
             # leave a placement adopted without its matching catalog entry.
@@ -3887,9 +3918,23 @@ class Storage:
                 "WHERE provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
                 (credential_id, item_id),
             ).fetchall()
-            if len(rows) != 1:
+            # Recovery is a distinct scoped acquisition. The former complete
+            # receipt remains historical evidence; a foreign or in-flight
+            # receipt is never silently replaced or taken as our own.
+            from .core.numilog_recovery import recovery_id
+            recovering = acquisition_id == recovery_id(
+                identity_id, credential_id, account_id, item_id,
+            )
+            if not rows or len(rows) > (2 if recovering else 1):
                 return False
-            aid, owner, account, status, raw = rows[0]
+            selected = [r for r in rows if r[0] == acquisition_id]
+            if len(selected) != 1 or any(
+                r[1] != identity_id or r[2] != account_id or
+                (r[0] != acquisition_id and (not recovering or r[3] != 'complete'))
+                for r in rows
+            ):
+                return False
+            aid, owner, account, status, raw = selected[0]
             meta = self._json_load(raw)
             if (aid != acquisition_id or owner != identity_id or account != account_id
                     or status not in {'acquiring', 'retryable_error', 'attention_required', 'complete'}

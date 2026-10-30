@@ -30,15 +30,20 @@ def test_unresolved_owned_purchase_never_counts_as_complete(tmp_path, monkeypatc
         )
         result = execute(broker, account.identity_id, "startup")
         assert not result.ok
-        assert result.facts["status"] == "blocked"
-        assert result.facts["downloaded"] == result.facts["attempted"] == 0
-        assert result.facts["blocked"] == 1
+        recoverable = reason in {"needs_reconciliation", "purchase_unproven"}
+        assert result.facts["status"] == ("failed" if recoverable else "blocked")
+        assert result.facts["downloaded"] == 0
+        assert result.facts["attempted"] == int(recoverable)
+        assert result.facts["blocked"] == int(not recoverable)
+        assert result.facts["failed"] == int(recoverable)
         assert result.facts["skipped"] == 0
-        assert result.facts["source_results"][0]["status"] == "blocked"
+        assert result.facts["source_results"][0]["status"] == result.facts["status"]
         durable = service.storage.numilog_materialization_run_status(sid)
-        assert durable["status"] == "blocked"
+        assert durable["status"] == result.facts["status"]
         assert durable["downloaded"] == 0
-        assert calls == []
+        # The fixture never implements delivery; reaching that boundary is
+        # now correct for the single consented/recoverable owned purchase.
+        assert calls == (["FORBIDDEN DOWNLOAD"] if recoverable else [])
         assert service.storage.acquisitions(provider_id="numilog") == []
     finally:
         service.close()

@@ -15,7 +15,7 @@ PHASES = frozenset({"admission", "durable_claim", "manifest_fetch", "rights_mirr
     "preflight", "acquisition", "adept", "index", "receipt_finalization", "completed"})
 CODES = frozenset({"started", "complete", "not_due", "consent_revoked", "admission_failed",
     "claim_failed", "manifest_failed", "manifest_invalid", "rights_mirror_failed",
-    "preflight_failed", "acquisition_failed", "adept_failed", "index_failed",
+    "preflight_failed", "rights_mirror_incomplete", "acquisition_failed", "adept_failed", "index_failed",
     "receipt_finalize_failed", "interrupted", "adept_complete",
     # Refusal boundaries in the locked Numilog acquisition executor. These
     # contain no exception string, URL, filename, product ID or account.
@@ -37,6 +37,10 @@ ITEM_DECISIONS = frozenset({
     "evidence_unavailable", "source_changed", "invalid_source",
     "invalid_item_id", "preflight_failed", "consent_revoked",
     "quota_reached", "acquired", "acquisition_failed",
+    "recovery_scope_invalid", "recovery_right_unproven",
+    "recovery_receipts_ambiguous", "recovery_foreign_receipt",
+    "recovery_already_attempted", "recovery_receipt_pending",
+    "recovery_foreign_placement", "recovery_evidence_unavailable",
 })
 
 COUNTS = ("attempted", "downloaded", "skipped", "failed")
@@ -348,6 +352,27 @@ class StartupTrace:
 
 _ACQUISITION_DENIAL_CODES = frozenset(code for code in CODES
     if code.startswith("acquisition_") and code != "acquisition_failed")
+
+
+def startup_acquisition_active() -> bool:
+    """Diagnostic trace presence, NOT independent acquisition permission.
+
+    The locked executor must separately validate exact consent, session,
+    account and fresh downloadable offer.
+    """
+    return _ACTIVE.get() is not None
+
+
+def mirror_observation_error(source_id):
+    """Preserve raw metadata projection failure in the local Core journal.
+
+    Do not echo SQL/provider exception text to the public bounded GTK trace.
+    """
+    if _source(source_id):
+        _LOG.warning(
+            "Numilog owned-rights projection unavailable (download offer unaffected)",
+            exc_info=True,
+        )
 
 
 def acquisition_refusal(code):

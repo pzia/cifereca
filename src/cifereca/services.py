@@ -2666,8 +2666,10 @@ class LibraryService:
 
         if item.source_provider == "numilog":
             from .core.numilog_direct_acquisition import acquire_numilog_direct
+            from .core.numilog_recovery import recovery_requested
             return acquire_numilog_direct(
                 self, item, _admission=_admission, session=session,
+                reconcile_pending=recovery_requested(),
                 InterProcessLock=InterProcessLock,
                 acquisition_lock_file=acquisition_lock_file,
                 LockBusyError=LockBusyError,
