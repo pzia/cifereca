@@ -530,10 +530,11 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 attempts += 1
                 observe("acquisition")
                 try:
-                    with trace.acquisition():
+                    from contextlib import nullcontext
+                    from .numilog_recovery import recovery_request
+                    with trace.acquisition(), (recovery_request() if is_recovery else nullcontext()):
                         acquired = broker.service.acquire_direct_item(
                             row, _admission=admission,
-                            **({'_numilog_recovery': True} if is_recovery else {}),
                         )
                     # The provider created a durable receipt under the lock;
                     # index without downloading again. Failed indexing leaves
