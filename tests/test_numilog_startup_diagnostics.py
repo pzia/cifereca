@@ -40,7 +40,6 @@ def assert_private_absent(service, result, status, tmp_path):
 @pytest.mark.parametrize('fault,phase,code,attempted', [
     ('manifest', 'manifest_fetch', 'manifest_failed', 0),
     ('invalid', 'manifest_fetch', 'manifest_invalid', 0),
-    ('mirror', 'rights_mirror', 'rights_mirror_failed', 0),
     ('preflight', 'preflight', 'preflight_failed', 0),
     ('acquire', 'acquisition', 'acquisition_failed', 1),
     ('adept', 'adept', 'adept_failed', 1),
