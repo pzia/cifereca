@@ -235,18 +235,18 @@ def execute_admitted_convergence(
             )
             continue
 
-        if row.provider_attested and row.state == "inactive":
-            # Descriptive history only: no acquisition and no negative write.
-            results.append(ConvergenceOutcome(key, "inactive", "right_inactive"))
+        if (row.provider_attested and row.state == "inactive"
+                and not row.delivery_attested):
+            # Inactivity is descriptive; it cannot veto a CURRENT attested
+            # delivery. Without one, no GET occurs.
+            results.append(ConvergenceOutcome(key, "inactive", "delivery_unavailable"))
             continue
 
         # A stale/unknown right, unsigned delivery, missing configured
         # consent or disabled source can never start a file GET or ADEPT.
         if (snapshot.status not in ("success", "partial")
                 or not row.provider_attested
-                or (row.state != "active" and not (
-                    row.state == "unknown" and row.delivery == "available"
-                ))):
+                or (row.state != "active" and not row.delivery_attested)):
             results.append(ConvergenceOutcome(key, "pending", "offer_unconfirmed"))
             continue
         if row.delivery_unavailable_reason == "archived":
