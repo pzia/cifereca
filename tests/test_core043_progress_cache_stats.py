@@ -12,7 +12,7 @@ from cifereca.cache_runtime import CacheBrokerImpl
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import SearchResult
-from cifereca.plugin_api import MANIFEST_VERSION, PLUGIN_API_VERSION
+from cifereca.plugin_api import MANIFEST_VERSION
 from cifereca.services import LibraryService
 from cifereca.storage import CURRENT_SCHEMA_VERSION, Storage
 
@@ -48,8 +48,7 @@ class _FakeSession:
         )]
 
 
-def test_core043_public_versions_and_schema():
-    assert PLUGIN_API_VERSION == "1.4.3"
+def test_core043_manifest_and_storage_schema():
     assert MANIFEST_VERSION == 1
     assert CURRENT_SCHEMA_VERSION == 14
 

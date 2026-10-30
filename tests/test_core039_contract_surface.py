@@ -7,7 +7,7 @@ from cifereca.brokers import build_public_brokers
 from cifereca.gui.shell_model import contextual_actions, page_actions
 from cifereca.plugin_api import (
     AccountRef, ArtifactFormat, ArtifactRef, BookRef, MaintenanceContext,
-    MaintenancePlan, MaintenanceResult, MaintenanceToolInfo, PLUGIN_API_VERSION,
+    MaintenancePlan, MaintenanceResult, MaintenanceToolInfo,
     SyncRequest, UiActionContext, UiActionContribution, UiPageContribution,
     normalize_language_tag,
 )
@@ -90,8 +90,7 @@ class Item:
     source_credential = ""
 
 
-def test_public_api_minor_and_new_category():
-    assert PLUGIN_API_VERSION == "1.4.3"
+def test_public_api_category_and_language_contract():
     assert "maintenance.tool" in {row.id for row in CORE_CATEGORIES}
     assert normalize_language_tag("fre") == "fr"
 

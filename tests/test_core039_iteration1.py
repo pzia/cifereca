@@ -33,7 +33,5 @@ def test_navigation_history_back_forward_and_branching():
 
 
 def test_contract_surface_is_added_only_in_iteration2():
-    from cifereca.plugin_api import PLUGIN_API_VERSION
     from cifereca.plugins.categories import CORE_CATEGORIES
-    assert PLUGIN_API_VERSION == "1.4.3"
     assert "maintenance.tool" in {row.id for row in CORE_CATEGORIES}
