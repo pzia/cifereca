@@ -30,7 +30,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     """Validate a GTK-thread snapshot without changing the current config.
 
     The service still owns migration and rollback. Provider descriptors contain
-    credential schemas only; values contain scalars and collections, no widgets.
+    credential and account-option schemas; values contain no widgets.
     """
     draft = deepcopy(config)
     saved_identities: list[dict[str, Any]] = []
