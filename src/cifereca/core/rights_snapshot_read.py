@@ -17,6 +17,9 @@ from cifereca.plugin_api.errors import Cancelled
 from cifereca.plugin_api.provider_rights_observation import (
     ProviderRightsScope, ProviderRightsSnapshot,
 )
+from cifereca.plugin_api.downloadable_resources import (
+    ResourceSnapshot, as_legacy_rights_snapshot,
+)
 
 _LOG = logging.getLogger("cifereca")
 
@@ -158,6 +161,14 @@ def read_account_rights_snapshot(service, account: Account, *,
             return unavailable("cancelled")
         if not still_bound():
             return unavailable()
+        # Transitional v2 adoption through the same single optional reader.
+        # Convert an exact downloadable-resource observation to the existing
+        # Core executor envelope; *never* infer a legal grant or extra GET.
+        # A v2-only provider need not introduce a parallel Sync loop.
+        if type(result) is ResourceSnapshot:
+            if result.scope != scope:
+                raise ValueError("invalid_downloadable_snapshot_scope")
+            result = as_legacy_rights_snapshot(result)
         if type(result) is not ProviderRightsSnapshot or result.scope != scope:
             raise ValueError("invalid_rights_snapshot_scope")
         return ProviderRightsSnapshot(
