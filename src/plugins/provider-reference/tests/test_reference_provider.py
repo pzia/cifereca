@@ -375,7 +375,7 @@ def test_v2_downloadable_resource_contract_when_core_abi_is_installed(tmp_path):
         assert len(inventory.resources) == 9
         record = next(r for r in inventory.resources
                       if r.source.edition_id == "epub-002")
-        assert record.right is not None and record.right.state == "unknown"
+        assert record.right is None  # genuinely absent optional right
         assert not record.can_propose_delivery  # ordinary inventory is not a preflight
         offer = session.downloadable_selected_offer_snapshot(
             a, edition_id="epub-002", resource_id="right-epub-002",
@@ -383,7 +383,7 @@ def test_v2_downloadable_resource_contract_when_core_abi_is_installed(tmp_path):
         )
         selected = offer.resources[0]
         assert selected.capability.downloadable
-        assert selected.right.state == "unknown"
+        assert selected.right is None
         assert not selected.authorizes_acquisition
         staged = session.downloadable_selected_delivery_candidate(
             a, edition_id="epub-002", resource_id="right-epub-002",
