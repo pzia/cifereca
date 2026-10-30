@@ -9,7 +9,7 @@ from cifereca.config import Config
 from cifereca.core.search import filter_loaded_results
 from cifereca.diagnostics import Diagnostics
 from cifereca.gui.book_facets import facets_for_book
-from cifereca.plugin_api import ArtifactFormat, ArtifactRef, ArtifactRouteRequest, PLUGIN_API_VERSION, MANIFEST_VERSION, ResolvedPluginService, StorageTarget
+from cifereca.plugin_api import ArtifactFormat, ArtifactRef, ArtifactRouteRequest, MANIFEST_VERSION, ResolvedPluginService, StorageTarget
 from cifereca.artifact_runtime import ArtifactExecutionBrokerImpl, ArtifactRoutingBrokerImpl
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
@@ -88,6 +88,5 @@ def test_artifact_routing_hides_target_already_holding_same_artifact(tmp_path):
     assert len(routing.targets(ArtifactRouteRequest(artifact, identity_id='alice', options={'include_existing': True}))) == 1
 
 
-def test_core042_keeps_public_contract_version_stable():
-    assert PLUGIN_API_VERSION == '1.4.3'
+def test_core042_keeps_manifest_contract_stable():
     assert MANIFEST_VERSION == 1

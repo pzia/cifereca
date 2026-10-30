@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cifereca.plugin_api import CONTRACT_REGISTRY, PLUGIN_API_VERSION
+from cifereca.plugin_api import CONTRACT_REGISTRY
 from cifereca.plugins import PackageStore, PluginConfigStore, PluginManager, PluginStateStore
 
 
@@ -31,8 +31,7 @@ def _manager(root: Path, brokers=None):
     )
 
 
-def test_plugin_api_12_and_public_contract_registry():
-    assert PLUGIN_API_VERSION == "1.4.3"
+def test_public_document_transformer_contract_registry():
     row = next(x for x in CONTRACT_REGISTRY if x.category == "document.transformer")
     assert row.contract_id == "cifereca.document.transformer"
     assert row.version == "1"

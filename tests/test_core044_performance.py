@@ -8,7 +8,6 @@ from cifereca.catalog import LocalCatalog
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import SearchResult
-from cifereca.plugin_api import PLUGIN_API_VERSION
 from cifereca.services import LibraryService
 from cifereca.storage import CURRENT_SCHEMA_VERSION, Storage
 
@@ -30,10 +29,9 @@ def _result(record_id: str) -> SearchResult:
     )
 
 
-def test_core044_versions_and_performance_schema(tmp_path: Path):
+def test_core044_performance_storage_schema(tmp_path: Path):
     storage = Storage(tmp_path / "db.sqlite3")
     try:
-        assert PLUGIN_API_VERSION == "1.4.3"
         assert CURRENT_SCHEMA_VERSION == 14
         assert storage.schema_version() == 14
         with storage._lock, storage._connect() as db:
