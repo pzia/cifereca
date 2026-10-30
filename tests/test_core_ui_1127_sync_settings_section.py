@@ -199,12 +199,14 @@ def test_opening_interval_is_not_described_as_periodic_timer():
     assert "minuterie périodique" in group.children[0].subtitle
 
 
-def test_unlinked_option_explicitly_warns_about_duplicate_downloads():
+def test_unlinked_option_preserves_source_refusals_and_postplacement_integrity():
     _, section, _ = _build()
     risky = section.children[0].children[2]
     assert "Ancienne dérogation Kobo" in risky.title
-    assert "ne contourne ni la vérification des droits" in risky.subtitle
-    assert "anti-doublons" in risky.subtitle
+    assert "ne contourne ni les refus explicites" in risky.subtitle
+    assert "l’intégrité des fichiers" in risky.subtitle
+    assert "anti-doublons après" in risky.subtitle
+    assert "consentement de la source" in risky.subtitle
 
 
 def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
