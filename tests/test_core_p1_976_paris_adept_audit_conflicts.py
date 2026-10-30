@@ -279,3 +279,66 @@ def test_unknown_ledger_status_is_closed_and_never_leaks_sensitive_text():
     assert report["loans"][0]["origin_resolution"] == "unknown"
     assert "PRIVATE-ACSM" not in repr(report)
     assert "proposed-only" not in repr(report)
+
+
+def test_safe_next_review_for_reused_paris_loan_id_with_two_items():
+    first = right("paris-a", "alice", "primary", item="book")
+    second = right("paris-a", "alice", "primary", item="other-book")
+    report = build_paris_adept_audit(FakeStorage(entitlements=[first, second]))
+    loan = report["loans"][0]
+    assert loan["multiple_connections"] is False
+    assert loan["multiple_item_ids"] is True
+    assert loan["requires_attention"] is True
+    assert loan["review_reasons"] == ["paris_loan_id_reused"]
+    assert loan["next_read_only_review"] == "compare_exact_loan_and_adobe_transactions"
+
+
+def test_safe_next_review_for_two_completed_adobe_profiles():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[
+            acquisition(profile="profile-a"),
+            acquisition(profile="profile-b"),
+        ],
+    )
+    loan = build_paris_adept_audit(storage)["loans"][0]
+    assert loan["recorded_profile_conflict"] is True
+    assert "recorded_adobe_profiles_conflict" in loan["review_reasons"]
+    assert loan["next_read_only_review"] == "compare_exact_loan_and_adobe_transactions"
+
+
+def test_safe_next_review_prioritizes_unverified_explicit_binding():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "linked")],
+    )
+    loan = build_paris_adept_audit(storage)["loans"][0]
+    assert loan["review_reasons"] == ["source_binding_unverified"]
+    assert loan["next_read_only_review"] == "inspect_paris_account_binding"
+
+
+def test_configured_vs_historical_adobe_profile_review_does_not_authorize_return():
+    historical = acquisition(profile="historical-hb", metadata={
+        "provider_loan_id": "shared",
+        "adept_binding": {
+            "adept_profile_id": "historical-hb", "adept_loan_id": "PRIVATE-LOAN",
+        },
+    })
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[historical],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    assert loan["origin_resolution"] == "single_recorded"
+    assert loan["recorded_profile_conflict"] is False
+    assert loan["review_reasons"] == ["configured_vs_recorded_profile_differs"]
+    assert loan["next_read_only_review"] == "compare_configured_vs_historical_profile"
+    assert "PRIVATE-LOAN" not in repr(report)
+
+
+def test_normal_one_connection_without_historical_adobe_claim_has_no_review_action():
+    storage = FakeStorage(entitlements=[right("paris-a", "alice", "primary")])
+    loan = build_paris_adept_audit(storage)["loans"][0]
+    assert loan["requires_attention"] is False
+    assert loan["review_reasons"] == []
+    assert loan["next_read_only_review"] == "none"
