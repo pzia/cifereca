@@ -79,3 +79,33 @@ def toggle_state(db, source: SourceKey):
                 or _HEX.fullmatch(revision[0]) is None):
             return "off"
     return "on"
+
+
+def numilog_generation(storage, scope):
+    """Opaque consent epoch for this exact account; None if unavailable.
+
+    This epoch changes on Numilog revoke/re-opt-in. Pinning it prevents an
+    ON→OFF→ON race from reviving a previously admitted delivery.
+    """
+    if getattr(scope, "provider_id", None) != "numilog":
+        return None
+    try:
+        value = storage.metadata_get(
+            "sync.source.numilog.materialization.epoch.v1." + _source_id(scope)
+        )
+        return value if type(value) is str and _HEX.fullmatch(value) else None
+    except Exception:
+        return None
+
+
+def numilog_generation_in_transaction(db, source):
+    """Read the same generation from the canonical publisher's transaction."""
+    if type(source) is not SourceKey or source.scope.provider_id != "numilog":
+        return None
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key=?",
+        ("sync.source.numilog.materialization.epoch.v1." +
+         _source_id(source.scope),),
+    ).fetchone()
+    value = row[0] if row else None
+    return value if type(value) is str and _HEX.fullmatch(value) else None
