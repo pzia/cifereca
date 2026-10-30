@@ -33,7 +33,7 @@ def _result(record_id: str) -> SearchResult:
 def test_core044_versions_and_performance_schema(tmp_path: Path):
     storage = Storage(tmp_path / "db.sqlite3")
     try:
-        assert PLUGIN_API_VERSION == "1.4.2"
+        assert PLUGIN_API_VERSION == "1.4.3"
         assert CURRENT_SCHEMA_VERSION == 14
         assert storage.schema_version() == 14
         with storage._lock, storage._connect() as db:

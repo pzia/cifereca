@@ -144,7 +144,7 @@ def test_artifact_routing_selects_storage_target_and_verifies_sha(tmp_path):
 
 def test_new_public_broker_protocols_and_version():
     from cifereca.plugin_api import ArtifactExecutionBroker, ArtifactRoutingBroker, LibraryMaintenanceBroker, LibraryReadBroker, PLUGIN_API_VERSION, MANIFEST_VERSION
-    assert PLUGIN_API_VERSION == '1.4.2'
+    assert PLUGIN_API_VERSION == '1.4.3'
     assert MANIFEST_VERSION == 1
     assert ArtifactExecutionBroker and ArtifactRoutingBroker and LibraryMaintenanceBroker and LibraryReadBroker
 
