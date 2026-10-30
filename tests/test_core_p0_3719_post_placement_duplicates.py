@@ -1,5 +1,8 @@
 """#3719: no cross-profile inference, no removal before reference-safe dedup."""
+import pytest
+
 from cifereca.core.canonical_post_placement import verified_post_placement_duplicates
+from tests.test_core_p0_3171_convergence_execution import rig
 from tests.test_core_p0_3171_atomic_publication_v14 import (
     BYTES, new_source, publish, register, rows, store, target,
 )
@@ -66,3 +69,35 @@ def test_unknown_and_missing_owner_are_never_proof(store, tmp_path):
     assert verified_post_placement_duplicates(
         store, library_root=tmp_path / "EBooks", placement_id="absent",
     ) == ()
+
+
+def test_probe_runs_after_commit_and_failure_cannot_unpublish(rig, monkeypatch):
+    from cifereca.core import canonical_post_placement
+    from tests.test_core_p0_3171_convergence_execution import (
+        fake_delivery, run,
+    )
+    service, account, source, snapshot, root, lock_path = rig
+    observed = []
+
+    def failed_probe(storage, *, library_root, placement_id):
+        assert storage is service.storage
+        assert library_root == root
+        assert rows(storage) == (1, 1, 1, 1)
+        assert storage.placement_get(placement_id)["identity_id"] == "A"
+        observed.append(placement_id)
+        raise RuntimeError("synthetic maintenance failure")
+
+    monkeypatch.setattr(canonical_post_placement,
+                        "verified_post_placement_duplicates", failed_probe)
+    first = run(service, account, snapshot, root, lock_path, {source},
+                fake_delivery(service, root))
+    assert first[0].status == "downloaded"
+    assert len(observed) == 1
+    assert rows(service.storage) == (1, 1, 1, 1)
+    assert service.calls == 1
+    again = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("post-B probe failure cannot force second GET"),
+    )
+    assert again[0].status == "present_attested"
+    assert service.calls == 1
