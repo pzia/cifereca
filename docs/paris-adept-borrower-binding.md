@@ -94,7 +94,41 @@ cifereca-cli paris-adept audit
 cifereca-cli paris-adept audit --credential "<connexion-paris>"
 ```
 
-Cette commande effectue un rapprochement **en lecture seule** des prêts actifs
+Pour examiner **une transaction historique précise** par les identifiants
+exacts du prêt Paris et de l'item (sans rapprochement par titre, ISBN ou SHA) :
+
+```bash
+cifereca-cli paris-adept audit-origin \
+  --loan-id "<id-pret-paris>" --item-id "<id-item>"
+```
+
+`audit-origin` reprend le résolveur Core `inspect_paris_adept_origins` :
+`sources` = visibilités issues des droits Paris persistés,
+`origins` = acquisitions ADEPT historiquement enregistrées (y compris dans
+une identité de bibliothèque différente), `evidence` = indice enregistré ou
+état d'inventaire précédemment attesté, `origin_resolution` = cohérence des
+revendications. Une observation `inventory_attested` **n'est jamais** une
+interrogation Adobe actuelle, ni une autorisation de retour. La commande ne
+contacte aucun fournisseur et ne modifie ni les fichiers ni la base.
+
+Pour examiner les références canoniques v14 correspondant au **même prêt et item**,
+sans confondre SourceReference Paris et OriginLink ADEPT :
+
+```bash
+cifereca-cli paris-adept audit-canonical \\
+  --loan-id "<id-pret-paris>" --item-id "<id-item>"
+```
+
+`audit-canonical` distingue les liens `provider` et `adept` persistés pour
+**chaque** SourceReference exacte, même lorsque deux comptes partagent un SHA.
+`paired_links_unverified` signifie seulement que les deux liens existent en
+base, **pas** que le profil Adobe ou son état serveur est attesté. Aucun
+rattachement de licence par identité de rangement ou SHA, aucun droit à un
+retour : `return_authorized=false`. Les références de reçus ne sont pas
+affichées. La sonde est décrite dans
+[la revue canonique](CORE-P1-976-CANONICAL-ADEPT-LINK-REVIEW.md).
+
+La commande globale `audit` effectue un rapprochement **en lecture seule** des prêts actifs
 et acquisitions déjà enregistrés en base, des connexions Paris et des profils
 ADEPT associés. Aucune activation, connexion fournisseur, vérification
 distante, suppression ou restitution n'est effectuée.
