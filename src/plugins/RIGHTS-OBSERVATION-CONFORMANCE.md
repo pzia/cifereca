@@ -17,14 +17,19 @@ d'artefact vérifiés, SHA final et Placement dans un profil ; C = Notice
 bibliographique descriptive. Le Core est **seul** responsable d'admettre
 un fait A, de rapprocher des OriginLink attestés et de publier B/OriginLink
 atomiquement. L'inventaire ne déclenche ni GET de livraison ni import ADEPT.
-La Sync unique réalise la convergence automatiquement lorsque l'offre, le
-droit et la configuration l'autorisent ; aucun dialogue de réconciliation
-généralisé, aucun veto à partir d'un titre ou d'un ISBN candidat.
+La Sync unique réalise la convergence automatiquement pour les fichiers dont
+la capacité de livraison exacte est observée, lorsque la configuration de Sync
+est activée. Le champ de droit est **facultatif et descriptif** : `state=unknown`
+ou même `inactive` ne sont pas des refus de GET si une offre `available` est
+réellement attestée par `provider_response` et le compte exact. Inversement,
+une ligne `active` avec `delivery=unknown/unavailable` ne garantit aucune
+acquisition. Le Core contrôle consentement, compte, livraison, ADEPT et SHA
+final ; aucun dialogue de réconciliation généralisé ni veto par titre/ISBN.
 
 | Producteur réel | Source et branche A | Identifiants admis | Type et état rapportés | Couverture | Offre de livraison dans A |
 |---|---|---|---|---|---|
 | `provider-numilog` | `MesLivres` authentifié ; `meslivres` | `numilog:<scope-credential>:<lid>:<variant-hash>` ; pas de rapprochement avec la fiche commerciale | achat, `active`, preuve `numilog.meslivres` | `partial`, pagination non attestée exhaustive, doublons `(lid, variant)` mis en quarantaine | `unknown` au scan normal ; `available` seulement dans le préflight ciblé #3586 sur action signée exacte (et identité #3587), sans exporter l'URL |
-| `provider-kobo` | manifeste Vault personnel ; `personal_manifest` | `product_id` authentifié strict, compte exact ; édition = droit dans le contrat v1 | achat `owned=True`, `active` même si archivé ; `owned=False` non promu ; preuve `kobo.personal_manifest` | `partial`, vignettes catalogue et résultats publics non probants | `unknown` en scan ordinaire ; préflight sélectionné #3592 seulement après droit exact et POST Vault explicite, `available` si candidat HTTPS GET unique admissible, puis revalidation de l’offre exacte avant restitution du descripteur, archive ≠ droit de télécharger |
+| `provider-kobo` | manifeste Vault personnel ; `personal_manifest` | `product_id` authentifié strict, compte exact ; édition = référence de ressource v1 | `owned=True` → achat déclaré `active` ; `owned` absent → `unknown` (la ressource du manifeste reste observable) ; `owned=False` non promu ; archive ≠ révocation ; preuve `kobo.personal_manifest` | `partial`, vignettes catalogue et résultats publics non probants | `unknown` en scan ordinaire ; préflight sélectionné #3592 seulement après droit exact et POST Vault explicite, `available` si candidat HTTPS GET unique admissible, puis revalidation de l’offre exacte avant restitution du descripteur, archive ≠ droit de télécharger |
 | `provider-paris` | prêts DILICOM ; `dilicom` | `Id` ou `HoldingId` **réel** + `RecordId` ; jamais repli titre/UUID | prêt, `unknown` (aucun état actif inféré) ; preuve `paris.dilicom.listloans` | `partial`, pas d'exhaustivité ; branche SYRACUSE physique séparée. Si DILICOM échoue, la PR #3547 (fusionnée) précise `failed/unknown`. | `unknown`, ni ACSM ni PNB déclenché |
 
 **Paris / multi-identités (#3118) :** les lectures d'owner du broker Core
@@ -91,7 +96,7 @@ copie de profil ou fichier local. Handoff #3171/#3252 :
 | Doublon d'ID ou édition contradictoire | mise en quarantaine des preuves ambiguës ; autres positifs conservés quand possible |
 | Branche qui échoue ou inventaire partiel | échec/partiel **sans preuve négative**, pas de déduction de révocation |
 | Archives et notices descriptives | catalogue public, archive, titre, ISBN ou SHA isolé ne servent jamais de droit |
-| Livraison et ADEPT | aucun GET signé supplémentaire pendant la capture A ; consentement, staging, validation et SHA final restent séparés |
+| Livraison et ADEPT | aucun GET signé supplémentaire pendant la capture A ; offre fraîche `available` même avec droit `unknown` ; garde compte/session, consentement, staging, intégrité et SHA final conservés |
 
 **Tests de production fournisseur hors réseau :**
 `src/plugins/provider-numilog/tests/test_p1_3252_rights_observation_snapshot.py`,

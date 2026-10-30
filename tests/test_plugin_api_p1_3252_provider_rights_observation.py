@@ -62,6 +62,24 @@ def test_interchangeable_providers_positive_claim_is_not_a_ledger_mutation(provi
     assert observed.authorizes_negative_reconciliation is False
 
 
+@pytest.mark.parametrize("provider", ("kobo", "numilog"))
+@pytest.mark.parametrize("state", ("active", "unknown", "inactive"))
+def test_exact_provider_delivery_is_independent_from_optional_right_state(provider, state):
+    offered = replace(purchase(), state=state)
+    report = snap(provider, rights=(offered,))
+    assert offered.delivery_attested
+    assert offered.provider_attested
+    assert offered.authorizes_mutation is False
+    assert report.rights[0].state == state
+    assert report.rights[0].delivery_offer_id == "offer:42"
+
+
+def test_historical_evidence_cannot_create_live_delivery_offer_even_if_active():
+    # Contract validation happens while constructing the changed observation.
+    with pytest.raises(ValueError, match="unproven_rights_delivery"):
+        replace(purchase(), evidence_kind="historical_receipt")
+
+
 def test_same_edition_in_two_identities_and_credentials_does_not_join():
     first = snap(rights=(purchase(),))
     second = snap(

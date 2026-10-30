@@ -22,6 +22,32 @@ def selection(**overrides):
     }
 
 
+def test_bnf_exact_signed_offer_not_blocked_by_unknown_right_metadata():
+    from dataclasses import replace
+
+    session, account, client = fixture(
+        activity(("edition-A", "loan-A")) + signed_action("loan-A")
+    )
+    original = session.rights_observation_snapshot
+
+    def unknown_right(bound):
+        snapshot = original(bound)
+        return replace(snapshot, rights=tuple(
+            replace(row, state="unknown") for row in snapshot.rights
+        ))
+
+    session.rights_observation_snapshot = unknown_right
+    try:
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, **selection(),
+        )
+        assert selected.rights[0].state == "unknown"
+        assert selected.rights[0].delivery_attested
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
 def test_bnf_selected_offer_from_multiple_loans_is_scoped_to_one():
     html = activity(("edition-A", "loan-A"), ("edition-B", "loan-B"))
     html += signed_action("loan-A")

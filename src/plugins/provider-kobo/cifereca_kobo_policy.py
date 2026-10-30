@@ -90,7 +90,7 @@ def classify_personal_manifest(
 
     The result is *not* a download plan. It deliberately cannot report
     'safe to acquire' until Core independently proves ledger, placement,
-    rights, account binding, guards and idempotence for each item.
+    exact delivery capability, account binding, consent, safety guards and\n    idempotence for each item. Right-state metadata is optional.
     """
     result = _blank_policy("invalid_scope")
     if not _strict_account_scope(account_id):
