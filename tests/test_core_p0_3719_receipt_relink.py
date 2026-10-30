@@ -179,3 +179,41 @@ def test_live_acquisition_lock_required(rig):
             shared_lock=InterProcessLock(lock_path),
         )
     assert json.loads(saved(rig, record_id)[2])["path"] == str(paths[1])
+
+
+def test_adept_receipt_requires_independent_published_origin(rig):
+    record_id = journal(rig)
+    storage, root, paths, pubs, source, _lock = rig
+    with storage._lock, storage._connect() as db:
+        payload = json.loads(db.execute(
+            "SELECT metadata_json FROM acquisition_ledger WHERE acquisition_id=?",
+            (record_id,),
+        ).fetchone()[0])
+        payload["adept_receipt"] = "synthetic-adept-final"
+        db.execute(
+            "UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+            (json.dumps(payload), record_id),
+        )
+    before = saved(rig, record_id)
+    with pytest.raises(ValueError, match="canonical_receipt_relink_origin_not_published"):
+        relink(rig)
+    assert saved(rig, record_id) == before
+
+    # The ADEPT origin must be independently published for this SAME source
+    # and Artifact. A PDF here is synthetic; this models provenance only.
+    same_source, snapshot = new_source(
+        "A", provider="seller-b", credential="card-b", account="buyer-b",
+    )
+    assert same_source == source
+    publish(
+        storage, root, paths[1], same_source, snapshot,
+        adept_receipt_ref="synthetic-adept-final",
+    )
+    links_before = rows(storage)
+    assert links_before == (1, 3, 3, 4)
+    assert relink(rig) == 1
+    stage = json.loads(saved(rig, record_id)[2])
+    assert stage["path"] == str(paths[0])
+    assert stage["adept_receipt"] == "synthetic-adept-final"
+    assert rows(storage) == links_before
+    assert all(path.read_bytes() == BYTES for path in paths)
