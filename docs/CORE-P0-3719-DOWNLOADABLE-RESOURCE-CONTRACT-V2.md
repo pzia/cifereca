@@ -38,9 +38,17 @@ slot and **not** inventing a legal grant: missing right metadata maps to
 `state="unknown"`. These functions do not grant acquisition or imply
 `SourceReference` local presence.
 
-This additive ABI is a contract milestone. **It is not yet wired as a second
-Core engine**, nor does it imply #3171/#3719 acceptance or validated Numilog
-delivery. The existing v1 provider integrations are not silently migrated.
+**Core integration:** the existing single `rights_observation_snapshot(account)`
+session reader may return either the v1 envelope or `ResourceSnapshot` v2.
+`rights_snapshot_read.py` validates the exact live identity/credential/account,
+converts v2 to the legacy transport under the same Core session/epoch checks,
+and forwards it to the **same** Sync executor. A plugin exporting only a new
+v2-named reader remains unsupported until the public source contract adds
+explicit method discovery; neither a second network read nor a fallback is
+introduced. Plugin-specific integrations are not silently migrated.
+
+The contract plus Core reader bridge is a milestone, **not** final #3719/#3171
+acceptance or validated real Numilog EPUB delivery.
 
 ## Required execution sequence
 
@@ -66,5 +74,7 @@ A verified file's physical integrity, not a historical receipt or
 The fixture matrix includes optional rights with three legal states, available
 vs unknown/archived capabilities, 351 references, two accounts, partial pages,
 unattested historical rows, corrupted evidence and v1 projection integrity.
-It is transport-contract coverage, **not** a substitute for Core/Plugin EPUB
-end-to-end tests in #3171/#2797.
+It also exercises the real v14 SQLite Core reader/Sync path: absent,
+unknown or inactive optional rights plus a current offer produce a verified
+synthetic PDF and a provider OriginLink, then an idempotent second Sync.
+These fixtures are **not** real supplier EPUB end-to-end proof (#3171/#2797).
