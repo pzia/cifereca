@@ -90,10 +90,8 @@ def test_loans_keep_other_upstream_when_one_fails(
     try:
         rows = session.loans(account)
         assert [row.id for row in rows] == [loan_id]
-        assert session.last_loan_errors == [{
-            "upstream": failed_upstream,
-            "code": "paris_loans_upstream_failed",
-        }]
+        assert session._loan_branch_failures.get() == frozenset({failed_upstream})
+        assert "last_loan_errors" not in vars(session)
     finally:
         session.close()
 

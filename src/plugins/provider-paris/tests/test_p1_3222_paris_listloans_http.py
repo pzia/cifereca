@@ -76,12 +76,8 @@ def test_listloans_http_denial_is_typed_without_retry_or_secret(status, reason, 
         with pytest.raises(ProviderConfigurationError):
             session.loans(account)
         assert len(requests) == 2  # no automatic retry on a 404/other denial
-        assert session.last_loan_errors == [
-            {"upstream": "DILICOM", "code": "paris_loans_upstream_failed",
-             "reason_code": reason},
-            {"upstream": "SYRACUSE", "code": "paris_loans_upstream_failed",
-             "reason_code": reason},
-        ]
+        assert session._loan_branch_failures.get() == frozenset({"DILICOM", "SYRACUSE"})
+        assert "last_loan_errors" not in vars(session)
         events = repr(diag.events)
         assert reason in events
         # HTTP denial emits the observed status and MIME plus its closed
@@ -128,8 +124,8 @@ def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
         assert [(b.upstream, b.completeness) for b in snapshot.branches] == [
             ("dilicom", "partial"), ("syracuse", "unknown"),
         ]
-        # Typed snapshots do not write the mutable legacy error facade.
-        assert session.last_loan_errors == []
+        # Typed snapshots publish only bounded branch evidence.
+        assert "last_loan_errors" not in vars(session)
         assert sum(path.endswith("/ListLoans") for path in calls) == 2
         assert reason in repr(diag.events)
     finally:
@@ -147,14 +143,14 @@ def test_both_404_then_upstream_recovers_without_claiming_absence():
     try:
         with pytest.raises(ProviderConfigurationError):
             session.loan_inventory_snapshot(account)
-        assert session.last_loan_errors == []
+        assert "last_loan_errors" not in vars(session)
         broken["value"] = False
         snapshot = session.loan_inventory_snapshot(account)
         assert snapshot.status == "success"
         assert snapshot.loans == ()
         # Even a valid empty Paris response does not attest exhaustive absence.
         assert all(branch.completeness == "unknown" for branch in snapshot.branches)
-        assert session.last_loan_errors == []
+        assert "last_loan_errors" not in vars(session)
     finally:
         session.close()
 
@@ -170,7 +166,7 @@ def test_listloans_transport_error_is_not_an_empty_manifest():
         result = session.loan_inventory_snapshot(account)
         assert result.status == "partial"
         assert result.loans == ()
-        assert session.last_loan_errors == []
+        assert "last_loan_errors" not in vars(session)
     finally:
         session.close()
 
@@ -207,9 +203,8 @@ def test_listloans_supplier_error_is_preserved_with_structured_code(
         assert PRIVATE in repr(diagnostics.events)
         assert "loans DILICOM" in repr(diagnostics.events)
         assert "loans SYRACUSE" in repr(diagnostics.events)
-        # Raw diagnostics remain searchable; the typed producer does not
-        # mutate the legacy v1 side channel to report the same failure.
-        assert session.last_loan_errors == []
+        # Raw diagnostics remain searchable without a mutable v1 error facade.
+        assert "last_loan_errors" not in vars(session)
     finally:
         session.close()
 
@@ -275,9 +270,8 @@ def test_listloans_raw_error_is_searchable_and_exported_without_truncation(
         exported = json.loads(export_raw_journal(log_path))
         assert sum(raw in json.dumps(row, ensure_ascii=False)
                    for row in exported["events"]) == 2
-        # Raw diagnostics remain searchable; the typed producer does not
-        # mutate the legacy v1 side channel to report the same failure.
-        assert session.last_loan_errors == []
+        # Raw diagnostics remain searchable without a mutable v1 error facade.
+        assert "last_loan_errors" not in vars(session)
     finally:
         session.close()
         logger.removeHandler(handler_file)

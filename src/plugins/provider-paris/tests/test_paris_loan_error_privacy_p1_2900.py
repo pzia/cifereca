@@ -54,11 +54,10 @@ def test_partial_dilicom_error_is_closed_without_losing_syracuse_rows(monkeypatc
     monkeypatch.setattr(session.client, "loans", loans)
     try:
         assert session.loans(account) == []
-        assert session.last_loan_errors == [{
-            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
-        }]
+        assert session._loan_branch_failures.get() == frozenset({"DILICOM"})
+        assert "last_loan_errors" not in vars(session)
         assert diagnostics.events
-        serialized = repr((session.last_loan_errors, diagnostics.events))
+        serialized = repr(diagnostics.events)
         assert PRIVATE not in serialized
         assert "PRIVATE_BARCODE" not in serialized
         assert "reader-PRIVATE" not in serialized
@@ -79,10 +78,8 @@ def test_two_failures_return_only_public_error_without_chained_secret(monkeypatc
         assert "OPAQUE_PRIVATE" not in str(ctx.value)
         assert ctx.value.__cause__ is None
         assert ctx.value.__suppress_context__ is True
-        assert len(session.last_loan_errors) == 2
-        assert {x["upstream"] for x in session.last_loan_errors} == {
-            "DILICOM", "SYRACUSE",
-        }
+        assert session._loan_branch_failures.get() == frozenset({"DILICOM", "SYRACUSE"})
+        assert "last_loan_errors" not in vars(session)
         assert "OPAQUE_PRIVATE" not in repr(diagnostics.events)
     finally:
         session.close()
@@ -99,9 +96,10 @@ def test_later_success_resets_partial_error_state(monkeypatch):
     monkeypatch.setattr(session.client, "loans", loans)
     try:
         assert session.loans(account) == []
-        assert session.last_loan_errors
+        assert session._loan_branch_failures.get() == frozenset({"DILICOM"})
         responses["DILICOM"] = []
         assert session.loans(account) == []
-        assert session.last_loan_errors == []
+        assert session._loan_branch_failures.get() == frozenset()
+        assert "last_loan_errors" not in vars(session)
     finally:
         session.close()

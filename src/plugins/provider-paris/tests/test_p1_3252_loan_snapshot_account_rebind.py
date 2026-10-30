@@ -19,8 +19,8 @@ def test_snapshot_refuses_borrower_rebind_even_with_same_account_values(change):
     original = session._read_loans_for_account
     invoked = []
 
-    def changed_during_read(borrower, *, publish_legacy_errors=True):
-        rows = original(borrower, publish_legacy_errors=publish_legacy_errors)
+    def changed_during_read(borrower):
+        rows = original(borrower)
         invoked.append("read")
         if change in {"replace_same_scope", "replace_different_identity"}:
             new_account = replace(account)

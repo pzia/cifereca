@@ -49,23 +49,18 @@ def test_typed_ignores_poisoned_legacy_facade_and_preserves_error_object():
         session.close()
 
 
-def test_only_v1_reader_publishes_legacy_errors_for_existing_consumers():
+def test_legacy_and_typed_loan_reads_share_positives_without_error_facade():
     session, a, _ = fixture()
     try:
         typed = session.loan_inventory_snapshot(a)
         assert typed.status == "partial"
-        assert session.last_loan_errors == []  # typed is read-only for v1
+        assert "last_loan_errors" not in vars(session)
         legacy = session.loans(a)
         assert len(legacy) == len(typed.loans) == 1
-        assert session.last_loan_errors == [{
-            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
-        }]
-        # A second typed read must not erase this compatibility-only state.
+        assert "last_loan_errors" not in vars(session)
         again = session.loan_inventory_snapshot(a)
         assert again.status == "partial"
-        assert session.last_loan_errors == [{
-            "upstream": "DILICOM", "code": "paris_loans_upstream_failed",
-        }]
+        assert "last_loan_errors" not in vars(session)
         assert len(session.client.calls) == 6
     finally:
         session.close()
@@ -89,7 +84,7 @@ def test_scoped_0_1_n_typed_positive_only_without_exhaustive_negative(rights):
                    for x in result.loans)
         assert result.branch_claims_complete("dilicom", "digital") is False
         assert result.branch_claims_complete("syracuse", "physical") is False
-        assert session.last_loan_errors == []
+        assert "last_loan_errors" not in vars(session)
         assert client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
         ]
