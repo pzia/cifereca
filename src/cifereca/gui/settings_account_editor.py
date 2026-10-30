@@ -35,8 +35,15 @@ def build_provider_account_editor(
     for field in getattr(descriptor, "account_options", ()):
         entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
         entry.set_title(field.label)
-        fallback = (config.get(field.legacy_config_key)
-                    if field.legacy_config_key and hasattr(config, "get") else None)
+        fallback = None
+        if field.legacy_config_key:
+            # Preserve the historical provider-level default before the
+            # deprecated global key. No provider-specific CoreUI dispatch.
+            provider_option = getattr(config, "provider_option", None)
+            if callable(provider_option):
+                fallback = provider_option(provider_id, field.key, None)
+            if not fallback and hasattr(config, "get"):
+                fallback = config.get(field.legacy_config_key)
         entry.set_text(str(options.get(field.key) or fallback or field.default))
         group.add(entry)
         option_fields[field.key] = entry

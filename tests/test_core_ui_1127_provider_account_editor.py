@@ -35,7 +35,7 @@ class Widget:
 
 def _render(provider_id="paris", *, data=None, credentials=None, url=None,
             descriptor_fields=None, descriptor_options=None, descriptor_note=None,
-            legacy_values=None, configured=None):
+            legacy_values=None, provider_legacy_values=None, configured=None):
     secret = SimpleNamespace(key="password", label="Mot de passe", secret=True)
     plain = SimpleNamespace(key="card", label="Numéro de carte", secret=False)
     fields = descriptor_fields if descriptor_fields is not None else [plain, secret]
@@ -54,6 +54,9 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     config = SimpleNamespace(
         paris_base_url=lambda: url,
         get=lambda key, default=None: (legacy_values or {}).get(key, default),
+        provider_option=lambda pid, key, default=None: (
+            (provider_legacy_values or {}).get((pid, key), default)
+        ),
     )
     editor, delete = build_provider_account_editor(
         data=settings, provider_id=provider_id,
@@ -194,3 +197,20 @@ def test_declared_option_prefers_saved_value_then_legacy_config_then_descriptor_
     assert saved['option_fields']['base_url'].text == 'https://saved.example'
     default, _, _, _ = _render('arbitrary-provider', descriptor_options=[field])
     assert default['option_fields']['base_url'].text == 'https://default.example'
+
+def test_provider_level_url_survives_legacy_account_migration():
+    field = _url_option('base_url', 'URL du portail',
+                        'https://default.example', 'base_url')
+    values = {('synthetic-provider', 'base_url'): 'https://provider.example.test'}
+    rendered, _, _, _ = _render(
+        'synthetic-provider', descriptor_options=[field],
+        provider_legacy_values=values,
+        legacy_values={'base_url': 'https://global.example.test'},
+    )
+    assert rendered['option_fields']['base_url'].text == 'https://provider.example.test'
+    explicit, _, _, _ = _render(
+        'synthetic-provider', descriptor_options=[field],
+        data={'options': {'base_url': 'https://account.example.test'}},
+        provider_legacy_values=values,
+    )
+    assert explicit['option_fields']['base_url'].text == 'https://account.example.test'

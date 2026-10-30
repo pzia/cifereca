@@ -2,10 +2,10 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.gallica",
-    "version": "1.2.23",
+    "version": "1.2.24",
     "name": "Gallica",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4.1,<2"
+    "plugin_api": ">=1.4.3,<2"
   },
   "plugins": [
     {
@@ -63,7 +63,7 @@
       },
       "recommends": [],
       "help_text": "Recherchez les livres EPUB/PDF publics et les documents sonores de Gallica sans compte BnF. Les liens EPUB/PDF proviennent des offres OPDS ; une simple notice ARK ne suffit pas. La recherche générale conserve les deux branches. Désactivez include_audio pour rechercher seulement les ebooks. Les champs titre, auteur, ISBN et sujet sont pris en charge ; séries/collections ne le sont pas. Les paramètres réseau prennent effet à la prochaine connexion ou après redémarrage. Le filtre Livres numériques limite la recherche aux ebooks ; le filtre audio active seulement la branche sonore. Une source temporairement indisponible est signalée sans masquer les résultats de l’autre branche. Les notices audio publient une recette de bundle non résolue fondée sur l’ARK ; les formats restent inconnus jusqu’à la résolution/validation explicite des pistes. Le manifeste final du bundle est validé contre la recette résolue. Les bundles audio sont publiés complets et sans écrasement ; la publication atomique nécessite Linux avec renameat2. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles. Les notices audio SRU conservent aussi sujets, identifiants et valeurs bibliographiques type/format explicitement fournies par Dublin Core, sans les convertir en genre ni en format d’acquisition.",
-      "version": "1.2.23",
+      "version": "1.2.24",
       "capabilities": [
         "catalog.search",
         "catalog.detail",

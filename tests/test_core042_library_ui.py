@@ -89,5 +89,5 @@ def test_artifact_routing_hides_target_already_holding_same_artifact(tmp_path):
 
 
 def test_core042_keeps_public_contract_version_stable():
-    assert PLUGIN_API_VERSION == '1.4.2'
+    assert PLUGIN_API_VERSION == '1.4.3'
     assert MANIFEST_VERSION == 1
