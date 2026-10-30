@@ -41,8 +41,7 @@ def build(monkeypatch, *, delivery="available", state="unknown"):
 
 
 def test_v2_loan_exact_scope_positive_unknown_right(monkeypatch):
-    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
-    from cifereca.plugin_api.downloadable_resources import ResourceSnapshot
+    from cifereca.plugin_api import ResourceSnapshot
     session, account, row = build(monkeypatch)
     inventory = session.downloadable_resource_snapshot(account)
     assert type(inventory) is ResourceSnapshot
@@ -59,7 +58,6 @@ def test_v2_loan_exact_scope_positive_unknown_right(monkeypatch):
 
 @pytest.mark.parametrize("delivery", ["unavailable", "unknown"])
 def test_v2_loan_negative_capacity_never_grants_get(monkeypatch, delivery):
-    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
     session, account, row = build(monkeypatch, delivery=delivery, state="active")
     selected = session.downloadable_selected_offer_snapshot(
         account, edition_id="edition-123", resource_id="loan-456",
@@ -71,8 +69,7 @@ def test_v2_loan_negative_capacity_never_grants_get(monkeypatch, delivery):
 
 
 def test_v2_candidate_never_publishes_core_placement(monkeypatch, tmp_path):
-    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
-    from cifereca.plugin_api.downloadable_resources import DeliveryCandidate
+    from cifereca.plugin_api import DeliveryCandidate
     session, account, row = build(monkeypatch)
     def staged(self, selected, *, edition_id, right_id, kind, branch,
                delivery_offer_id, target_dir, explicit_user_action=False):
