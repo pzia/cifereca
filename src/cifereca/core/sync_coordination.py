@@ -71,53 +71,23 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     # any provider/session request. A corrupt preference must fail closed.
     if not self.sync_source_enabled(account):
         return {**result, "status": "skipped", "reason": "source_disabled"}
+    private_source_scope = (
+        account.identity_id, account.provider_id,
+        account.credential_id, account.unique_id,
+    )
+    private_source_epoch = source_context_epoch(self)
     session = self._session_for_account(account)
 
-    def valid_kobo_source() -> bool:
-        """Refresh must not publish rights from a stale Kobo binding."""
-        try:
-            matching = [
-                current for current in self.accounts
-                if current.provider_id == "kobo"
-                and current.credential_id == account.credential_id
-            ]
-            bound = self.storage.identity_for_connection(
-                "kobo", account.credential_id,
-            )
-            connections = (
-                self.storage.provider_connections(identity_id=bound)
-                if bound else []
-            )
-            return bool(
-                len(matching) == 1
-                and matching[0].identity_id == account.identity_id
-                and matching[0].unique_id == account.unique_id
-                and self.identity_by_id(account.identity_id) is not None
-                and bound == account.identity_id
-                and sum(
-                    row.get("provider_id") == "kobo"
-                    and row.get("credential_id") == account.credential_id
-                    and row.get("enabled") is True
-                    for row in connections
-                ) == 1
-                and self.sync_source_enabled(matching[0])
-                and self._sessions.get(
-                    self._session_key("kobo", account.credential_id)
-                ) is session
-                and session.connected is True
-            )
-        except Exception:
-            return False
+    from .private_inventory_binding import private_inventory_binding_current
 
-    if account.provider_id == "kobo" and not valid_kobo_source():
-        raise ProviderConfigurationError("Source Kobo non liée au compte demandé")
-    if account.provider_id == "numilog":
-        from .numilog_manifest_rights import numilog_inventory_binding_valid
-        if not numilog_inventory_binding_valid(self, account, session=session):
-            # No provider call or inventory authorization on a stale account,
-            # detached identity or disabled connection. Never select the
-            # current GTK account as a fallback owner.
-            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
+    def private_source_current():
+        return private_inventory_binding_current(
+            self, account, session, scope=private_source_scope,
+            epoch=private_source_epoch,
+        )
+
+    if session.capabilities.personal_library and not private_source_current():
+        raise ProviderConfigurationError("private_inventory_source_unbound")
     if not session.connected:
         raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
     if control is not None and callable(getattr(control, "check_cancelled", None)):
@@ -217,16 +187,12 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # mirror and remote catalog must see the exact same authenticated rows.
         with measure("library_read_ms"):
             rows = list(session.library())
-        if account.provider_id == "numilog" and not numilog_inventory_binding_valid(
-            self, account, session=session,
-        ):
-            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
+        if not private_source_current():
+            raise ProviderConfigurationError("private_inventory_source_changed")
         if account.provider_id == "numilog":
             from .numilog_private_rows import private_library_rows_valid
             if not private_library_rows_valid(rows, account.credential_id):
                 raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
-        if account.provider_id == "kobo" and not valid_kobo_source():
-            raise ProviderConfigurationError("Source Kobo modifiée pendant la lecture")
         if account.provider_id == "kobo":
             # Persist attested personal rights, but never start Kobo acquisition.
             from .kobo_manifest_rights import mirror_kobo_manifest_rights
@@ -247,16 +213,12 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                     credential_id=account.credential_id,
                     account_id=account.unique_id or None,
                 )
-        # A source-level sync is an inventory/rights refresh, not a request
-        # to materialize local files. In particular, Numilog may advertise
-        # direct_download but that capability must not implicitly acquire
-        # every returned EPUB from the generic Sync broker (#1346).
-        # The separate legacy opening/acquisition workflow remains unchanged.
-        if account.provider_id == "numilog" and not numilog_inventory_binding_valid(
-            self, account, session=session,
-        ):
-            # Revoke a stale source even if the ownership projection completed.
-            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
+        # A private metadata observation is not acquisition consent. The
+        # canonical resource/offer stage below retains its own admission.
+        # Revalidate after compatibility mirroring too: a callback must not
+        # project a stale source's notices into its former profile.
+        if not private_source_current():
+            raise ProviderConfigurationError("private_inventory_source_changed")
         with measure("catalog_mirror_ms"):
             result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
     if deep:
@@ -1467,3 +1429,4 @@ def _record_loan_statistics(self, account, rows, *, from_cache=False):
     value={'loan_keys':sorted({hashlib.sha256(f'{source}:{row.id}'.encode()).hexdigest() for row in rows}),
            'observed_at':None if from_cache else int(time.time()),'origin':'cache' if from_cache else 'provider'}
     self.storage.metadata_json_put_item(key,source,value,only_if_missing=from_cache)
+
