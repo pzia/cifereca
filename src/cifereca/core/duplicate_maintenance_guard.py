@@ -182,6 +182,28 @@ def candidate_has_active_dependencies_in_db(
     # These records survive duplicate deletion and must not be orphaned.
     if canonical_metadata_mentions_path(db, path) is not False:
         return True
+    # Other Core metadata namespaces can retain an *operational* path
+    # (for example an interrupted sync or a provider-specific checkpoint).
+    # This generic key/value table was not covered by the existing guards.
+    # A schema-free record cannot be safely migrated by a duplicate delete:
+    # refuse a literal path, including one embedded in a JSON envelope.
+    # Escaped Unicode/JSON slashes require decoding before deciding absence.
+    for index, (raw,) in enumerate(db.execute(
+        "SELECT value FROM metadata LIMIT 100001"
+    )):
+        if index >= 100_000 or type(raw) is not str or len(raw) > 1024 * 1024:
+            return True
+        if path in raw:
+            return True
+        if "\\u" in raw or "\\/" in raw:
+            try:
+                decoded = json.loads(raw)
+            except (ValueError, TypeError, RecursionError):
+                # Unknown escaped data may be a path we cannot interpret.
+                return True
+            if (_mentions_exact_path(decoded, path)
+                    or path in json.dumps(decoded, ensure_ascii=False)):
+                return True
     # User declarations have their own strict private schema/budget,
     # and the source-bound file path is not a receipt we can replace.
     # An invalid declaration namespace cannot prove non-dependency.

@@ -93,6 +93,47 @@ def test_active_reference_forbids_duplicate_deletion(tmp_path, dependency):
         service.storage.close()
 
 
+@pytest.mark.parametrize("encoding", ["literal", "nested", "escaped"])
+def test_generic_metadata_path_reference_blocks_duplicate_preview(
+    tmp_path, encoding,
+):
+    service, broker, req, doomed, kept, _artifact = _rig(tmp_path)
+    try:
+        if encoding == "literal":
+            value = str(doomed)
+        elif encoding == "nested":
+            value = json.dumps({"resume": {"path": str(doomed)}})
+        else:
+            value = json.dumps({"resume": {"path": str(doomed)}}).replace(
+                "/", chr(92) + "u002f",
+            )
+        service.storage.metadata_set("sync.private.staged-v1", value)
+        with pytest.raises(Conflict):
+            broker.plan(req)
+        assert doomed.is_file() and kept.is_file()
+        assert service.storage.placement_get(req.placement_id) is not None
+    finally:
+        service.storage.close()
+
+
+def test_metadata_path_added_after_preview_blocks_sqlite_retirement(
+    tmp_path,
+):
+    service, broker, req, doomed, kept, _artifact = _rig(tmp_path)
+    try:
+        plan = broker.plan(req)
+        service.storage.metadata_set(
+            "sync.private.staged-v1",
+            json.dumps({"resume": {"path": str(doomed)}}),
+        )
+        with pytest.raises(Conflict):
+            broker.run(plan)
+        assert doomed.is_file() and kept.is_file()
+        assert service.storage.placement_get(req.placement_id) is not None
+    finally:
+        service.storage.close()
+
+
 def test_external_reference_appearing_after_preview_prevents_unlink(tmp_path):
     service, broker, req, doomed, kept, artifact = _rig(tmp_path)
     try:
