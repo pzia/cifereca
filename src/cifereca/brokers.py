@@ -778,8 +778,9 @@ class SynchronizationBrokerImpl:
             raise ValueError("local materialization not supported")
         if mode == "on_start" and not can_enable_kobo_on_start(self.service, account):
             raise ValueError("source not eligible for automatic materialization")
-        self.service.storage.metadata_set(
+        self.service.storage.metadata_set_with_revision(
             policy_key(source_id), "1" if mode == "on_start" else "0",
+            policy_key(source_id) + ".revision",
         )
         self._notify()
         return mode
