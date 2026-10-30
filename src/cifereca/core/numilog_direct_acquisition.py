@@ -16,7 +16,7 @@ def acquire_numilog_direct(
     service: Any, item: Any, *, _admission: Any, session: Any,
     InterProcessLock: Any, acquisition_lock_file: Any,
     LockBusyError: type[Exception], ProviderConfigurationError: type[Exception],
-    hashlib: Any,
+    hashlib: Any, reconcile_pending: bool = False,
 ) -> Any:
     # Even an explicit UI click is not permission to download from a
     # detached account or to race an existing manual/materialize run.
@@ -46,6 +46,16 @@ def acquire_numilog_direct(
                 )
 
             stage = "acquisition_local_conflict"
+            if reconcile_pending:
+                from .numilog_recovery import recovery_gate
+                if (_admission is None or item.owned is not True
+                        or item.downloadable is not True
+                        or recovery_gate(
+                            service.storage, identity_id=identity.identity_id,
+                            credential_id=item.source_credential,
+                            account_id=pinned_account_id, item_id=item.record_id,
+                        ) != 'recoverable'):
+                    raise ProviderConfigurationError('Numilog : reprise non attestée')
             from .library_declared_links import has_active_declared_link
             if has_active_declared_link(
                 service.storage, identity_id=identity.identity_id,
@@ -55,7 +65,7 @@ def acquire_numilog_direct(
                 raise ProviderConfigurationError(
                     "Numilog : association locale déclarée ; vérifier le fichier avant de télécharger"
                 )
-            if service.storage.numilog_purchase_has_local_conflict(
+            if not reconcile_pending and service.storage.numilog_purchase_has_local_conflict(
                 credential_id=item.source_credential,
                 item_id=item.record_id,
             ):
@@ -87,11 +97,21 @@ def acquire_numilog_direct(
                 )
             from .numilog_publication_guard import require_tracked_publications
             stage = "acquisition_publication_guard"
-            require_tracked_publications(service, identity.identity_id, target_dir)
+            if not reconcile_pending:
+                require_tracked_publications(service, identity.identity_id, target_dir)
+            # A recovery cannot claim any historical file by name or by SHA.
+            # A fresh provider GET is permitted ONLY into its otherwise empty
+            # exact destination; no existing byte is overwritten or removed.
             # Recheck the exact caller/source after bounded filesystem
             # inspection and immediately before any provider I/O.
             stage = "acquisition_admission_failed"
             item = readmit()
+            if reconcile_pending and recovery_gate(
+                    service.storage, identity_id=identity.identity_id,
+                    credential_id=item.source_credential,
+                    account_id=pinned_account_id, item_id=item.record_id,
+            ) != 'recoverable':
+                raise ProviderConfigurationError('Numilog : preuves modifiées pendant la reprise')
             stage = "acquisition_delivery_failed"
             try:
                 path, _private_url = pinned_session.download_direct(
@@ -149,7 +169,7 @@ def acquire_numilog_direct(
             stage = "acquisition_receipt_failed"
             checkpoint_id = record(
                 service, item, path, target_dir, identity.identity_id, pinned_account_id,
-                validate=final_admission,
+                validate=final_admission, recovery=reconcile_pending,
             )
             # A provider-returned URL may contain single-use ACSM
             # signatures. Never persist it as Acquisition.source_url.
