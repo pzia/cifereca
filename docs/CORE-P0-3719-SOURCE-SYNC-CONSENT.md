@@ -70,13 +70,14 @@ pour BnF. Les anciens appels automatiques de prêts et le worker Kobo sont
 écartés pour ce compte-source, même si l'inventaire canonique échoue. Les
 lectures d'inventaire et les données historiques ne sont pas supprimées.
 
-**Limite de cette tranche :** le backend et son API sont livrés ; les contrôles
-GTK historiques ne sont pas remplacés ici. La page Sync doit ensuite consommer
-ce protocole, présenter un contrôle d'acquisition par source, et supprimer les
-contrôles par droit/anciens commutateurs après migration explicite. Les tables
-provider du pont de compatibilité et les parcours legacy des sources non
-migrées restent à retirer. Cette tranche ne clôt ni #3719 ni #3171 ; elle ne
-livre pas la déduplication physique post-placement ni une recette fournisseur
+**Consommation CoreUI :** la page Sync courante utilise ce protocole pour un
+contrôle d’acquisition par source et n’affiche plus les grants par droit.
+Un réglage non migré exige un choix explicite ; le rendu n’écrit rien.
+Voir [le contrat CoreUI](CORE-P0-3171-CANONICAL-CONSENT-COREUI.md).
+Les hôtes anciens sans ce protocole gardent leurs autres contrôles de
+compatibilité. Les tables provider du pont et les parcours legacy des sources
+non migrées restent à retirer. Cette tranche ne clôt ni #3719 ni #3171 ; elle
+ne livre pas la déduplication physique post-placement ni une recette fournisseur
 réelle.
 
 ## Preuves

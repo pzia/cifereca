@@ -73,10 +73,9 @@ def _build_sync_page(self):
     add_sync_action(heading, all_now)
     root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
-        label="Synchroniser actualise les notices et droits en ligne. "
-        "Si un compte a explicitement autorisé les téléchargements automatiques "
-        "(par exemple les prêts BnF), cette action peut aussi récupérer des fichiers. "
-        "Ces autorisations se règlent séparément dans chaque compte.",
+        label="Synchroniser actualise les inventaires et peut recevoir les fichiers disponibles "
+        "lorsque le téléchargement automatique de ce compte est autorisé. "
+        "Chaque compte conserve son propre réglage.",
         xalign=0,
     )
     scope_note.set_wrap(True)
@@ -377,6 +376,11 @@ def _refresh_sync_page(self) -> None:
         # selected profile. No toggle/preview may be wired to that row.
         if getattr(source, "identity_id", None) != scope.identity_id:
             continue
+        source_consent_api = all(callable(getattr(broker, name, None)) for name in (
+            "source_sync_consent", "set_source_sync_consent",
+        ))
+        if source_consent_api:
+            presentation = sync_source_presentation(source, canonical=True)
         # The scoped broker order determines ephemeral labels only; sid remains
         # the opaque, separate source route for each row.
         group = Adw.PreferencesGroup()
@@ -447,7 +451,7 @@ def _refresh_sync_page(self) -> None:
         now.set_tooltip_text(
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
-        def one(_button, sid=source.source_id, label=display_label, provider=source.provider_id):
+        def one(_button, sid=source.source_id, label=display_label, provider=source.provider_id, canonical=source_consent_api):
             if not sync_action_scope_current(self, scope):
                 return
             def completed(_result):
@@ -460,7 +464,7 @@ def _refresh_sync_page(self) -> None:
                 if refreshed is not None and refreshed.identity_id == scope.identity_id:
                     self.refresh_library(False)
             self.runner.submit(
-                ("Actualiser mes achats Numilog…" if provider == "numilog" else f"Synchronisation {label}…"),
+                ("Actualiser mes achats Numilog…" if not canonical and provider == "numilog" else f"Synchronisation {label}…"),
                 lambda: broker.synchronize_source(sid)
                 if sync_action_scope_current(self, scope) else None,
                 completed, control=_button,
@@ -470,21 +474,16 @@ def _refresh_sync_page(self) -> None:
         now.set_valign(Gtk.Align.CENTER)
         if source.sync_capable:
             add_sync_action(row, now)
-            # A canonical right-level grant is independent of legacy Kobo
-            # backup, Numilog schedules and source inventory toggles. Only
-            # the opt-in Core broker exposes an exact, confirmed choice UI.
-            # This optional panel is not a dependency of source inventory
-            # and must not break lightweight GTK/AST hosts without Adw.
-            try:
-                from cifereca.gui.canonical_consent_controls import (
-                    append_canonical_consent_controls,
+            if source_consent_api:
+                from cifereca.gui.source_sync_consent_controls import (
+                    append_source_sync_consent_controls,
                 )
-            except ImportError:
-                pass
-            else:
-                append_canonical_consent_controls(
-                    self, broker, source, scope, group,
-                )
+                group.add(sync_action_row(row))
+                append_source_sync_consent_controls(self, broker, source, scope, group)
+                # The current broker owns policy and execution. Legacy tools
+                # must not expose a second acquisition/consent path here,
+                # even if the generic read fails or the adapter is unsupported.
+                continue
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
