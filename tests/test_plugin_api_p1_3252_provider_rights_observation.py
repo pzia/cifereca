@@ -203,3 +203,18 @@ def test_archive_reason_requires_attested_unavailable_delivery(delivery):
     with pytest.raises(ValueError, match="invalid_rights_delivery_reason"):
         ProviderRightObservation("edition", "right", "purchase", delivery="unavailable",
                                  delivery_unavailable_reason="archived")
+
+
+def test_current_download_offer_is_valid_with_unknown_descriptive_right():
+    # A genuine provider-admitted delivery offer is the acquisition criterion.
+    # The right remains unknown rather than being fabricated as an active one.
+    current = replace(purchase(), state="unknown")
+    assert current.state == "unknown"
+    assert current.delivery == "available"
+    assert current.provider_attested is True
+    assert current.authorizes_mutation is False
+    with pytest.raises(ValueError, match="unproven_rights_delivery"):
+        replace(current, evidence_kind="legacy_unverified",
+                evidence_ref="", observed_at=None)
+    with pytest.raises(ValueError, match="unproven_rights_delivery"):
+        replace(current, state="inactive")
