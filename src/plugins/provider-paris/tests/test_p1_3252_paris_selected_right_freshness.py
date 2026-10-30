@@ -222,7 +222,7 @@ def test_paris_candidate_gets_only_fresh_pnb_url_with_unknown_right(
 @pytest.mark.parametrize("link", [
     "", "javascript:alert(1)", "file:///private/loan",
     "//foreign.example/item", "https://user:password@example.com/secret",
-    "https://example.com/injected\\nheader",
+    "https://example.com/injected\nheader",
 ])
 def test_paris_no_positive_offer_without_safe_dilicom_link(link, tmp_path, monkeypatch):
     session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
