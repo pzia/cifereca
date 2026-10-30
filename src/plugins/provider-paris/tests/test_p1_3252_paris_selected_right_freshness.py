@@ -279,3 +279,26 @@ def test_paris_missing_link_never_uses_borrow_post_for_candidate(
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
+
+
+def test_paris_supplier_tls_allowlist_applies_before_offer_claim(tmp_path, monkeypatch):
+    from cifereca_paris_client import ParisClient
+
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    # In production this is the same validator used immediately before GET.
+    client._validate_pnb_redirect_url = (
+        lambda url: ParisClient._validate_pnb_redirect_url(client, url)
+    )
+    try:
+        client.digital = [raw_loan("https://external.invalid/secret.epub")]
+        denied = session.rights_observation_snapshot(account).rights[0]
+        assert denied.state == "unknown"
+        assert denied.delivery == "unknown"
+        client.digital = [raw_loan(SIGNED)]
+        allowed = session.rights_observation_snapshot(account).rights[0]
+        assert allowed.state == "unknown"
+        assert allowed.delivery_attested
+        assert gets == []
+    finally:
+        session.close()
+
