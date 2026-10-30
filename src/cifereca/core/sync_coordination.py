@@ -819,7 +819,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     all_loans: list[Loan] = []
     # One opening cycle must not schedule a second Kobo GET after Core A→B.
     # Exact scoped IDs are safer than a credential-only flag (multi-profiles).
-    canonical_kobo_sources: set[str] = set()
+    # Value records whether Core convergence completed without pending errors.
+    canonical_kobo_sources: dict[str, bool] = {}
     # Device/profile state is provider-owned by Kobo-Adept. Read it once per
     # opening sync and only project it into the dashboard summary; Paris does
     # not persist a competing device inventory.
@@ -1018,7 +1019,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         # for this exact Kobo source (including pending/blocked).
                         # A legacy worker must not make a second decision/GET.
                         if account.provider_id == "kobo":
-                            canonical_kobo_sources.add(source_id)
+                            canonical_kobo_sources[source_id] = not any(
+                                counts[name] for name in (
+                                    "pending", "blocked", "failed", "cancelled"
+                                )
+                            )
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts
                         })
@@ -1265,14 +1270,17 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         and account.credential_id in scheduled_credentials
     }
     if kobo_decision["status"] in {"started", "fresh_cache"}:
-        # The outer opening-sync already owns the cross-process lock.
-        # The scoped helper is the ONLY automatic materialization path.
-        due = [
+        legacy_eligible = [
             session for session in eligible_kobo
             if self.sync_source_id(
                 scheduled_accounts[session.credential_id]
             ) not in canonical_kobo_sources
-            and on_start_due(self, scheduled_accounts[session.credential_id])
+        ]
+        # The outer opening-sync already owns the cross-process lock.
+        # The scoped helper is the ONLY automatic materialization path.
+        due = [
+            session for session in legacy_eligible
+            if on_start_due(self, scheduled_accounts[session.credential_id])
         ]
         executed: list[dict[str, Any]] = []
         for session in due:
@@ -1312,7 +1320,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 scheduled_accounts[session.credential_id].identity_id,
                 session.credential_id,
             ).rsplit(".", 1)[-1]
-            for session in eligible_kobo
+            for session in legacy_eligible
             if session.credential_id not in due_credentials
         }
         cached_sources = [
@@ -1327,15 +1335,16 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         states = {str(row.get("status") or "partial") for row in sources}
         if any(result.get("status") == "error" for result in executed):
             batch_status = "error"
-        elif counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
+        elif (counters["errors"] or any(not ok for ok in canonical_kobo_sources.values())
+              or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states):
             batch_status = "partial"
         elif "attention_required" in states:
             batch_status = "attention_required"
-        elif len(sources) < len(eligible_kobo):
+        elif len(sources) < len(legacy_eligible):
             batch_status = "partial"
         else:
             batch_status = "complete"
-        if not due:
+        if not due and not canonical_kobo_sources:
             batch_status = (
                 "fresh_cache" if batch_status == "complete"
                 else "fresh_cache_partial"
@@ -1343,8 +1352,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         kobo_summary = {
             **counters, "scope": "accounts", "status": batch_status,
             "sessions": len(eligible_kobo), "synced_accounts": len(due),
-            "cached_accounts": len(eligible_kobo) - len(due),
-            "sources": sources, "skipped_fresh": not bool(due),
+            "cached_accounts": len(legacy_eligible) - len(due),
+            "canonical_sources": len(canonical_kobo_sources),
+            "sources": sources, "skipped_fresh": not bool(due or canonical_kobo_sources),
         }
         kobo_decision["status"] = (
             "error" if batch_status == "error"
