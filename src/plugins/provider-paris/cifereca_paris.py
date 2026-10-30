@@ -1064,7 +1064,7 @@ class ParisProviderSession(ProviderSession):
                         or loan.source_account_id != (account.unique_id or "primary")
                         or loan.identity_id != account.identity_id
                         or type(loan.raw) is not dict
-                        or not _pnb_direct_url_observed(loan.ebook_url)):
+                        or not _pnb_direct_url_observed(loan.ebook_url, client=self.client)):
                     continue
                 raw_right = loan.raw.get("Id") or loan.raw.get("HoldingId")
                 raw_edition = loan.raw.get("RecordId")
