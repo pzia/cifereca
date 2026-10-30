@@ -34,11 +34,12 @@ class Widget:
 
 
 def _render(provider_id="paris", *, data=None, credentials=None, url=None,
-            descriptor_fields=None, configured=None):
+            descriptor_fields=None, descriptor_options=None, configured=None):
     secret = SimpleNamespace(key="password", label="Mot de passe", secret=True)
     plain = SimpleNamespace(key="card", label="Numéro de carte", secret=False)
     fields = descriptor_fields if descriptor_fields is not None else [plain, secret]
-    descriptor = SimpleNamespace(display_name=provider_id.upper(), credential_fields=fields)
+    descriptor = SimpleNamespace(display_name=provider_id.upper(), credential_fields=fields,
+                                 account_options=descriptor_options or ())
     gtk = SimpleNamespace(
         Switch=Widget, Button=lambda label=None: Widget(),
         Align=SimpleNamespace(CENTER="center"),
@@ -136,3 +137,22 @@ def test_window_keeps_guard_id_allocation_delete_dirty_and_async_save():
     assert "build_provider_account_editor(" in render
     assert "mark_settings_dirty('accounts')" in render
     assert "settings_committer.submit(" in render
+
+
+def test_unknown_provider_option_schema_builds_generic_rows_and_preserves_values():
+    option = SimpleNamespace(key='endpoint', label='Adresse du service',
+                             default='https://default.example', secret=False)
+    secret = SimpleNamespace(key='auth_hint', label='Clé de compte',
+                             default='', secret=True)
+    original = {'options': {'endpoint': 'https://saved.example', 'unmanaged': 'keep'}}
+    editor, _, container, adw = _render(
+        'synthetic-provider', data=original, descriptor_options=[option, secret],
+    )
+    assert editor['option_fields']['endpoint'].text == 'https://saved.example'
+    assert isinstance(editor['option_fields']['auth_hint'], adw.PasswordEntryRow)
+    assert editor['option_fields']['auth_hint'].text == ''
+    assert editor['original_options']['unmanaged'] == 'keep'
+    assert editor['base_url'] is None and editor['vault_url'] is None
+    assert not any(row.title in {'Connexion indirecte au compte Kobo', 'Accès public'}
+                   for row in container.children[0].children)
+    assert original == {'options': {'endpoint': 'https://saved.example', 'unmanaged': 'keep'}}
