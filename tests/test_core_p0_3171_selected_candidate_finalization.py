@@ -150,6 +150,35 @@ def test_rejected_candidate_removes_private_staging_without_publishing(
     assert base.is_dir() and not list(base.glob("run-*"))
 
 
+def test_source_revoked_after_staging_creation_removes_uncommitted_run(
+    rig, monkeypatch,
+):
+    service, db, root = rig
+    _prepare(service)
+    from dataclasses import replace
+    original_mkdir = Path.mkdir
+    callbacks = []
+
+    def mkdir_and_revoke(path, *args, **kwargs):
+        result = original_mkdir(path, *args, **kwargs)
+        if path.name.startswith("run-"):
+            service.session.accounts = [
+                replace(service.account, unique_id="foreign-borrower"),
+            ]
+        return result
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_and_revoke)
+    service.session.rights_selected_delivery_candidate = (
+        lambda *_a, **_kw: callbacks.append("GET")
+    )
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["failed"] == 1
+    assert callbacks == []
+    assert refs(db)[1] == 0 and db.placements() == []
+    base = root / "A" / ".canonical-delivery"
+    assert base.is_dir() and not list(base.glob("run-*"))
+
+
 def test_provider_candidate_outside_fresh_staging_cannot_publish(rig):
     service, db, root = rig
     _prepare(service)
