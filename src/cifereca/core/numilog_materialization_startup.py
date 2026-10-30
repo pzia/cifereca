@@ -65,26 +65,36 @@ def _completed_local_purchase_verified(
         before = storage.numilog_purchase_preflight_evidence(**options)
         rights = before.get("entitlements")
         ledger = before.get("acquisitions")
-        if (type(rights) is not list or len(rights) != 1
+        if (type(rights) is not list or len(rights) > 1
                 or type(ledger) is not list or not 1 <= len(ledger) <= 2):
             local_proof(account, source_id, item_id, "rights_or_receipt_ambiguous",
                         right_count=len(rights) if type(rights) is list else None,
                         receipt_count=len(ledger) if type(ledger) is list else None)
             return False
-        right = rights[0]
+        right = rights[0] if rights else None
+        from ..acquisition_engine import stable_id
         from .numilog_recovery import recovery_id
         from .numilog_materialization_checkpoint import _checked_receipt
+        original_id = stable_id(
+            "numilog-materialization", account.identity_id,
+            account.credential_id, account.unique_id, item_id,
+        )
         retry_id = recovery_id(
             account.identity_id, account.credential_id,
             account.unique_id, item_id,
         )
-        recovered = [r for r in ledger if type(r) is dict
-                     and r.get("acquisition_id") == retry_id]
-        if recovered:
-            receipt = recovered[0]
-            if (len(recovered) != 1 or type(right) is not dict
-                    or receipt.get("status") != "complete"
-                    or receipt.get("entitlement_id") != right.get("entitlement_id")
+        checkpoint = [r for r in ledger if type(r) is dict
+                      and r.get("acquisition_id") in (original_id, retry_id)]
+        # The old preview verifies legacy receipts with an exact right; new
+        # Core delivery checkpoints can be verified without a cached right.
+        new_delivery = [r for r in checkpoint
+                        if r.get("acquisition_id") == retry_id or right is None]
+        if len(new_delivery) == 1:
+            receipt = new_delivery[0]
+            if (receipt.get("status") != "complete"
+                    or (right is not None and
+                        receipt.get("entitlement_id") not in (
+                            None, right.get("entitlement_id")))
                     or any(type(other) is not dict
                            or other.get("identity_id") != account.identity_id
                            or other.get("account_id") != account.unique_id
@@ -94,16 +104,23 @@ def _completed_local_purchase_verified(
                 local_proof(account, source_id, item_id, "receipt_incomplete_or_scope_mismatch")
                 return False
             try:
-                checked, path = _checked_receipt(broker.service, retry_id)
+                checked, path = _checked_receipt(
+                    broker.service, receipt["acquisition_id"],
+                )
                 placement = storage.placement_for_path(path)
                 sha = checked["metadata"]["sha256"]
+                artifact = storage.artifact_get("sha256:" + sha)
                 verified = bool(
                     source_current()
                     and placement is not None
                     and placement.get("identity_id") == account.identity_id
                     and placement.get("provider_id") == "numilog"
                     and placement.get("source_item_id") == item_id
+                    and placement.get("state") == "present"
                     and placement.get("artifact_id") == "sha256:" + sha
+                    and artifact is not None
+                    and artifact.get("sha256") == sha
+                    and artifact.get("size") == checked["metadata"]["size"]
                     and before == storage.numilog_purchase_preflight_evidence(**options)
                     and source_current()
                 )
@@ -115,6 +132,12 @@ def _completed_local_purchase_verified(
             except Exception:
                 local_proof(account, source_id, item_id, "verification_failed", exc_info=True)
                 return False
+        if right is None:
+            # Legacy rows without an exact acquisition checkpoint cannot
+            # establish current physical presence, but this observation alone
+            # is never a veto on an authorized provider re-download.
+            local_proof(account, source_id, item_id, "receipt_incomplete_or_scope_mismatch")
+            return False
         if len(ledger) != 1:
             local_proof(account, source_id, item_id, "rights_or_receipt_ambiguous",
                         right_count=len(rights), receipt_count=len(ledger))
