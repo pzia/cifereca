@@ -64,6 +64,11 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     return editor, delete, container, adw
 
 
+def _url_option(key, title, default='', legacy_config_key=None):
+    return SimpleNamespace(key=key, label=title, default=default,
+                           legacy_config_key=legacy_config_key, secret=False)
+
+
 def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     data = {
         "id": "paris-a", "label": "Bibliothèque", "enabled": False,
@@ -72,7 +77,9 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
         },
         "options": {"base_url": "https://custom.paris.example"},
     }
-    editor, delete, container, adw = _render("paris", data=data)
+    editor, delete, container, adw = _render(
+        "paris", data=data, descriptor_options=[_url_option('base_url', 'URL du portail')],
+    )
     assert len(container.children) == 1
     group = container.children[0]
     assert group.title == "PARIS — paris-a"
@@ -85,8 +92,7 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     assert editor["fields"]["card"].text == "CARD-77"
     assert isinstance(editor["fields"]["password"], adw.PasswordEntryRow)
     assert editor["fields"]["password"].text == "private-password"
-    assert editor["base_url"].text == "https://custom.paris.example"
-    assert editor["opds_url"] is None and editor["vault_url"] is None
+    assert editor["option_fields"]["base_url"].text == "https://custom.paris.example"
     assert editor["original_options"] == data["options"]
     assert editor["deleted"] is False
     assert delete in group.children[-1].suffixes
@@ -94,25 +100,34 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
 
 
 def test_paris_url_and_identity_fallbacks_are_unchanged():
-    editor, _, _, _ = _render("paris", configured=[{"id": "bob"}],
-                              url="https://env.paris.example")
-    assert editor["identity"].text == "bob"
-    assert editor["base_url"].text == "https://env.paris.example"
-    editor, _, _, _ = _render("paris")
-    assert editor["identity"].text == "default"
-    assert editor["base_url"].text == "https://bibliotheques.paris.fr"
+    option = _url_option('base_url', 'URL du portail',
+                         'https://bibliotheques.paris.fr', 'base_url')
+    editor, _, _, _ = _render('paris', configured=[{'id': 'bob'}],
+                              descriptor_options=[option],
+                              legacy_values={'base_url': 'https://env.paris.example'})
+    assert editor['identity'].text == 'bob'
+    assert editor['option_fields']['base_url'].text == 'https://env.paris.example'
+    editor, _, _, _ = _render('paris', descriptor_options=[option])
+    assert editor['identity'].text == 'default'
+    assert editor['option_fields']['base_url'].text == 'https://bibliotheques.paris.fr'
 
 
 def test_gallica_public_and_kobo_indirect_access_rows_are_preserved():
-    gallica, _, gc, _ = _render("gallica", descriptor_fields=[],
-                               data={"options": {"opds_url": "https://test.example/opds"}})
+    gallica, _, gc, _ = _render(
+        'gallica', descriptor_fields=[],
+        descriptor_options=[_url_option('opds_url', 'URL du catalogue OPDS')],
+        descriptor_note=('Accès public', 'Source sans authentification'),
+        data={'options': {'opds_url': 'https://test.example/opds'}},
+    )
     assert gc.children[0].children[0].title == "Source activée"
-    assert gallica["opds_url"].text == "https://test.example/opds"
-    assert gallica["base_url"] is None and gallica["vault_url"] is None
+    assert gallica["option_fields"]["opds_url"].text == "https://test.example/opds"
     assert any(row.title == "Accès public" for row in gc.children[0].children)
-    kobo, _, kc, _ = _render("kobo", data={"options": {"base_url": "http://local:9000"}})
-    assert kobo["vault_url"].text == "http://local:9000"
-    assert kobo["opds_url"] is None and kobo["base_url"] is None
+    kobo, _, kc, _ = _render(
+        'kobo', data={'options': {'base_url': 'http://local:9000'}},
+        descriptor_options=[_url_option('base_url', 'URL API Kobo-Vault')],
+        descriptor_note=('Connexion indirecte au compte Kobo', 'Kobo-Vault est intermédiaire'),
+    )
+    assert kobo['option_fields']['base_url'].text == 'http://local:9000'
     assert any(row.title == "Connexion indirecte au compte Kobo" for row in kc.children[0].children)
 
 
@@ -154,7 +169,7 @@ def test_unknown_provider_option_schema_builds_generic_rows_and_preserves_values
     assert isinstance(editor['option_fields']['auth_hint'], adw.PasswordEntryRow)
     assert editor['option_fields']['auth_hint'].text == ''
     assert editor['original_options']['unmanaged'] == 'keep'
-    assert editor['base_url'] is None and editor['vault_url'] is None
+    assert 'base_url' not in editor and 'vault_url' not in editor
     assert not any(row.title in {'Connexion indirecte au compte Kobo', 'Accès public'}
                    for row in container.children[0].children)
     assert original == {'options': {'endpoint': 'https://saved.example', 'unmanaged': 'keep'}}

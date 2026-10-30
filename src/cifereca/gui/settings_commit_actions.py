@@ -54,9 +54,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             row["option_fields"] = {
                 key: widget.get_text() for key, widget in editor.get("option_fields", {}).items()
             }
-            for key in ("base_url", "opds_url", "vault_url"):
-                widget = editor.get(key)
-                row[key] = widget.get_text() if widget is not None else None
             accounts.append(row)
         values = {
             "identities": identities, "accounts": accounts,

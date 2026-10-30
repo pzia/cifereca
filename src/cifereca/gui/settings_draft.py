@@ -30,7 +30,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     """Validate a GTK-thread snapshot without changing the current config.
 
     The service still owns migration and rollback. Provider descriptors contain
-    credential schemas only; values contain scalars and collections, no widgets.
+    credential and account-option schemas; values contain no widgets.
     """
     draft = deepcopy(config)
     saved_identities: list[dict[str, Any]] = []
@@ -78,14 +78,11 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     saved_accounts = list(preserved)
     # A declared cardinality is a provider contract, never CoreUI provider policy.
     scoped_accounts: dict[tuple[str, str], list[str]] = {}
-    kobo_identity_accounts: dict[str, str] = {}  # legacy fallback until plugin migration
     for row in preserved:
         provider_id = str(row.get('provider') or '').lower()
         iid = str(row.get('identity_id') or '').strip()
         if iid:
             scoped_accounts.setdefault((provider_id, iid), []).append(str(row.get('id') or ''))
-        if provider_id == 'kobo' and iid:
-            kobo_identity_accounts[iid] = str(row.get('id') or 'kobo')
     for editor in values['accounts']:
         if editor.get('deleted'):
             continue
@@ -101,12 +98,6 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             if field.required and not value:
                 raise SettingsValidationError(f'Option obligatoire : {field.label}')
             options[field.key] = value
-        if editor.get('base_url') is not None:
-            options['base_url'] = editor['base_url'].strip() or 'https://bibliotheques.paris.fr'
-        if editor.get('opds_url') is not None:
-            options['opds_url'] = editor['opds_url'].strip() or 'https://gallica.bnf.fr/opds'
-        if editor.get('vault_url') is not None:
-            options['base_url'] = editor['vault_url'].strip()
         account_identity_id = editor['identity'].strip() or saved_identities[0]['id']
         if account_identity_id not in identity_ids:
             raise SettingsValidationError(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
@@ -123,12 +114,6 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 )
             if editor['id'] not in linked:
                 linked.append(editor['id'])
-        elif provider_id == 'kobo':
-            # Preserve historical Kobo validation until its descriptor is migrated.
-            previous = kobo_identity_accounts.get(account_identity_id)
-            if previous and previous != editor['id']:
-                raise SettingsValidationError(f"Une identité ne peut avoir qu'un compte Kobo Vault : {account_identity_id} est déjà lié à {previous}.")
-            kobo_identity_accounts[account_identity_id] = editor['id']
         saved_accounts.append({
             'id': editor['id'], 'provider': editor['provider'],
             'identity_id': account_identity_id,
