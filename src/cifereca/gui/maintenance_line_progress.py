@@ -10,20 +10,6 @@ from threading import Lock
 from typing import Callable
 
 
-# The Core reconciliation broker emits these exact literals. Arbitrary plugin
-# progress prose can include account names, source URLs or local paths and
-# must never appear in the GTK status line (#2565). This is a presentation
-# allowlist, not a claim that a plugin's phase is authoritative.
-_RECONCILIATION_PHASES = frozenset({
-    "Inventaire local",
-    "Lecture des preuves locales",
-    "Comparaison des preuves locales",
-    "Comparaison des identifiants bibliographiques",
-    "Vérification des chemins enregistrés",
-    "Audit local terminé",
-})
-
-
 @dataclass(frozen=True)
 class MaintenanceLineState:
     phase: str = "idle"
@@ -47,7 +33,7 @@ class MaintenanceLineProgress:
         self._alive = alive
         # Labels are Core-owned constants; reject plugin-provided free text.
         self._activity_label = (
-            activity_label if activity_label in ("Purge", "Réconciliation", "Vérification des couvertures", "Vérification des langues", "Vérification d’intégrité", "Audit des noms", "Renormalisation des noms", "Nettoyage des doublons")
+            activity_label if activity_label in ("Purge", "Vérification des couvertures", "Vérification des langues", "Vérification d’intégrité", "Audit des noms", "Renormalisation des noms", "Nettoyage des doublons")
             else "Traitement"
         )
         self._lock = Lock()
@@ -129,27 +115,14 @@ class MaintenanceLineProgress:
             type(current) is int and type(total) is int
             and total > 0 and 0 <= current <= total
         )
-        if self._activity_label == "Réconciliation":
-            # Phase names (not a plugin-provided numeric total) are the only
-            # presentation authority for a reconciliation audit. Its recursive
-            # inventory has no trustworthy denominator: even current=total
-            # cannot establish percentage completion. No arbitrary message
-            # can override the phase or smuggle private plugin text.
-            if type(message) is not str or message not in _RECONCILIATION_PHASES:
-                return
-            if (message == "Inventaire local" and type(current) is int
-                    and 0 <= current <= 1_000_000 and total is None):
-                label = f"Réconciliation · Inventaire local · {current} fichier(s)"
-            else:
-                label = f"Réconciliation · {message}…"
-            fraction = None
-        elif valid:
+        if valid:
             # Known-total maintenance tools may report their own progress.
             # 100% is reserved exclusively for a successful terminal callback.
             percent = min(99, (current * 100) // total)
             label = f"{self._activity_label} en cours · {percent} %"
             fraction = percent / 100.0
         else:
+            # Plugin messages are never rendered, including for unknown tools.
             label = f"{self._activity_label} en cours…"
             fraction = None
         # A live plan() report belongs to the analysis phase; keep that
