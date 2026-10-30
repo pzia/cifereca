@@ -133,9 +133,8 @@ def test_no_delivery_without_exact_offer_or_core_selected_action(tmp_path):
             session.rights_selected_delivery_candidate(a, **{**kwargs, "edition_id":"epub-002"})
         with pytest.raises(ProviderCapabilityError):
             session.rights_selected_delivery_candidate(a, **{**kwargs, "delivery_offer_id":"reference.offer:"+"0"*64})
-        with pytest.raises(ProviderCapabilityError):
-            qualify(session, a, "archived-006")  # no valid selected candidate
-            if False else candidate(session, a, qualify(session,a,"archived-006"), tmp_path)
+        with pytest.raises(ProviderCapabilityError, match="reference_offer_invalid"):
+            candidate(session, a, qualify(session, a, "archived-006"), tmp_path)
         assert list(tmp_path.iterdir()) == []
         assert session.diagnostic_state()["staged_attempts"] == 0
     finally:
