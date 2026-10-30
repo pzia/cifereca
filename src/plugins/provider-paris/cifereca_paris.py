@@ -66,7 +66,7 @@ def _paris_pnb_offer_id(scope, edition_id: str, right_id: str) -> str:
     """Stable opaque scoped action ID; never encode a signed PNB URL."""
     parts = (scope.identity_id, scope.provider_id, scope.credential_id,
              scope.account_id, edition_id, right_id, "dilicom:pnb-direct/1")
-    return "paris.pnb:" + hashlib.sha256("\\x1f".join(parts).encode("utf-8")).hexdigest()
+    return "paris.pnb:" + hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()
 
 
 
