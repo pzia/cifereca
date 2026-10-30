@@ -71,8 +71,8 @@ def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
         # arbitrary ports and embedded credentials without performing I/O.
         validator(urljoin(base_url.rstrip("/") + "/", raw))
         return True
-    except (AttributeError, TypeError, ValueError, Exception):
-        # Supplier parsing/rejection is uncertainty, never a negative right.
+    except Exception:
+        # Supplier policy rejection is uncertainty, never a negative right.
         return False
 
 
