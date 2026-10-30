@@ -117,8 +117,9 @@ même si un ancien reçu contient un champ `adept_binding` : seul son statut
 d'acquisition reste affiché. Les reçus historiques sans ces champs demeurent
 des indices `recorded`, jamais une attestation serveur.
 Un identifiant de prêt non textuel dans les métadonnées historiques est ignoré
-plutôt que transformé en texte potentiellement privé dans la sortie JSON. Un statut de reçu inconnu est affiché `unknown`,
-jamais comme un message arbitraire pouvant contenir des données privées.
+plutôt que transformé en texte potentiellement privé dans la sortie JSON.
+Un statut de reçu inconnu est affiché `unknown`, jamais comme un message
+arbitraire pouvant contenir des données privées.
 Le résolveur Core par transaction (`audit_paris_adept_loan_origins`) est
 **distinct de cette commande globale** : il qualifie séparément
 `status` (force de la meilleure preuve individuelle),
