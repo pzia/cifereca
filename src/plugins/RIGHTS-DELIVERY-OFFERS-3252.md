@@ -102,3 +102,18 @@ le même profil seulement. Si la présence exacte est incertaine, le Core doit
 télécharger même si un SHA identique est connu. Une déduplication échouée
 ne doit ni annuler la réception ni supprimer un candidat de l'utilisateur.
 Cette recette ne certifie ni les six achats réels ni la réexécution zéro GET.
+
+## Kobo — confinement du candidat sélectionné pendant le réseau (#3252)
+
+Le fournisseur Kobo épingle désormais le dossier de staging Core avec
+`O_DIRECTORY|O_NOFOLLOW` avant les lectures privées Vault/descriptor et
+la livraison HTTPX. Les octets temporaires sont écrits via le descripteur
+stable `/proc/self/fd/<fd>`, puis le chemin d'origine est revalidé avant
+de remettre le candidat au Core. Une substitution du chemin par un lien
+symbolique, y compris pendant le GET, provoque un refus typé et le
+nettoyage de l'original, sans écriture extérieure. Tests synthétiques :
+`provider-kobo/tests/test_p0_3252_staging_inode.py`.
+
+Cela sécurise **uniquement** le candidat fournisseur. Le Core reste
+responsable du consentement, des octets finaux, du placement et de
+la déduplication physique **après placement** à l'intérieur de chaque profil.
