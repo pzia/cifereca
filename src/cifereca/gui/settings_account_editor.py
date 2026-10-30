@@ -35,8 +35,14 @@ def build_provider_account_editor(
     for field in getattr(descriptor, "account_option_fields", ()):
         row = Adw.EntryRow(); row.set_title(field.label)
         value = options.get(field.key)
-        if not value and field.legacy_config_key and hasattr(config, "get"):
-            value = config.get(field.legacy_config_key)
+        if not value and field.legacy_config_key:
+            # Preserve the old provider-level default (possibly configured on
+            # another account) before falling back to the former global key.
+            provider_option = getattr(config, "provider_option", None)
+            if callable(provider_option):
+                value = provider_option(provider_id, field.key, None)
+            if not value and hasattr(config, "get"):
+                value = config.get(field.legacy_config_key)
         row.set_text(str(value or field.default)); group.add(row)
         option_fields[field.key] = row
     for title, subtitle in getattr(descriptor, "account_help", ()):
