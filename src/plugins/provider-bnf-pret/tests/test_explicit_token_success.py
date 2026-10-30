@@ -32,6 +32,22 @@ def test_exact_observed_loan_stages_private_acsm(tmp_path):
 
 
 
+def test_bnf_signed_action_stages_acsm_with_unknown_loan_state(tmp_path):
+    """An optional status is not a file-delivery veto on current signed ACS4."""
+    session, account, loan, state, calls, downloaded = connected()
+    try:
+        loan.state = "unknown"
+        path, source = session.download_digital(
+            loan, account, tmp_path / "stage", explicit_user_action=True,
+        )
+        assert source == "" and path.read_bytes() == TOKEN
+        assert len(downloaded) == 1
+        assert downloaded[0].method == "GET"
+        assert downloaded[0].url.path == "/loans/loan-a"
+    finally:
+        session.close()
+
+
 def test_provider_session_default_download_refused_even_for_valid_loan(tmp_path):
     session, account, loan, _, _, downloaded = connected()
     try:
