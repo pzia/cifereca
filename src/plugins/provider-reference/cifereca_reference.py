@@ -231,13 +231,17 @@ class ReferenceSession(ProviderSession):
         """Selected, exact positive/negative/unknown v2 capacity observation."""
         from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
 
-        return from_legacy_rights_snapshot(
+        snapshot = from_legacy_rights_snapshot(
             self.rights_selected_delivery_offer_snapshot(
                 account, edition_id=edition_id, right_id=resource_id,
                 kind=kind, branch=branch,
                 explicit_user_action=explicit_user_action,
             )
         )
+        return replace(snapshot, resources=tuple(
+            replace(item, right=None) if item.source.edition_id == "epub-002"
+            else item for item in snapshot.resources
+        ))
 
     def downloadable_selected_delivery_candidate(
         self, account: Account, *, edition_id, resource_id, kind, branch,
