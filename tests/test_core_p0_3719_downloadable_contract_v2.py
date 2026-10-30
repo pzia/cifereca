@@ -243,6 +243,12 @@ def test_real_core_sync_accepts_v2_from_existing_typed_reader_once(rig):
         capability=DownloadCapability("available", "signed-resource-offer"),
     )
     v2 = replace(v2, resources=(resource,))
+    # Install the *existing* Core executor route but deny all source consent.
+    # A positive provider offer alone must never call the plugin for bytes.
+    service._canonical_persisted_consent = lambda _account: frozenset()
+    service._canonical_right_delivery = lambda *_args: pytest.fail(
+        "v2 offer without persisted consent cannot GET"
+    )
     observed = []
     service.session.rights_observation_snapshot = lambda account: (
         observed.append(account) or v2
