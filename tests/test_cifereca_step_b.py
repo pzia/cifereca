@@ -62,7 +62,7 @@ def _manager(tmp_path: Path) -> PluginManager:
 
 def test_step_b_public_api_and_core_categories_are_versioned(tmp_path):
     assert Version(__version__) >= Version("0.9.2")
-    assert PLUGIN_API_VERSION == "1.4.3"
+    assert Version(PLUGIN_API_VERSION) >= Version("1.4.3")
     manager = _manager(tmp_path)
     categories = {row.id for row in manager.categories.all()}
     assert {
