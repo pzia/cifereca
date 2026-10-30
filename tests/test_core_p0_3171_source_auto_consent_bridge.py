@@ -224,3 +224,20 @@ def test_optional_right_state_does_not_veto_canonical_download(
     assert again["canonical_execution"]["present_attested"] == 1
     assert again["canonical_execution"]["downloaded"] == 0
     assert calls == [service.source]
+
+
+def test_complete_selected_delivery_abi_preempts_legacy_bnf_worker():
+    from types import SimpleNamespace
+    from cifereca.core.sync_coordination import _source_uses_canonical_delivery
+
+    # Old plugins and partial ABI continue using the guarded legacy route;
+    # a full implementation must not be called twice for a single consent.
+    older = SimpleNamespace(rights_observation_snapshot=lambda *_: None)
+    complete = SimpleNamespace(
+        rights_observation_snapshot=lambda *_: None,
+        rights_selected_delivery_offer_snapshot=lambda *_: None,
+        rights_selected_delivery_candidate=lambda *_: None,
+    )
+    assert not _source_uses_canonical_delivery(None)
+    assert not _source_uses_canonical_delivery(older)
+    assert _source_uses_canonical_delivery(complete)
