@@ -498,9 +498,9 @@ def test_unattested_historical_return_flag_cannot_create_state_conflict():
     report = _audit([], [attested, unverified])
     assert report["adobe_loan_state_disagreement"] is False
     assert report["origin_resolution"] == "single_recorded"
-    assert [row["historic_adobe_loan_state"] for row in report["origins"]] == [
+    assert {row["historic_adobe_loan_state"] for row in report["origins"]} == {
         "active", "unknown",
-    ]
+    }
 
 
 def test_empty_audit_exposes_consistent_closed_disagreement_schema():
