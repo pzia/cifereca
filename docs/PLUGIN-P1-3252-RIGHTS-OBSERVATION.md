@@ -6,7 +6,7 @@
 
 Disponible dans `cifereca.plugin_api` :
 
-- `RIGHTS_OBSERVATION_CONTRACT = "cifereca.rights.observation/1"`.
+- `RIGHTS_OBSERVATION_CONTRACT = "cifereca.rights.observation/1"` (ABI maintenue ; livraison et droit découplés).
 - `ProviderRightsScope(identity_id, provider_id, credential_id, account_id)` :
   portée **exacte** ; un compte principal à ID vide est permis, jamais un joker.
 - `ProviderRightObservation(edition_id, right_id, kind, state, evidence_kind,
