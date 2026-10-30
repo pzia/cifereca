@@ -61,6 +61,22 @@ def _configured_identity_ids(window: Any) -> tuple[str, ...]:
     return values
 
 
+def _scheduled_refresh_capable(source: Any) -> bool:
+    """Use only the Sync broker's explicit capability, never a provider ID.
+
+    A malformed/unversioned source projection cannot authorize scheduled I/O.
+    The broker still revalidates account, connection, consent and phase at GET.
+    """
+    provider = getattr(source, "provider_id", None)
+    caps = getattr(source, "sync_capabilities", None)
+    return (
+        type(provider) is str and bool(provider.strip()) and "\0" not in provider
+        and type(caps) is tuple and 0 < len(caps) <= 32
+        and all(type(cap) is str and 0 < len(cap) <= 80 for cap in caps)
+        and "scheduled_refresh" in caps
+    )
+
+
 def _automatic_opening_in_flight(window: Any) -> bool:
     """Defer a periodic refresh while the global automatic opening owns Sync.
 
@@ -97,7 +113,7 @@ def periodic_identities_due(
                 try:
                     if (
                         getattr(source, "identity_id", None) != identity_id
-                        or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
+                        or not _scheduled_refresh_capable(source)
                         or getattr(source, "sync_capable", None) is not True
                     ):
                         continue
@@ -243,7 +259,7 @@ def configure(
                 try:
                     if (
                         getattr(source, "identity_id", None) == identity_id
-                        and getattr(source, "provider_id", None) in {"kobo", "numilog"}
+                        and _scheduled_refresh_capable(source)
                         and getattr(source, "enabled", None) is True
                         and getattr(source, "connected", None) is True
                         and getattr(source, "sync_capable", None) is True
