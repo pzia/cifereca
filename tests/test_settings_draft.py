@@ -241,3 +241,46 @@ def test_descriptor_required_option_refuses_blank_without_dropping_existing_conf
     values['accounts'][0]['option_fields']['endpoint'] = ' https://source.example '
     result = validate(editor, descriptors={'synthetic': spec})
     assert result.data['providers']['accounts'][0]['options']['endpoint'] == 'https://source.example'
+
+
+
+@pytest.mark.parametrize(
+    ("persisted", "spoofed"),
+    [(False, True), (True, False), ("true", True), (1, False), (None, True)],
+)
+def test_generic_settings_save_never_rewrites_readonly_legacy_kobo_permission(
+    editor, persisted, spoofed,
+):
+    config, values = editor
+    config.set("kobo_backup.enabled", persisted)
+    config.set("kobo_backup.allow_unlinked_acquisition", persisted)
+    before = deepcopy(config.data)
+    # The GTK switches are read-only; an inconsistent/stale/test snapshot
+    # cannot change legacy permissions via the unrelated Settings save.
+    values["backup_enabled"] = spoofed
+    values["allow_unlinked_acquisition"] = spoofed
+    values["identities"][0]["label"] = "Updated without acquisition opt-in"
+    draft = validate(editor)
+    assert draft.data["kobo_backup"]["enabled"] == persisted
+    assert draft.data["kobo_backup"]["allow_unlinked_acquisition"] == persisted
+    assert draft.data["identities"][0]["label"] == "Updated without acquisition opt-in"
+    assert config.data == before
+    assert not config.path.exists()
+
+
+def test_settings_draft_keeps_historical_kobo_flags_when_other_fields_change(editor):
+    config, values = editor
+    config.set("kobo_backup.enabled", True)
+    config.set("kobo_backup.allow_unlinked_acquisition", False)
+    values["backup_enabled"] = False
+    values["allow_unlinked_acquisition"] = True
+    values["backup_interval"] = "90"
+    values["backup_directory"] = "KoboBooks"
+    result = validate(editor)
+    legacy = result.data["kobo_backup"]
+    assert legacy["enabled"] is True
+    assert legacy["allow_unlinked_acquisition"] is False
+    # Compatibility-only tunables still follow the old save pipeline;
+    # this change does not remove support for legacy configuration.
+    assert legacy["interval_minutes"] == 90
+    assert legacy["directory"] == "KoboBooks"
