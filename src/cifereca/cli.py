@@ -162,6 +162,12 @@ def main(argv: list[str] | None = None) -> int:
     adept_audit.add_argument(
         "--credential", help="Filtre les prêts liés à cette connexion, sans masquer les autres provenances"
     )
+    adept_exact = adept_sub.add_parser(
+        "audit-origin",
+        help="Audit historique ADEPT hors réseau sur un prêt Paris et un item exacts",
+    )
+    adept_exact.add_argument("--loan-id", required=True, help="ID exact de prêt Paris")
+    adept_exact.add_argument("--item-id", required=True, help="ID exact de l'item du prêt")
     adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
     adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
     adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
@@ -202,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "paris-adept":
         if a.username or a.account:
             p.error("paris-adept exige --credential, pas --username ou --account")
+        if a.paris_adept_cmd == "audit-origin":
+            # Reject unusable transaction keys before Core can be opened.
+            if (not a.loan_id.strip() or not a.item_id.strip()
+                    or "\x00" in a.loan_id or "\x00" in a.item_id):
+                p.error("audit-origin exige --loan-id et --item-id non vides et sans NUL")
         if a.paris_adept_cmd == "bind" and not a.confirm_ownership:
             p.error(
                 "paris-adept bind exige --confirm-ownership : "
@@ -270,6 +281,18 @@ def main(argv: list[str] | None = None) -> int:
                     from .paris_adept_audit import build_paris_adept_audit
                     result = build_paris_adept_audit(
                         core.storage, credential_id=a.credential
+                    )
+                elif a.paris_adept_cmd == "audit-origin":
+                    from .artifact_inspection import inspect_artifact
+                    from .core.adept_origin_audit import inspect_paris_adept_origins
+                    # Exact loan + item. This does not connect Paris, inspect
+                    # remote Adobe inventories or authorize a return. Evidence
+                    # from other local identities is deliberately retained.
+                    result = inspect_paris_adept_origins(
+                        loan_id=a.loan_id.strip(), item_id=a.item_id.strip(),
+                        entitlements=core.storage.entitlements(provider_id="paris"),
+                        acquisitions=core.storage.acquisitions(provider_id="paris"),
+                        artifact_inspector=inspect_artifact,
                     )
                 elif a.paris_adept_cmd == "list":
                     bindings = core.storage.paris_borrower_adept_bindings(
