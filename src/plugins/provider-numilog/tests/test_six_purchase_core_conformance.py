@@ -273,6 +273,13 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
         source_id=sid, activate=enabled, expected_revision=None,
     ) is True
     assert broker.canonical_acquisition_choices(sid) == ()
+    from cifereca.core.numilog_materialization_startup import (
+        eligible_source_ids, execute as legacy_execute,
+    )
+    # The live Numilog adapter has the full canonical ABI. The legacy worker
+    # must NOT create a second acquisition queue for this consented account.
+    assert sid not in eligible_source_ids(broker, account.identity_id)
+    assert legacy_execute(broker, account.identity_id, "startup").facts["status"] == "not_due"
     result = synchronize(service, account)
     assert result["present_attested"] == 3
     assert result["downloaded"] == (3 if enabled else 0)
