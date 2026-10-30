@@ -3785,14 +3785,17 @@ class Storage:
             recovering = acquisition_id == self._stable_id(
                 "numilog-materialization-recovery", identity, credential, account, item_id,
             )
-            recovery_root = Path(source_root) / ("recovery-" + hashlib.sha256(
-                item_id.encode("utf-8"),
-            ).hexdigest()[:32])
-            # The provider may stage a consented recovery under the same
-            # identity's isolated recovery directory if the default basename
-            # was already occupied. No arbitrary nested path is accepted.
-            approved_parent = str(parent.parent) == source_root or (
-                recovering and parent.parent == recovery_root
+            purchase_digest = hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:32]
+            recovery_root = Path(source_root) / ("recovery-" + purchase_digest)
+            delivery_root = Path(source_root) / ("delivery-" + purchase_digest)
+            # Only the exact-purchase, fixed Core-managed staging roots
+            # are admitted; neither a title nor an arbitrary path is allowed.
+            # The global acquisition lock and provider adapter never modify
+            # an existing root or a historical acsm-* placement.
+            approved_parent = (
+                str(parent.parent) == source_root
+                or (recovering and parent.parent == recovery_root)
+                or (not recovering and parent.parent == delivery_root)
             )
             if (not path.is_absolute() or not approved_parent
                     or re.fullmatch(r"acsm-([0-9a-f]{64})", parent.name) is None):
