@@ -158,10 +158,15 @@ def inventory_source_eligible(service: Any, account: Any) -> bool:
             account.identity_id, account.provider_id,
             account.credential_id, account.unique_id,
         )
-        if not all(
-            type(value) is str and value.strip() and "\x00" not in value
-            for value in scope
+        if (not all(
+                type(value) is str and value.strip() and "\x00" not in value
+                for value in scope[:3]
+            )
+            or type(scope[3]) is not str
+            or (scope[3] != "" and not scope[3].strip())
+            or "\x00" in scope[3]
         ):
+            # Exact empty upstream account ID means primary, not a wildcard.
             return False
 
         # An absent legacy schedule switch is not new consent. A malformed

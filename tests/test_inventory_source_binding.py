@@ -45,6 +45,20 @@ class InventorySourceBindingTests(unittest.TestCase):
                                                SynchronizationBrokerImpl._source_id(account)])
                 self.assertFalse(session.capabilities.backup)
 
+    def test_empty_primary_account_id_is_exact_and_still_bound(self):
+        for provider in PROVIDERS:
+            with self.subTest(provider=provider):
+                service, account, _, state = rig(provider)
+                account.unique_id = ''
+                self.assertTrue(inventory_source_eligible(service, account))
+                expected_key = 'sync.source.enabled.' + SynchronizationBrokerImpl._source_id(account)
+                self.assertEqual(state.reads, [expected_key])
+                service.accounts.append(copy(account))
+                self.assertFalse(inventory_source_eligible(service, account))
+                service.accounts.pop()
+                state.owner = 'bob'
+                self.assertFalse(inventory_source_eligible(service, account))
+
     def test_disabled_corrupt_or_non_boolean_enablement_never_grants(self):
         for provider in PROVIDERS:
             for value in ('0', 'false', '', 'TRUE', 1, True, [], {}):
@@ -104,7 +118,10 @@ class InventorySourceBindingTests(unittest.TestCase):
     def test_invalid_coordinates_never_grant_or_read_storage(self):
         for provider in PROVIDERS:
             for field in ('provider_id', 'identity_id', 'credential_id', 'unique_id'):
-                for value in ('', ' ', None, True, 'broken\x00coordinate'):
+                invalid = (' ', None, True, 'broken\x00coordinate')
+                if field != 'unique_id':
+                    invalid = ('',) + invalid
+                for value in invalid:
                     with self.subTest(provider=provider, field=field, value=value):
                         service, account, _, state = rig(provider)
                         setattr(account, field, value)
