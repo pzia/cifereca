@@ -1,4 +1,5 @@
 """Headless behavioural contracts for independent Tools row progress."""
+from pathlib import Path
 from threading import Thread, get_ident
 
 import pytest
@@ -154,3 +155,26 @@ def test_control_owner_close_suppresses_reports_and_renderer_failure_is_isolated
     closed = True
     control.report(current=2, total=2)
     assert len(calls) == 1
+
+
+def test_retired_reconciliation_label_is_not_a_live_maintenance_mode():
+    pending, rendered = [], []
+    progress = MaintenanceLineProgress(
+        idle_add=pending.append, render=rendered.append,
+        activity_label="Réconciliation",
+    )
+    ticket = running(progress)
+    pending.pop()()
+    assert rendered[-1].label == "Traitement en cours…"
+    progress.report(ticket, current=4, total=10,
+                    message="/PRIVATE/account/SECRET")
+    pending.pop()()
+    assert rendered[-1].label == "Traitement en cours · 40 %"
+    assert "/PRIVATE" not in rendered[-1].label
+
+
+def test_trace_kind_allowlist_remains_closed_without_private_plugin_labels():
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/task_runner.py").read_text(encoding="utf-8")
+    assert '"maintenance-plan", "maintenance-tool"' in source
+    assert 'else "other"' in source
