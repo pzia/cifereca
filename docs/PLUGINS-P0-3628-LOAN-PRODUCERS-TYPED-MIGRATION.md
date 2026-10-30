@@ -1,6 +1,6 @@
 # #3628 · Producteurs de prêts installables — migration vers l'inventaire typé
 
-## Périmètre vérifié (28 octobre 2026)
+## Périmètre vérifié (30 octobre 2026)
 
 Ticket enfant Plugins P0 de [#3197](https://github.com/pzia/cifereca/issues/3197),
 sous l'architecture #3171. Le Core garde **exclusivement** le moteur Sync,
@@ -9,7 +9,7 @@ politique de suppression des droits.
 
 | Producteur / service installable | Exposition legacy | Observation typée en production | Garantie négative |
 | --- | --- | --- | --- |
-| `provider-paris` (`ProviderSession`, `capabilities.loans=True`) | `loans(Account)`, `last_loan_errors` pour anciens consommateurs | `loan_inventory_snapshot(Account) -> LoanInventorySnapshot` sous verrou : une lecture DILICOM/digital et SYRACUSE/physical, compte/credential/identité et instance vivante figés, evidence de branche locale au contexte de la lecture. **N'appelle pas `loans()` et ne lit/écrit pas `last_loan_errors`** depuis la voie typée. | **Aucune** : succès des deux branches `completeness=unknown`, échec isolé `partial/branch_unavailable`, deux branches en panne refusées |
+| `provider-paris` (`ProviderSession`, `capabilities.loans=True`) | `loans(Account)` positif compatible ; aucun `last_loan_errors` depuis #3759 | `loan_inventory_snapshot(Account) -> LoanInventorySnapshot` sous verrou : une lecture DILICOM/digital et SYRACUSE/physical, compte/credential/identité et instance vivante figés, evidence de branche locale au contexte de la lecture. **N'appelle pas `loans()` et ne lit/écrit pas `last_loan_errors`** depuis la voie typée. | **Aucune** : succès des deux branches `completeness=unknown`, échec isolé `partial/branch_unavailable`, deux branches en panne refusées |
 | `provider-bnf-pret` (`ProviderSession`, `capabilities.loans=True`) | `loans(Account)`, pas de canal `last_loan_errors` | `loan_inventory_snapshot(Account) -> LoanInventorySnapshot` sous verrou epoch/session, compte lié exact, une seule lecture HTML BnF, **indépendante de la façade v1** ; prêt positif et action ACS4 observables sans récupération du token | **Aucune** : HTML `active-loans` même vide toujours `partial/inventory_not_exhaustive` |
 | `runtime-kobo-adept` | `loans(profile)` du moteur technique local ADEPT, **pas** `ProviderSession.loans(Account)` | Inventaire de runtime local distinct ; **pas un producteur de prêts fournisseur** dans la sélection Core `ProviderSession` | Aucune preuve de restitution fournisseur déduite des licences locales |
 | Kobo, Numilog, autres providers catalogue/public installables | pas de `ProviderCapabilities.loans=True` identifié en tant que producteur `LoanInventorySnapshot` | Achats : contrat distinct `cifereca.rights.observation/1` ; aucune conversion de liste descriptive en prêt | Aucune |
@@ -27,10 +27,11 @@ GET `loans()` déclenché par la voie typée.
 - Paris : le statut de chaque branche est collecté dans un
   `ContextVar` pour **cette lecture**, sous verrou. Les exceptions
   fournisseur DILICOM ou SYRACUSE ne deviennent pas une liste négative.
-  `last_loan_errors` continue à être mis à jour **uniquement lors d'une
-  invocation v1** pour préserver les clients installés ; il ne constitue
-  jamais une attestation de droits. L'annulation arrête les lectures sans
-  fabriquer de résultat complet.
+  La façade mutable `last_loan_errors` est **supprimée** depuis
+  [#3759](https://github.com/pzia/cifereca/pull/3759) ; la méthode
+  `loans(Account)` reste compatible pour les prêts positifs sans
+  attestation négative. L'annulation arrête les lectures sans fabriquer de
+  résultat complet.
 - BnF : typé et legacy partagent seulement un lecteur interne verrouillé ;
   le modèle de droits positifs reste identique. Un HTML 200 vide ne suffit
   pas à prouver un retour de prêt.

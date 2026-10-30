@@ -82,7 +82,7 @@ def test_opening_partial_provider_rows_do_not_erase_other_source_success(
             connected=True, capabilities=NS(
                 loans=True, personal_library=False, backup=False,
             ),
-            last_loan_errors=[{"upstream": "catalogue", "error": "temporary"}],
+            # Legacy v1 inventory is partial even without an error side channel.
         )
         monkeypatch.setattr(service, "_loans_for_account", lambda _a, force=False: [])
         enable_synthetic_paris_opening(service)
