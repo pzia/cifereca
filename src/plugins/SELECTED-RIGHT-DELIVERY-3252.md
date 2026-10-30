@@ -159,10 +159,7 @@ Toute erreur supprime le fichier partiel. Le plugin ne fournit **aucun**
 Core #3171 reste seul responsable de l'inspection structurelle définitive,
 du traitement ADEPT d'un ACSM, de la preuve finale, du rehash du Placement,
 de l'`OriginLink` et de la seconde Sync sans nouveau GET. Les chemins
-KDRM/non HTTP restent **refusés**. Paris conserve `state=unknown` sans bloquer en soi la synchronisation.
-Sa capacité de livraison PNB n'est cependant pas encore qualifiée comme
-`available` par l'adaptateur canonique : ne pas transformer un droit actif
-supposé en offre, ni lancer de POST d'emprunt implicite.
+KDRM/non HTTP restent **refusés**. Paris conserve `state=unknown` mais projette `delivery=available` uniquement si le prêt DILICOM exact expose son `EbookUrl` authentifié. L'adaptateur offre un préflight sélectionné et un candidat PNB sous staging Core, sans GET pendant l'observation, sans POST d'emprunt implicite, sans URL signée en sortie et sans forger de droit actif. La relecture avant GET refuse une ressource disparue ou un lien absent ; les 403 de livraison sont des échecs de transfert, pas des révocations présumées.
 
 ### Pourquoi différer l'ADEPT Numilog dans la voie canonique
 
