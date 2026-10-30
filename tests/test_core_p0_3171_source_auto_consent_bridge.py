@@ -225,8 +225,9 @@ def test_unknown_right_but_downloadable_provider_resource_runs_canonical_get(
     assert calls == [service.source]
 
 
+@pytest.mark.parametrize("descriptive_state", ["unknown", "inactive"])
 def test_unknown_right_and_unknown_delivery_can_select_current_offer_before_get(
-    policy,
+    policy, descriptive_state,
 ):
     """The descriptive right is optional even BEFORE provider offer lookup."""
     from cifereca.core.convergence_execution import CompletedDelivery
@@ -237,7 +238,7 @@ def test_unknown_right_and_unknown_delivery_can_select_current_offer_before_get(
     service, db, switch = policy
     with db._lock, db._connect() as conn:
         conn.execute("DELETE FROM source_references")
-    original = replace(service.snapshot.rights[0], state="unknown")
+    original = replace(service.snapshot.rights[0], state=descriptive_state)
     service.snapshot = replace(service.snapshot, rights=(original,))
     assert persist_attested_source_references(db, service.snapshot) == 1
     assert db.entitlements() == []
