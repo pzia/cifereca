@@ -62,8 +62,8 @@ def qualify_selected_offers(
     # fallback, and never try this preflight without exact persisted consent.
     if not any(SourceKey(scope, row.edition_id, row.right_id,
                          row.kind, snapshot.branch) in persisted_consent
-               for row in snapshot.rights if row.state == "active"
-               and row.provider_attested and row.delivery == "unknown"):
+               for row in snapshot.rights
+               if row.provider_attested and row.delivery == "unknown"):
         return snapshot
     raw_reader = getattr_static(session, "rights_selected_delivery_offer_snapshot", None)
     if raw_reader is None:
