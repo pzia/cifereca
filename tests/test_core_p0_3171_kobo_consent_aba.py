@@ -120,3 +120,29 @@ def test_policy_and_generation_commit_or_rollback_as_one_sqlite_unit(rig):
     finally:
         with db._lock, db._connect() as conn:
             conn.execute("DROP TRIGGER refuse_toggle")
+
+
+def test_public_kobo_schedule_setter_increments_epoch_for_every_transition(tmp_path):
+    from cifereca.brokers import SynchronizationBrokerImpl
+    from tests.test_kobo_backup_guard import _service
+
+    service = _service(tmp_path)
+    try:
+        session = service._sessions[service._session_key("kobo", "vault-1")]
+        account = session.accounts[0]
+        service.accounts = [account]
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        policy = "sync.source.materialization.on_start." + sid
+        assert broker.set_local_materialization_schedule(sid, "on_start") == "on_start"
+        first = service.storage.metadata_get(policy + ".revision")
+        assert len(first) == 32
+        assert broker.set_local_materialization_schedule(sid, "manual") == "manual"
+        second = service.storage.metadata_get(policy + ".revision")
+        assert second != first
+        assert broker.set_local_materialization_schedule(sid, "on_start") == "on_start"
+        third = service.storage.metadata_get(policy + ".revision")
+        assert len({first, second, third}) == 3
+        assert service.storage.metadata_get(policy) == "1"
+    finally:
+        service.close()
