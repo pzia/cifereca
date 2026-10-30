@@ -534,7 +534,6 @@ class BnfProviderSession(ProviderSession):
             right = selected.exact(edition_id, right_id, kind)
             if (selected.branch != branch or observed_scope != pinned
                     or right is None or not right.provider_attested
-                    or right.state != 'active'
                     or (account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id) != pinned):
                 raise ProviderCapabilityError('bnf_selected_offer_scope_changed')
