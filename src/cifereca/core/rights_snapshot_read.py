@@ -145,13 +145,18 @@ def read_account_rights_snapshot(service, account: Account, *,
             return unavailable("cancelled")
         if not still_bound():
             return unavailable()
-        raw_reader = getattr_static(session, "rights_observation_snapshot", None)
+        reader_name = (
+            "downloadable_resource_snapshot"
+            if getattr_static(session, "downloadable_resource_snapshot", None) is not None
+            else "rights_observation_snapshot"
+        )
+        raw_reader = getattr_static(session, reader_name, None)
         if raw_reader is None:
             return unavailable()
         if not callable(raw_reader):
             raise ValueError("invalid_rights_reader")
-        reader_kind = "typed"
-        reader = object.__getattribute__(session, "rights_observation_snapshot")
+        reader_kind = reader_name
+        reader = object.__getattribute__(session, reader_name)
         if not callable(reader):
             raise ValueError("invalid_rights_reader")
         result = reader(account)
@@ -165,6 +170,8 @@ def read_account_rights_snapshot(service, account: Account, *,
         # Convert an exact downloadable-resource observation to the existing
         # Core executor envelope; *never* infer a legal grant or extra GET.
         # A v2-only provider need not introduce a parallel Sync loop.
+        if reader_name == "downloadable_resource_snapshot" and type(result) is not ResourceSnapshot:
+            raise ValueError("invalid_downloadable_snapshot")
         if type(result) is ResourceSnapshot:
             if result.scope != scope:
                 raise ValueError("invalid_downloadable_snapshot_scope")
