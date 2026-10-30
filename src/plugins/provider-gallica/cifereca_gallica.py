@@ -17,6 +17,7 @@ from cifereca.plugin_api import (
     BundleAcquisitionRecipe,
 )
 from cifereca.plugin_api import (
+    AccountOptionField,
     ProviderCapabilities,
     ProviderSearchCapabilities,
     ProviderCapabilityError,
@@ -79,6 +80,12 @@ DESCRIPTOR = ProviderDescriptor(
         ),
     ),
     homepage="https://gallica.bnf.fr",
+    account_options=(AccountOptionField("opds_url", "URL du catalogue OPDS",
+                                       default="https://gallica.bnf.fr/opds"),),
+    account_note=(
+        "Accès public",
+        "Aucun identifiant requis · EPUB + documents sonores publics Gallica",
+    ),
     notes=(
         "Source publique sans authentification.",
         "Les EPUB utilisent OPDS ; les documents sonores utilisent le SRU Gallica puis OAIRecord pour les pistes.",
