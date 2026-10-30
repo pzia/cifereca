@@ -235,11 +235,6 @@ def execute_admitted_convergence(
             )
             continue
 
-        if row.provider_attested and row.state == "inactive" and row.delivery != "available":
-            # Descriptive history only: no acquisition and no negative write.
-            results.append(ConvergenceOutcome(key, "inactive", "right_inactive"))
-            continue
-
         # A stale/unknown right, unsigned delivery, missing configured
         # consent or disabled source can never start a file GET or ADEPT.
         if (snapshot.status not in ("success", "partial")
@@ -248,6 +243,11 @@ def execute_admitted_convergence(
             continue
         if row.delivery_unavailable_reason == "archived":
             results.append(ConvergenceOutcome(key, "skipped_archived", "delivery_archived"))
+            continue
+        if row.state == "inactive" and row.delivery != "available":
+            # Explicit archives have their own non-error counter regardless
+            # of descriptive rights. Neither case permits a content GET.
+            results.append(ConvergenceOutcome(key, "inactive", "right_inactive"))
             continue
         if row.delivery != "available" or not row.delivery_offer_id:
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))

@@ -301,14 +301,6 @@ def plan_convergence(
             if not row.provider_attested:
                 decision("pending", "provider_right_unattested")
                 continue
-            if row.state != "active" and row.delivery != "available":
-                # Unknown/inactive is descriptive metadata, not an independent
-                # file-delivery veto. A genuinely available provider offer
-                # takes precedence; legacy state without an offer stays
-                # diagnostic-only and cannot initiate GET.
-                decision("inactive" if row.state == "inactive" else "pending",
-                         "right_inactive" if row.state == "inactive" else "delivery_unconfirmed")
-                continue
             hashes = origins_by_source.get(key, set())
             matching = [
                 placement for sha in hashes
@@ -320,6 +312,13 @@ def plan_convergence(
                 continue
             if row.delivery_unavailable_reason == "archived":
                 decision("skipped_archived", "delivery_archived")
+                continue
+            # Descriptive rights cannot erase exact local presence or the
+            # provider's explicit archive classification. Without either,
+            # an unavailable offer still cannot authorize acquisition.
+            if row.state != "active" and row.delivery != "available":
+                decision("inactive" if row.state == "inactive" else "pending",
+                         "right_inactive" if row.state == "inactive" else "delivery_unconfirmed")
                 continue
             active_declarations = declared_by_source.get(key, ())
             current = sorted({

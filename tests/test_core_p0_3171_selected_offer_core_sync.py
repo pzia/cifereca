@@ -50,8 +50,12 @@ def _selected(service, *, offer="exact-selected-offer"):
                    status="partial", coverage="partial")
 
 
-def test_selected_offer_admitted_only_once_and_second_sync_skips_private_get(rig):
+@pytest.mark.parametrize("state", ["active", "unknown", "inactive"])
+def test_selected_offer_admitted_only_once_and_second_sync_skips_private_get(rig, state):
     service, db, root = rig
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], state=state,
+    ),))
     consent, downloads = _enabled(service, root)
     preflights = []
 
@@ -78,6 +82,48 @@ def test_selected_offer_admitted_only_once_and_second_sync_skips_private_get(rig
     assert second["canonical_execution"]["downloaded"] == 0
     assert len(preflights) == len(downloads) == 1
     assert refs(db)[1] == 1
+
+
+@pytest.mark.parametrize("state", ["active", "unknown", "inactive"])
+def test_verified_local_archive_keeps_file_and_origin_without_new_get(rig, state):
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    service.session.rights_selected_delivery_offer_snapshot = lambda *_a, **_kw: _selected(service)
+    assert synchronize_account_source(service, service.account)["canonical_execution"]["downloaded"] == 1
+    before = db.placements()
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], state=state, delivery="unavailable",
+        delivery_offer_id="", delivery_unavailable_reason="archived",
+    ),))
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail("verified archive must not read another offer")
+    )
+    for _ in range(2):
+        counts = synchronize_account_source(service, service.account)["canonical_execution"]
+        assert counts["present_attested"] == 1
+        assert counts["skipped_archived"] == counts["inactive"] == counts["failed"] == 0
+        assert counts["downloaded"] == 0
+        assert len(downloads) == 1
+        assert refs(db)[1] == 1 and db.placements() == before
+        assert (root / "A" / "selected-delivered.pdf").read_bytes() == BYTES
+
+
+def test_selected_offer_without_held_core_lock_never_calls_provider(rig):
+    from cifereca.core.canonical_selected_offers import qualify_selected_offers
+    from cifereca.locking import InterProcessLock
+
+    service, db, root = rig
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail("provider cannot be called without Core lock")
+    )
+    with pytest.raises(ValueError, match="canonical_offer_core_lock_required"):
+        qualify_selected_offers(
+            service, service.account, service.session, service.snapshot,
+            admitted_epoch=service._source_context_epoch,
+            shared_lock=InterProcessLock(root.parent / "state" / "acquisition.lock"),
+            library_root=root, persisted_consent=frozenset({service.source}),
+            consent_still_current=lambda _key: True,
+        )
 
 
 def test_selected_preflight_is_never_called_without_persisted_consent(rig):
@@ -201,9 +247,13 @@ def test_only_consented_source_from_multiple_rights_may_preflight(rig):
 
 
 @pytest.mark.parametrize("selected_only", [False, True])
-def test_archived_delivery_is_non_error_without_content_get(rig, selected_only):
+@pytest.mark.parametrize("state", ["active", "unknown", "inactive"])
+def test_archived_delivery_is_non_error_without_content_get(rig, selected_only, state):
     service, db, root = rig
     _, downloads = _enabled(service, root)
+    service.snapshot = replace(service.snapshot, rights=(replace(
+        service.snapshot.rights[0], state=state,
+    ),))
     archived = replace(service.snapshot.rights[0], delivery="unavailable",
                        delivery_offer_id="", delivery_unavailable_reason="archived")
     selected_calls = []
@@ -222,6 +272,7 @@ def test_archived_delivery_is_non_error_without_content_get(rig, selected_only):
         assert counts["skipped_archived"] == 1
         assert counts["pending"] == counts["blocked"] == counts["failed"] == 0
         assert counts["downloaded"] == 0
+        assert counts["inactive"] == 0
         assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
         assert len(refs(db)[0]) == 1  # Positive right retained, not a receipt.
     assert len(selected_calls) == (2 if selected_only else 0)

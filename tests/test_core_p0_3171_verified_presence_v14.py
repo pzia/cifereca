@@ -118,7 +118,29 @@ def test_unavailable_or_negative_snapshot_does_not_infer_remote_absence(store, t
     inactive = replace(snapshot, rights=(replace(snapshot.rights[0], state="inactive"),))
     decisions = plan(store, inactive, tmp_path)
     assert len(decisions) == 1
-    assert decisions[0].provider_satisfied is False
+    assert decisions[0].provider_satisfied is True
+    path.unlink()
+    assert plan(store, inactive, tmp_path)[0].provider_satisfied is False
+
+
+@pytest.mark.parametrize("state", ["active", "unknown", "inactive"])
+def test_exact_local_presence_precedes_archive_without_erasing_history(store, tmp_path, state):
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", path, source, snapshot)
+    archived = replace(snapshot, rights=(replace(
+        snapshot.rights[0], state=state, delivery="unavailable",
+        delivery_offer_id="", delivery_unavailable_reason="archived",
+    ),))
+    before = store.placements()
+    for _ in range(2):
+        assert plan(store, archived, tmp_path)[0].state == "present_attested"
+        assert path.read_bytes() == BYTES
+        assert store.placements() == before
+    path.unlink()
+    assert plan(store, archived, tmp_path)[0].state == "skipped_archived"
+    assert store.placements() == before
 
 
 def test_rebound_provider_connection_disables_presence_without_erasing_origin(store, tmp_path):
