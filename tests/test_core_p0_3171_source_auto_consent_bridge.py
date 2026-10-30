@@ -158,3 +158,22 @@ def test_unknown_right_with_authenticated_downloadable_file_publishes_without_en
         assert conn.execute(
             "SELECT count(*) FROM origin_links WHERE origin_kind='provider'"
         ).fetchone()[0] == 1
+
+
+def test_kobo_exact_source_opt_in_not_legacy_global_backup_pref(policy):
+    service, db, _ = policy
+    from cifereca.core.source_convergence import SourceKey
+    kobo = replace(service.source, scope=replace(
+        service.source.scope, provider_id="kobo",
+    ))
+    sid = bridge._source_id(kobo.scope)
+    db.metadata_set("kobo_backup.enabled", "1")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, kobo) is None
+    db.metadata_set("sync.source.materialization.on_start." + sid, "1")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, kobo) == "on"
+    db.metadata_set("sync.source.materialization.on_start." + sid, "0")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, kobo) == "off"
+    assert bridge.configured_kind("kobo", "loan") is False
