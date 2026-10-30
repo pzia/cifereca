@@ -134,7 +134,7 @@ def test_refresh_preview_reads_only_manifest_and_handles_malformed_items(tmp_pat
         service.close()
 
 
-def test_preview_never_creates_target_and_reflects_unlinked_safety_guard(tmp_path: Path):
+def test_preview_never_creates_target_and_does_not_block_on_unrelated_import(tmp_path: Path):
     service, _session = _service(tmp_path, [])
     untouched = tmp_path / "never-created-by-preview"
     service.config.set("kobo_backup.directory", str(untouched))
@@ -142,11 +142,11 @@ def test_preview_never_creates_target_and_reflects_unlinked_safety_guard(tmp_pat
     service.kobo_unlinked_local_count = lambda _id: 3
     try:
         result = service.kobo_backup_preview("vault-1")
-        assert result["unlinked_local_books"] == 3
-        assert result["counts"]["blocked_unlinked"] == 1
-        assert result["counts"]["candidate_unverified"] == 0
+        assert result["unlinked_local_books"] == 3  # diagnostic retained
+        assert result["counts"]["blocked_unlinked"] == 0
+        assert result["counts"]["candidate_unverified"] == 1
         assert not untouched.exists()
-        assert result["acquisition_authorized"] is False
+        assert result["acquisition_authorized"] is False  # preview is not consent
     finally:
         service.close()
 
@@ -251,17 +251,22 @@ def test_offline_preview_never_confuses_same_product_id_across_identities(tmp_pa
 
 
 @pytest.mark.parametrize("malformed_opt_in", ["false", "true", 1, 0, None])
-def test_kobo_preview_matches_strict_unlinked_opt_in_guard(
+def test_kobo_preview_obsolete_unlinked_override_never_restores_global_veto(
     tmp_path: Path, malformed_opt_in,
 ):
-    service, _session = _service(tmp_path, [])
+    service, session = _service(tmp_path, [
+        {"product_id": "purchase", "revision_id": "r1", "format": "EPUB",
+         "downloadable": True},
+    ])
     _backup(service, "purchase")
     service.kobo_unlinked_local_count = lambda _id: 3
     service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
     try:
-        preview = service.kobo_backup_preview("vault-1")
-        assert preview["counts"]["blocked_unlinked"] == 1
-        assert preview["counts"]["candidate_unverified"] == 0
+        preview = service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        assert preview["unlinked_local_books"] == 3
+        assert preview["counts"]["blocked_unlinked"] == 0
+        assert preview["counts"]["potentially_missing"] == 1
+        assert preview["blocking_items"] == 0
         assert preview["acquisition_authorized"] is False
     finally:
         service.close()

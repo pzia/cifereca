@@ -408,10 +408,6 @@ def kobo_backup_preview(
     source_digest = _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1]
     checkpoint = _kobo_checkpoint_for(self, identity_id, credential_id)
     unlinked_local_books = self.kobo_unlinked_local_count(identity_id)
-    unlinked_blocked = (
-        unlinked_local_books > 0
-        and not self.config.get("kobo_backup.allow_unlinked_acquisition", False) is True
-    )
     counts = {
         "already_local_linked": 0, "already_local_verified": 0,
         "needs_reconciliation": 0, "attention_required": 0, "skipped_archived": 0,
@@ -588,8 +584,6 @@ def kobo_backup_preview(
                     if current.get("attention_code") == "missing_delegation_scope"
                     else "attention_required"
                 )
-            elif unlinked_blocked:
-                reason = "blocked_unlinked"
             elif not refresh_manifest:
                 reason = "candidate_unverified"
             else:
@@ -1300,7 +1294,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             abort_all = True
             break
 
-        unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
         declared_budget = {"remaining": 8.0}
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
@@ -1438,8 +1431,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
                 if _skip_manifest_item(
                     self, item, raw, session_target_dir, indexed_kobo_paths,
-                    unlinked_local_count, adapter_available, adept_state,
-                    index, len(manifest), summary, defer_item_event, logger,
+                    adapter_available, adept_state,
+                    index, len(manifest), summary, defer_item_event,
                     retry_scope_blocked=retry_scope_blocked,
                     session=session, declared_budget=declared_budget,
                 ):
@@ -1909,7 +1902,7 @@ def _manifest_archived(raw, current):
     )
 
 
-def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False, session=None, declared_budget=None):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, adapter_available, adept_state, index, total, summary, emit, *, retry_scope_blocked: bool = False, session=None, declared_budget=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     # A known archive is a terminal non-error, before reconciliation or any
@@ -2027,8 +2020,8 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
              title=title, item_id=product_id)
         return True
 
-    # A bypass of the global unlinked-books guard must never imply permission
-    # to overwrite or re-download a plausible, *unlinked* artifact for this item.
+    # Unrelated imported books do not block delivery. However, never overwrite
+    # or redownload a plausible, *unlinked* artifact for this exact item.
     # Filename matches, including damaged or symlinked files, are ambiguous:
     # quarantine for manual reconciliation rather than treating them as complete.
     # This includes legacy flat-library placements from older versions.
@@ -2161,14 +2154,6 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             item_id=product_id, title=title, code="missing_delegation_scope",
             message="Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
         )
-        return True
-
-    if unlinked_local_count and not self.config.get("kobo_backup.allow_unlinked_acquisition", False) is True:
-        message = f"Acquisition suspendue : {unlinked_local_count} livre(s) local(aux) sans liaison Kobo. Rapprochez les fichiers ou autorisez explicitement l’acquisition dans les paramètres."
-        self.storage.backup_put({**base_record, "status": "attention_required", "attention_code": "unlinked_local_books", "error": message})
-        summary["attention_required"] += 1
-        emit("attention_required", current=index + 1, total=total, title=title, item_id=product_id, code="unlinked_local_books", message=message)
-        logger.info("TRACE kobo acquisition decision=blocked reason=unlinked-local-books count=%s", unlinked_local_count)
         return True
 
     if not adapter_available:

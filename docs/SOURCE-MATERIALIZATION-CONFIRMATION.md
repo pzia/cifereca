@@ -44,9 +44,10 @@ credential et droit possédé. Même un autre livre approuvé ne peut s'y substi
 La source est revalidée à cette frontière avant toute résolution d'acquisition.
 Un credential partagé entre comptes, un compte absent/ambigu, une migration de
 dossier en attente, des symlinks ou des preuves incomplètes bloquent le parcours.
-Le bypass historique `allow_unlinked_acquisition` n'est jamais hérité : des livres
-non liés nécessitent d'abord une réconciliation. Aucune autorisation implicite
-de réessayer les refus de délégation.
+Les livres locaux non liés et sans correspondance exacte sont seulement signalés :
+ils ne bloquent plus les nouvelles acquisitions. Un fichier candidat, un lien exact
+ambigu ou une preuve physique invalide demeurent des motifs de rapprochement.
+Aucune autorisation implicite de réessayer les refus de délégation.
 
 L'adaptateur transitoire Kobo réutilise sa politique et son exécuteur existants,
 y compris les gardes d'idempotence, le ledger, les révisions et le runtime DRM.
