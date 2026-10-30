@@ -356,3 +356,32 @@ def test_shared_paris_loan_with_two_configured_profiles_requests_exact_review():
     assert "multiple_paris_connections" in loan["review_reasons"]
     assert loan["next_read_only_review"] == "compare_exact_loan_and_adobe_transactions"
     assert loan["requires_attention"] is True
+
+
+def test_unknown_acquisition_status_requires_review_even_without_conflicting_receipts():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[acquisition(
+            profile="untrusted-profile", status="PRIVATE-TOKEN-STATUS"
+        )],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    assert loan["ledger_status_ambiguous"] is True
+    assert loan["requires_attention"] is True
+    assert "acquisition_receipts_conflict" in loan["review_reasons"]
+    assert loan["next_read_only_review"] == "inspect_historical_adobe_inventory"
+    assert loan["origin_resolution"] == "unknown"
+    assert "PRIVATE-TOKEN" not in repr(report)
+    assert "untrusted-profile" not in repr(report)
+
+
+def test_known_single_noncompleted_acquisition_status_does_not_imply_conflict():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[acquisition(profile="proposed", status="failed")],
+    )
+    loan = build_paris_adept_audit(storage)["loans"][0]
+    assert loan["ledger_status_ambiguous"] is False
+    assert loan["origin_resolution"] == "unknown"
+    assert "acquisition_receipts_conflict" not in loan["review_reasons"]
