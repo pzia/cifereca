@@ -94,6 +94,31 @@ def test_kobo_unknown_purchase_state_can_still_fetch_exact_offered_epub(
         session.close()
 
 
+def test_kobo_private_file_with_owned_false_gets_only_exact_selected_epub(
+    tmp_path, monkeypatch,
+):
+    session, vault, broker, account, posts = setup()
+    vault.rows[0]["owned"] = False
+    calls = []
+    fake_public_client(
+        monkeypatch,
+        lambda req: (calls.append((req.method, str(req.url)))
+                     or httpx.Response(200, content=epub_bytes(),
+                                       headers={"content-type": "application/epub+zip"})),
+        [],
+    )
+    try:
+        observed = session.rights_observation_snapshot(account)
+        assert observed.rights[0].state == "unknown"
+        offer = admitted(session, account)
+        candidate, ref = execute(session, account, offer, tmp_path)
+        assert candidate.is_file() and candidate.read_bytes() == epub_bytes()
+        assert ref == "" and calls == [("GET", SIGNED)]
+        assert len(posts) == 2  # descriptor admission + fresh revalidation
+    finally:
+        session.close()
+
+
 def test_exact_kobo_epub_get_only_after_fresh_descriptor(tmp_path, monkeypatch):
     session, vault, broker, account, posts = setup()
     requests, clients = [], []

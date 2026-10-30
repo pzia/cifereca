@@ -867,7 +867,14 @@ class KoboSession(ProviderSession):
         observed = datetime.now(timezone.utc).isoformat()
         observed_rights = []
         for row in results:
-            if type(row) is not SearchResult or row.owned is not True:
+            # A positive *file-capability flag* in this account's private
+            # manifest merits an exact descriptor check even if the separate
+            # ownership field says False. Neither owned=False nor a missing
+            # right may veto a genuinely offered file (#3171, 30/10).
+            # Catalogue-only rows and resources with no positive ownership
+            # or downloadability claim remain outside selected acquisition.
+            if (type(row) is not SearchResult
+                    or (row.owned is not True and row.downloadable is not True)):
                 continue
             if (type(row.record_id) is not str
                     or _strict_product_id({"product_id": row.record_id})
