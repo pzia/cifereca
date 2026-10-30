@@ -40,6 +40,13 @@ def setup_source(service, monkeypatch, tmp_path, *, registered=True):
     account = Account(display_name="PRIVATE", unique_id="PRIVATE", provider_id="provider.test",
                       credential_id="PRIVATE", identity_id="default")
     service.accounts = [account]
+    # Real source Sync now validates every provider's private binding.
+    # Telemetry fixtures must register the same enabled connection as a
+    # configured source; bypassing it would test an unadmitted inventory.
+    service.storage.provider_connection_put({
+        "identity_id": account.identity_id, "provider_id": account.provider_id,
+        "credential_id": account.credential_id, "enabled": True,
+    })
     calls = []
     session = NS(connected=True, provider_id=account.provider_id, credential_id="PRIVATE",
                  capabilities=NS(loans=False, personal_library=True),
