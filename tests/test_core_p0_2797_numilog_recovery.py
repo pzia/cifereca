@@ -262,3 +262,122 @@ def test_foreign_placement_blocks_recovery_but_identical_sha_does_not(
         ) == "recovery_foreign_placement"
     finally:
         service.close()
+
+
+def test_authenticated_downloadable_without_cached_right_is_idempotent(
+    tmp_path, monkeypatch,
+):
+    """Latest #3171: optional rights cannot veto a proven delivery offer."""
+    from dataclasses import replace
+    from cifereca.core import numilog_materialization_startup as startup
+
+    service, account, session, _calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        row = replace(_row(account.credential_id, 91), owned=False,
+                      downloadable=True)
+        session.library = lambda: [row]
+        requests = []
+        def deliver(item, target):
+            requests.append(item.record_id)
+            file = Path(target) / "offered.epub"
+            epub(file)
+            return file, ""
+        session.download_direct = deliver
+        result = execute(broker, account.identity_id, "startup")
+        assert result.ok, result.facts
+        assert result.facts["downloaded"] == 1
+        assert requests == [row.record_id]
+        assert service.storage.entitlements(provider_id="numilog") == []
+        saved = service.storage.acquisitions(provider_id="numilog")
+        assert len(saved) == 1 and saved[0]["status"] == "complete"
+        assert saved[0]["entitlement_id"] is None
+        monkeypatch.setattr(startup, "time", lambda: 2_000_000_000)
+        second = execute(broker, account.identity_id, "startup")
+        assert second.ok, second.facts
+        assert second.facts["skipped"] == 1
+        assert second.facts["attempted"] == second.facts["downloaded"] == 0
+        assert requests == [row.record_id]
+    finally:
+        service.close()
+
+
+def test_untracked_legacy_files_never_veto_safe_isolated_get(
+    tmp_path, monkeypatch,
+):
+    service, account, session, broker, root, rows, _rights = setup_six(tmp_path, monkeypatch)
+    try:
+        # An unindexed EPUB in an arbitrary historic subdirectory is NOT
+        # a proof of edition, and it is NOT a reason to stop all downloads.
+        orphan = root / "acsm-old" / "unlinked.epub"
+        epub(orphan)
+        initial = orphan.read_bytes()
+        session.library = lambda: [rows[0]]
+        requests = []
+        def deliver(item, target):
+            requests.append(Path(target))
+            path = Path(target) / "delivered.epub"
+            epub(path)
+            return path, ""
+        session.download_direct = deliver
+        result = execute(broker, account.identity_id, "startup")
+        assert result.ok, result.facts
+        assert result.facts["downloaded"] == 1
+        assert len(requests) == 1
+        assert requests[0] != root
+        assert requests[0].parent == root
+        assert orphan.read_bytes() == initial
+    finally:
+        service.close()
+
+
+def test_optional_rights_mirror_failure_does_not_veto_download(
+    tmp_path, monkeypatch,
+):
+    service, account, session, _calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        row = _row(account.credential_id, 22)
+        session.library = lambda: [row]
+        # The positive provider delivery survives a broken metadata mirror.
+        monkeypatch.setattr(
+            "cifereca.core.numilog_materialization_startup.mirror_numilog_manifest_rights",
+            lambda *_args, **_kwargs: 0,
+        )
+        requests = []
+        def deliver(item, target):
+            requests.append(item.record_id)
+            path = Path(target) / "offered.epub"
+            epub(path)
+            return path, ""
+        session.download_direct = deliver
+        first = execute(broker, account.identity_id, "startup")
+        assert first.ok, first.facts
+        assert first.facts["downloaded"] == 1 and len(requests) == 1
+        assert service.storage.entitlements(provider_id="numilog") == []
+    finally:
+        service.close()
+
+
+def test_unknown_or_negative_download_offer_is_individually_blocked(
+    tmp_path, monkeypatch,
+):
+    from dataclasses import replace
+    service, account, session, _calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        rows = [replace(_row(account.credential_id, 1), owned=None,
+                        downloadable=None),
+                replace(_row(account.credential_id, 2), owned=False,
+                        downloadable=False)]
+        session.library = lambda: rows
+        session.download_direct = lambda *_a: pytest.fail(
+            "Unknown/negative provider capability must not GET"
+        )
+        result = execute(broker, account.identity_id, "startup")
+        assert not result.ok
+        assert result.facts["attempted"] == 0
+        assert result.facts["blocked"] == 2
+        assert result.facts["downloaded"] == 0
+    finally:
+        service.close()
