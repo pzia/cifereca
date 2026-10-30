@@ -347,6 +347,19 @@ def execute_admitted_convergence(
                     )
             except Exception:
                 _LOG.warning("TRACE convergence code=canonical_catalog_index_failed")
+            # Post-B deduplication is intentionally advisory until the
+            # Core can atomically migrate every active path/receipt reference.
+            # A failed probe must never roll back a delivered book or retry GET.
+            try:
+                from .canonical_post_placement import verified_post_placement_duplicates
+                matches = verified_post_placement_duplicates(
+                    initial_storage, library_root=library_root,
+                    placement_id=published.placement_id,
+                )
+                if matches:
+                    _LOG.info("TRACE convergence code=canonical_dedup_pending")
+            except Exception:
+                _LOG.warning("TRACE convergence code=canonical_dedup_probe_failed")
             results.append(ConvergenceOutcome(
                 key,
                 "recovered" if was_recovered else (
