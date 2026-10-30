@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cifereca.gui.settings_account_editor import build_provider_account_editor
+from cifereca.providers import ProviderAccountOptionField
 
 
 class Widget:
@@ -38,7 +39,19 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     secret = SimpleNamespace(key="password", label="Mot de passe", secret=True)
     plain = SimpleNamespace(key="card", label="Numéro de carte", secret=False)
     fields = descriptor_fields if descriptor_fields is not None else [plain, secret]
-    descriptor = SimpleNamespace(display_name=provider_id.upper(), credential_fields=fields)
+    option_schema = {
+        "paris": (ProviderAccountOptionField("base_url", "URL du portail",
+                   "https://bibliotheques.paris.fr", legacy_config_key="base_url"),),
+        "gallica": (ProviderAccountOptionField("opds_url", "URL du catalogue OPDS",
+                     "https://gallica.bnf.fr/opds"),),
+        "kobo": (ProviderAccountOptionField("base_url", "URL API Kobo-Vault"),),
+    }.get(provider_id, ())
+    hints = {
+        "gallica": (("Accès public", "Catalogue ouvert"),),
+        "kobo": (("Connexion indirecte au compte Kobo", "Accès via Vault"),),
+    }.get(provider_id, ())
+    descriptor = SimpleNamespace(display_name=provider_id.upper(), credential_fields=fields,
+                                 account_option_fields=option_schema, account_help=hints)
     gtk = SimpleNamespace(
         Switch=Widget, Button=lambda label=None: Widget(),
         Align=SimpleNamespace(CENTER="center"),
@@ -51,7 +64,7 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     settings = data if data is not None else {}
     config = SimpleNamespace(
         paris_base_url=lambda: url,
-        get=lambda key, default=None: default,
+        get=lambda key, default=None: url if key == "base_url" and url else default,
     )
     editor, delete = build_provider_account_editor(
         data=settings, provider_id=provider_id,
@@ -83,8 +96,8 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     assert editor["fields"]["card"].text == "CARD-77"
     assert isinstance(editor["fields"]["password"], adw.PasswordEntryRow)
     assert editor["fields"]["password"].text == "private-password"
-    assert editor["base_url"].text == "https://custom.paris.example"
-    assert editor["opds_url"] is None and editor["vault_url"] is None
+    assert editor["option_fields"]["base_url"].text == "https://custom.paris.example"
+    assert set(editor["option_fields"]) == {"base_url"}
     assert editor["original_options"] == data["options"]
     assert editor["deleted"] is False
     assert delete in group.children[-1].suffixes
@@ -95,22 +108,20 @@ def test_paris_url_and_identity_fallbacks_are_unchanged():
     editor, _, _, _ = _render("paris", configured=[{"id": "bob"}],
                               url="https://env.paris.example")
     assert editor["identity"].text == "bob"
-    assert editor["base_url"].text == "https://env.paris.example"
+    assert editor["option_fields"]["base_url"].text == "https://env.paris.example"
     editor, _, _, _ = _render("paris")
     assert editor["identity"].text == "default"
-    assert editor["base_url"].text == "https://bibliotheques.paris.fr"
+    assert editor["option_fields"]["base_url"].text == "https://bibliotheques.paris.fr"
 
 
 def test_gallica_public_and_kobo_indirect_access_rows_are_preserved():
     gallica, _, gc, _ = _render("gallica", descriptor_fields=[],
                                data={"options": {"opds_url": "https://test.example/opds"}})
     assert gc.children[0].children[0].title == "Source activée"
-    assert gallica["opds_url"].text == "https://test.example/opds"
-    assert gallica["base_url"] is None and gallica["vault_url"] is None
+    assert gallica["option_fields"]["opds_url"].text == "https://test.example/opds"
     assert any(row.title == "Accès public" for row in gc.children[0].children)
     kobo, _, kc, _ = _render("kobo", data={"options": {"base_url": "http://local:9000"}})
-    assert kobo["vault_url"].text == "http://local:9000"
-    assert kobo["opds_url"] is None and kobo["base_url"] is None
+    assert kobo["option_fields"]["base_url"].text == "http://local:9000"
     assert any(row.title == "Connexion indirecte au compte Kobo" for row in kc.children[0].children)
 
 
@@ -136,3 +147,25 @@ def test_window_keeps_guard_id_allocation_delete_dirty_and_async_save():
     assert "build_provider_account_editor(" in render
     assert "mark_settings_dirty('accounts')" in render
     assert "settings_committer.submit(" in render
+
+def test_unknown_provider_option_fields_are_rendered_without_provider_branches():
+    option = ProviderAccountOptionField('endpoint', 'API personnalisée',
+                                        'https://example.invalid')
+    descriptor = SimpleNamespace(display_name='Fournisseur fictif',
+                                 credential_fields=[],
+                                 account_option_fields=(option,), account_help=())
+    gtk = SimpleNamespace(Switch=Widget, Button=lambda label=None: Widget(),
+                          Align=SimpleNamespace(CENTER='center'))
+    adw = SimpleNamespace(PreferencesGroup=Widget, ActionRow=Widget,
+                          EntryRow=Widget, PasswordEntryRow=Widget)
+    container = Widget()
+    editor, _ = build_provider_account_editor(
+        data={'options': {'endpoint': 'https://custom.example.test'}},
+        provider_id='synthetic-unknown', account_id='one',
+        descriptor=descriptor, configured_identities=[],
+        accounts_container=container, config=SimpleNamespace(get=lambda *a: None),
+        Gtk=gtk, Adw=adw,
+    )
+    assert editor['option_fields']['endpoint'].text == 'https://custom.example.test'
+    assert editor['option_fields']['endpoint'].title == 'API personnalisée'
+    assert 'paris' not in __import__('inspect').getsource(build_provider_account_editor)

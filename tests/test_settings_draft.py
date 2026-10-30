@@ -5,6 +5,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.config import Config
+from cifereca.providers import ProviderAccountOptionField
 from cifereca.gui.settings_draft import build_settings_draft, SettingsValidationError
 from cifereca.gui.settings_model import SettingsRevisionState
 
@@ -42,8 +43,19 @@ def account(provider, identity='alice', account_id='source'):
 
 
 def descriptor(provider, state='ready'):
+    fields = {
+        'paris': (ProviderAccountOptionField('base_url', 'URL du portail',
+                    'https://bibliotheques.paris.fr', legacy_config_key='base_url'),),
+        'gallica': (ProviderAccountOptionField('opds_url', 'URL du catalogue',
+                    'https://gallica.bnf.fr/opds'),),
+        'kobo': (ProviderAccountOptionField('base_url', 'URL API Kobo-Vault'),),
+    }.get(provider, ())
     return NS(id=provider, state=state, display_name=provider,
-              credential_fields=[NS(key='username')])
+              credential_fields=[NS(key='username')],
+              account_option_fields=fields,
+              max_accounts_per_identity=1 if provider == 'kobo' else None,
+              account_limit_message=("Une identité ne peut avoir qu'un compte Kobo Vault"
+                                     if provider == 'kobo' else ""))
 
 
 def test_draft_neither_mutates_config_nor_writes_and_preserves_missing_adept_profile(editor):
@@ -100,7 +112,7 @@ def test_unavailable_public_and_unknown_accounts_are_preserved(editor):
                    for p in ('broken', 'public', 'paris')}
     replacement = account('paris')
     replacement['original_options'] = {'kept': 'option'}
-    replacement['base_url'] = ' '
+    replacement['option_fields'] = {'base_url': ' '}
     values['accounts'] = [replacement]
     draft = validate(editor, descriptors=descriptors, public_ids={'public'})
     accounts = draft.data['providers']['accounts']
@@ -188,3 +200,43 @@ def test_revision_snapshot_is_independent_and_later_edits_remain_dirty():
     assert state.snapshot()['accounts'] == 2
     state.commit(state.snapshot())
     assert not state.dirty('accounts')
+
+def test_unknown_provider_option_schema_and_existing_values_survive_edit(editor):
+    values = editor[1]
+    values['accounts'] = [account('synthetic', account_id='synthetic-one')]
+    values['accounts'][0]['original_options'] = {'opaque_legacy': 'preserved'}
+    values['accounts'][0]['option_fields'] = {'endpoint': ' https://private.example.test/api '}
+    synthetic = descriptor('synthetic')
+    synthetic.account_option_fields = (
+        ProviderAccountOptionField('endpoint', 'URL du service', 'https://example.invalid'),
+    )
+    draft = validate(editor, descriptors={'synthetic': synthetic})
+    saved = draft.data['providers']['accounts'][0]
+    assert saved['options'] == {
+        'opaque_legacy': 'preserved', 'endpoint': 'https://private.example.test/api',
+    }
+    assert saved['identity_id'] == 'alice'
+
+
+def test_unknown_provider_cardinality_from_descriptor_is_enforced(editor):
+    values = editor[1]
+    values['accounts'] = [
+        account('synthetic', account_id='first'),
+        account('synthetic', account_id='second'),
+    ]
+    synthetic = descriptor('synthetic')
+    synthetic.max_accounts_per_identity = 1
+    with pytest.raises(SettingsValidationError, match='Limite de 1 compte'):
+        validate(editor, descriptors={'synthetic': synthetic})
+    assert editor[0].provider_accounts() == []
+
+
+def test_invalid_account_option_never_mutates_configuration(editor):
+    values = editor[1]
+    values['accounts'] = [account('synthetic')]
+    values['accounts'][0]['option_fields'] = {'endpoint': {'unexpected': True}}
+    synthetic = descriptor('synthetic')
+    synthetic.account_option_fields = (ProviderAccountOptionField('endpoint', 'URL'),)
+    with pytest.raises(SettingsValidationError, match='Option de compte invalide'):
+        validate(editor, descriptors={'synthetic': synthetic})
+    assert editor[0].provider_accounts() == []
