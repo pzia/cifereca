@@ -14,6 +14,7 @@ import json
 from ..models import Account
 from .canonical_publication import _stable
 from .source_convergence import SourceKey
+from .source_auto_consent_bridge import toggle_state, configured_kind
 from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsScope,
 )
@@ -133,6 +134,19 @@ def consent_current_in_transaction(db, source: SourceKey) -> bool:
     """
     if type(source) is not SourceKey:
         return False
+    # The source/type automatic acquisition switch is authoritative when
+    # explicitly configured. Its OFF state revokes even earlier per-right
+    # grants, including for an in-flight GET. No rights database row creates
+    # consent on its own.
+    switched = toggle_state(db, source)
+    if switched is not None:
+        if switched != "on":
+            return False
+        # The publisher calls this INSIDE its atomic SQLite transaction;
+        # bind the global grant to this exact active source/account too.
+        # No right-specific grant or local file is used as permission.
+        scope = _coordinates(source)[:4]
+        return _bound(db, scope, enabled=True)
     record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
     return record is not None and _payload_allowed(record[0], source)
 
@@ -179,8 +193,12 @@ def read_source_acquisition_consent(service, account: Account) -> frozenset[Sour
                 continue
             if not _attested(source, evidence_ref, observed_at):
                 continue
-            record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
-            if record is not None and _payload_allowed(record[0], source):
+            # Re-read this exact source's automatic policy from the same
+            # SQLite snapshot as its positive canonical SourceReference.
+            # An omitted switch preserves explicit legacy grants; an
+            # explicitly configured OFF blocks them and ON covers every
+            # authenticated synchronizable offer of this source/type.
+            if consent_current_in_transaction(db, source):
                 admitted.add(source)
         return frozenset(admitted) if current() else frozenset()
 
@@ -229,6 +247,12 @@ def _choices(service, account, *, page: int = 0):
                 "SELECT value FROM metadata WHERE key=?",
                 (consent_key(source),),
             ).fetchone()
+            switched = toggle_state(db, source)
+            if switched is not None:
+                # The global ON/OFF switch is the sole acquisition control
+                # for this source/type; never present conflicting “Autoriser
+                # ce droit…” dialogs alongside it.
+                continue
             opted_in = record is not None and _payload_allowed(record[0], source)
             admissible = (
                 bound_for_grant and enabled
