@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.bnf-pret",
-    "version": "0.3.14",
+    "version": "0.3.15",
     "name": "BnF Prêt — HTTPX",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
@@ -11,7 +11,7 @@
     {
       "id": "provider.bnf-pret",
       "type": "provider.library",
-      "version": "0.3.14",
+      "version": "0.3.15",
       "entrypoint": "cifereca_bnf_pret:PLUGIN",
       "display_name": "BnF Prêt",
       "description": "Catalogue HTML, fiches et synchronisation non destructive des prêts via HTTPX.",
