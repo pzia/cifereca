@@ -87,6 +87,25 @@ def test_kobo_malformed_manifest_permission_flags_never_become_file_capability(
         session.close()
 
 
+def test_kobo_downloadable_owned_false_archive_remains_skipped_without_post():
+    session, vault, broker, account, posts = setup()
+    vault.rows[0].update(owned=False, downloadable=True, archived=True)
+    try:
+        inventory = session.rights_observation_snapshot(account)
+        right = inventory.exact("book-1", "book-1", "purchase")
+        assert right is not None and right.state == "unknown"
+        assert right.delivery == "unavailable"
+        assert right.delivery_unavailable_reason == "archived"
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, **select(),
+        )
+        assert selected.rights[0].delivery == "unavailable"
+        assert selected.rights[0].delivery_offer_id == ""
+        assert posts == []
+    finally:
+        session.close()
+
+
 def test_selected_kobo_one_right_one_preflight():
     session, vault, broker, account, posts = setup()
     try:
