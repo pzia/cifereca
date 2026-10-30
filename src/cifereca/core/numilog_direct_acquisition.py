@@ -83,7 +83,7 @@ def acquire_numilog_direct(
                         or not recovery_authorized()):
                     raise ProviderConfigurationError('Numilog : reprise non attestée')
             from .library_declared_links import has_active_declared_link
-            if has_active_declared_link(
+            if not reconcile_pending and has_active_declared_link(
                 service.storage, identity_id=identity.identity_id,
                 provider_id='numilog', credential_id=item.source_credential,
                 account_id=pinned_account_id, item_id=item.record_id,
