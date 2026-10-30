@@ -318,10 +318,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 row.record_id for row in raw if type(row.record_id) is str
             )
             if (any(
-                type(row.owned) is not bool
-                or type(row.downloadable) is not bool
+                row.owned not in (True, False, None)
+                or row.downloadable not in (True, False, None)
                 or (
-                    row.owned is True
+                    (row.owned is True or row.downloadable is True)
                     and (
                         type(row.id) is not str
                         or type(row.record_id) is not str
@@ -357,15 +357,13 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 credential_id=account.credential_id,
                 account_id=account.unique_id,
             )
-            # The authenticated inventory is the authority for the number
-            # of owned editions. An account rebind, collision or silent mirror
-            # refusal is not a successful empty backup; never acquire until
-            # every attested purchase has been recorded as a local right.
+            # A cached entitlement is informational, not a mandatory
+            # predecessor to provider delivery (#3171/2026-10-30).
+            # Failed metadata mirroring must not veto an independently
+            # admitted, account-scoped downloadable offer.
             expected_rights = sum(row.owned is True for row in raw)
             if type(mirrored) is not int or mirrored != expected_rights:
-                trace.fail("rights_mirror_failed")
-                failures += 1
-                continue
+                trace.event("rights_mirror", "rights_mirror_incomplete")
             if (
                 not same_source()
                 or mode(broker, source_id) != "on_start"
@@ -385,7 +383,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and row.source_credential == account.credential_id
                 and row.source_collection == "library"
                 and row.scenario == "NUMILOG_LIBRARY"
-                and row.owned is True
+                and (row.owned is True or row.downloadable is True)
                 and row.id == row.record_id
                 and _item_id(row.record_id, account.credential_id)
                 and count[row.record_id] == 1
@@ -447,18 +445,20 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         skipped += 1
                         trace.record_item(position, 'already_local_declared', item_id=row.record_id)
                         continue
-                    blocked += 1
+                    # Invalid/obsolete declarations are not a veto on a
+                    # fresh provider-admitted download. The existing file and
+                    # declaration remain historical evidence.
                     declared_pending += 1
-                    trace.record_item(position, 'declared_needs_review', item_id=row.record_id)
-                    trace.fail('preflight_failed')
-                    continue
+                    prior_status = 'needs_reconciliation'
+                else:
+                    prior_status = prior.facts.get('status')
                 # The offline preflight conservatively reports *any*
                 # existing receipt as needs_reconciliation. A previous
                 # completed purchase must nevertheless count as present if
                 # the existing exact receipt, placement and current SHA all
                 # agree. Unknown/foreign/damaged evidence remains blocked.
                 is_recovery = False
-                if prior.facts.get('status') == 'needs_reconciliation':
+                if prior_status == 'needs_reconciliation':
                     if presence_seconds_remaining > 0:
                         proof_started = monotonic()
                         try:
@@ -507,8 +507,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     trace.record_item(position, 'not_downloadable', item_id=row.record_id)
                     trace.fail('preflight_failed')
                     continue
-                if (not is_recovery and (prior.ok is not True
-                        or prior.facts.get("status") != "candidate_unverified")):
+                if (not is_recovery and
+                        prior_status not in {"candidate_unverified", "purchase_unproven",
+                                              "not_downloadable"}):
                     # A prior receipt, conflicting placement, missing proof or
                     # non-downloadable purchased title does not attest a
                     # local file. Keep it pending instead of counting a
@@ -543,7 +544,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     check = broker.preflight_numilog_purchase(source_id, row.record_id)
                     if is_recovery:
                         status_ok = (
-                            check.facts.get('status') == 'needs_reconciliation'
+                            check.facts.get('status') in {
+                                'needs_reconciliation', 'declared_link_recorded',
+                            }
                             and recovery_gate(
                                 broker.service.storage,
                                 identity_id=account.identity_id,
@@ -554,8 +557,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         )
                     else:
                         status_ok = (
-                            check.ok is True
-                            and check.facts.get('status') == 'candidate_unverified'
+                            check.facts.get('status') in {
+                                'candidate_unverified', 'purchase_unproven',
+                                'not_downloadable',
+                            }
                         )
                     if not status_ok:
                         trace.fail("preflight_failed")
