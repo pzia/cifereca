@@ -6,6 +6,24 @@ admission remain mandatory. This check ONLY excludes unsafe historical state.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_RECOVERY = ContextVar('cifereca.numilog.recovery', default=False)
+
+
+@contextmanager
+def recovery_request():
+    token = _RECOVERY.set(True)
+    try:
+        yield
+    finally:
+        _RECOVERY.reset(token)
+
+
+def recovery_requested():
+    return _RECOVERY.get() is True
+
 from ..acquisition_engine import stable_id
 from .numilog_manifest_rights import _scoped_record_id
 
