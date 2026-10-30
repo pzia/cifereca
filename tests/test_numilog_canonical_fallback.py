@@ -287,7 +287,10 @@ def test_global_and_manual_broker_share_canonical_delivery_and_no_second_get(rig
     monkeypatch.setattr(rig.service, '_loans_for_account', lambda *_a, **_kw: [])
     opened = rig.service.opening_sync()
     own = next(row for row in opened['identities'] if row['identity_id'] == 'default')
-    assert own['canonical_execution']['downloaded'] == 6
+    assert own['canonical_execution']['pending'] == 6
+    assert not rig.downloads  # the independently queued inventory is not a second batch
+    automatic = startup.execute(rig.broker, rig.account.identity_id, 'startup')
+    assert automatic.facts['downloaded'] == 6
     assert len(rig.downloads) == 6
     manual = rig.broker.synchronize_source(rig.sid)
     assert manual.facts['library'] == 6

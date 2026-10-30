@@ -351,8 +351,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             if all(callable(getattr_static(session, name, None)) for name in (
                 "rights_observation_snapshot", "rights_selected_delivery_candidate",
             )):
-                synced = broker.service.synchronize_account_source(
-                    account, control=control, _canonical_attempt_limit=_MAX_ITEMS_PER_OPENING)
+                from .sync_coordination import synchronize_account_source
+                synced = synchronize_account_source(
+                    broker.service, account, control=control,
+                    _canonical_attempt_limit=_MAX_ITEMS_PER_OPENING)
                 counts = synced.get("canonical_execution")
                 if type(counts) is not dict:
                     trace.fail("manifest_failed")

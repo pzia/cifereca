@@ -251,7 +251,7 @@ def test_declared_checks_share_one_source_time_budget(rig, monkeypatch):
     ticks = iter([100.0, 109.0])
     monkeypatch.setattr(startup, 'monotonic', lambda: next(ticks))
     result = execute(broker, account.identity_id, 'startup')
-    assert not result.ok and result.facts['status'] == 'blocked'
+    assert not result.ok and result.facts['status'] == 'partial'
     assert result.facts['already_local_declared'] == result.facts['blocked'] == 1
     assert result.facts['attempted'] == 0 and checked == [item.record_id]
     assert book.is_file() and another.is_file() and calls == []

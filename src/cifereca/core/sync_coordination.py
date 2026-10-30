@@ -269,6 +269,7 @@ def _run_observed_canonical_convergence(
     admitted_epoch: int, sync_lease: InterProcessLock,
     cancelled_for_rights: Callable[[], bool],
     attempt_limit: int | None = None,
+    consent_reader_override=None,
 ) -> dict[str, int] | None:
     """Run the SAME canonical A→B executor for explicit and opening Sync.
 
@@ -290,7 +291,8 @@ def _run_observed_canonical_convergence(
     # a CompletedDelivery or OriginLink. No compatibility
     # fallback or implied consent for older sessions.
     delivery = getattr(self, "_canonical_right_delivery", None)
-    consent_reader = getattr(self, "_canonical_persisted_consent", None)
+    consent_reader = (consent_reader_override if consent_reader_override is not None
+                      else getattr(self, "_canonical_persisted_consent", None))
     if (delivery is None and admitted_snapshots
             and callable(consent_reader)):
         from inspect import getattr_static
@@ -1040,6 +1042,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         admitted_epoch=admitted_epoch,
                         sync_lease=_OPENING_CANONICAL_LEASE.get(),
                         cancelled_for_rights=lambda: False,
+                        consent_reader_override=getattr(
+                            self, "_canonical_opening_persisted_consent", None),
                     )
                     if (counts is None and canonical is not None
                             and canonical.get("pending", 0) > 0):

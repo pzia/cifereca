@@ -209,7 +209,7 @@ def test_six_existing_purchases_two_receipts_repaired_without_redownload(
                           if r["identity_id"] == account.identity_id}
     # The automatic worker reports pending receipts honestly and never retries delivery.
     before = startup.execute(broker, account.identity_id, "startup")
-    assert not before.ok and before.facts["status"] == "blocked"
+    assert not before.ok and before.facts["status"] == "partial"
     assert before.facts["skipped"] == 4 and before.facts["blocked"] == 2
     assert before.facts["attempted"] == before.facts["downloaded"] == 0
 

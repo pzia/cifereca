@@ -543,6 +543,13 @@ class LibraryService:
         return read_source_acquisition_consent(
             self, account, configured_policy=LibraryService._canonical_configured_consent_current)
 
+    def _canonical_opening_persisted_consent(self, account: Account):
+        # Configured source acquisition is dispatched by its durable startup
+        # claim, which then calls this same source Sync. Do not launch a second
+        # automatic batch from the independent opening inventory task.
+        from .core.source_acquisition_consent import read_source_acquisition_consent
+        return read_source_acquisition_consent(self, account)
+
     @staticmethod
     def _canonical_configured_consent_current(connection, source) -> bool:
         from .core.numilog_materialization_consent import canonical_consent_current
@@ -3600,10 +3607,8 @@ class LibraryService:
         """
         return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
 
-    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None,
-                                   _canonical_attempt_limit=None) -> dict[str, Any]:
-        return sync_coordination.synchronize_account_source(
-            self, account, deep=deep, control=control, _canonical_attempt_limit=_canonical_attempt_limit)
+    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""
