@@ -5,9 +5,11 @@ liaison privée sans interpréter le nom du fournisseur. Cette fonction ne
 contacte pas le fournisseur, n’enregistre pas de consentement et ne publie
 ni droit ni fichier.
 
-Les coordonnées profil, fournisseur, connexion et compte doivent être des
-chaînes non vides sans NUL. Le compte doit être l’unique objet actif de la
-connexion et le profil doit encore exister. La source et l’unique connexion
+Les coordonnées profil, fournisseur et connexion doivent être des chaînes
+non vides sans NUL. Le compte doit être une chaîne sans NUL ; la valeur vide
+désigne un compte primaire exact, jamais un joker. Les valeurs composées
+uniquement d’espaces sont invalides. Le compte doit être l’unique objet
+actif de la connexion et le profil doit encore exister. La source et l’unique connexion
 persistée doivent être activées. Une préférence d’activation corrompue ne
 permet pas un lancement automatique. Une seule session connectée doit
 correspondre aux mêmes fournisseur et connexion, avec `personal_library`
