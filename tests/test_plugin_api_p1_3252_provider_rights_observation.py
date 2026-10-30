@@ -75,9 +75,9 @@ def test_exact_provider_delivery_is_independent_from_optional_right_state(provid
 
 
 def test_historical_evidence_cannot_create_live_delivery_offer_even_if_active():
-    prior = replace(purchase(), evidence_kind="historical_receipt")
+    # Contract validation happens while constructing the changed observation.
     with pytest.raises(ValueError, match="unproven_rights_delivery"):
-        snap(rights=(prior,))
+        replace(purchase(), evidence_kind="historical_receipt")
 
 
 def test_same_edition_in_two_identities_and_credentials_does_not_join():
