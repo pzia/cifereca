@@ -449,7 +449,7 @@ class BnfProviderSession(ProviderSession):
             for loan in inventory.loans:
                 # Both opaque IDs come from the authenticated active-loan HTML:
                 # never substitute a catalogue URL, title, ISBN or file hash.
-                if (loan.medium != 'digital' or loan.state != 'active'):
+                if loan.medium != 'digital':
                     continue
                 # The current BnF HTML parser limits route IDs to 128 ASCII
                 # characters. Keep the public rights/1 boundary independent
@@ -476,7 +476,7 @@ class BnfProviderSession(ProviderSession):
                                         and reported == expected) else ''
                 rights.append(ProviderRightObservation(
                     edition_id=loan.record_id, right_id=loan.id,
-                    kind='loan', state='active',
+                    kind='loan', state=('active' if loan.state == 'active' else 'unknown'),
                     evidence_kind='provider_response',
                     evidence_ref='bnf_html.active_loans',
                     observed_at=observed,
@@ -642,7 +642,11 @@ class BnfProviderSession(ProviderSession):
                     or loan.source_credential != self.credential_id
                     or loan.source_account_id != account.unique_id
                     or loan.identity_id != account.identity_id
-                    or loan.medium != 'digital' or loan.state != 'active'
+                    or loan.medium != 'digital'
+                    # Legacy explicit GET preserves its historical state
+                    # requirement. The canonical selected GET requires an
+                    # exact *signed file offer*, not proof of an active right.
+                    or (expected_offer_id is None and loan.state != 'active')
                     or not loan.id or not loan.record_id
                     or self._observed_loans.get(loan.id) != loan.record_id):
                 raise ProviderConfigurationError('loan_not_observed')

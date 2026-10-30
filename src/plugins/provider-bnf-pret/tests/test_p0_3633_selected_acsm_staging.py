@@ -58,6 +58,32 @@ def stage(session, account, offer, path, **changes):
     )
 
 
+def test_bnf_signed_file_offer_remains_deliverable_with_unknown_loan_state(tmp_path):
+    # The status is merely metadata. Core has selected the same authenticated
+    # ACS4 file action, and supplier/account/loan/edition stay exact.
+    session, account, _, calls, gets, offer = ready()
+    original = session._read_live_loans_locked
+
+    def unknown_status(bound):
+        return [replace(loan, state="unknown") for loan in original(bound)]
+
+    session._read_live_loans_locked = unknown_status
+    try:
+        right = session.rights_selected_delivery_offer_snapshot(
+            account, edition_id="book-a", right_id="loan-a", kind="loan",
+            branch="bnf_html", explicit_user_action=True,
+        ).rights[0]
+        assert right.state == "unknown"
+        assert right.delivery_attested
+        assert right.delivery_offer_id == offer.delivery_offer_id
+        candidate, ref = stage(session, account, offer, tmp_path)
+        assert candidate.is_file() and candidate.read_bytes() == TOKEN
+        assert candidate.suffix == ".acsm" and ref == ""
+        assert len(gets) == 1
+    finally:
+        session.close()
+
+
 def test_real_httpx_selected_bnf_acsm_to_exact_core_staging(tmp_path):
     session, account, _, calls, get, offer = ready()
     try:
