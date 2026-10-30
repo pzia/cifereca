@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from .core.adept_origin_audit import _opaque_ref
+
 
 def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -> dict[str, Any]:
     """Cross-reference active Paris entitlements, acquisitions and pinned grants."""
@@ -28,10 +30,16 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
         credential: next(iter(identities)) if len(identities) == 1 else None
         for credential, identities in owner_candidates.items()
     }
-    grants = {
-        (str(row["credential_id"]), str(row["account_id"])): row
-        for row in storage.paris_borrower_adept_bindings()
-    }
+    # Duplicate grants must fail closed. A dict comprehension previously
+    # accepted whichever historical row happened to be returned last.
+    grants: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for grant in storage.paris_borrower_adept_bindings():
+        if not isinstance(grant, dict):
+            continue
+        credential = str(grant.get("credential_id") or "").strip()
+        account = str(grant.get("account_id") or "").strip()
+        if credential and account:
+            grants[(credential, account)].append(grant)
     exposures: dict[str, dict[tuple[str, str | None, str, str], dict[str, Any]]] = defaultdict(dict)
     rows_without_loan_id = 0
 
@@ -81,6 +89,18 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                     current["recorded_adept_profile_id"] = (
                         profile_id if len(profiles) == 1 else None
                     )
+                # Adobe loan reference is distinct from both the Paris loan
+                # and the locally configured ADEPT profile. Expose only an
+                # opaque digest, never the private license/activation token.
+                loan_ref = ade.get("adept_loan_id")
+                if isinstance(loan_ref, str) and loan_ref.strip():
+                    refs = current.setdefault("recorded_adept_loan_refs", [])
+                    opaque = _opaque_ref("adept-loan", loan_ref.strip())
+                    if opaque not in refs:
+                        refs.append(opaque)
+                    current["recorded_adept_loan_ref"] = (
+                        opaque if len(refs) == 1 else None
+                    )
 
     for row in storage.entitlements(provider_id="paris", state="active"):
         add(row, row.get("loan_id"), source="entitlement")
@@ -122,10 +142,16 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                     else "primary_unproven"
                 )
             else:
-                grant = grants.get((credential, "primary" if account in {"", "primary"} else account))
-                if grant is None:
+                candidates = grants.get(
+                    (credential, "primary" if account in {"", "primary"} else account), ()
+                )
+                if not candidates:
                     row["binding_state"] = "binding_required"
+                elif len(candidates) != 1:
+                    # No borrower/profile is inferred from inconsistent grants.
+                    row["binding_state"] = "ambiguous_binding"
                 else:
+                    grant = candidates[0]
                     borrower_identity = str(grant.get("borrower_identity_id") or "")
                     pinned = str(grant.get("profile_id") or "")
                     row["borrower_identity_id"] = borrower_identity or None
@@ -142,6 +168,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                 row["recorded_adept_profile_ids"].sort()
             if "acquisition_statuses" in row:
                 row["acquisition_statuses"].sort()
+            if "recorded_adept_loan_refs" in row:
+                row["recorded_adept_loan_refs"].sort()
             exposures_for_loan.append(row)
 
         if credential_id is not None and not any(
@@ -168,7 +196,36 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                 if row.get("recorded_adept_profile_id") else []
             ))
         }
+        # Distinguish two contradictory historical Adobe claims from a
+        # merely changed current profile association. Neither observation
+        # establishes that Adobe activated the wrong account.
+        recorded_profile_conflict = len(recorded) > 1
+        configured_profile_divergence = len(profiles) > 1
+        configured_vs_recorded_difference = bool(
+            profiles and recorded and profiles != recorded
+        )
         profiles_in_conflict = len(profiles | recorded) > 1
+        loan_refs = {
+            reference for row in exposures_for_loan
+            for reference in row.get("recorded_adept_loan_refs", ())
+        }
+        loan_reference_disagreement = len(loan_refs) > 1
+        acquisition_rows = [
+            row for row in exposures_for_loan if "acquisition" in row["sources"]
+        ]
+        multiple_items = len({row["item_id"] for row in exposures_for_loan}) > 1
+        if recorded_profile_conflict or loan_reference_disagreement:
+            origin_resolution = "conflicting_records"
+        elif (not multiple_items and len(recorded) == len(loan_refs) == 1
+              and acquisition_rows
+              and all(row.get("recorded_adept_profile_id")
+                      and row.get("recorded_adept_loan_ref")
+                      for row in acquisition_rows)):
+            # A recorded identity is evidence for review, NEVER authority to
+            # return or fulfill: inventory confirmation is not performed here.
+            origin_resolution = "single_recorded"
+        else:
+            origin_resolution = "unknown"
         ledger_status_ambiguous = any(
             len(row.get("acquisition_statuses", ())) > 1
             for row in exposures_for_loan
@@ -176,12 +233,19 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
         groups.append({
             "loan_id": loan_id,
             "multiple_connections": shared,
-            "profile_disagreement": profiles_in_conflict,
+            "profile_disagreement": profiles_in_conflict,  # legacy aggregate
+            "recorded_profile_conflict": recorded_profile_conflict,
+            "configured_profile_divergence": configured_profile_divergence,
+            "configured_vs_recorded_difference": configured_vs_recorded_difference,
+            "adept_loan_reference_disagreement": loan_reference_disagreement,
+            "origin_resolution": origin_resolution,
             "requires_attention": (
-                shared or inconsistent or profiles_in_conflict or ledger_status_ambiguous
+                shared or inconsistent or profiles_in_conflict
+                or ledger_status_ambiguous or loan_reference_disagreement
+                or origin_resolution == "conflicting_records"
             ),
             "ledger_status_ambiguous": ledger_status_ambiguous,
-            "multiple_item_ids": len({row["item_id"] for row in exposures_for_loan}) > 1,
+            "multiple_item_ids": multiple_items,
             "exposures": exposures_for_loan,
         })
 
@@ -192,6 +256,10 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             "loan_groups": len(groups),
             "multiple_connection_groups": sum(x["multiple_connections"] for x in groups),
             "profile_disagreements": sum(x["profile_disagreement"] for x in groups),
+            "recorded_profile_conflicts": sum(x["recorded_profile_conflict"] for x in groups),
+            "adept_loan_reference_disagreements": sum(
+                x["adept_loan_reference_disagreement"] for x in groups
+            ),
             "attention_groups": sum(x["requires_attention"] for x in groups),
             "rows_without_loan_id": rows_without_loan_id,
         },
@@ -200,6 +268,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             "Inventaire local uniquement : une liaison cohérente ne prouve pas "
             "l'autorisation Adobe. Plusieurs connexions exposant un même ID ne "
             "prouvent pas à elles seules une seule transaction. Aucun ADEPT ni "
-            "POST Paris n'a été effectué."
+            "POST Paris n'a été effectué. Un écart avec le profil actuellement "
+            "configuré n'atteste pas une mauvaise activation ADEPT ; les "
+            "références historiques ne valent jamais autorisation de retour."
         ),
     }
