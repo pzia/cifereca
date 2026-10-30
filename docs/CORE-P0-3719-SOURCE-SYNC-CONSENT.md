@@ -44,6 +44,10 @@ relire et passer la révision courante. Un ancien client ne peut pas écraser
 la révocation d'un autre client. Un réglage corrompu est explicitement
 `valid=False, enabled=False` ; sa révision opaque permet une réparation par
 CAS après une action explicite, sans l'assimiler à une préférence absente.
+Les clés JSON répétées sont également invalides, même identiques ou écrites
+avec des échappements équivalents : la dernière valeur ne peut pas accorder ON.
+La lecture ne répare ni ne migre la ligne ; elle garde son empreinte opaque
+pour le CAS explicite.
 
 Le moteur fige la génération de **toute** source, sans sélection par nom de
 fournisseur, avant de lire son autorisation. Il la revalide autour de l'offre,
@@ -93,3 +97,4 @@ transport synthétique, Sync explicite/ouverture et acquisition simulée au
 point de livraison ; un seul exécuteur malgré l'ancien réglage ON, zéro
 ancienne acquisition sous OFF. Kobo : OFF interdit le repli legacy même sans
 observation typée. Ces tests ne prouvent aucun accès fournisseur réel.
+

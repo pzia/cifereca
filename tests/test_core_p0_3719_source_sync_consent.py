@@ -285,3 +285,29 @@ def test_final_sql_guard_rechecks_source_enablement_not_just_consent_epoch(sourc
     assert result['downloaded'] == 0
     assert db.placements() == [] and refs(db)[1] == 0
     assert calls == ['offer', 'delivery']
+
+@pytest.mark.parametrize('field', ['enabled', 'schema', 'scope', 'revision'])
+def test_duplicate_policy_fields_deny_delivery_and_require_cas_repair(source, field):
+    service, db, root, calls, broker = source
+    change(source, True)
+    scope = policy.scope_for_account(service.account)
+    key = policy.policy_key(scope)
+    valid = db.metadata_get(key)
+    value = {'enabled': False, 'schema': 'old-schema',
+             'scope': ['foreign'] * 4, 'revision': 'b' * 32}[field]
+    raw = '{' + json.dumps(field) + ':' + json.dumps(value) + ',' + valid[1:]
+    assert json.loads(raw)['enabled'] is True
+    db.metadata_set(key, raw)
+    sid = broker._source_id(service.account)
+    state = broker.source_sync_consent(sid)
+    assert state['configured'] and not state['valid'] and not state['enabled']
+    assert state['revision'].startswith('invalid:')
+    result = synchronize_account_source(service, service.account)['canonical_execution']
+    assert result['downloaded'] == 0 and calls == [] and db.placements() == []
+    assert db.metadata_get(key) == raw  # no repair or migration at read time
+    with pytest.raises(ValueError, match='source_sync_consent_changed'):
+        change(source, True)
+    repaired = change(source, False, state['revision'])
+    assert repaired['valid'] and not repaired['enabled']
+    assert repaired['revision'] != state['revision']
+

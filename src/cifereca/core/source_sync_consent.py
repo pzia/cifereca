@@ -45,6 +45,15 @@ def policy_key(scope):
     return _PREFIX + hashlib.sha256(encoded.encode('ascii')).hexdigest()
 
 
+def _unique_policy_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError('duplicate_source_sync_consent_field')
+        value[key] = item
+    return value
+
+
 def _decode(raw, scope):
     if raw is None:
         return Policy('unset', None)
@@ -54,7 +63,7 @@ def _decode(raw, scope):
     if type(raw) is not str or len(raw) > 65536:
         return invalid
     try:
-        row = json.loads(raw)
+        row = json.loads(raw, object_pairs_hook=_unique_policy_object)
     except (ValueError, TypeError, RecursionError):
         return invalid
     if (type(row) is not dict
@@ -179,3 +188,4 @@ def set_source_enabled(service, account, enabled, preference_key):
                        'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
         if not current():
             raise ValueError('source_sync_consent_scope_changed')
+
