@@ -483,7 +483,10 @@ class SynchronizationBrokerImpl:
         if type(enabled) is not bool:
             raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
-        if getattr(account, "provider_id", None) == "numilog":
+        from .core.source_sync_consent import configured, set_source_enabled
+        if configured(self.service, account):
+            set_source_enabled(self.service, account, enabled, self._preference_key(source_id))
+        elif getattr(account, "provider_id", None) == "numilog":
             if enabled:
                 # Old releases could leave a disabled source with an active
                 # consent after a crash in the former two-step revoke.
@@ -711,6 +714,23 @@ class SynchronizationBrokerImpl:
                    "attempted": attempted, "failed": failed,
                    "acquisition_authorized": False},
         )
+
+    def source_sync_consent(self, source_id: str) -> dict[str, object]:
+        """Local whole-source acquisition policy; no inventory or file I/O."""
+        from .core.source_sync_consent import source_sync_consent
+        return source_sync_consent(self.service, self._find_account(source_id))
+
+    def set_source_sync_consent(
+        self, source_id: str, *, enabled: bool, expected_revision: str | None,
+    ) -> dict[str, object]:
+        """Explicit, CAS-guarded ON/OFF for every resource of this source."""
+        from .core.source_sync_consent import set_source_sync_consent
+        result = set_source_sync_consent(
+            self.service, self._find_account(source_id), enabled=enabled,
+            expected_revision=expected_revision,
+        )
+        self._notify()
+        return result
 
     def local_materialization_schedule(self, source_id: str) -> str:
         """Read the *materialize* schedule only; inventory uses its own flow.

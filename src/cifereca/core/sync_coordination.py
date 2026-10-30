@@ -5,6 +5,7 @@ no widgets or additional remote calls are introduced."""
 from __future__ import annotations
 
 from .source_context import source_context_epoch
+from .source_sync_consent import configured as source_consent_configured
 
 from contextvars import ContextVar
 
@@ -174,7 +175,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
-        if account.provider_id == 'bnf-pret':
+        if account.provider_id == 'bnf-pret' and not source_consent_configured(self, account):
             from .bnf_auto_materialization import enabled, materialize
             if enabled(self, account):
                 # One private bounded inventory per source batch, not one
@@ -277,7 +278,7 @@ def _run_observed_canonical_convergence(
     persisted exact SourceKey authorization and session/offers are checked by
     the original executor, under that same lock, before and after network I/O.
     """
-    if account.provider_id == "bnf-pret":
+    if account.provider_id == "bnf-pret" and not source_consent_configured(self, account):
         from .bnf_auto_materialization import enabled as bnf_legacy_auto_enabled
         # The legacy BnF auto route still owns declared-local loan matching
         # and receipts. Running its fulfilled ACSM again through A→B would
@@ -326,11 +327,7 @@ def _run_observed_canonical_convergence(
         # Freeze an exact source/type epoch BEFORE the first grant read.
         # The legacy unversioned Kobo switch remains admissible; any later
         # ON→OFF→ON advances its revision and invalidates this older attempt.
-        versioned_source = account.provider_id in {"numilog", "kobo", "bnf-pret"}
-        frozen_epoch = (
-            consent_generation(self.storage, admitted_snapshots[0].scope)
-            if versioned_source else None
-        )
+        frozen_epoch = consent_generation(self.storage, admitted_snapshots[0].scope)
 
         try:
             consent = consent_reader(account)
@@ -350,11 +347,9 @@ def _run_observed_canonical_convergence(
         # consent generation must not revive an old signed/one-use delivery.
         def epoch_current(key: SourceKey) -> bool:
             return (
-                not versioned_source
-                or (frozen_epoch not in {"unavailable", "invalid"}
-                    and key.scope == admitted_snapshots[0].scope
-                    and consent_generation(self.storage, key.scope)
-                    == frozen_epoch)
+                frozen_epoch not in {"unavailable", "invalid"}
+                and key.scope == admitted_snapshots[0].scope
+                and consent_generation(self.storage, key.scope) == frozen_epoch
             )
 
         def current_consent(key: SourceKey) -> bool:
@@ -373,7 +368,7 @@ def _run_observed_canonical_convergence(
 
         def publication_consent(db, key: SourceKey) -> bool:
             # Execute in publisher's BEGIN IMMEDIATE, not a stale read.
-            if versioned_source and (
+            if (
                 frozen_epoch in {"unavailable", "invalid"}
                 or key.scope != admitted_snapshots[0].scope
                 or consent_generation_in_transaction(db, key) != frozen_epoch
@@ -1093,6 +1088,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
             physical_scan_cache = {}
             for loan in loans:
+                if any(
+                    source_consent_configured(self, account)
+                    for account in accounts
+                    if _opening_loans_scoped(account, identity.identity_id, [loan])
+                ):
+                    # This source has one authoritative canonical ON/OFF,
+                    # including OFF/invalid or a failed typed inventory.
+                    # Never fall through to an independent loan acquisition.
+                    continue
                 # Re-resolve the currently registered provider session: an
                 # earlier inventory GET may have run before disconnect/swap.
                 # The admission check never invokes a provider method.
@@ -1278,6 +1282,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             if self.sync_source_id(
                 scheduled_accounts[session.credential_id]
             ) not in canonical_kobo_sources
+            and not source_consent_configured(
+                self, scheduled_accounts[session.credential_id]
+            )
         ]
         # The outer opening-sync already owns the cross-process lock.
         # The scoped helper is the ONLY automatic materialization path.
