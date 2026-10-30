@@ -150,8 +150,8 @@ def _evidence(service, account, manifest):
     )
     _require(preview["manifest_valid"], "invalid_manifest")
     counts = {key: preview["counts"][key] for key in _COUNTS}
-    # This path never inherits the historical unlinked-acquisition bypass.
-    _require(preview["unlinked_local_books"] == 0, "unlinked_local_books")
+    # Unrelated local books are diagnostic only; exact per-item candidates
+    # and unsafe placements remain vetoes in the refreshed preview.
     _require(preview["blocking_items"] == 0, "reconciliation_required")
     roots = _roots(service, account.identity_id)
     backup = service.storage.backup_list("kobo", account.credential_id)

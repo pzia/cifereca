@@ -171,27 +171,30 @@ def _add_local_catalog(service: LibraryService, path: Path, *, identity_id: str,
     })
 
 
-def test_unlinked_local_file_blocks_kobo_batch(tmp_path: Path, monkeypatch):
+def test_unlinked_local_file_does_not_block_unrelated_kobo_acquisition(tmp_path: Path, monkeypatch):
+    """#3196: another book is not evidence that this Kobo item already exists."""
     service = _service(tmp_path)
     imported = tmp_path / "EBooks" / "alice" / "local" / "imported.epub"
     _write_epub(imported, b"keep")
+    original = imported.read_bytes()
     _add_local_catalog(service, imported, identity_id="alice", item_id="imported")
     monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
-    monkeypatch.setattr(
-        service,
-        "_execute_kobo_acquisition",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("guard must block acquisition")),
-    )
+
+    def acquire(_item, target_dir):
+        artifact = Path(target_dir) / "downloaded.epub"
+        _write_epub(artifact, b"fresh")
+        return SimpleNamespace(path=artifact, account_id="account", metadata={})
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
     try:
         summary = service.sync_kobo_backup()
-
         assert service.kobo_unlinked_local_count("alice") == 1
-        assert summary["attempted"] == 0
-        assert summary["attention_required"] == 1
+        assert summary["attempted"] == summary["downloaded"] == 1
+        assert summary["attention_required"] == 0
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
-        assert row is not None
-        assert row["status"] == "attention_required"
-        assert row["attention_code"] == "unlinked_local_books"
+        assert row["status"] == "complete"
+        assert Path(row["local_path"]) != imported
+        assert imported.read_bytes() == original
     finally:
         service.close()
 
@@ -286,7 +289,7 @@ def test_complete_linked_backup_is_unchanged(tmp_path: Path, monkeypatch):
         service.close()
 
 
-def test_catalog_scan_runs_before_unlinked_guard(tmp_path: Path, monkeypatch):
+def test_catalog_scan_still_precedes_acquisition_without_global_unlinked_guard(tmp_path: Path, monkeypatch):
     service = _service(tmp_path)
     calls: list[str] = []
 
@@ -294,24 +297,21 @@ def test_catalog_scan_runs_before_unlinked_guard(tmp_path: Path, monkeypatch):
         calls.append("scan")
         return {"scanned": 0}
 
-    def guard(identity_id):
-        assert identity_id == "alice"
-        calls.append("guard")
-        return 1
+    def acquire(_item, target_dir):
+        calls.append("acquire")
+        artifact = Path(target_dir) / "fresh.epub"
+        _write_epub(artifact)
+        return SimpleNamespace(path=artifact, account_id="account", metadata={})
 
     monkeypatch.setattr(service, "catalog_scan", scan)
-    monkeypatch.setattr(service, "kobo_unlinked_local_count", guard)
-    monkeypatch.setattr(
-        service,
-        "_execute_kobo_acquisition",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("guard must block acquisition")),
-    )
+    monkeypatch.setattr(service, "kobo_unlinked_local_count",
+                        lambda _identity: pytest.fail("obsolete global unlinked guard"))
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
     try:
         summary = service.sync_kobo_backup()
-
-        assert calls[:2] == ["scan", "guard"]
-        assert summary["attempted"] == 0
-        assert summary["attention_required"] == 1
+        assert calls == ["scan", "acquire"]
+        assert summary["downloaded"] == 1
+        assert summary["attention_required"] == 0
     finally:
         service.close()
 
@@ -736,8 +736,10 @@ def test_direct_kobo_download_rejects_renamed_catalog_product_link(tmp_path: Pat
 
 
 @pytest.mark.parametrize("malformed_opt_in", ["false", "true", 1, 0, None])
-def test_unlinked_kobo_override_requires_literal_true(tmp_path: Path, monkeypatch, malformed_opt_in):
-    """String or numeric config values must not silently disable duplicate guards."""
+def test_obsolete_unlinked_override_does_not_gate_unrelated_books(
+    tmp_path: Path, monkeypatch, malformed_opt_in,
+):
+    """Legacy configuration values cannot restore a global download veto."""
     service = _service(tmp_path)
     imported = tmp_path / "EBooks" / "alice" / "local" / "already-here.epub"
     _write_epub(imported, b"original")
@@ -745,16 +747,20 @@ def test_unlinked_kobo_override_requires_literal_true(tmp_path: Path, monkeypatc
     _add_local_catalog(service, imported, identity_id="alice", item_id="already-here")
     service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
     monkeypatch.setattr(service, "catalog_scan", lambda *_a, **_kw: {"scanned": 1})
-    monkeypatch.setattr(service, "_execute_kobo_acquisition",
-                        lambda *_a, **_kw: pytest.fail("unconsented download"))
+
+    def acquire(_item, target_dir):
+        destination = Path(target_dir) / "new-received.epub"
+        _write_epub(destination, b"fresh")
+        return SimpleNamespace(path=destination, account_id="account", metadata={})
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
     try:
         summary = service.sync_kobo_backup()
-        assert summary["attempted"] == 0
-        assert summary["downloaded"] == 0
-        assert summary["attention_required"] == 1
+        assert summary["attempted"] == summary["downloaded"] == 1
         assert service.storage.backup_get(
             "kobo", "vault-1", "book-1",
-        )["attention_code"] == "unlinked_local_books"
+        )["status"] == "complete"
         assert imported.read_bytes() == original
     finally:
         service.close()
+

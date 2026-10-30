@@ -195,13 +195,16 @@ def test_cancellation_between_items_keeps_file_and_has_its_own_phase_clock(case)
     assert case.service.storage.backup_get("kobo", "vault-2", "PRIVATE-book-2") is None
 
 
-def test_unlinked_bypass_is_not_inherited_by_confirmed_execution(case, monkeypatch):
-    case.service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+def test_unlinked_unrelated_book_does_not_veto_confirmed_execution(case, monkeypatch):
+    """A different local book cannot require per-item confirmation or block a source."""
+    case.service.config.set("kobo_backup.allow_unlinked_acquisition", False)
     monkeypatch.setattr(case.service, "kobo_unlinked_local_count", lambda identity: 1)
     before = _dump(case)
-    result = case.broker.prepare_local_materialization(case.source)
-    assert result.facts["status"] == "unlinked_local_books" and not result.ok
+    token = _prepare(case)
     assert _dump(case) == before and not case.downloaded
+    result = case.broker.materialize_source(case.source, token)
+    assert result.ok and result.changed == 2, result
+    assert len(case.downloaded) == 2
 
 
 def test_local_evidence_change_refuses_confirmation_without_delegation(case):
