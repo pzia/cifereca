@@ -269,6 +269,8 @@ def test_stale_checkpoint_is_cleared_only_after_last_present_duplicate_exits(
         db.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
                    (second.placement_id,))
     assert store.metadata_get(key) is not None
+    # A deindexed row alone is not evidence of physical cleanup.
+    paths[1].unlink()
     _check_post_placement_duplicates(
         store, library_root=root, placement_id=first.placement_id,
     )
@@ -334,3 +336,27 @@ def test_missing_keeper_proof_or_unknown_marker_does_not_clear_checkpoint(
         store, library_root=root, placement_id=first.placement_id,
     )
     assert store.metadata_get(key) == original
+
+
+def test_deindexed_but_still_physical_duplicate_keeps_pending_marker(
+    store, tmp_path,
+):
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, paths, (first, second, _foreign) = _two_accounts(store, tmp_path)
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        key = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchone()[0]
+        db.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
+                   (second.placement_id,))
+    original = store.metadata_get(key)
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    assert store.metadata_get(key) == original
+    assert all(path.read_bytes() == BYTES for path in paths)

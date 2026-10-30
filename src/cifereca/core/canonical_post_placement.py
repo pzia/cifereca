@@ -6,6 +6,7 @@ Matching SHA alone neither authorizes adoption nor deletion of another path.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import hashlib
 import json
 
@@ -173,6 +174,10 @@ def clear_checkpoint_if_no_duplicates(
                 or record["identity_id"] != identity
                 or record["artifact_id"] != artifact
                 or type(record["placement_ids"]) is not list
+                or not 2 <= len(record["placement_ids"]) <= _MAX_MATCHES + 1
+                or any(type(pid) is not str or not 0 < len(pid) <= 256
+                       for pid in record["placement_ids"])
+                or len(set(record["placement_ids"])) != len(record["placement_ids"])
                 or placement_id not in record["placement_ids"]):
             return False
         registered = db.execute(
@@ -185,6 +190,34 @@ def clear_checkpoint_if_no_duplicates(
         owner_dir = owners[0]
         reserved = frozenset(directory for _, directory in registered
                              if type(directory) is str and directory)
+        former_ids = tuple(
+            pid for pid in record["placement_ids"] if pid != placement_id
+        )
+        former = db.execute(
+            "SELECT placement_id,identity_id,artifact_id,state,path "
+            "FROM placements WHERE placement_id IN ("
+            + ",".join("?" for _ in former_ids) + ")",
+            former_ids,
+        ).fetchall()
+        if len(former) != len(former_ids):
+            # A deleted row contains no path: we cannot prove that its bytes
+            # were cleaned up merely because the registration disappeared.
+            return False
+        former_paths = []
+        for pid, candidate_owner, candidate_artifact, state, candidate_path in former:
+            if (pid not in former_ids or candidate_owner != identity
+                    or candidate_artifact != artifact or state == "present"
+                    or type(candidate_path) is not str):
+                return False
+            previous = Path(candidate_path)
+            # Missing registered placement is not missing physical bytes.
+            # Preserve the queue until EACH previous pathname is absent.
+            if (not previous.is_absolute() or ".." in previous.parts
+                    or os.path.lexists(previous)):
+                return False
+            former_paths.append((pid, candidate_path, state))
+        if len(former_paths) != len(former_ids):
+            return False
     if not _verified_copy(
         path, root=library_root, owner_directory=owner_dir,
         registered_directories=reserved, size=size, sha256=digest,
@@ -201,6 +234,14 @@ def clear_checkpoint_if_no_duplicates(
         ).fetchall()
         if present != [(placement_id, path, "present")]:
             return False
+        for pid, candidate_path, state in former_paths:
+            if (db.execute(
+                "SELECT path,state FROM placements WHERE placement_id=? "
+                "AND identity_id=? AND artifact_id=?",
+                (pid, identity, artifact),
+            ).fetchone() != (candidate_path, state)
+                    or os.path.lexists(candidate_path)):
+                return False
         if db.execute(
             "SELECT 1 FROM placements WHERE placement_id=? "
             "AND identity_id=? AND artifact_id=? AND state='present' "
