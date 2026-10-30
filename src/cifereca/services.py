@@ -2586,7 +2586,7 @@ class LibraryService:
         """Compatibility façade; Kobo execution lives in the provider adapter."""
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
-    def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
+    def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None, _numilog_recovery=False) -> Acquisition:
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             raise ProviderConfigurationError(
                 "Résultat connu hors ligne : acquisition indisponible"
@@ -2668,6 +2668,7 @@ class LibraryService:
             from .core.numilog_direct_acquisition import acquire_numilog_direct
             return acquire_numilog_direct(
                 self, item, _admission=_admission, session=session,
+                reconcile_pending=_numilog_recovery,
                 InterProcessLock=InterProcessLock,
                 acquisition_lock_file=acquisition_lock_file,
                 LockBusyError=LockBusyError,
@@ -2699,7 +2700,9 @@ class LibraryService:
             item, path=path, url=url, target_dir=target_dir, action="download",
         )
 
-    def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
+    def acquire_direct_item(self, item: SearchResult, *, _admission=None, _numilog_recovery=False) -> Acquisition:
+        if _numilog_recovery and (item.source_provider != 'numilog' or not callable(_admission)):
+            raise ProviderConfigurationError('Numilog : reprise non autorisée')
         identity_id = None
         # Do not trust a persisted connection owner to attribute private
         # Numilog activity before the locked source admission succeeds.
@@ -2711,7 +2714,8 @@ class LibraryService:
             except Exception:
                 identity_id = self.current_identity.identity_id if self.current_identity else None
         try:
-            result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
+            result = (self._acquire_direct_item_impl(item, _admission=_admission,
+                       _numilog_recovery=_numilog_recovery) if _admission is not None
                       else self._acquire_direct_item_impl(item))
             if item.source_provider == "numilog":
                 identity_id = result.metadata.get("identity_id")
