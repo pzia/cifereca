@@ -226,18 +226,24 @@ def test_optional_right_state_does_not_veto_canonical_download(
     assert calls == [service.source]
 
 
-def test_complete_selected_delivery_abi_preempts_legacy_bnf_worker():
-    from types import SimpleNamespace
-    from cifereca.core.sync_coordination import _source_uses_canonical_delivery
 
-    # Old plugins and partial ABI continue using the guarded legacy route;
-    # a full implementation must not be called twice for a single consent.
-    older = SimpleNamespace(rights_observation_snapshot=lambda *_: None)
-    complete = SimpleNamespace(
-        rights_observation_snapshot=lambda *_: None,
-        rights_selected_delivery_offer_snapshot=lambda *_: None,
-        rights_selected_delivery_candidate=lambda *_: None,
+def test_bnf_legacy_auto_prevents_parallel_canonical_dispatch(monkeypatch):
+    """Until BnF declared-local proofs migrate, auto-on has one owner."""
+    from types import SimpleNamespace
+    from cifereca.models import Account
+    from cifereca.core.sync_coordination import _run_observed_canonical_convergence
+    monkeypatch.setattr(
+        "cifereca.core.bnf_auto_materialization.enabled",
+        lambda service, account: True,
     )
-    assert not _source_uses_canonical_delivery(None)
-    assert not _source_uses_canonical_delivery(older)
-    assert _source_uses_canonical_delivery(complete)
+    target = Account(
+        identity_id="default", provider_id="bnf-pret",
+        credential_id="synthetic", unique_id="borrower",
+    )
+    # Even if a modern adapter publishes typed A, a consented legacy
+    # BnF loan must not start a second canonical GET in the same Sync.
+    result = _run_observed_canonical_convergence(
+        SimpleNamespace(), target, [],
+        admitted_epoch=1, sync_lease=None, cancelled_for_rights=lambda: False,
+    )
+    assert result is None
