@@ -355,3 +355,83 @@ def test_same_final_sha_two_providers_never_borrow_another_profile_receipt(
         root / "A" / "book.pdf"
     )["identity_id"] == "A"
     assert len(journal(service.storage)) == 2
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("receipt", "X" * 1025),
+        ("receipt", "receipt\\nforged"),
+        ("receipt", "receipt\\x00forged"),
+        ("adept_receipt", "Y" * 1025),
+        ("adept_receipt", "adept\\rforged"),
+        ("adept_receipt", "adept\\x00forged"),
+    ],
+)
+def test_invalid_staged_receipt_never_blocks_fresh_authorized_get(
+    rig, monkeypatch, field, invalid,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    first = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert first[0].status == "failed"
+    assert service.calls == 1
+    with service.storage._lock, service.storage._connect() as db:
+        record_id, metadata = db.execute(
+            "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'"
+        ).fetchone()
+        staged = json.loads(metadata)
+        staged[field] = invalid
+        db.execute(
+            "UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+            (json.dumps(staged), record_id),
+        )
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", original,
+    )
+    # The corrupted receipt is neither publication authority nor a permanent
+    # dead end. A new authorized GET produces a new, well-formed checkpoint.
+    resumed = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert resumed[0].status == "downloaded"
+    assert service.calls == 2
+    assert rows(service.storage) == (1, 1, 1, 1)
+    assert journal(service.storage)[0][0] == "complete"
+
+
+def test_oversized_staged_journal_never_blocks_fresh_authorized_get(
+    rig, monkeypatch,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    assert run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )[0].status == "failed"
+    with service.storage._lock, service.storage._connect() as db:
+        record_id, metadata = db.execute(
+            "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'"
+        ).fetchone()
+        damaged = json.loads(metadata)
+        damaged["unexpected_untrusted_data"] = "Z" * 65536
+        db.execute(
+            "UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+            (json.dumps(damaged), record_id),
+        )
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", original,
+    )
+    resumed = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert resumed[0].status == "downloaded"
+    assert service.calls == 2
+    assert rows(service.storage) == (1, 1, 1, 1)
