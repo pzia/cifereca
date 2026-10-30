@@ -35,6 +35,5 @@ def enable_synthetic_paris_opening(service) -> None:
                 opening_loan_auto_acquisition=True,
             ),
             accounts=accounts,
-            last_loan_errors=[],
             options={},
         )
