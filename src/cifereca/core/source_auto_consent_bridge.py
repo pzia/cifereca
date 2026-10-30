@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import logging
 
 from .source_convergence import SourceKey
+from .source_sync_consent import read_policy, policy_in_transaction
 
 # Scoped *automatic acquisition* policies, NOT source-inventory switches.
 # The kind distinguishes purchase vs loan. No loan can inherit a purchase
@@ -57,6 +59,15 @@ def toggle_state(db, source: SourceKey):
     """
     if type(source) is not SourceKey:
         return "off"
+    generic = policy_in_transaction(db, source.scope)
+    if generic.configured:
+        from .source_enablement import source_enabled
+        enabled = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            ("sync.source.enabled." + _source_id(source.scope),),
+        ).fetchone()
+        return ("on" if generic.mode == "on"
+                and source_enabled(enabled[0] if enabled else None) else "off")
     spec = _POLICIES.get((source.scope.provider_id, source.kind))
     if spec is None:
         return None
@@ -129,6 +140,13 @@ def consent_generation(storage, scope):
     An unreadable/malformed revision is never equivalent to no revision:
     deny rather than permitting a stale ON->OFF->ON delivery.
     """
+    try:
+        generic = read_policy(storage, scope)
+    except Exception:
+        logging.getLogger('cifereca').warning('Source consent generation read failed', exc_info=True)
+        return "unavailable"
+    if generic.configured:
+        return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
     key = _consent_generation_key(scope)
     if key is None:
         return None
@@ -145,6 +163,13 @@ def consent_generation_in_transaction(db, source):
     """Read the exact epoch under Core's final BEGIN IMMEDIATE publication."""
     if type(source) is not SourceKey:
         return "invalid"
+    try:
+        generic = policy_in_transaction(db, source.scope)
+    except Exception:
+        logging.getLogger('cifereca').warning('Source consent transaction generation read failed', exc_info=True)
+        return "unavailable"
+    if generic.configured:
+        return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
     key = _consent_generation_key(source.scope)
     if key is None:
         return None

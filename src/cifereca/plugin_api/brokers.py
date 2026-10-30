@@ -58,6 +58,20 @@ class SynchronizationBroker(Protocol):
     def subscribe(self, callback: Any) -> Any: ...
 
 @runtime_checkable
+class SourceSyncConsentBroker(Protocol):
+    """Optional source-wide acquisition ON/OFF, independent of resource IDs.
+
+    Read is local. Set is an explicit user preference, never an inventory
+    side effect. Pass the revision returned by read (None on first opt-in).
+    A stale revision rejects the update; OFF also advances the generation.
+    """
+    def source_sync_consent(self, source_id: str) -> Mapping[str, object]: ...
+    def set_source_sync_consent(
+        self, source_id: str, *, enabled: bool, expected_revision: str | None,
+    ) -> Mapping[str, object]: ...
+
+
+@runtime_checkable
 class SourceInventoryRefreshScheduleBroker(Protocol):
     """Optional schedule/dispatch for per-source inventory and rights only."""
     def inventory_refresh_schedule(self, source_id: str) -> Mapping[str, object]: ...
