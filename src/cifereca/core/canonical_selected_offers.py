@@ -151,7 +151,7 @@ def qualify_selected_offers(
     for i, row in enumerate(snapshot.rights):
         key = SourceKey(scope, row.edition_id, row.right_id, row.kind,
                         snapshot.branch)
-        if (row.state != "active" or not row.provider_attested
+        if (not row.provider_attested
                 or row.delivery != "unknown"
                 or key not in persisted_consent or key in satisfied):
             continue
@@ -190,7 +190,6 @@ def qualify_selected_offers(
                 or selected.rights[0].edition_id != key.edition_id
                 or selected.rights[0].right_id != key.right_id
                 or selected.rights[0].kind != key.kind
-                or selected.rights[0].state != "active"
                 or not selected.rights[0].provider_attested):
             continue
         rights[i] = selected.rights[0]
