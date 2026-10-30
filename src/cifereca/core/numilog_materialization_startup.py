@@ -17,6 +17,7 @@ from .numilog_startup_diagnostics import StartupTrace
 from .numilog_local_preview import _item_id
 from .numilog_materialization_checkpoint import index_delivered
 from .numilog_manifest_rights import mirror_numilog_manifest_rights
+from .numilog_recovery import recovery_gate, recovery_id
 from .numilog_materialization_consent import (
     _binding, _same_binding, _MAX_ITEMS_PER_OPENING, mode,
 )
@@ -62,11 +63,48 @@ def _completed_local_purchase_verified(
         before = storage.numilog_purchase_preflight_evidence(**options)
         rights = before.get("entitlements")
         ledger = before.get("acquisitions")
-        if type(rights) is not list or len(rights) != 1 or (
-            type(ledger) is not list or len(ledger) != 1
-        ):
+        if type(rights) is not list or len(rights) != 1 or type(ledger) is not list:
             return False
-        right, receipt = rights[0], ledger[0]
+        right = rights[0]
+        # A recovered delivery has its OWN complete receipt, preserving the
+        # original legacy acquisition record rather than overwriting history.
+        retry_id = recovery_id(
+            account.identity_id, account.credential_id,
+            account.unique_id, item_id,
+        )
+        recovered = [row for row in ledger if row.get('acquisition_id') == retry_id]
+        if len(recovered) == 1 and len(ledger) <= 2:
+            receipt = recovered[0]
+            if (receipt.get('status') != 'complete'
+                    or any(other.get('identity_id') != account.identity_id
+                           or other.get('account_id') != account.unique_id
+                           or (other is not receipt and other.get('status') != 'complete')
+                           for other in ledger)):
+                return False
+            from .numilog_materialization_checkpoint import _checked_receipt
+            from ..plugin_api import Cancelled
+            try:
+                checked, path = _checked_receipt(broker.service, retry_id)
+                placement = storage.placement_for_path(path)
+                metadata = checked['metadata']
+                return bool(
+                    source_current() and
+                    checked.get('entitlement_id') == right.get('entitlement_id') and
+                    placement is not None and
+                    placement.get('identity_id') == account.identity_id and
+                    placement.get('provider_id') == 'numilog' and
+                    placement.get('source_item_id') == item_id and
+                    placement.get('artifact_id') == 'sha256:' + metadata['sha256'] and
+                    before == storage.numilog_purchase_preflight_evidence(**options) and
+                    source_current()
+                )
+            except Cancelled:
+                raise
+            except Exception:
+                return False
+        if len(ledger) != 1:
+            return False
+        receipt = ledger[0]
         if (type(right) is not dict or type(receipt) is not dict
                 or receipt.get("status") != "complete"
                 or receipt.get("identity_id") != account.identity_id
@@ -384,6 +422,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # completed purchase must nevertheless count as present if
                 # the existing exact receipt, placement and current SHA all
                 # agree. Unknown/foreign/damaged evidence remains blocked.
+                is_recovery = False
                 if prior.facts.get('status') == 'needs_reconciliation':
                     if presence_seconds_remaining > 0:
                         proof_started = monotonic()
@@ -409,6 +448,21 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             skipped += 1
                             trace.record_item(position, 'already_local_verified', item_id=row.record_id)
                             continue
+                    # A legacy complete receipt or same-owner placement is
+                    # not proof of a current file. It must not veto a fresh
+                    # purchase already authorized by the persisted policy.
+                    gate = recovery_gate(
+                        broker.service.storage, identity_id=account.identity_id,
+                        credential_id=account.credential_id,
+                        account_id=account.unique_id, item_id=row.record_id,
+                    )
+                    if gate == 'recoverable':
+                        is_recovery = True
+                    else:
+                        blocked += 1
+                        trace.record_item(position, gate, item_id=row.record_id)
+                        trace.fail('preflight_failed')
+                        continue
                 # The fresh authenticated inventory is authoritative for
                 # delivery capability. SQLite's older owned right may omit
                 # 'downloadable'; a permissive preflight must never override
@@ -418,8 +472,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     trace.record_item(position, 'not_downloadable', item_id=row.record_id)
                     trace.fail('preflight_failed')
                     continue
-                if (prior.ok is not True
-                        or prior.facts.get("status") != "candidate_unverified"):
+                if (not is_recovery and (prior.ok is not True
+                        or prior.facts.get("status") != "candidate_unverified")):
                     # A prior receipt, conflicting placement, missing proof or
                     # non-downloadable purchased title does not attest a
                     # local file. Keep it pending instead of counting a
@@ -452,8 +506,23 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         trace.fail("consent_revoked")
                         raise ValueError("numilog_auto_consent_revoked")
                     check = broker.preflight_numilog_purchase(source_id, row.record_id)
-                    if (check.ok is not True
-                            or check.facts.get("status") != "candidate_unverified"):
+                    if is_recovery:
+                        status_ok = (
+                            check.facts.get('status') == 'needs_reconciliation'
+                            and recovery_gate(
+                                broker.service.storage,
+                                identity_id=account.identity_id,
+                                credential_id=account.credential_id,
+                                account_id=account.unique_id,
+                                item_id=row.record_id,
+                            ) == 'recoverable'
+                        )
+                    else:
+                        status_ok = (
+                            check.ok is True
+                            and check.facts.get('status') == 'candidate_unverified'
+                        )
+                    if not status_ok:
                         trace.fail("preflight_failed")
                         raise ValueError("numilog_auto_purchase_changed")
                     return row
@@ -464,6 +533,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     with trace.acquisition():
                         acquired = broker.service.acquire_direct_item(
                             row, _admission=admission,
+                            **({'_numilog_recovery': True} if is_recovery else {}),
                         )
                     # The provider created a durable receipt under the lock;
                     # index without downloading again. Failed indexing leaves
