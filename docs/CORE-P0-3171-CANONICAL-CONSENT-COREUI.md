@@ -1,4 +1,25 @@
-# #3171 — Consentements canoniques par droit, dans Synchronisation
+# #3171 — Consentements canoniques : acquisition source/type et exceptions exactes
+
+> **Règle applicable depuis l'arbitrage utilisateur du 30/10/2026** :
+> le commutateur d'acquisition automatique persistant **par profil,
+> fournisseur et type** vaut consentement pour les fichiers effectivement
+> téléchargeables que le compte authentifié expose, y compris ceux dont
+> l'état de droit est `unknown` ou `inactive`. Le droit est descriptif.
+> Le GET exige une offre qualifiée et une réadmission Core ; une permission
+> source ne prouve ni un fichier, ni un achat, ni une licence ADEPT.
+> OFF révoque les acquisitions automatiques nouvelles ; ne supprime aucune
+> donnée historique. Le commutateur n'autorise jamais un autre profil.
+>
+> **Pont de transition :** Numilog achats `on_start` avec epoch de révocation,
+> BnF prêts `bnf_auto` et Kobo achats `source.materialization.on_start`.
+> Le booléen global historique `kobo_backup.enabled` ne vaut pas consentement.
+> Si aucun de ces commutateurs n'est configuré, l'ancienne sélection exacte
+> `SourceKey` reste disponible. Quand un commutateur source est configuré,
+> il est l'autorité ON/OFF : la liste « Autoriser ce droit… » redondante est
+> masquée, et ses anciens grants ne contournent pas OFF.
+>
+> La suite du document décrit l'ancien parcours **individuel de repli**
+> et n'établit pas une obligation supplémentaire lorsqu'un switch global existe.
 
 ## Raison
 
@@ -41,10 +62,13 @@ affichage ne déclenche jamais de provider GET, d'ACSM ou de publication.
 
 ## Garanties et limites
 
-- Les grants durables sont exacts et un par SourceKey, **jamais** tous les
-  futurs droits d'un compte ni une préférence globale.
+- En mode individuel de repli, les grants durables restent exacts et un
+  par SourceKey. En mode automatique, le commutateur source/type explicitement
+  activé couvre également les nouvelles offres téléchargeables de ce compte ;
+  aucun droit fournisseur n'est inféré, et sa révocation est immédiatement
+  opposable à la Sync canonique.
 - La Sync, y compris l'ouverture, redemande l'offre choisie au provider et
-  vérifie droit/binding/consentement avant et après GET, avant SHA et commit
+  vérifie offre/binding/consentement avant et après GET, avant SHA et commit
   atomique OriginLink/Artifact/Placement.
 - Les labels génériques « achat/prêt n°N » préservent les IDs privés mais ne
   remplacent pas une notice lisible. Un affichage bibliographique riche reste

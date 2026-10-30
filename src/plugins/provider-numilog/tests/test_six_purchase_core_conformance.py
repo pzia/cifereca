@@ -247,3 +247,126 @@ def test_three_local_files_without_provider_origin_do_not_veto_selected_delivery
     assert again["downloaded"] == again["failed"] == again["blocked"] == 0
     assert content_gets(gets, urls) == (urls[3:] if consent else [])
     assert len(runtime_calls) == expected_adept
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_source_wide_auto_switch_replaces_six_individual_consents(
+    purchases, synchronize, enabled,
+):
+    """#3171: a persistent Numilog source opt-in covers eligible purchases."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
+    for i, (key, path) in enumerate(zip(keys, paths)):
+        if i < 3:
+            attest(service, snapshot, key, path, root)
+        assert LocalCatalog(service.storage, root).index_path(
+            path, identity_id=account.identity_id,
+        )["status"] == "indexed"
+    before = {path: path.read_bytes() for path in paths}
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    store = service.storage
+    # Equivalent persisted result of the Core source consent confirmation.
+    # No exact-right authorization is created by this test.
+    assert store.numilog_materialization_change_consent(
+        source_id=sid, activate=enabled, expected_revision=None,
+    ) is True
+    assert broker.canonical_acquisition_choices(sid) == ()
+    from cifereca.core.numilog_materialization_startup import (
+        eligible_source_ids, execute as legacy_execute,
+    )
+    # The live Numilog adapter has the full canonical ABI. The legacy worker
+    # must NOT create a second acquisition queue for this consented account.
+    assert sid not in eligible_source_ids(broker, account.identity_id)
+    assert legacy_execute(broker, account.identity_id, "startup").facts["status"] == "not_due"
+    result = synchronize(service, account)
+    assert result["present_attested"] == 3
+    assert result["downloaded"] == (3 if enabled else 0)
+    assert result["pending"] == (0 if enabled else 3)
+    assert result["failed"] == result["blocked"] == 0
+    assert content_gets(gets, urls) == (urls[3:] if enabled else [])
+    assert {p: p.read_bytes() for p in paths} == before
+    assert len(store.placements()) == (9 if enabled else 6)
+    assert len(runtime_calls) == (3 if enabled and kind == "acsm" else 0)
+    again = synchronize(service, account)
+    assert again["downloaded"] == 0
+    assert again["present_attested"] == (6 if enabled else 3)
+    assert content_gets(gets, urls) == (urls[3:] if enabled else [])
+
+
+def test_source_wide_revocation_blocks_existing_per_right_permission(
+    purchases, synchronize,
+):
+    """Explicit OFF suppresses a stale exact-grant without removing it."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
+    for i, (key, path) in enumerate(zip(keys, paths)):
+        if i < 3:
+            attest(service, snapshot, key, path, root)
+        LocalCatalog(service.storage, root).index_path(path, identity_id=account.identity_id)
+    service.set_canonical_acquisition_consent(account, keys[3], allowed=True)
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    assert service.storage.numilog_materialization_change_consent(
+        source_id=sid, activate=False,
+    )
+    result = synchronize(service, account)
+    assert result["present_attested"] == 3
+    assert result["pending"] == 3
+    assert result["downloaded"] == 0
+    assert content_gets(gets, urls) == []
+    assert service.storage.placements() and len(service.storage.placements()) == 6
+
+
+@pytest.mark.parametrize("reopt_in", [False, True])
+def test_revoke_then_reenable_during_delivery_cannot_revive_old_sync(
+    purchases, synchronize, reopt_in,
+):
+    """The frozen Numilog consent epoch guards GET and SQLite publication."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+    from cifereca.core.convergence_execution import CompletedDelivery
+
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
+    for i, (key, path) in enumerate(zip(keys, paths)):
+        if i < 3:
+            attest(service, snapshot, key, path, root)
+        LocalCatalog(service.storage, root).index_path(path, identity_id=account.identity_id)
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    assert service.storage.numilog_materialization_change_consent(
+        source_id=sid, activate=True, expected_revision=None,
+    )
+    refs_before = [p for p in service.storage.placements()]
+    from cifereca.core import source_auto_consent_bridge as bridge
+    before_epoch = bridge.numilog_generation(service.storage, snapshot.scope)
+    calls = []
+    def revoke_while_delivering(source, offer):
+        calls.append(source)
+        assert service.storage.numilog_materialization_change_consent(
+            source_id=sid, activate=False,
+        )
+        if reopt_in:
+            revoked_epoch = bridge.numilog_generation(service.storage, snapshot.scope)
+            assert service.storage.numilog_materialization_change_consent(
+                source_id=sid, activate=True, expected_revision=revoked_epoch,
+            )
+        assert bridge.numilog_generation(service.storage, snapshot.scope) != before_epoch
+        path = root / "hugues" / "numilog" / "unpublished.epub"
+        path.write_bytes(epub_bytes(99))
+        return CompletedDelivery(
+            source, offer.delivery_offer_id, path,
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+            "synthetic-completed-but-revoked-receipt",
+        )
+    service._canonical_right_delivery = revoke_while_delivering
+    result = synchronize(service, account)
+    assert result["downloaded"] == 0
+    assert result["blocked"] == 1
+    assert len(calls) == 1
+    assert service.storage.placements() == refs_before
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM origin_links WHERE origin_kind='provider'"
+        ).fetchone()[0] == 3

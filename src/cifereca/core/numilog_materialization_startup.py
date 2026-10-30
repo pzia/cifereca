@@ -191,6 +191,27 @@ def _completed_local_purchase_verified(
         return False
 
 
+def _canonical_source_delivery_active(session: Any) -> bool:
+    """The single canonical Sync executor owns provider GET when ABI is complete.
+
+    A legacy auto materialization worker would otherwise race/duplicate that
+    same acquisition under a different receipt namespace. The independent
+    historical worker remains for older provider sessions without this ABI.
+    """
+    from inspect import getattr_static
+    try:
+        return all(
+            callable(getattr_static(session, name, None))
+            for name in (
+                "rights_observation_snapshot",
+                "rights_selected_delivery_offer_snapshot",
+                "rights_selected_delivery_candidate",
+            )
+        )
+    except (TypeError, AttributeError):
+        return False
+
+
 def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
     """Passive policy/connection check: no filesystem I/O or provider call."""
     try:
@@ -205,8 +226,9 @@ def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
         for account in accounts:
             try:
                 sid = broker._source_id(account)
-                if (mode(broker, sid) == "on_start"
-                        and _binding(broker, sid) is not None):
+                bound = _binding(broker, sid)
+                if (mode(broker, sid) == "on_start" and bound is not None
+                        and not _canonical_source_delivery_active(bound[1])):
                     ids.append(sid)
             except Exception:
                 # A corrupt sibling must not suppress other source-specific

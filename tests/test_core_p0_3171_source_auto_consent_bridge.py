@@ -1,0 +1,249 @@
+"""#3171: source/type auto-download grants the canonical A→B executor, not UI rights.
+
+Real SQLite, exact provider/credential/account scope, valid opt-in and
+re-evaluation at the SQLite publication boundary. No provider HTTP.
+"""
+from dataclasses import replace
+
+import pytest
+
+from cifereca.core import source_auto_consent_bridge as bridge
+from cifereca.core.canonical_sync_stage import persist_attested_source_references
+from cifereca.core.source_acquisition_consent import (
+    consent_current_in_transaction, read_source_acquisition_consent,
+    set_source_acquisition_consent, canonical_acquisition_choices,
+)
+from tests.test_core_p0_3171_canonical_sync_stage import rig
+
+
+@pytest.fixture
+def policy(rig, monkeypatch):
+    service, db, root = rig
+    # The real Numilog/BnF policies use the same bridge contract, but these
+    # fake-provider test rows isolate Core from any installed plugin.
+    monkeypatch.setitem(bridge._POLICIES, ("seller-a", "purchase"), (
+        "sync.test.provider.auto.", "1", None,
+    ))
+    persist_attested_source_references(db, service.snapshot)
+    key = "sync.test.provider.auto." + bridge._source_id(service.source.scope)
+    return service, db, key
+
+
+def test_auto_on_grants_all_current_positive_offers_without_per_right_click(policy):
+    service, db, key = policy
+    other = replace(service.snapshot.rights[0],
+                    edition_id="another-edition", right_id="another-right")
+    persist_attested_source_references(
+        db, replace(service.snapshot,
+                    rights=(service.snapshot.rights[0], other)),
+    )
+    second = replace(service.source,
+                     edition_id="another-edition", right_id="another-right")
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+    db.metadata_set(key, "1")
+    assert read_source_acquisition_consent(service, service.account) == frozenset({
+        service.source, second,
+    })
+    # Once a source-wide switch is configured, no one-by-one authorization UI.
+    assert canonical_acquisition_choices(service, service.account) == ()
+    with db._lock, db._connect() as conn:
+        assert consent_current_in_transaction(conn, service.source)
+        assert consent_current_in_transaction(conn, second)
+
+
+def test_auto_off_revokes_even_an_earlier_exact_grant(policy):
+    service, db, key = policy
+    set_source_acquisition_consent(
+        service, service.account, service.source, allowed=True,
+    )
+    assert read_source_acquisition_consent(service, service.account) == frozenset({
+        service.source,
+    })
+    db.metadata_set(key, "1")
+    assert read_source_acquisition_consent(service, service.account)
+    db.metadata_set(key, "0")
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+    with db._lock, db._connect() as conn:
+        assert not consent_current_in_transaction(conn, service.source)
+    assert canonical_acquisition_choices(service, service.account) == ()
+
+
+@pytest.mark.parametrize("tamper", ["disabled", "other_account", "inactive", "historical"])
+def test_source_grant_cannot_bypass_exact_account_binding_and_positive_A(policy, tamper):
+    service, db, key = policy
+    db.metadata_set(key, "1")
+    with db._lock, db._connect() as conn:
+        if tamper == "disabled":
+            conn.execute("UPDATE provider_connections SET enabled=0")
+        elif tamper == "other_account":
+            conn.execute("UPDATE provider_accounts SET account_id='another'")
+        elif tamper == "inactive":
+            conn.execute("UPDATE source_references SET state='inactive'")
+        else:
+            conn.execute("UPDATE source_references SET evidence_kind='historical_receipt'")
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+
+
+def test_unconfigured_provider_type_and_legacy_per_right_are_unchanged(policy):
+    service, db, _key = policy
+    assert bridge.configured_kind("seller-a", "loan") is False
+    set_source_acquisition_consent(
+        service, service.account, service.source, allowed=True,
+    )
+    assert read_source_acquisition_consent(service, service.account) == frozenset({
+        service.source,
+    })
+    assert len(canonical_acquisition_choices(service, service.account)) == 1
+
+
+def test_numilog_epoch_and_bnf_mode_cannot_leak_across_types(policy):
+    service, db, _key = policy
+    purchase = replace(
+        service.source,
+        scope=replace(service.source.scope, provider_id="numilog"),
+    )
+    loan = replace(
+        service.source, kind="loan",
+        scope=replace(service.source.scope, provider_id="bnf-pret"),
+    )
+    numilog_id = bridge._source_id(purchase.scope)
+    bnf_id = bridge._source_id(loan.scope)
+    db.metadata_set("sync.source.numilog.materialization.consent.v1." + numilog_id,
+                    "on_start:v1")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, purchase) == "off"  # epoch missing
+        assert bridge.toggle_state(conn, loan) is None
+    db.metadata_set("sync.source.numilog.materialization.epoch.v1." + numilog_id, "a" * 32)
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, purchase) == "on"
+        assert bridge.toggle_state(conn, loan) is None
+    db.metadata_set("sync.source.bnf_auto." + bnf_id, "1")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, loan) == "on"
+        assert bridge.toggle_state(conn, purchase) == "on"
+
+
+def test_unknown_right_with_authenticated_downloadable_file_publishes_without_entitlement(
+    policy, tmp_path,
+):
+    """No SQLite right record is required to publish a proven file OriginLink."""
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+    from cifereca.core.source_convergence import SourceKey
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service, db, switch = policy
+    row = replace(service.snapshot.rights[0],
+                  state="unknown", delivery="available",
+                  delivery_offer_id="scoped-synthetic-offer")
+    snapshot = replace(service.snapshot, rights=(row,))
+    # Canonical A may record this synchronizable resource, but never invent an
+    # owned entitlement merely because its provider permits downloading.
+    assert persist_attested_source_references(db, snapshot) in (0, 1)
+    db.metadata_set(switch, "1")
+    assert read_source_acquisition_consent(service, service.account) == frozenset({
+        service.source,
+    })
+    book = tmp_path / "EBooks" / "A" / "direct.pdf"
+    book.parent.mkdir(parents=True, exist_ok=True)
+    book.write_bytes(BYTES)
+    result = publish_completed_acquisition(
+        db, library_root=tmp_path / "EBooks", path=book,
+        source=service.source, snapshot=snapshot, final_sha256=SHA,
+        delivery_receipt_ref="authenticated-delivery-receipt",
+    )
+    assert result.artifact_id == "sha256:" + SHA
+    assert len(db.placements()) == 1
+    assert db.entitlements() == []
+    with db._lock, db._connect() as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM origin_links WHERE origin_kind='provider'"
+        ).fetchone()[0] == 1
+
+
+def test_kobo_exact_source_opt_in_not_legacy_global_backup_pref(policy):
+    service, db, _ = policy
+    from cifereca.core.source_convergence import SourceKey
+    kobo = replace(service.source, scope=replace(
+        service.source.scope, provider_id="kobo",
+    ))
+    sid = bridge._source_id(kobo.scope)
+    db.metadata_set("kobo_backup.enabled", "1")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, kobo) is None
+    db.metadata_set("sync.source.materialization.on_start." + sid, "1")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, kobo) == "on"
+    db.metadata_set("sync.source.materialization.on_start." + sid, "0")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, kobo) == "off"
+    assert bridge.configured_kind("kobo", "loan") is False
+
+
+@pytest.mark.parametrize("state", ["unknown", "inactive"])
+def test_optional_right_state_does_not_veto_canonical_download(
+    policy, state,
+):
+    from cifereca.core.convergence_execution import CompletedDelivery
+    from cifereca.core.sync_coordination import synchronize_account_source
+    from cifereca.services import LibraryService
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service, db, switch = policy
+    service.snapshot = replace(
+        service.snapshot, rights=(replace(
+            service.snapshot.rights[0], state=state,
+            delivery="available", delivery_offer_id="current-provider-offer",
+        ),),
+    )
+    db.metadata_set(switch, "1")
+    service._canonical_persisted_consent = (
+        lambda account: LibraryService._canonical_persisted_consent(service, account)
+    )
+    service._canonical_publication_consent_current = (
+        lambda conn, source: LibraryService._canonical_publication_consent_current(
+            service, conn, source,
+        )
+    )
+    calls = []
+    def delivery(key, offer):
+        calls.append(key)
+        path = service.root / "A" / "current.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(
+            key, offer.delivery_offer_id, path, SHA,
+            "exact-provider-delivery-receipt",
+        )
+    service._canonical_right_delivery = delivery
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert calls == [service.source]
+    assert db.entitlements() == []
+    assert len(db.placements()) == 1
+    again = synchronize_account_source(service, service.account)
+    assert again["canonical_execution"]["present_attested"] == 1
+    assert again["canonical_execution"]["downloaded"] == 0
+    assert calls == [service.source]
+
+
+
+def test_bnf_legacy_auto_prevents_parallel_canonical_dispatch(monkeypatch):
+    """Until BnF declared-local proofs migrate, auto-on has one owner."""
+    from types import SimpleNamespace
+    from cifereca.models import Account
+    from cifereca.core.sync_coordination import _run_observed_canonical_convergence
+    monkeypatch.setattr(
+        "cifereca.core.bnf_auto_materialization.enabled",
+        lambda service, account: True,
+    )
+    target = Account(
+        identity_id="default", provider_id="bnf-pret",
+        credential_id="synthetic", unique_id="borrower",
+    )
+    # Even if a modern adapter publishes typed A, a consented legacy
+    # BnF loan must not start a second canonical GET in the same Sync.
+    result = _run_observed_canonical_convergence(
+        SimpleNamespace(), target, [],
+        admitted_epoch=1, sync_lease=None, cancelled_for_rights=lambda: False,
+    )
+    assert result is None

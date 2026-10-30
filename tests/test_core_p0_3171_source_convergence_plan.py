@@ -505,3 +505,14 @@ def test_historical_inactive_claim_cannot_override_exact_attested_file():
     assert result.decisions[0].reason == "provider_right_unattested"
     assert not result.decisions[0].authorizes_negative_reconciliation
     assert not result.decisions[0].provider_satisfied
+
+
+@pytest.mark.parametrize("state", ["unknown", "inactive"])
+def test_authenticated_available_offer_takes_priority_over_optional_right_state(state):
+    snapshot, reference = source(state=state, evidence_kind="provider_response",
+                                 delivery="available")
+    decision = plan(snapshot, scans=(scan("A"),),
+                    consent=(reference,)).decisions[0]
+    assert decision.state == "missing_to_download"
+    assert not decision.authorizes_negative_reconciliation
+    assert plan(snapshot, scans=(scan("A"),)).decisions[0].state == "pending"

@@ -301,9 +301,13 @@ def plan_convergence(
             if not row.provider_attested:
                 decision("pending", "provider_right_unattested")
                 continue
-            if row.state != "active":
+            if row.state != "active" and row.delivery != "available":
+                # Unknown/inactive is descriptive metadata, not an independent
+                # file-delivery veto. A genuinely available provider offer
+                # takes precedence; legacy state without an offer stays
+                # diagnostic-only and cannot initiate GET.
                 decision("inactive" if row.state == "inactive" else "pending",
-                         "right_inactive" if row.state == "inactive" else "right_unconfirmed")
+                         "right_inactive" if row.state == "inactive" else "delivery_unconfirmed")
                 continue
             hashes = origins_by_source.get(key, set())
             matching = [

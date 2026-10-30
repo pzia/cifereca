@@ -277,6 +277,15 @@ def _run_observed_canonical_convergence(
     persisted exact SourceKey authorization and session/offers are checked by
     the original executor, under that same lock, before and after network I/O.
     """
+    if account.provider_id == "bnf-pret":
+        from .bnf_auto_materialization import enabled as bnf_legacy_auto_enabled
+        # The legacy BnF auto route still owns declared-local loan matching
+        # and receipts. Running its fulfilled ACSM again through A→B would
+        # duplicate ADEPT/placements. While that source's explicit auto
+        # switch is ON, let exactly one existing path own the acquisition.
+        # Other providers and BnF exact-right/manual scopes retain canonical.
+        if bnf_legacy_auto_enabled(self, account):
+            return None
     if (type(admitted_snapshots) is not list or len(admitted_snapshots) != 1
             or type(sync_lease) is not InterProcessLock
             or sync_lease._handle is None
@@ -309,6 +318,16 @@ def _run_observed_canonical_convergence(
             and callable(consent_reader)):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
+        from .source_auto_consent_bridge import (
+            numilog_generation, numilog_generation_in_transaction,
+        )
+        # Capture the source-wide consent epoch BEFORE the initial SQLite
+        # grant read. An ON→OFF→ON between reads must never become this run's
+        # permission, even if the latest boolean is ON again.
+        frozen_numilog_epoch = (
+            numilog_generation(self.storage, admitted_snapshots[0].scope)
+            if account.provider_id == "numilog" else None
+        )
 
         try:
             consent = consent_reader(account)
@@ -324,13 +343,41 @@ def _run_observed_canonical_convergence(
         ):
             consent = frozenset()
 
+        # Numilog's source-wide ON/OFF is a cross-process CAS with a new
+        # generation on *every* transition. A frozen consent boolean alone
+        # cannot detect ON→OFF→ON during one signed/one-use HTTP delivery.
+        # Pin the initial epoch before selected-offer I/O and require that
+        # identical epoch before/after GET and in the publication transaction.
+        def epoch_current(key: SourceKey) -> bool:
+            return (
+                frozen_numilog_epoch is None
+                or (key.scope == admitted_snapshots[0].scope
+                    and numilog_generation(self.storage, key.scope)
+                    == frozen_numilog_epoch)
+            )
+
         def current_consent(key: SourceKey) -> bool:
-            # Called by the Core executor both before GET and
-            # after GET, rejecting consent revoked in flight.
+            # Re-admission on every offer, GET and post-GET boundary.
+            if not epoch_current(key):
+                return False
             latest = consent_reader(account)
             return (type(latest) is frozenset
                     and key in latest
-                    and all(type(x) is SourceKey for x in latest))
+                    and all(type(x) is SourceKey for x in latest)
+                    and epoch_current(key))
+
+        existing_publication_guard = getattr(
+            self, "_canonical_publication_consent_current", None,
+        )
+
+        def publication_consent(db, key: SourceKey) -> bool:
+            # Execute in publisher's BEGIN IMMEDIATE, not a stale read.
+            if (frozen_numilog_epoch is not None and
+                    numilog_generation_in_transaction(db, key)
+                    != frozen_numilog_epoch):
+                return False
+            return (existing_publication_guard(db, key)
+                    if callable(existing_publication_guard) else True)
 
         # The optional selected-offer preflight is permitted
         # only under the already held lock, exact persisted
@@ -354,9 +401,7 @@ def _run_observed_canonical_convergence(
             persisted_consent=consent,
             consent_still_current=current_consent,
             deliver=delivery, cancelled=cancelled_for_rights,
-            publication_guard=getattr(
-                self, "_canonical_publication_consent_current", None,
-            ),
+            publication_guard=publication_consent,
         )
         counts = {
             status: sum(row.status == status for row in outcomes)
