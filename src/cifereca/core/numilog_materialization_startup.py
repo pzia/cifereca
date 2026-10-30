@@ -350,7 +350,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         or not _item_id(row.record_id, account.credential_id)
                         or count[row.record_id] != 1
                     )
-                )
                 for row in raw
             )):
                 trace.fail("manifest_invalid")
