@@ -149,7 +149,7 @@ def test_rebind_during_declaration_read_discards_preflight(rig, monkeypatch):
     assert not result.ok and result.facts['status'] == 'source_changed'
 
 
-def test_startup_with_unverified_declared_file_is_blocked_not_complete(rig):
+def test_unverified_declared_file_cannot_veto_consenting_download(rig):
     service, account, session, calls, item, book, _, _, broker = rig
     declare(rig)
     book.unlink()
@@ -157,10 +157,11 @@ def test_startup_with_unverified_declared_file_is_blocked_not_complete(rig):
     session.library = lambda: [item]
     session.download_direct = lambda *_a: pytest.fail('no duplicate download')
     result = execute(broker, account.identity_id, 'startup')
-    assert not result.ok and result.facts['status'] == 'blocked'
-    assert result.facts['blocked'] == 1
-    assert result.facts['attempted'] == result.changed == result.facts['downloaded'] == 0
-    assert result.facts['source_results'][0]['status'] == 'blocked'
+    assert not result.ok and result.facts['status'] == 'failed'
+    assert result.facts['blocked'] == 0
+    assert result.facts['failed'] == result.facts['attempted'] == 1
+    assert result.changed == result.facts['downloaded'] == 0
+    assert result.facts['source_results'][0]['status'] == 'failed'
     assert service.storage.acquisitions(provider_id='numilog') == []
     assert service.storage.placements() == []
     assert not book.exists() and calls == []
@@ -186,13 +187,15 @@ def test_declared_pair_does_not_starve_another_purchase(rig, monkeypatch, change
     result = execute(broker, account.identity_id, 'startup')
     assert result.ok is (not changed)
     assert result.facts['status'] == ('partial' if changed else 'complete')
-    assert result.facts['blocked'] == int(changed)
+    assert result.facts['blocked'] == 0
+    assert result.facts['failed'] == int(changed)
     assert result.facts['already_local_declared'] == int(not changed)
     assert result.facts['declared_needs_review'] == int(changed)
     durable = service.storage.numilog_materialization_run_status(broker._source_id(account))
     assert durable['already_local_declared'] == int(not changed)
     assert durable['declared_needs_review'] == int(changed)
-    assert result.changed == result.facts['attempted'] == 1
+    assert result.changed == 1
+    assert result.facts['attempted'] == (2 if changed else 1)
     assert result.facts['source_results'][0]['status'] == ('partial' if changed else 'complete')
     assert acquired == [missing.record_id] and indexed == [True]
     assert book.is_file() and calls == []
@@ -251,7 +254,11 @@ def test_declared_checks_share_one_source_time_budget(rig, monkeypatch):
     ticks = iter([100.0, 109.0])
     monkeypatch.setattr(startup, 'monotonic', lambda: next(ticks))
     result = execute(broker, account.identity_id, 'startup')
-    assert not result.ok and result.facts['status'] == 'blocked'
-    assert result.facts['already_local_declared'] == result.facts['blocked'] == 1
-    assert result.facts['attempted'] == 0 and checked == [item.record_id]
-    assert book.is_file() and another.is_file() and calls == []
+    assert not result.ok and result.facts['status'] == 'failed'
+    assert result.facts['already_local_declared'] == 1
+    assert result.facts['declared_needs_review'] == 1
+    assert result.facts['blocked'] == 0
+    assert result.facts['attempted'] == result.facts['failed'] == 1
+    assert checked == [item.record_id]
+    assert book.is_file() and another.is_file()
+    assert calls == ['FORBIDDEN DOWNLOAD']
