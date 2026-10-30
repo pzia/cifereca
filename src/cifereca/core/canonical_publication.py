@@ -109,6 +109,7 @@ def publish_completed_acquisition(
         source.edition_id, source.right_id, source.kind,
     )
     if (row is None or not row.provider_attested
+            or (row.state != "active" and row.delivery != "available")
             or snapshot.status not in ("success", "partial")):
         raise ValueError("canonical_active_provider_right_required")
     if (type(delivery_receipt_ref) is not str
