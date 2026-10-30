@@ -43,34 +43,64 @@ def validate_loan_token(payload: bytes) -> None:
 
 
 def save_private_loan_token(payload: bytes, target_dir: Path) -> Path:
-    """Never overwrite an ACSM, follow a final-component symlink or publish a partial file."""
+    """Stage a validated ACSM within a pinned directory, without overwrites.
+
+    The Core-selected caller can hold a private staging path across remote
+    GETs. No path redirection, including a final-component symlink swapped
+    between checks, may send this token to a foreign directory. The helper is
+    also used by legacy explicit (never implicit) delivery.
+    """
     validate_loan_token(payload)
     directory = Path(target_dir)
-    if directory.is_symlink():
-        raise ReaderHTTPError("download_storage_failed")
+    stagefd = None
     try:
+        if directory.is_symlink():
+            raise ReaderHTTPError("download_storage_failed")
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if directory.is_symlink() or not directory.is_dir():
             raise ReaderHTTPError("download_storage_failed")
-        file = directory / ("bnf-loan-" + uuid4().hex + ".acsm")
-        temporary = directory / ("." + uuid4().hex + ".part")
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(temporary, flags, 0o600)
-    except OSError:
-        raise ReaderHTTPError("download_storage_failed") from None
-    try:
-        with os.fdopen(fd, "wb") as output:
-            output.write(payload)
-            output.flush()
-            os.fsync(output.fileno())
-        # Atomic publication of a complete .acsm with no overwrite, including
-        # in the astronomically unlikely event of a filename collision.
-        os.link(temporary, file, follow_symlinks=False)
-        return file
+        stagefd = os.open(
+            directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+        identity = os.fstat(stagefd)
+
+        def same_stage():
+            try:
+                current = os.stat(directory, follow_symlinks=False)
+                return ((current.st_dev, current.st_ino)
+                        == (identity.st_dev, identity.st_ino))
+            except OSError:
+                return False
+
+        if not same_stage():
+            raise ReaderHTTPError("download_storage_failed")
+
+        name = "bnf-loan-" + uuid4().hex + ".acsm"
+        part_name = "." + uuid4().hex + ".part"
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+        fd = os.open(part_name, flags, 0o600, dir_fd=stagefd)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            if not same_stage():
+                raise ReaderHTTPError("download_storage_failed")
+            # Both names are relative to the original pinned directory.
+            # An attacker swapping the pathname cannot redirect the link.
+            os.link(part_name, name, src_dir_fd=stagefd,
+                    dst_dir_fd=stagefd, follow_symlinks=False)
+            if not same_stage():
+                os.unlink(name, dir_fd=stagefd)
+                raise ReaderHTTPError("download_storage_failed")
+            return directory / name
+        finally:
+            try:
+                os.unlink(part_name, dir_fd=stagefd)
+            except FileNotFoundError:
+                pass
     except OSError:
         raise ReaderHTTPError("download_storage_failed") from None
     finally:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if stagefd is not None:
+            os.close(stagefd)
