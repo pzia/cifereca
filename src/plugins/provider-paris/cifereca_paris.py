@@ -47,17 +47,20 @@ _TRACE_LOG = logging.getLogger("cifereca")
 def _pnb_direct_url_observed(raw: object) -> bool:
     """Conservative action hint, not an HTTP success or an active loan right."""
     if (type(raw) is not str or not raw or raw != raw.strip()
-            or any(c.isspace() or not c.isprintable() for c in raw)):
+            or any(c.isspace() or not c.isprintable() or c == chr(92) for c in raw)
+            or "%0a" in raw.casefold() or "%0d" in raw.casefold()):
         return False
     try:
         parsed = urlparse(raw)
         if parsed.scheme:
             return (parsed.scheme in ("http", "https") and bool(parsed.hostname)
+                    and bool(parsed.path) and not parsed.fragment
                     and parsed.username is None and parsed.password is None)
         # Reject scheme-relative foreign hosts and fragments. The download
         # transport resolves a normal relative route against its account host
         # and checks each URL/redirect before any actual content GET.
-        return not raw.startswith("//") and not parsed.netloc and not parsed.fragment
+        return (not raw.startswith("//") and not parsed.netloc
+                and bool(parsed.path) and not parsed.fragment)
     except ValueError:
         return False
 
