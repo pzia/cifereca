@@ -54,8 +54,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
 
     def add(row: dict[str, Any], loan_id: str, *, source: str) -> None:
         nonlocal rows_without_loan_id
-        loan_key = str(loan_id or "").strip()
-        if not loan_key:
+        loan_key = loan_id.strip() if type(loan_id) is str else ""
+        if not loan_key or "\x00" in loan_key:
             rows_without_loan_id += 1
             return
         credential = str(row.get("credential_id") or "")
@@ -93,6 +93,11 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             # ambiguous even if another receipt for the same scope completed.
             if status != "complete":
                 return
+            # Non-Adobe deliveries cannot attest an Adobe fulfillment.
+            # Absent executor/strategy fields are legacy recorded evidence only.
+            if (row.get("executor") not in (None, "", "kobo-adept")
+                    or row.get("strategy") not in (None, "", "loan_auto")):
+                return
             metadata = row.get("metadata")
             metadata = metadata if isinstance(metadata, dict) else {}
             ade = metadata.get("adept_binding")
@@ -121,8 +126,11 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                     )
 
     for row in storage.entitlements(provider_id="paris", state="active"):
-        add(row, row.get("loan_id"), source="entitlement")
+        if str(row.get("provider_id") or "paris").casefold() == "paris":
+            add(row, row.get("loan_id"), source="entitlement")
     for row in storage.acquisitions(provider_id="paris"):
+        if str(row.get("provider_id") or "paris").casefold() != "paris":
+            continue
         metadata = row.get("metadata")
         metadata = metadata if isinstance(metadata, dict) else {}
         loan_id = metadata.get("provider_loan_id")
