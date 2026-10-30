@@ -14,21 +14,9 @@ from tests.test_p1_3252_rights_observation_snapshot import (
 )
 
 
-class Poison:
-    def __iter__(self):
-        pytest.fail("typed inventory read mutable v1 errors")
-
-    def __bool__(self):
-        pytest.fail("typed inventory inferred completeness from v1 errors")
-
-    def __len__(self):
-        pytest.fail("typed inventory read mutable v1 errors")
-
-
-def test_typed_ignores_poisoned_legacy_facade_and_preserves_error_object():
+def test_typed_never_calls_v1_reader_or_recreates_mutable_error_facade():
     session, a, _ = fixture()
-    poison = Poison()
-    session.last_loan_errors = poison
+    assert "last_loan_errors" not in vars(session)
     session.loans = lambda *_: pytest.fail("typed inventory called v1 loans")
     try:
         report = read_loan_inventory(session, replace(a))
@@ -41,7 +29,7 @@ def test_typed_ignores_poisoned_legacy_facade_and_preserves_error_object():
             ("syracuse", "physical", "unknown"),
         ]
         assert [x.source_account_id for x in report.loans] == ["reader-A"]
-        assert session.last_loan_errors is poison
+        assert "last_loan_errors" not in vars(session)
         assert session.client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
         ]
