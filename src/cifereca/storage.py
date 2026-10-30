@@ -3782,7 +3782,19 @@ class Storage:
                 return refused("receipt_root_invalid")
             path = Path(expected_path)
             parent = path.parent
-            if (not path.is_absolute() or str(parent.parent) != source_root
+            recovering = acquisition_id == self._stable_id(
+                "numilog-materialization-recovery", identity, credential, account, item_id,
+            )
+            recovery_root = Path(source_root) / ("recovery-" + hashlib.sha256(
+                item_id.encode("utf-8"),
+            ).hexdigest()[:32])
+            # The provider may stage a consented recovery under the same
+            # identity's isolated recovery directory if the default basename
+            # was already occupied. No arbitrary nested path is accepted.
+            approved_parent = str(parent.parent) == source_root or (
+                recovering and parent.parent == recovery_root
+            )
+            if (not path.is_absolute() or not approved_parent
                     or re.fullmatch(r"acsm-([0-9a-f]{64})", parent.name) is None):
                 return refused("path_not_canonical")
             acsm_sha = parent.name[5:]
@@ -3839,11 +3851,19 @@ class Storage:
             # placement and its exact catalogue row, never the shared artifact
             # ownership or another profile's provenance. Still reject another
             # sourced placement of the same owner, or an unresolvable owner.
+            # A fresh, same-owner, exact purchase delivery justifies an
+            # independent OriginLink even if another source has these bytes.
+            # Preserve both Placements; an unknown owner remains a refusal.
+            ambiguous_owners = (
+                "NOT EXISTS (SELECT 1 FROM identities AS i WHERE i.identity_id=p.identity_id)"
+                if recovering else
+                "(p.identity_id=? OR NOT EXISTS (SELECT 1 FROM identities AS i "
+                "WHERE i.identity_id=p.identity_id))"
+            )
             other = db.execute(
                 "SELECT 1 FROM placements AS p WHERE p.artifact_id=? AND p.path<>? "
-                "AND p.source_item_id IS NOT NULL AND (p.identity_id=? OR "
-                "NOT EXISTS (SELECT 1 FROM identities AS i "
-                "WHERE i.identity_id=p.identity_id)) LIMIT 1",
+                "AND p.source_item_id IS NOT NULL AND " + ambiguous_owners + " LIMIT 1",
+                (artifact_id, expected_path) if recovering else
                 (artifact_id, expected_path, identity),
             ).fetchone()
             if other is not None:
