@@ -19,8 +19,10 @@ Disponible dans `cifereca.plugin_api` :
 `provider_response` et `historical_receipt` requièrent une référence
 d'observation et une date avec fuseau. Un statut `active` porté par
 `legacy_unverified` **n'est pas attesté**. `delivery="available"` exige
-un identifiant d'offre observée ET un droit actif non legacy. Une offre n'est
-pas une livraison, une sauvegarde locale, un SHA vérifié ni une acquisition.
+un identifiant d'offre exacte ET une preuve `provider_response` récente.
+L'état du droit (`active`, `inactive` ou `unknown`) reste facultatif et
+ne peut **pas** annuler seul une capacité de livraison positive. Une offre
+n'est pas une livraison, une sauvegarde locale, un SHA vérifié ni une acquisition.
 Une fiche catalogue/ISBN/titre ne remplit aucun de ces champs par inférence.
 
 Les doublons `(edition_id, right_id, kind)` sont rejetés; plusieurs droits
@@ -33,16 +35,22 @@ branche**; il ne peut pas effacer un droit manquant.
 `authorizes_mutation=False` et
 `authorizes_negative_reconciliation=False` sont invariants, même avec
 `provider_response` et `coverage=complete`. Construire ou afficher l'enveloppe ne déclenche aucun réseau ; **l'appel explicite à l'adaptateur réel peut effectuer une lecture distante authentifiée**, sans téléchargement d'ouvrage ni effet métier. Le consommateur Core doit indépendamment
-vérifier session courante, scope, epoch, preuve de fichier, permission,
-consentement et transaction. Ne pas publier de jeton/cookie ou URL signée
+vérifier session courante, scope, epoch, preuve de fichier, capacité
+réellement offerte, consentement de synchronisation et transaction. Une
+observation de droit n'est jamais une autorisation autonome de GET. Ne pas publier de jeton/cookie ou URL signée
 comme `evidence_ref` ; utiliser une référence opaque locale à l'observation.
 
 ## État des adaptateurs et critères de réception encore ouverts
 
 - **Numilog** : inventaire `MesLivres` positif et partiel (#3505). Scan ordinaire `delivery=unknown` ; préqualification ciblée d'une véritable action signée #3586 et liaison de l'offre à l'identité Core avant GET #3587, fusionnées. Sans callback Core et consentement persisté, aucune acquisition automatique.
 - **BnF-Prêt** : preuve du prêt actif (#3524) ; une action de livraison `reader-acs4` authentifiée peut attester une offre opaque liée au prêt exact (#3585, fusionnée). Le jeton ACSM ne prouve **pas** les octets EPUB/PDF finaux après ADEPT.
-- **Kobo** : manifest personnel positif (#3508) ; préqualification **explicitement sélectionnée** par un POST Vault `descriptor` puis candidat HTTPS GET strict et revalidation du descripteur privé (#3592, fusionnée). Aucune inférence depuis `downloadable` ou un simple drapeau d'archive. Le POST de préflight n'est permis qu'après admission et consentement Core.
-- **Paris** : `ListLoans(DILICOM)` donne des identifiants exacts, mais `state=unknown` et `delivery=unknown` restent les seules observations canoniques garanties (#3525). La garde du second GET après mutation de propriétaire Core est fusionnée (#3593) ; toute vérification ciblée de livraison PNB reste distincte de l'attestation d'un état actif et du consentement.
+- **Kobo** : manifeste personnel positif (#3508), pouvant exposer une
+ressource du compte avec `state=unknown` quand `owned` est absent ; préqualification **explicitement sélectionnée** par un POST Vault `descriptor` puis candidat HTTPS GET strict et revalidation du descripteur privé (#3592, fusionnée). Aucune inférence depuis `downloadable` ou un simple drapeau d'archive. Le POST de préflight n'est permis qu'après admission et consentement Core.
+- **Paris** : `ListLoans(DILICOM)` donne des identifiants exacts, mais
+`state=unknown` et `delivery=unknown` restent les seules observations
+canoniques garanties (#3525). Il manque une qualification de capacité de
+livraison PNB exacte indépendante de l'état actif du droit (sans POST
+d'emprunt implicite). La garde du second GET après mutation de propriétaire Core est fusionnée (#3593) ; toute vérification ciblée de livraison PNB reste distincte de l'attestation d'un état actif et du consentement.
 - **Core #3171** : les fondations de publication transactionnelle et d'exécution sous verrou sont fusionnées, **pas le routage fournisseur de production**. `src/cifereca/core/sync_coordination.py` n'appelle l'exécuteur que si les deux hooks Core `_canonical_right_delivery` et `_canonical_persisted_consent` existent et sont utilisables. Les tests synthétiques qui leur injectent des fonctions ne prouvent pas leur enregistrement dans une application installée.
 
 **Critères de fermeture #3252 :** une observation A authentifiée sous `AccountRef v2` exact, une offre exécutable `delivery=available` spécifique à la même `SourceKey`, une autorisation/consentement **durablement persisté**, la livraison des octets finaux (ACSM + traitement DRM s'il le faut), un reçu indépendant de A, le SHA final vérifié, puis `Artifact/Placement/OriginLink` publié atomiquement par le Core. La deuxième Sync doit constater un OriginLink et un Placement **rehashés** sans second GET ; disparition dans un inventaire partiel, résultat de catalogue, titre, ISBN ou fichier manuel ne suffisent jamais à créer/supprimer un droit. Vérifier refus avant GET si propriétaire A→B/A→A, consentement retiré ou lien signé périmé, et reprise après crash sans faux B.
