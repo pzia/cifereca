@@ -1,6 +1,10 @@
 """Maintenance progress and task type labels must remain closed and private-safe."""
 from __future__ import annotations
 
+from pathlib import Path
+
+from cifereca.gui.maintenance_line_progress import MaintenanceLineProgress
+
 def test_reconciliation_label_is_closed_allowlist_value():
     pending, rendered = [], []
     line = MaintenanceLineProgress(
