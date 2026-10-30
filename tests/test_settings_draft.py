@@ -101,7 +101,10 @@ def test_unavailable_public_and_unknown_accounts_are_preserved(editor):
                    for p in ('broken', 'public', 'paris')}
     replacement = account('paris')
     replacement['original_options'] = {'kept': 'option'}
-    replacement['base_url'] = ' '
+    replacement['option_fields'] = {'base_url': ' '}
+    descriptors['paris'].account_options = (
+        AccountOptionField('base_url', 'URL du portail', default='https://bibliotheques.paris.fr'),
+    )
     values['accounts'] = [replacement]
     draft = validate(editor, descriptors=descriptors, public_ids={'public'})
     accounts = draft.data['providers']['accounts']
@@ -115,12 +118,14 @@ def test_unavailable_public_and_unknown_accounts_are_preserved(editor):
 def test_two_kobo_accounts_cannot_share_one_identity(editor):
     values = editor[1]
     values['accounts'] = [account('kobo', account_id='one'), account('kobo', account_id='two')]
-    with pytest.raises(SettingsValidationError, match='qu.un compte Kobo Vault'):
-        validate(editor, descriptors={'kobo': descriptor('kobo')})
+    kobo = descriptor('kobo')
+    kobo.max_accounts_per_identity = 1
+    with pytest.raises(SettingsValidationError, match='au plus 1 compte'):
+        validate(editor, descriptors={'kobo': kobo})
     values['identities'].append(dict(id='bob', label='Bob', directory='bob',
         adept_profile='', languages='fr', prefer_vo=False))
     values['accounts'][1]['identity'] = 'bob'
-    assert len(validate(editor, descriptors={'kobo': descriptor('kobo')}).data['providers']['accounts']) == 2
+    assert len(validate(editor, descriptors={'kobo': kobo}).data['providers']['accounts']) == 2
 
 
 def test_commands_remain_argument_lists_and_kobo_defaults_are_unchanged(editor):
