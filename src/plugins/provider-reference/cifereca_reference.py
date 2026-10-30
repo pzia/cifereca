@@ -206,6 +206,54 @@ class ReferenceSession(ProviderSession):
                 resume_cursor=f"offset:{end}" if end < len(self._resources) else "",
             )
 
+    def downloadable_resource_snapshot(self, account: Account, *, resume_cursor: str = ""):
+        """Versioned ABI v2: resource capacity is separate from optional rights.
+
+        No new inventory read or owner decision; the same positive-only scoped
+        v1 facts are converted by the PUBLIC Core-owned compatibility adapter.
+        """
+        from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
+
+        return from_legacy_rights_snapshot(
+            self.rights_observation_snapshot(account, resume_cursor=resume_cursor)
+        )
+
+    def downloadable_selected_offer_snapshot(
+        self, account: Account, *, edition_id, resource_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        """Selected, exact positive/negative/unknown v2 capacity observation."""
+        from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
+
+        return from_legacy_rights_snapshot(
+            self.rights_selected_delivery_offer_snapshot(
+                account, edition_id=edition_id, right_id=resource_id,
+                kind=kind, branch=branch,
+                explicit_user_action=explicit_user_action,
+            )
+        )
+
+    def downloadable_selected_delivery_candidate(
+        self, account: Account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+    ):
+        """Return typed v2 staged bytes, never a Core publication receipt."""
+        from cifereca.plugin_api.downloadable_resources import (
+            SourceReference, DeliveryCandidate,
+        )
+
+        path, hint = self.rights_selected_delivery_candidate(
+            account, edition_id=edition_id, right_id=resource_id,
+            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+        return DeliveryCandidate(
+            source=SourceReference(
+                self._scope(account), branch, edition_id, resource_id, kind,
+            ),
+            selected_offer_id=selected_offer_id, path=path, provider_hint=hint,
+        )
+
     def rights_selected_delivery_offer_snapshot(
         self, account: Account, *, edition_id, right_id, kind, branch,
         explicit_user_action=False,
