@@ -44,24 +44,35 @@ from cifereca.plugin_api import (
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
-def _pnb_direct_url_observed(raw: object) -> bool:
-    """Conservative action hint, not an HTTP success or an active loan right."""
+def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
+    """Only an actionable link at a supplier host; no remote GET or right test.
+
+    Reuse the SAME host/TLS policy as the actual Paris content GET; merely
+    parsing HTTPS is not enough to attest a provider-executable file route.
+    """
     if (type(raw) is not str or not raw or raw != raw.strip()
             or any(c.isspace() or not c.isprintable() or c == chr(92) for c in raw)
             or "%0a" in raw.casefold() or "%0d" in raw.casefold()):
         return False
     try:
         parsed = urlparse(raw)
-        if parsed.scheme:
-            return (parsed.scheme in ("http", "https") and bool(parsed.hostname)
-                    and bool(parsed.path) and not parsed.fragment
-                    and parsed.username is None and parsed.password is None)
-        # Reject scheme-relative foreign hosts and fragments. The download
-        # transport resolves a normal relative route against its account host
-        # and checks each URL/redirect before any actual content GET.
-        return (not raw.startswith("//") and not parsed.netloc
-                and bool(parsed.path) and not parsed.fragment)
-    except ValueError:
+        if parsed.scheme and parsed.scheme != "https":
+            return False
+        if ((not parsed.scheme and (raw.startswith("//") or parsed.netloc))
+                or not parsed.path or parsed.fragment or parsed.username
+                or parsed.password):
+            return False
+        base_url = client.base_url
+        validator = client._validate_pnb_redirect_url
+        if type(base_url) is not str or not callable(validator):
+            return False
+        # A relative action is anchored to the currently configured Paris
+        # account endpoint. The validator rejects foreign hosts, non-TLS,
+        # arbitrary ports and embedded credentials without performing I/O.
+        validator(urljoin(base_url.rstrip("/") + "/", raw))
+        return True
+    except (AttributeError, TypeError, ValueError, Exception):
+        # Supplier parsing/rejection is uncertainty, never a negative right.
         return False
 
 
@@ -848,7 +859,7 @@ class ParisProviderSession(ProviderSession):
                 # without attesting a valid/active entitlement. No PNB GET
                 # happens while observing the inventory. Actual download
                 # requires a fresh exact-card recheck and the Core consent.
-                has_pnb = _pnb_direct_url_observed(loan.ebook_url)
+                has_pnb = _pnb_direct_url_observed(loan.ebook_url, client=self.client)
                 rights_by_id[right_key] = ProviderRightObservation(
                     edition_id=edition_text, right_id=right_key,
                     kind="loan", state="unknown",
