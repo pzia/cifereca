@@ -31,10 +31,20 @@ def build_provider_account_editor(
             entry = Adw.EntryRow(); entry.set_title(field.label); entry.set_text(str(credentials.get(field.key) or ""))
         group.add(entry); fields[field.key] = entry
     options = dict(data.get("options") or {})
+    option_fields: dict[str, Any] = {}
+    for field in getattr(descriptor, "account_options", ()):
+        entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
+        entry.set_title(field.label)
+        entry.set_text(str(options.get(field.key) or field.default))
+        group.add(entry)
+        option_fields[field.key] = entry
+    # Compatibility path until the existing providers publish their descriptors.
     base_url_row = None
     opds_url_row = None
     vault_url_row = None
-    if provider_id == "paris":
+    if option_fields:
+        pass
+    elif provider_id == "paris":
         base_url_row = Adw.EntryRow(); base_url_row.set_title("URL du portail")
         base_url_row.set_text(str(options.get("base_url") or (config.paris_base_url() if hasattr(config, "paris_base_url") else config.get("base_url")) or "https://bibliotheques.paris.fr")); group.add(base_url_row)
     elif provider_id == "gallica":
@@ -54,6 +64,7 @@ def build_provider_account_editor(
     editor = {
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields, "base_url": base_url_row, "opds_url": opds_url_row, "vault_url": vault_url_row,
+        "option_fields": option_fields,
         "original_options": options, "deleted": False,
     }
     return editor, delete_button
