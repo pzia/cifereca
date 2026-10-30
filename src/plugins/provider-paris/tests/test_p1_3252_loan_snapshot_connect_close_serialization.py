@@ -70,8 +70,8 @@ def test_connect_or_close_cannot_interleave_legacy_read_and_typed_snapshot(chang
     )
     old = session._read_loans_for_account
 
-    def pause_after_legacy_read(bound_account, *, publish_legacy_errors=True):
-        rows = old(bound_account, publish_legacy_errors=publish_legacy_errors)
+    def pause_after_legacy_read(bound_account):
+        rows = old(bound_account)
         got_loans.set()
         if not release_read.wait(10):
             raise AssertionError("Synthetic Paris read blocked unexpectedly")

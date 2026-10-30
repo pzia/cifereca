@@ -68,8 +68,8 @@ def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
     )
     private_read = session._read_loans_for_account
 
-    def frozen_loans(account, *, publish_legacy_errors=True):
-        rows = private_read(account, publish_legacy_errors=publish_legacy_errors)
+    def frozen_loans(account):
+        rows = private_read(account)
         if account.unique_id == a.unique_id:
             read_a_complete.set()
             if not unblock_a.wait(10):
@@ -110,7 +110,7 @@ def test_snapshot_and_legacy_read_do_not_interleave_branch_failures():
         assert snap_a.loans[0].identity_id == "identity-A"
         assert len(rows_b) == 2
         assert all(row.source_account_id == "reader-B" for row in rows_b)
-        assert session.last_loan_errors == []
+        assert "last_loan_errors" not in vars(session)
         assert session.client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
             ("DILICOM", "reader-B"), ("SYRACUSE", "reader-B"),
@@ -140,7 +140,7 @@ def test_typed_branch_failure_survives_legacy_side_channel_cleared():
     try:
         snapshot = session.loan_inventory_snapshot(a)
         # The typed reader must neither depend on nor overwrite this
-        # compatibility-only v1 channel.
+        # untrusted injected attribute.
         assert session.last_loan_errors == [
             {"upstream": "SYRACUSE", "code": "stale"},
         ]
@@ -180,7 +180,7 @@ def test_typed_success_ignores_stale_legacy_failure_from_another_read():
 def test_typed_reader_without_scoped_branch_evidence_fails_closed():
     session, a, _ = fixture()
     session._read_loans_for_account = (
-        lambda _account, *, publish_legacy_errors=True: []
+        lambda _account: []
     )  # A broken *typed* backend cannot fabricate branch coverage.
     try:
         with pytest.raises(ProviderConfigurationError, match="loan_inventory_evidence_missing"):

@@ -235,7 +235,6 @@ class ParisProviderSession(ProviderSession):
         self._loan_branch_failures: ContextVar[frozenset[str] | None] = ContextVar(
             "paris_loan_branch_failures", default=None,
         )
-        self.last_loan_errors: list[dict[str, str]] = []
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
@@ -512,14 +511,11 @@ class ParisProviderSession(ProviderSession):
         with self._loan_inventory_lock:
             return self._read_loans_for_account(account)
 
-    def _read_loans_for_account(
-        self, account: Account, *, publish_legacy_errors: bool = True,
-    ) -> list[Loan]:
-        """Read both scoped branches once; typed snapshots never publish v1 errors.
+    def _read_loans_for_account(self, account: Account) -> list[Loan]:
+        """Read the two scoped branches with private, per-read evidence.
 
-        The ContextVar keeps evidence local to THIS read under the session
-        lock. Only an explicit legacy loans() caller updates its compatibility
-        side channel, which has no entitlement/absence authority.
+        Both loans() and the typed snapshot reuse the same GETs; only the
+        typed snapshot may attest branch coverage. No mutable v1 error facade.
         """
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
@@ -636,11 +632,9 @@ class ParisProviderSession(ProviderSession):
             # provider branch failure that permits another private GET.
             if not scope_current():
                 raise ProviderConfigurationError("account_scope_mismatch")
-        # Do not let a later mutation of the legacy error facade change the
-        # branch coverage of this particular typed read.
+        # Closed, per-read branch evidence; never publish a mutable error
+        # side channel or use a v1 empty list as negative-rights evidence.
         self._loan_branch_failures.set(frozenset(error["upstream"] for error in errors))
-        if publish_legacy_errors:
-            self.last_loan_errors = errors
         if errors and not rows and len(errors) == 2:
             raise ProviderConfigurationError(
                 "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
@@ -703,14 +697,11 @@ class ParisProviderSession(ProviderSession):
 
         if not still_bound():
             raise ProviderConfigurationError("account_scope_mismatch")
-        # The typed reader does not call loans() or write last_loan_errors.
-        # Its per-read ContextVar evidence cannot be replaced by the v1
-        # facade of a different borrower.
+        # The typed reader does not call loans(). Its scoped ContextVar
+        # cannot be replaced by a different borrower's read.
         token = self._loan_branch_failures.set(None)
         try:
-            rows = self._read_loans_for_account(
-                account, publish_legacy_errors=False,
-            )
+            rows = self._read_loans_for_account(account)
             failed = self._loan_branch_failures.get()
         finally:
             self._loan_branch_failures.reset(token)
