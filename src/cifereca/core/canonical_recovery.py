@@ -216,6 +216,11 @@ def recover_completed_delivery(
         ) != 1:
             return None
         try:
+            # A damaged operation journal cannot permanently trap the source
+            # in a broken recovery loop. A valid receipt record is bounded by
+            # the source coordinates, offer, pathname and two receipt refs.
+            if type(row[6]) is not str or len(row[6]) > 65536:
+                return None
             raw = json.loads(row[6])
             if (type(raw) is not dict or raw.get("schema") != _SCHEMA
                     or raw.get("source") != _scope(source)
@@ -223,8 +228,11 @@ def recover_completed_delivery(
                     or type(raw.get("path")) is not str
                     or type(raw.get("sha256")) is not str
                     or type(raw.get("receipt")) is not str
-                    or not raw["receipt"]
-                    or type(raw.get("adept_receipt")) is not str):
+                    or not raw["receipt"] or len(raw["receipt"]) > 1024
+                    or any(ch in raw["receipt"] for ch in "\x00\r\n")
+                    or type(raw.get("adept_receipt")) is not str
+                    or len(raw["adept_receipt"]) > 1024
+                    or any(ch in raw["adept_receipt"] for ch in "\x00\r\n")):
                 return None
             completed = CompletedDelivery(
                 source=source, delivery_offer_id=offer_id,
@@ -232,7 +240,7 @@ def recover_completed_delivery(
                 receipt_ref=raw["receipt"],
                 adept_receipt_ref=raw["adept_receipt"],
             )
-        except (ValueError, TypeError, KeyError, OSError):
+        except (ValueError, TypeError, KeyError, OSError, RecursionError):
             return None
     try:
         _path_verified(
