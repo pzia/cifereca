@@ -37,7 +37,8 @@ def _token(value: object, *, empty: bool = False) -> bool:
 
 
 def _timestamp(value: object) -> bool:
-    if not _token(value) or len(value) < 20:
+    # Keep v2 ISO witnesses within the v1 Core adapter's bounded timestamp.
+    if not _token(value) or not 20 <= len(value) <= 40:
         return False
     try:
         date = datetime.fromisoformat(value.replace("Z", "+00:00"))
