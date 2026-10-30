@@ -572,9 +572,19 @@ def test_short_pin_never_reaches_any_zip_member_even_with_approved_book_id():
             review.decide(candidate.key, "keep" if candidate.value == "214"
                           else "anonymize")
         plan = prepare_reviewed_zip(review)
+        # The preview contains SHA-256 digests: a random digest can contain
+        # four digits matching a fictional PIN without exporting that PIN.
+        # Exclude only *complete* 64-hex checksums from the substring scan;
+        # every other ZIP member, name and value remains under inspection.
+        import re
         serialized = json.dumps(plan.preview(), sort_keys=True)
+        exported_without_hashes = re.sub(
+            r"(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])",
+            "[SHA256]", serialized,
+        )
         for secret in ("0007", "1234", "4321", "5678", "6543"):
-            assert secret not in serialized
+            assert secret not in exported_without_hashes
+        assert "pinCode" not in exported_without_hashes
         body = next(item["text"] for item in plan.preview()["members"]
                     if item["name"] == "bodies/0001-request.txt")
         shaped = json.loads(body)
