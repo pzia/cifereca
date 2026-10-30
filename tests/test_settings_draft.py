@@ -241,3 +241,16 @@ def test_descriptor_required_option_refuses_blank_without_dropping_existing_conf
     values['accounts'][0]['option_fields']['endpoint'] = ' https://source.example '
     result = validate(editor, descriptors={'synthetic': spec})
     assert result.data['providers']['accounts'][0]['options']['endpoint'] == 'https://source.example'
+
+
+def test_retired_global_unlinked_bypass_is_preserved_not_rewritten(editor):
+    """#3196: save a current settings draft without consuming legacy override."""
+    config, values = editor
+    config.set("kobo_backup.allow_unlinked_acquisition", True)
+    values.pop("allow_unlinked_acquisition")
+    original = deepcopy(config.data)
+    draft = validate(editor)
+    assert draft.data["kobo_backup"]["allow_unlinked_acquisition"] is True
+    assert config.data == original
+    config.set("kobo_backup.allow_unlinked_acquisition", False)
+    assert validate(editor).data["kobo_backup"]["allow_unlinked_acquisition"] is False

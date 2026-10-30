@@ -42,7 +42,7 @@ def _case(configured=True):
     controls = NS(**{
         key: Control(active=(configured is True) if key == "backup_switch" else False)
         for key in (
-            "backup_switch", "unlinked_switch", "backup_dir_row",
+            "backup_switch", "backup_dir_row",
             "backup_interval_row", "vault_profile_drop",
             "run_backup_now", "backup_status",
         )

@@ -6,7 +6,6 @@ from .settings_sync_section import kobo_backup_action_state
 
 def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_settings):
     backup_switch = kobo_settings.backup_switch
-    unlinked_switch = kobo_settings.unlinked_switch
     backup_dir_row = kobo_settings.backup_dir_row
     backup_interval_row = kobo_settings.backup_interval_row
     vault_profile_drop = kobo_settings.vault_profile_drop
@@ -43,7 +42,6 @@ def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_sett
     # unsaved switch is already active. No provider access from callbacks.
     for widget, signal in (
         (backup_switch, "notify::active"),
-        (unlinked_switch, "notify::active"),
         (backup_dir_row, "notify::text"),
         (backup_interval_row, "notify::text"),
         (vault_profile_drop, "notify::selected"),

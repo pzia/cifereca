@@ -39,7 +39,6 @@ class KoboSyncSettings:
     backup_switch: Any
     backup_status: Any
     run_backup_now: Any
-    unlinked_switch: Any
     library_dir_row: Any
     backup_dir_row: Any
     backup_interval_row: Any
@@ -85,22 +84,6 @@ def build_kobo_sync_section(
     run_backup_now.set_valign(Gtk.Align.CENTER)
     manual_row.add_suffix(run_backup_now)
     backup_group.add(manual_row)
-    unlinked_row = Adw.ActionRow(); unlinked_row.set_title(
-        "Ancienne dérogation Kobo (compatibilité)"
-    )
-    unlinked_row.set_subtitle(
-        "Ancien réglage en lecture seule : il ne contourne ni la vérification "
-        "des droits ni l’anti-doublons. Tout fichier local candidat ambigu exige "
-        "un rapprochement sûr avant une nouvelle acquisition."
-    )
-    unlinked_switch = Gtk.Switch()
-    unlinked_switch.set_active(config.get("kobo_backup.allow_unlinked_acquisition", False) is True)
-    # The old permissive bypass is inert under the P0 anti-duplicate policy.
-    # Never suggest that toggling it can override a blocked reconciliation.
-    unlinked_switch.set_sensitive(False)
-    unlinked_switch.set_valign(Gtk.Align.CENTER)
-    unlinked_row.add_suffix(unlinked_switch)
-    backup_group.add(unlinked_row)
     library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
     library_dir_row.set_text(str(config.get("library.directory", "~/EBooks") or "~/EBooks")); download_group.add(library_dir_row)
     backup_dir_row = Adw.EntryRow(); backup_dir_row.set_title("Sous-répertoire/override Kobo (vide = bibliothèque locale)")
@@ -118,7 +101,7 @@ def build_kobo_sync_section(
     vault_profile_drop.set_valign(Gtk.Align.CENTER); vault_display_row.add_suffix(vault_profile_drop); backup_group.add(vault_display_row)
     return KoboSyncSettings(
         backup_switch=backup_switch, backup_status=backup_status,
-        run_backup_now=run_backup_now, unlinked_switch=unlinked_switch,
+        run_backup_now=run_backup_now,
         library_dir_row=library_dir_row, backup_dir_row=backup_dir_row,
         backup_interval_row=backup_interval_row, vault_profiles=vault_profiles,
         vault_profile_drop=vault_profile_drop,

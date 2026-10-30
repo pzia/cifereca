@@ -21,7 +21,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
     level_drop = application_ui.level_dropdown
     levels = application_ui.levels
     backup_switch = kobo_settings.backup_switch
-    unlinked_switch = kobo_settings.unlinked_switch
     library_dir_row = kobo_settings.library_dir_row
     backup_dir_row = kobo_settings.backup_dir_row
     backup_interval_row = kobo_settings.backup_interval_row
@@ -76,7 +75,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
         values["post_download_command"] = global_post_row.get_text()
         values["diagnostics_level_index"] = level_drop.get_selected()
         values["library_directory"] = library_dir_row.get_text()
-        values["allow_unlinked_acquisition"] = unlinked_switch.get_active()
         values["vault_profile_index"] = vault_profile_drop.get_selected()
         return values
 

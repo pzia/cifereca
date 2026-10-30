@@ -171,7 +171,8 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         raise SettingsValidationError(f'Configuration Kobo invalide : {exc}')
     draft.set('library.directory', values['library_directory'].strip() or '~/EBooks')
     draft.set('kobo_backup.enabled', values['backup_enabled'])
-    draft.set('kobo_backup.allow_unlinked_acquisition', values['allow_unlinked_acquisition'])
+    # The retired global bypass is not a user setting. Keep any historical
+    # value untouched in the cloned config for rollback and migration.
     draft.set('kobo_backup.directory', values['backup_directory'].strip())
     draft.set('kobo_backup.interval_minutes', backup_interval)
     selected_profile = int(values['vault_profile_index'])
