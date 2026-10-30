@@ -214,9 +214,13 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             row for row in exposures_for_loan if "acquisition" in row["sources"]
         ]
         multiple_items = len({row["item_id"] for row in exposures_for_loan}) > 1
-        if recorded_profile_conflict or loan_reference_disagreement:
+        if multiple_items:
+            # Equal Paris loan IDs with different items do not attest one
+            # transaction; report their distinct records without collapsing.
+            origin_resolution = "unknown"
+        elif recorded_profile_conflict or loan_reference_disagreement:
             origin_resolution = "conflicting_records"
-        elif (not multiple_items and len(recorded) == len(loan_refs) == 1
+        elif (len(recorded) == len(loan_refs) == 1
               and acquisition_rows
               and all(row.get("recorded_adept_profile_id")
                       and row.get("recorded_adept_loan_ref")
