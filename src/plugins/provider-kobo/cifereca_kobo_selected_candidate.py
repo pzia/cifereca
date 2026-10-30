@@ -102,132 +102,159 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             or type(account.identity_id) is not str or not account.identity_id):
         raise ProviderCapabilityError("kobo_candidate_not_admitted")
     target = Path(target_dir)
-    if (not target.is_dir() or target.is_symlink()
-            or not target.resolve(strict=True).is_dir()):
-        raise ProviderCapabilityError("kobo_candidate_staging_invalid")
+    try:
+        if (not target.is_dir() or target.is_symlink()
+                or target.resolve(strict=True) != target.absolute()):
+            raise ProviderCapabilityError("kobo_candidate_staging_invalid")
+        initially = os.stat(target, follow_symlinks=False)
+        stagefd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened = os.fstat(stagefd)
+        if (initially.st_dev, initially.st_ino) != (opened.st_dev, opened.st_ino):
+            os.close(stagefd)
+            raise ProviderCapabilityError("kobo_candidate_staging_invalid")
+    except (OSError, ValueError, RuntimeError):
+        raise ProviderCapabilityError("kobo_candidate_staging_invalid") from None
 
-    accounts = session._accounts
-    if not session.connected or len(accounts) != 1:
-        raise ProviderCapabilityError("kobo_candidate_owner_unverified")
-    live = accounts[0]
-    broker, client = session.identity_broker, session.client
-    epoch = session._personal_binding_generation
-    caller = (account.identity_id, account.provider_id,
-              account.credential_id, account.unique_id)
-    original = (live.identity_id, live.provider_id,
-                live.credential_id, live.unique_id)
-    owner = session._rights_owner_snapshot(caller[3])
-    if (original[1:] != caller[1:]
-            or original[0] not in (None, "", "default", caller[0])
-            or owner is None or owner[1] != (caller[0],)):
-        raise ProviderCapabilityError("kobo_candidate_owner_unverified")
-
-    def bound():
+    def stage_current():
         try:
-            session._ensure_personal_binding(
-                live, epoch, expected_account_id=caller[3],
-                expected_identity_id=original[0],
-            )
-            return (
-                session.connected is True
-                and session._accounts is accounts
-                and len(accounts) == 1 and accounts[0] is live
-                and session.client is client
-                and session.identity_broker is broker
-                and (account.identity_id, account.provider_id,
-                     account.credential_id, account.unique_id) == caller
-                and (live.identity_id, live.provider_id,
-                     live.credential_id, live.unique_id) == original
-                and session._rights_owner_snapshot(caller[3]) == owner
-            )
-        except (ProviderError, AttributeError, TypeError, ValueError):
+            current = os.stat(target, follow_symlinks=False)
+            opened = os.fstat(stagefd)
+            return (current.st_dev, current.st_ino) == (opened.st_dev, opened.st_ino)
+        except OSError:
             return False
 
-    if not bound():
-        raise ProviderCapabilityError("kobo_candidate_owner_changed")
-    # An opaque offer string alone cannot bootstrap a file: recheck the
-    # exact scoped personal manifest before initiating another private POST.
-    inventory = session.rights_observation_snapshot(account)
-    if not bound():
-        raise ProviderCapabilityError("kobo_candidate_owner_changed")
-    right = inventory.exact(edition_id, right_id, "purchase")
-    if (right is None or right.provider_attested is not True):
-        raise ProviderCapabilityError("kobo_candidate_purchase_unobserved")
-    if right.delivery == "unavailable":
-        raise ProviderCapabilityError("kobo_candidate_delivery_unavailable")
-
-    payload = session.resolve_acquisition(
-        right_id, mode="descriptor", expected_offer_id=delivery_offer_id,
-        expected_identity_id=caller[0],
-    )
-    if not bound():
-        raise ProviderCapabilityError("kobo_candidate_owner_changed")
-    url, fmt = _single_admitted_candidate(
-        payload, delivery_offer_id, identity_id=caller[0],
-        credential_id=caller[2], account_id=caller[3],
-        product_id=right_id,
-    )
-    if not bound():
-        raise ProviderCapabilityError("kobo_candidate_owner_changed")
-    # Always use Core's public-peer pinned transport, never the authenticated
-    # Vault client or system proxies. A 302/307 cannot leak a signed URL,
-    # cookies or an Authorization header to another origin.
-    fd, filename = tempfile.mkstemp(
-        prefix=".kobo-selected-", suffix="." + fmt, dir=target,
-    )
-    path = Path(filename)
-    succeeded = False
     try:
-        with os.fdopen(fd, "wb") as out:
-            if not bound():
-                raise ProviderCapabilityError("kobo_candidate_owner_changed")
-            with HTTPX_TRANSPORT.public_client(
-                producer="provider.kobo.delivery", timeout=30,
-            ) as transfer:
-                with transfer.stream("GET", url, headers={
-                    "Accept": "application/octet-stream",
-                }, follow_redirects=False) as response:
-                    if response.status_code != 200:
-                        raise ProviderCapabilityError(
-                            "kobo_candidate_http_unavailable"
-                        )
-                    declared = response.headers.get("content-length", "")
-                    if declared.isdecimal() and int(declared) > _MAX_DELIVERY_BYTES:
-                        raise ProviderCapabilityError(
-                            "kobo_candidate_size_exceeded"
-                        )
-                    media = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if media in ("text/html", "text/plain", "application/json"):
-                        raise ProviderCapabilityError(
-                            "kobo_candidate_not_a_file"
-                        )
-                    size = 0
-                    for chunk in response.iter_bytes():
-                        if not bound():
+        accounts = session._accounts
+        if not session.connected or len(accounts) != 1:
+            raise ProviderCapabilityError("kobo_candidate_owner_unverified")
+        live = accounts[0]
+        broker, client = session.identity_broker, session.client
+        epoch = session._personal_binding_generation
+        caller = (account.identity_id, account.provider_id,
+                  account.credential_id, account.unique_id)
+        original = (live.identity_id, live.provider_id,
+                    live.credential_id, live.unique_id)
+        owner = session._rights_owner_snapshot(caller[3])
+        if (original[1:] != caller[1:]
+                or original[0] not in (None, "", "default", caller[0])
+                or owner is None or owner[1] != (caller[0],)):
+            raise ProviderCapabilityError("kobo_candidate_owner_unverified")
+
+        def bound():
+            try:
+                session._ensure_personal_binding(
+                    live, epoch, expected_account_id=caller[3],
+                    expected_identity_id=original[0],
+                )
+                return (
+                    session.connected is True
+                    and session._accounts is accounts
+                    and len(accounts) == 1 and accounts[0] is live
+                    and session.client is client
+                    and session.identity_broker is broker
+                    and (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id) == caller
+                    and (live.identity_id, live.provider_id,
+                         live.credential_id, live.unique_id) == original
+                    and session._rights_owner_snapshot(caller[3]) == owner
+                )
+            except (ProviderError, AttributeError, TypeError, ValueError):
+                return False
+
+        if not bound():
+            raise ProviderCapabilityError("kobo_candidate_owner_changed")
+        # An opaque offer string alone cannot bootstrap a file: recheck the
+        # exact scoped personal manifest before initiating another private POST.
+        inventory = session.rights_observation_snapshot(account)
+        if not bound():
+            raise ProviderCapabilityError("kobo_candidate_owner_changed")
+        right = inventory.exact(edition_id, right_id, "purchase")
+        if (right is None or right.provider_attested is not True):
+            raise ProviderCapabilityError("kobo_candidate_purchase_unobserved")
+        if right.delivery == "unavailable":
+            raise ProviderCapabilityError("kobo_candidate_delivery_unavailable")
+
+        payload = session.resolve_acquisition(
+            right_id, mode="descriptor", expected_offer_id=delivery_offer_id,
+            expected_identity_id=caller[0],
+        )
+        if not bound():
+            raise ProviderCapabilityError("kobo_candidate_owner_changed")
+        url, fmt = _single_admitted_candidate(
+            payload, delivery_offer_id, identity_id=caller[0],
+            credential_id=caller[2], account_id=caller[3],
+            product_id=right_id,
+        )
+        if not bound():
+            raise ProviderCapabilityError("kobo_candidate_owner_changed")
+        # Always use Core's public-peer pinned transport, never the authenticated
+        # Vault client or system proxies. A 302/307 cannot leak a signed URL,
+        # cookies or an Authorization header to another origin.
+        if not stage_current():
+            raise ProviderCapabilityError("kobo_candidate_staging_rebound")
+        # Use an open Linux dirfd: a symlink swap during the Vault or
+        # HTTPX request cannot redirect the candidate into another folder.
+        fd, filename = tempfile.mkstemp(
+            prefix=".kobo-selected-", suffix="." + fmt,
+            dir=Path("/proc/self/fd") / str(stagefd),
+        )
+        path = Path(filename)
+        succeeded = False
+        try:
+            with os.fdopen(fd, "wb") as out:
+                if not bound():
+                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
+                with HTTPX_TRANSPORT.public_client(
+                    producer="provider.kobo.delivery", timeout=30,
+                ) as transfer:
+                    with transfer.stream("GET", url, headers={
+                        "Accept": "application/octet-stream",
+                    }, follow_redirects=False) as response:
+                        if response.status_code != 200:
                             raise ProviderCapabilityError(
-                                "kobo_candidate_owner_changed"
+                                "kobo_candidate_http_unavailable"
                             )
-                        size += len(chunk)
-                        if size > _MAX_DELIVERY_BYTES:
+                        declared = response.headers.get("content-length", "")
+                        if declared.isdecimal() and int(declared) > _MAX_DELIVERY_BYTES:
                             raise ProviderCapabilityError(
                                 "kobo_candidate_size_exceeded"
                             )
-                        out.write(chunk)
-            out.flush()
-            os.fsync(out.fileno())
-        if (not bound() or not _candidate_format_ok(path, fmt)):
+                        media = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                        if media in ("text/html", "text/plain", "application/json"):
+                            raise ProviderCapabilityError(
+                                "kobo_candidate_not_a_file"
+                            )
+                        size = 0
+                        for chunk in response.iter_bytes():
+                            if not bound():
+                                raise ProviderCapabilityError(
+                                    "kobo_candidate_owner_changed"
+                                )
+                            size += len(chunk)
+                            if size > _MAX_DELIVERY_BYTES:
+                                raise ProviderCapabilityError(
+                                    "kobo_candidate_size_exceeded"
+                                )
+                            out.write(chunk)
+                out.flush()
+                os.fsync(out.fileno())
+            if (not bound() or not _candidate_format_ok(path, fmt)):
+                raise ProviderCapabilityError(
+                    "kobo_candidate_owner_changed" if not bound()
+                    else "kobo_candidate_format_invalid"
+                )
+            # A supplier stream is never a Core receipt or verified OriginLink.
+            # Only this staging path is returned; the signed URL remains private.
+            if not stage_current():
+                raise ProviderCapabilityError("kobo_candidate_staging_rebound")
+            succeeded = True
+            return target / path.name, ""
+        except (httpx.HTTPError, OSError, ValueError):
             raise ProviderCapabilityError(
-                "kobo_candidate_owner_changed" if not bound()
-                else "kobo_candidate_format_invalid"
-            )
-        # A supplier stream is never a Core receipt or verified OriginLink.
-        # Only this staging path is returned; the signed URL remains private.
-        succeeded = True
-        return path, ""
-    except (httpx.HTTPError, OSError, ValueError):
-        raise ProviderCapabilityError(
-            "kobo_candidate_transport_failed"
-        ) from None
+                "kobo_candidate_transport_failed"
+            ) from None
+        finally:
+            if not succeeded:
+                path.unlink(missing_ok=True)
     finally:
-        if not succeeded:
-            path.unlink(missing_ok=True)
+        os.close(stagefd)
