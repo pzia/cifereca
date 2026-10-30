@@ -257,40 +257,62 @@ class ReferenceSession(ProviderSession):
                 raise ProviderCapabilityError("reference_offer_unavailable")
             try:
                 target = Path(target_dir)
-                valid = (target.is_dir() and not target.is_symlink()
-                         and target.resolve(strict=True).is_dir())
+                valid = (
+                    target.is_dir() and not target.is_symlink()
+                    and target.resolve(strict=True) == target.absolute()
+                )
+                if not valid:
+                    raise ProviderCapabilityError("reference_staging_invalid")
+                # Descriptor-relative creation prevents a swapped staging
+                # directory from redirecting writes through a new symlink.
+                dirfd = os.open(
+                    target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                )
             except (TypeError, ValueError, OSError, RuntimeError):
-                valid = False
-            if not valid:
-                raise ProviderCapabilityError("reference_staging_invalid")
-            row = self._by_id[edition_id]
-            failure_key = (account.identity_id, account.unique_id, edition_id)
-            self._delivery_calls += 1
-            if row.interrupt_once and failure_key not in self._interrupted:
-                self._interrupted.add(failure_key)
-                raise ProviderCapabilityError("reference_delivery_interrupted")
-            hook = self._before_write
-            if hook is not None:
-                hook()
-            if not self._still_bound(account, pin):
-                raise ProviderCapabilityError("reference_account_rebound")
-            destination = target / (edition_id + ".epub")
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
+                raise ProviderCapabilityError("reference_staging_invalid") from None
             try:
-                fd = os.open(destination, flags, 0o600)
-            except OSError as exc:
-                raise ProviderCapabilityError("reference_staging_occupied") from None
-            try:
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(epub_bytes(row))
+                parent = os.fstat(dirfd)
+
+                def stage_still_bound():
+                    try:
+                        current = os.stat(target, follow_symlinks=False)
+                        return ((current.st_dev, current.st_ino) ==
+                                (parent.st_dev, parent.st_ino))
+                    except OSError:
+                        return False
+
+                row = self._by_id[edition_id]
+                failure_key = (account.identity_id, account.unique_id, edition_id)
+                self._delivery_calls += 1
+                if row.interrupt_once and failure_key not in self._interrupted:
+                    self._interrupted.add(failure_key)
+                    raise ProviderCapabilityError("reference_delivery_interrupted")
+                hook = self._before_write
+                if hook is not None:
+                    hook()
                 if not self._still_bound(account, pin):
                     raise ProviderCapabilityError("reference_account_rebound")
-            except BaseException:
-                destination.unlink(missing_ok=True)
-                raise
-            return destination, "reference.synthetic.epub"
+                if not stage_still_bound():
+                    raise ProviderCapabilityError("reference_staging_rebound")
+                destination = target / (edition_id + ".epub")
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                try:
+                    fd = os.open(destination.name, flags, 0o600, dir_fd=dirfd)
+                except OSError:
+                    raise ProviderCapabilityError("reference_staging_occupied") from None
+                try:
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(epub_bytes(row))
+                    if not self._still_bound(account, pin):
+                        raise ProviderCapabilityError("reference_account_rebound")
+                    if not stage_still_bound():
+                        raise ProviderCapabilityError("reference_staging_rebound")
+                except BaseException:
+                    os.unlink(destination.name, dir_fd=dirfd)
+                    raise
+                return destination, "reference.synthetic.epub"
+            finally:
+                os.close(dirfd)
 
     def diagnostic_state(self):
         with self._lock:
