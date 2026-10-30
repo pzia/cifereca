@@ -5,7 +5,7 @@
     "version": "1.2.26",
     "name": "Kobo Suite Provider",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4.1,<2"
+    "plugin_api": ">=1.4.3,<2"
   },
   "plugins": [
     {
