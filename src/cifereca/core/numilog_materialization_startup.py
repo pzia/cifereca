@@ -344,7 +344,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 row.owned not in (True, False, None)
                 or row.downloadable not in (True, False, None)
                 or (
-                    (row.owned is True or row.downloadable is True)
+                    True
                     and (
                         type(row.id) is not str
                         or type(row.record_id) is not str
@@ -415,7 +415,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and row.source_credential == account.credential_id
                 and row.source_collection == "library"
                 and row.scenario == "NUMILOG_LIBRARY"
-                and (row.owned is True or row.downloadable is True)
                 and row.id == row.record_id
                 and _item_id(row.record_id, account.credential_id)
                 and count[row.record_id] == 1
