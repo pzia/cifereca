@@ -132,3 +132,20 @@ dossier de remplacement, et le résultat n'est pas annoncé comme reçu.
 Cette protection concerne le candidat BnF uniquement ; le Core traite encore
 le profil ADEPT, le SHA final, le Placement, les OriginLink et la
 déduplication physique post-placement par profil.
+
+## Paris — staging PNB sélectionné après relecture du prêt (#3723)
+
+L'acquisition sélectionnée épingle le répertoire de staging Core avec un
+descripteur `O_DIRECTORY|O_NOFOLLOW` **avant** les lectures privées du prêt
+et le GET PNB. Seule cette voie écrit le fichier final candidat par
+temporaire et lien atomique exclusif dans le même descripteur :
+aucun remplacement d'un livre personnel de même nom et aucun
+détournement d'écriture par changement du chemin. Une course de répertoire
+pendant le GET ou après la liaison invalide le candidat et le nettoie.
+La livraison explicite historique non sélectionnée reste inchangée.
+
+Tests synthétiques :
+`provider-paris/tests/test_p0_3723_pnb_selected_staging.py`.
+Le Core demeure seul responsable d'ADEPT, de la publication du Placement
+et des OriginLink, puis de la déduplication physique par profil après
+placement.

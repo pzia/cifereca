@@ -3,6 +3,7 @@ from cifereca_paris_formats import explicit_formats
 
 import logging
 import hashlib
+import os
 import httpx
 from contextvars import ContextVar
 from dataclasses import replace
@@ -1037,57 +1038,69 @@ class ParisProviderSession(ProviderSession):
         directory = Path(target_dir)
         try:
             if (not directory.is_dir() or directory.is_symlink()
-                    or not directory.resolve(strict=True).is_dir()):
+                    or directory.resolve(strict=True) != directory.absolute()):
                 raise ProviderCapabilityError("paris_candidate_staging_invalid")
         except (OSError, RuntimeError):
             raise ProviderCapabilityError("paris_candidate_staging_invalid") from None
-        observed = self.rights_selected_delivery_offer_snapshot(
-            account, edition_id=edition_id, right_id=right_id,
-            kind=kind, branch=branch, explicit_user_action=True,
-        )
-        selected = observed.exact(edition_id, right_id, "loan")
-        if (selected is None or not selected.delivery_attested
-                or selected.delivery_offer_id != delivery_offer_id):
-            raise ProviderCapabilityError("paris_candidate_offer_unavailable")
-        # Preserve the same exact account/borrower binding as the observation.
-        # The legacy explicit method independently validates both identities,
-        # the live loan card and owner *again* around the PNB token GET.
-        with self._loan_inventory_lock:
-            inventory = self._snapshot_for_account(account)
-            candidates = []
-            for loan in inventory.loans:
-                if (type(loan) is not Loan or loan.provider != "DILICOM"
-                        or loan.medium != "digital"
-                        or loan.id != right_id or loan.record_id != edition_id
-                        or loan.source_provider != self.provider_id
-                        or loan.source_credential != self.credential_id
-                        or loan.source_account_id != (account.unique_id or "primary")
-                        or loan.identity_id != account.identity_id
-                        or type(loan.raw) is not dict
-                        or not _pnb_direct_url_observed(loan.ebook_url, client=self.client)):
-                    continue
-                raw_right = loan.raw.get("Id") or loan.raw.get("HoldingId")
-                raw_edition = loan.raw.get("RecordId")
-                if (type(raw_right) not in (str, int)
-                        or type(raw_edition) not in (str, int)
-                        or str(raw_right) != right_id
-                        or str(raw_edition) != edition_id):
-                    continue
-                candidates.append(loan)
-            if len(candidates) != 1:
-                raise ProviderCapabilityError("paris_candidate_source_unobserved")
-            # Another fresh ListLoans inside download_digital rejects a
-            # disappeared link, rebind or loan mismatch before any PNB GET.
-            return self.download_digital(
-                candidates[0], account, directory,
-                expected_right_id=right_id,
-                expected_identity_id=account.identity_id,
+        try:
+            stage_fd = os.open(
+                directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
             )
+        except OSError:
+            raise ProviderCapabilityError("paris_candidate_staging_invalid") from None
+        try:
+            observed = self.rights_selected_delivery_offer_snapshot(
+                account, edition_id=edition_id, right_id=right_id,
+                kind=kind, branch=branch, explicit_user_action=True,
+            )
+            selected = observed.exact(edition_id, right_id, "loan")
+            if (selected is None or not selected.delivery_attested
+                    or selected.delivery_offer_id != delivery_offer_id):
+                raise ProviderCapabilityError("paris_candidate_offer_unavailable")
+            # Preserve the same exact account/borrower binding as the observation.
+            # The legacy explicit method independently validates both identities,
+            # the live loan card and owner *again* around the PNB token GET.
+            with self._loan_inventory_lock:
+                inventory = self._snapshot_for_account(account)
+                candidates = []
+                for loan in inventory.loans:
+                    if (type(loan) is not Loan or loan.provider != "DILICOM"
+                            or loan.medium != "digital"
+                            or loan.id != right_id or loan.record_id != edition_id
+                            or loan.source_provider != self.provider_id
+                            or loan.source_credential != self.credential_id
+                            or loan.source_account_id != (account.unique_id or "primary")
+                            or loan.identity_id != account.identity_id
+                            or type(loan.raw) is not dict
+                            or not _pnb_direct_url_observed(loan.ebook_url, client=self.client)):
+                        continue
+                    raw_right = loan.raw.get("Id") or loan.raw.get("HoldingId")
+                    raw_edition = loan.raw.get("RecordId")
+                    if (type(raw_right) not in (str, int)
+                            or type(raw_edition) not in (str, int)
+                            or str(raw_right) != right_id
+                            or str(raw_edition) != edition_id):
+                        continue
+                    candidates.append(loan)
+                if len(candidates) != 1:
+                    raise ProviderCapabilityError("paris_candidate_source_unobserved")
+                # Another fresh ListLoans inside download_digital rejects a
+                # disappeared link, rebind or loan mismatch before any PNB GET.
+                return self.download_digital(
+                    candidates[0], account, directory,
+                    expected_right_id=right_id,
+                    expected_identity_id=account.identity_id,
+                    selected_stage_fd=stage_fd,
+                )
+
+        finally:
+            os.close(stage_fd)
 
     def download_digital(
         self, loan: Loan, account: Account, target_dir: Path, *,
         expected_right_id: str | None = None,
         expected_identity_id: str | None = None,
+        selected_stage_fd: int | None = None,
     ) -> tuple[Path, str]:
         """Existing-loan delivery only: exact live Paris borrower and loan.
 
@@ -1244,6 +1257,7 @@ class ParisProviderSession(ProviderSession):
             completed, historical_url = self._download_digital_scoped_impl(
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
+                selected_stage_fd=selected_stage_fd,
             )
             # A signed PNB URL is transient secret transport evidence, NOT a
             # SourceReference or Core delivery receipt. Keep the old tuple
@@ -1254,7 +1268,8 @@ class ParisProviderSession(ProviderSession):
 
     def _download_digital_scoped_impl(self, loan: Loan, account: Account,
                                       target_dir: Path, *, scope_guard=None,
-                                      borrower_uid=None) -> tuple[Path, str]:
+                                      borrower_uid=None,
+                                      selected_stage_fd=None) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -1358,7 +1373,13 @@ class ParisProviderSession(ProviderSession):
         name = sanitize_filename_component(str(loan.title), "download")
         path = target_dir / (name[:160] + '.' + fmt)
         ensure_scope()
-        publish_artifact_content(path, content)
+        if selected_stage_fd is None:
+            # Preserve the explicitly requested historical/manual behavior.
+            publish_artifact_content(path, content)
+        else:
+            from cifereca_paris_selected_staging import save_selected_candidate
+            path = save_selected_candidate(target_dir, selected_stage_fd,
+                                           path.name, content)
         ensure_scope()
         _TRACE_LOG.info(
             "TRACE download paris acsm-write book_id=%s bytes=%s detected_acsm=%s duration_ms=%s",
