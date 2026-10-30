@@ -2721,6 +2721,94 @@ def main() -> int:
             "real GTK/TaskRunner/XTEST; three synthetic accounts and observed broker boundary; "
             "no live provider, file or DRM acquisition claimed")
         capture("03m-kobo-single-account-completed-result")
+        begin_source_sync_consent_acceptance()
+
+    def begin_source_sync_consent_acceptance():
+        # Exercise the modern broker path in the same real GTK/XTEST shell.
+        # The provider is deliberately unknown to the CoreUI; only DTOs and
+        # local source-consent commands are supplied, no provider acquisition.
+        from cifereca.plugin_api import SyncSourceRef
+        w = window[0]
+        f = loan_sync_fixture
+        broker = w.plugin_manager.broker("sync")
+        source = SyncSourceRef(
+            source_id="p0-canonical-unknown", identity_id="camille",
+            provider_id="fixture-unknown", account_id="synthetic-account",
+            label="Source générique fictive", sync_capabilities=("remote_inventory",),
+        )
+        state = dict(supported=True, configured=False, enabled=False,
+                     revision=None, valid=True)
+        f["canonical_writes"] = []
+        def write(sid, *, enabled, expected_revision):
+            assert sid == source.source_id and expected_revision == state["revision"]
+            f["canonical_writes"].append((sid, enabled, expected_revision))
+            state.update(configured=True, enabled=enabled,
+                         revision="source-epoch-1" if enabled else "source-epoch-2")
+            return dict(state)
+        for name, value in (
+            ("sources", lambda identity_id: (source,) if identity_id == "camille" else ()),
+            ("source_sync_consent", lambda sid: dict(state)),
+            ("set_source_sync_consent", write),
+        ):
+            f["overrides"].append((broker, name, name in vars(broker), vars(broker).get(name)))
+            setattr(broker, name, value)
+        w._refresh_sync_page()
+        scroll = w._sync_sources_box.get_parent()
+        while not isinstance(scroll, Gtk.ScrolledWindow):
+            scroll = scroll.get_parent()
+        scroll.get_vadjustment().set_value(0)
+        later(200, source_sync_consent_initial_choice)
+
+    def source_sync_consent_initial_choice():
+        w = window[0]
+        f = loan_sync_fixture
+        assert not f["canonical_writes"], "Rendering must not expand an old grant"
+        row = next(node for node in walk(w._sync_sources_box)
+                   if isinstance(node, Adw.ActionRow)
+                   and node.get_title() == "Téléchargement automatique de ce compte")
+        on = next(node for node in walk(sync_action_row(row))
+                  if isinstance(node, Gtk.Button)
+                  and getattr(node, "_cifereca_action_label", node.get_label()) == "Activer")
+        assert on.get_mapped() and on.get_sensitive()
+        report["pointer_actions"].append(device[0].click_widget(on))
+        later(250, source_sync_consent_rendered)
+
+    def source_sync_consent_rendered():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
+        header = next(row for row in rows if row.get_title() == "Source générique fictive")
+        assert "fichiers disponibles" in header.get_subtitle()
+        assert not any(isinstance(node, Gtk.Expander)
+                       and node.get_label() == "Outils et planification"
+                       for node in walk(w._sync_sources_box))
+        assert not any("Acquisition canonique" in row.get_title() for row in rows)
+        consent = next(row for row in rows if row.get_title() == "Téléchargement automatique de ce compte")
+        toggle, = [node for node in walk(consent) if isinstance(node, Gtk.Switch)]
+        assert toggle.get_active() and toggle.get_mapped()
+        assert f["canonical_writes"] == [("p0-canonical-unknown", True, None)]
+        f["canonical_old_toggle"] = toggle
+        capture("03n-canonical-source-consent-before")
+        report["pointer_actions"].append(device[0].click_widget(toggle))
+        later(250, source_sync_consent_revoked)
+
+    def source_sync_consent_revoked():
+        w = window[0]
+        f = loan_sync_fixture
+        assert f["canonical_writes"] == [
+            ("p0-canonical-unknown", True, None),
+            ("p0-canonical-unknown", False, "source-epoch-1"),
+        ]
+        row = next(node for node in walk(w._sync_sources_box)
+                   if isinstance(node, Adw.ActionRow)
+                   and node.get_title() == "Téléchargement automatique de ce compte")
+        toggle, = [node for node in walk(row) if isinstance(node, Gtk.Switch)]
+        assert not toggle.get_active() and "Désactivé" in row.get_subtitle()
+        f["canonical_old_toggle"].set_active(True)
+        assert len(f["canonical_writes"]) == 2, "Replaced GTK handler must remain inert"
+        report["checks"]["P0_3416_unknown_provider_generic_consent_XTEST_OFF"] = True
+        report["checks"]["P0_3416_generic_consent_render_no_write_and_stale_widget_inert"] = True
+        capture("03o-canonical-source-consent-off")
         cleanup_loan_sync()
         later(100, continue_baseline_settings)
 

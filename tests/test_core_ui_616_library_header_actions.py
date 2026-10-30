@@ -60,14 +60,21 @@ def test_underlying_business_callbacks_are_unchanged():
     assert "window.navigate('sync')" in source
     assert "window.open_library_folder()" in source
 
-def test_sync_page_explains_inventory_and_distinct_opt_in_downloads():
+def test_sync_page_explains_inventory_and_account_scoped_downloads():
     path = ROOT / "src/cifereca/gui/sync_controller.py"
-    text = path.read_text(encoding="utf-8")
-    assert "Synchroniser actualise les notices et droits en ligne" in text
-    assert "explicitement autorisé les téléchargements automatiques" in text
-    assert "par exemple les prêts BnF" in text
-    assert "cette action peut aussi récupérer des fichiers" in text
-    assert "Ces autorisations se règlent séparément dans chaque compte" in text
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    build = next(node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name == "_build_sync_page")
+    note = next(node.value for node in ast.walk(build)
+                if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "scope_note"
+                        for target in node.targets))
+    label = next(keyword.value for keyword in note.keywords if keyword.arg == "label")
+    text = ast.literal_eval(label)
+    assert "actualise les inventaires" in text
+    assert "peut recevoir les fichiers disponibles" in text
+    assert "lorsque le téléchargement automatique de ce compte est autorisé" in text
+    assert "Chaque compte conserve son propre réglage" in text
     assert "sans télécharger de livre" not in text
-    assert "self.service.sync_kobo_backup(progress=progress)" in text
+    assert not any(provider in text for provider in ("Kobo", "Numilog", "BnF", "Paris"))
     assert "self.service.sync_kobo_backup(" not in _method("_build_library_page")

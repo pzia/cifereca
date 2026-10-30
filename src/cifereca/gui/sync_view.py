@@ -493,7 +493,7 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     return None
 
 
-def sync_source_presentation(source: object) -> SyncSourcePresentation:
+def sync_source_presentation(source: object, *, canonical: bool = False) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
     connected = bool(getattr(source, "connected", False))
     capable = bool(getattr(source, "sync_capable", False))
@@ -555,7 +555,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         phases = []
         # Stores expose a customer's purchased/owned collection. This is
         # neither a public-library loan nor a physically downloaded EPUB.
-        store_owned = getattr(source, "provider_id", "") in {"kobo", "numilog"}
+        store_owned = not canonical and getattr(source, "provider_id", "") in {"kobo", "numilog"}
         if "remote_inventory" in capabilities:
             phases.append(
                 "inventaire des livres achetés"
@@ -581,7 +581,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         )
     # A Kobo source refresh only updates online metadata. It is deliberately
     # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
-    kobo_notices_only = getattr(source, "provider_id", "") == "kobo"
+    kobo_notices_only = not canonical and getattr(source, "provider_id", "") == "kobo"
     if kobo_notices_only:
         summary += "\nActualise uniquement les notices Kobo en ligne ; ne télécharge aucun ebook."
         if "local_materialization" in getattr(source, "sync_capabilities", ()):
@@ -591,11 +591,13 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
             )
         else:
             summary += "\nAcquisition locale Kobo : non prise en charge par ce compte."
-    if getattr(source, "provider_id", "") == "numilog":
+    if not canonical and getattr(source, "provider_id", "") == "numilog":
         summary += (
             "\nActualise les livres achetés chez Numilog : aucun emprunt "
             "de bibliothèque créé et aucun fichier EPUB/ACSM téléchargé."
         )
+    if canonical and capable:
+        summary += "\nLes fichiers disponibles sont reçus selon l’autorisation de ce compte et les capacités de la source."
     if status in {"partial", "error", "failed"} and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
@@ -608,7 +610,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         summary=summary,
         action_label=("Mettre à jour les notices Kobo en ligne" if kobo_notices_only
                       else "Actualiser les livres achetés Numilog"
-                      if getattr(source, "provider_id", "") == "numilog"
+                      if not canonical and getattr(source, "provider_id", "") == "numilog"
                       else f"Synchroniser {label}"),
         action_enabled=action_enabled,
         disabled_reason=disabled_reason,

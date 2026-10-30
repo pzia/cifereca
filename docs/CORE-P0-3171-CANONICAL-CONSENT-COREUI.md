@@ -1,92 +1,67 @@
-# #3171 — Consentements canoniques : acquisition source/type et exceptions exactes
+# #3171 / #3416 — Consentement d’acquisition par compte-source
 
-> **Règle applicable depuis l'arbitrage utilisateur du 30/10/2026** :
-> le commutateur d'acquisition automatique persistant **par profil,
-> fournisseur et type** vaut consentement pour les fichiers effectivement
-> téléchargeables que le compte authentifié expose, y compris ceux dont
-> l'état de droit est `unknown` ou `inactive`. Le droit est descriptif.
-> Le GET exige une offre qualifiée et une réadmission Core ; une permission
-> source ne prouve ni un fichier, ni un achat, ni une licence ADEPT.
-> OFF révoque les acquisitions automatiques nouvelles ; ne supprime aucune
-> donnée historique. Le commutateur n'autorise jamais un autre profil.
->
-> **Pont de transition :** Numilog achats `on_start` avec epoch de révocation,
-> BnF prêts `bnf_auto` et Kobo achats `source.materialization.on_start`.
-> Le booléen global historique `kobo_backup.enabled` ne vaut pas consentement.
-> Si aucun de ces commutateurs n'est configuré, l'ancienne sélection exacte
-> `SourceKey` reste disponible. Quand un commutateur source est configuré,
-> il est l'autorité ON/OFF : la liste « Autoriser ce droit… » redondante est
-> masquée, et ses anciens grants ne contournent pas OFF.
->
-> La suite du document décrit l'ancien parcours **individuel de repli**
-> et n'établit pas une obligation supplémentaire lorsqu'un switch global existe.
+## Contrôle courant de la page Synchronisation
 
-## Raison
+Le CoreUI consomme le protocole optionnel `SourceSyncConsentBroker`
+([contrat et persistance](CORE-P0-3719-SOURCE-SYNC-CONSENT.md)). Un fournisseur
+inconnu est présenté avec les mêmes contrôles que les fournisseurs déjà
+installés ; aucun branchement par nom de fournisseur n’intervient dans ce
+contrôle de consentement.
 
-Les premiers lots #3171 ont livré le stockage `SourceKey` et l'exécution
-canonique par la Sync explicite puis l'ouverture (#3653), mais aucun utilisateur
-ne pouvait activer ou révoquer **un droit exact** via CoreUI. En particulier,
-l'ancien `kobo_backup.enabled`, le planning Numilog `on_start`, une notice,
-un ISBN et une simple présence de fichier ne constituent pas un nouveau
-consentement canonique. La recette du **29 octobre 2026** contient trois
-Numilog `needs_reconciliation` : ils ne deviennent pas téléchargeables par
-le seul ajout de ces contrôles, car leur état de provenance reste distinct.
+- Réglage déjà configuré : un commutateur ON/OFF porte sur tous les achats et
+  prêts livrables de ce compte-source, y compris les ressources futures.
+- Réglage non encore migré : deux choix explicites **Activer / Désactiver**.
+  L’affichage ne transforme aucun ancien grant en consentement global et ne
+  prétend pas que les anciennes autorisations sont déjà désactivées.
+- Contrat de livraison non pris en charge : activation indisponible, mais
+  désactivation possible pour arrêter les anciennes acquisitions automatiques.
+- Source désactivée : impossible d’activer l’acquisition ; la révocation reste
+  accessible. Les fichiers reçus restent conservés.
+- État corrompu : aucun ON implicite ; une réparation nécessite un choix
+  explicite et la révision opaque courante.
 
-## Contrat fermé (broker Core optionnel)
+L’action transmet le `source_id` exact et la révision lue, sans identifiant de
+livre, édition, droit ou offre. Le Core vérifie le CAS et le compte sous
+transaction SQLite. Un autre profil, une page reconstruite ou une fenêtre
+fermée invalide immédiatement le callback. Un conflit est affiché sans retry
+ni écrasement automatique de la modification d’un autre client.
 
-`SynchronizationBrokerImpl.canonical_acquisition_choices(source_id)` lit
-**uniquement** SQLite : pages de 48 SourceReferences déjà persistées,
-du compte exact, accessibles via un index stable. Le journal du 29 octobre
-mentionne **522 éléments du manifeste Kobo historique** ; leur nombre de
-SourceReferences canoniques positives n'est pas attesté. La pagination
-permet néanmoins de gérer un compte de cette taille sans troncature. Retour : `reference` (empreinte opaque stable
-de 64 caractères, **pas** un jeton d'autorisation), `kind` achat/prêt,
-`allowed` et `eligible` booléens. Aucun identifiant fournisseur/credential,
-numéro de prêt, titre privé, URL signée ni chemin n'est exposé dans l'API/UI.
+Afficher la page ne lance ni acquisition, ni inventaire fournisseur, ni scan
+SHA, ni ADEPT. Le changement d’autorisation est local ; la Sync suivante
+réadmet l’offre, la session, le consentement et les octets jusqu’au commit.
+Une métadonnée de droit manquante ou inconnue ne remplace pas l’offre de
+livraison et ne constitue pas un veto indépendant.
 
-`set_canonical_acquisition_choice(source_id, reference, allowed=bool)`
-retrouve ce sélecteur à partir du compte toujours lié, puis appelle **la
-primitive Core déjà livrée** `set_source_acquisition_consent` ; le `BEGIN
-IMMEDIATE` revalide l'attestation positive, la source active, l'identité,
-le credential, l'édition et le prêt avant d'écrire un grant. L'échec est
-fermé. Révoquer un grant ancien reste possible après disparition du droit,
-sans suppression du droit ni d'un fichier. Les records malformés sont refusés. Les droits au-delà de 48 sont exposés
-par les pages suivantes sans chargement fournisseur ni grant automatique.
+## Nettoyage et compatibilité
 
-La page Synchronisation ajoute, dans les outils du compte visible, une
-action par droit affiché, avec navigation entre pages de 48 droits.
-**Autoriser** et **Révoquer** exigent un clic puis
-une confirmation explicite ; le bouton respecte le scope CoreUI capturé
-(page/profil/source), puis la primitive Core revérifie sous SQLite. Le simple
-affichage ne déclenche jamais de provider GET, d'ACSM ou de publication.
+Le composant `canonical_consent_controls.py`, son import et les tests de
+l’ancien parcours « Autoriser ce droit… » sont supprimés. Les primitives
+Core de lecture des grants historiques restent présentes pour la
+compatibilité ; elles ne sont plus exposées comme une étape de la page Sync.
 
-## Garanties et limites
+Avec le broker courant, les cartes synchronisables utilisent le contrôle
+source et ne rendent plus les anciens panneaux de préparation, audit,
+confirmation de téléchargement, consentement fournisseur ou planning par
+magasin. Une erreur de lecture du nouveau contrat n’ouvre pas un ancien
+chemin d’acquisition. Les libellés de cette carte n’affirment plus que Sync
+ne télécharge jamais de fichier.
 
-- En mode individuel de repli, les grants durables restent exacts et un
-  par SourceKey. En mode automatique, le commutateur source/type explicitement
-  activé couvre également les nouvelles offres téléchargeables de ce compte ;
-  aucun droit fournisseur n'est inféré, et sa révocation est immédiatement
-  opposable à la Sync canonique.
-- La Sync, y compris l'ouverture, redemande l'offre choisie au provider et
-  vérifie offre/binding/consentement avant et après GET, avant SHA et commit
-  atomique OriginLink/Artifact/Placement.
-- Les labels génériques « achat/prêt n°N » préservent les IDs privés mais ne
-  remplacent pas une notice lisible. Un affichage bibliographique riche reste
-  à faire via la Notice canonique attestée sans interpréter le titre comme
-  autorité de droits.
-- Les permissions réelles fournisseur, la reprise ADEPT one-use, les achats
-  Numilog legacy `needs_reconciliation`, la migration `backup_items`
-  #3196 et la recette physique #3642 ne sont **pas** réglés ici.
-- Les producteurs/transport HTTP, le contrat optionnel #3252 et les modules
-  Diagnostics C ne sont pas modifiés.
+Les hôtes anciens sans ce protocole conservent leur rendu de compatibilité,
+à l’exception du contrôle par droit supprimé. Les APIs et données historiques
+ne sont pas effacées. Le retrait complet des branches restantes, la projection
+des connexions indisponibles/catalogues et le dernier bilan détaillé canonique
+restent suivis dans #3416 ; la déduplication après placement relève de #3719.
+Aucune clôture du maître ni recette fournisseur réelle n’est déduite de ce lot.
 
-## Régressions
+## Validation
 
-`tests/test_core_p0_3171_canonical_consent_broker.py` : SQLite v14, un
-grant/révocation persistant, changement de scope, autre compte, mauvais
-sélecteur, droit devenu inactif, duplicat d'Account, réaffectation de
-credential ; **zéro GET**. Les suites Core et GTK existantes doivent rester
-vertes sur le dernier HEAD de la PR.
+`tests/test_core_p0_3416_source_sync_consent_ui.py` exerce callbacks et rendu
+avec les mêmes contrats pour fictif inconnu, Kobo, Numilog, BnF et Paris : zéro
+mutation au rendu, choix source explicite, OFF sans contrat de livraison,
+CAS, scope périmé, réponse mal formée et absence d’appel aux anciens outils.
 
-**Critère restant pour #3171** : réception manuelle GTK et fournisseurs
-réels, y compris vérification de l'offre exacte et seconde Sync sans GET.
+Les scénarios GTK/XTEST existants `mainwindow-baseline-1366` et
+`mainwindow-baseline-1600` incluent le rendu réel d’une source inconnue,
+l’activation initiale puis la révocation par clic, et un widget remplacé qui
+ne peut plus écrire. Leurs résultats doivent être contrôlés en CI sur le SHA
+final ; les tests à widgets doublés ne prouvent pas l’allocation GTK.
