@@ -381,3 +381,35 @@ def test_unknown_or_negative_download_offer_is_individually_blocked(
         assert result.facts["downloaded"] == 0
     finally:
         service.close()
+
+
+def test_orphaned_delivery_staging_never_overwrites_prior_bytes(
+    tmp_path, monkeypatch,
+):
+    service, account, session, _calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        row = _row(account.credential_id, 12)
+        session.library = lambda: [row]
+        root = service.library_identity_provider_dir(account.identity_id, "numilog")
+        prefix = "delivery-" + hashlib.sha256(
+            row.record_id.encode("utf-8"),
+        ).hexdigest()[:32]
+        orphan = root / prefix / "old.epub"
+        epub(orphan)
+        before = orphan.read_bytes()
+        delivered = []
+        def deliver(item, target):
+            delivered.append(Path(target))
+            path = Path(target) / "new.epub"
+            epub(path)
+            return path, ""
+        session.download_direct = deliver
+        result = execute(broker, account.identity_id, "startup")
+        assert result.ok, result.facts
+        assert result.facts["downloaded"] == 1
+        assert len(delivered) == 1
+        assert delivered[0] == root / (prefix + "-2")
+        assert orphan.read_bytes() == before
+    finally:
+        service.close()
