@@ -824,13 +824,8 @@ def main():
         verify_p1_tool_rows()
 
     def finish():
-        from gi.repository import Pango
-        from library_inspection_acceptance import exercise
-        exercise(parent=window[0], Gtk=Gtk, Adw=Adw, GLib=GLib, Pango=Pango,
-                 device=device[0], until=until, walk=walk, report=report,
-                 checkpoint=gtk_phase_2027, done=finish_inspection)
-
-    def finish_inspection():
+        # The retired reconciliation Maintenance tool is no longer an E2E entrypoint.
+        # Continue to exercise the independent explicit library-declaration flow.
         from gi.repository import Pango
         from library_declaration_acceptance import exercise
         exercise(parent=window[0], Gtk=Gtk, Adw=Adw, GLib=GLib, Pango=Pango,
