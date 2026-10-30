@@ -14,13 +14,19 @@ doit pas être présenté comme un fournisseur commercial.
 | 4. Livraison sélectionnée | `rights_selected_delivery_candidate(..., target_dir, delivery_offer_id, explicit_user_action=True)` | Crée le staging privé, puis valide EPUB/DRM/SHA |
 | 5. Publication | **Aucune méthode provider** | Seul le Core publie Artifact, OriginLink, Placement, journal et reprise |
 
-L'API consommée aujourd'hui est `cifereca.rights.observation/1`, avec la
-facette optionnelle `rights_selected_delivery_*()`. Le contrat de référence
-`SourceReference/DownloadCapability/OptionalRightMetadata/DeliveryCandidate`
-à venir relève de **#3719** (Core). La migration s'effectuera sur cette
-branche B quand l'ABI A sera figée, **sans** implémenter un second moteur et
-sans faire importer des modules `cifereca.core` ou `cifereca.storage` au
-provider.
+Le provider conserve l'ABI de compatibilité **v1**
+`rights_observation_snapshot` / `rights_selected_delivery_*` et expose
+l'ABI **v2** `downloadable_resource_snapshot` /
+`downloadable_selected_offer_snapshot` /
+`downloadable_selected_delivery_candidate`, qui consomme exclusivement les
+types publics `SourceReference`, `DownloadCapability`, `OptionalRightMetadata`,
+`ResourceSnapshot` et `DeliveryCandidate` définis par **A #3730 / #3719**.
+La dépendance v2 est chargée au moment de l'appel : la compatibilité v1 reste
+opérante avant fusion de #3730. Les tests v2 s'activent quand les types Core
+sont publiés. Exemple : `epub-002` est téléchargeable **sans aucune**
+métadonnée de droit en v2, et la même ressource est `state=unknown` en v1.
+Aucun nouveau moteur, aucune importation de `cifereca.core` ou
+`cifereca.storage` depuis le provider.
 
 Le broker public `identities` exige un unique `AccountRef` v2 dont
 l'identité, le credential et le compte sont identiques à la session. Un compte
