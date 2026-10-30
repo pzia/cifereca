@@ -361,11 +361,11 @@ def test_same_final_sha_two_providers_never_borrow_another_profile_receipt(
     ("field", "invalid"),
     [
         ("receipt", "X" * 1025),
-        ("receipt", "receipt\\nforged"),
-        ("receipt", "receipt\\x00forged"),
+        ("receipt", "receipt\nforged"),
+        ("receipt", "receipt\x00forged"),
         ("adept_receipt", "Y" * 1025),
-        ("adept_receipt", "adept\\rforged"),
-        ("adept_receipt", "adept\\x00forged"),
+        ("adept_receipt", "adept\rforged"),
+        ("adept_receipt", "adept\x00forged"),
     ],
 )
 def test_invalid_staged_receipt_never_blocks_fresh_authorized_get(
