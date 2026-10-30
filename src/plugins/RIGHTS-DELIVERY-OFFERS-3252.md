@@ -117,3 +117,18 @@ nettoyage de l'original, sans écriture extérieure. Tests synthétiques :
 Cela sécurise **uniquement** le candidat fournisseur. Le Core reste
 responsable du consentement, des octets finaux, du placement et de
 la déduplication physique **après placement** à l'intérieur de chaque profil.
+
+## BnF-Prêt — protection du staging ACSM (#3723)
+
+L'écriture du jeton ACSM validé dans `provider-bnf-pret` est maintenant
+effectuée sous un descripteur de dossier `O_DIRECTORY|O_NOFOLLOW`.
+Création exclusive du temporaire et liaison finale sans écrasement opèrent
+toutes deux **relativement au même descripteur** ; l'identité du dossier est
+revérifiée avant et après la publication du candidat. Les essais synthétiques
+simulent une substitution du chemin juste avant la création du temporaire
+ou juste après la liaison finale : aucun ACSM ni temporaire ne fuit vers le
+dossier de remplacement, et le résultat n'est pas annoncé comme reçu.
+
+Cette protection concerne le candidat BnF uniquement ; le Core traite encore
+le profil ADEPT, le SHA final, le Placement, les OriginLink et la
+déduplication physique post-placement par profil.
