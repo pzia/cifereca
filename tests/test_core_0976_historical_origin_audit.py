@@ -332,6 +332,7 @@ def test_non_paris_origin_audit_preserves_closed_report_schema(tmp_path):
             "status": "unsupported_source", "shared_visibility": False,
             "profile_disagreement": False,
             "adept_loan_reference_disagreement": False,
+            "adobe_loan_state_disagreement": False,
             "origin_resolution": "unknown", "sources": [], "origins": [],
         }
     finally:
@@ -463,3 +464,47 @@ def test_unverified_historical_return_flag_never_claims_adobe_return():
     second = _audit([], [row])
     assert second["origins"][0]["historic_adobe_loan_state"] == "unknown"
     assert "PRIVATE-ACCOUNT-STATE" not in repr(second)
+
+
+def test_same_adobe_loan_with_conflicting_attested_return_states_is_not_resolved():
+    first = _acq("alice", "paris-a", "adept-historical", state="attested")
+    second = _acq("bob", "paris-b", "adept-historical", state="attested")
+    origin = second["metadata"]["adept_binding"]
+    origin["loan_state"] = "returned"
+    origin["token_present"] = False
+    origin["return_verification"] = "confirmed"
+    before = deepcopy((first, second))
+    for ordered in ([first, second], [second, first]):
+        report = _audit([], ordered)
+        assert report["status"] == "inventory_attested"  # strongest evidence only
+        assert report["profile_disagreement"] is False
+        assert report["adept_loan_reference_disagreement"] is False
+        assert report["adobe_loan_state_disagreement"] is True
+        assert report["origin_resolution"] == "conflicting_records"
+        assert {r["historic_adobe_loan_state"] for r in report["origins"]} == {
+            "active", "returned",
+        }
+        assert "adept-lic" not in str(report)
+    assert (first, second) == before
+
+
+def test_unattested_historical_return_flag_cannot_create_state_conflict():
+    attested = _acq("alice", "paris-a", "adept-historical", state="attested")
+    unverified = _acq("bob", "paris-b", "adept-historical", state="recorded")
+    binding = unverified["metadata"]["adept_binding"]
+    binding["loan_state"] = "returned"
+    binding["token_present"] = False
+    binding["return_verification"] = "confirmed"
+    report = _audit([], [attested, unverified])
+    assert report["adobe_loan_state_disagreement"] is False
+    assert report["origin_resolution"] == "single_recorded"
+    assert [row["historic_adobe_loan_state"] for row in report["origins"]] == [
+        "active", "unknown",
+    ]
+
+
+def test_empty_audit_exposes_consistent_closed_disagreement_schema():
+    report = _audit([], [], loan="", item="book")
+    assert report["origin_resolution"] == "unknown"
+    assert report["adobe_loan_state_disagreement"] is False
+    assert report["sources"] == report["origins"] == []
