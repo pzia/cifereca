@@ -212,7 +212,7 @@ class ReferenceSession(ProviderSession):
         No new inventory read or owner decision; the same positive-only scoped
         v1 facts are converted by the PUBLIC Core-owned compatibility adapter.
         """
-        from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
+        from cifereca.plugin_api import from_legacy_rights_snapshot
 
         snapshot = from_legacy_rights_snapshot(
             self.rights_observation_snapshot(account, resume_cursor=resume_cursor)
@@ -229,7 +229,7 @@ class ReferenceSession(ProviderSession):
         explicit_user_action=False,
     ):
         """Selected, exact positive/negative/unknown v2 capacity observation."""
-        from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
+        from cifereca.plugin_api import from_legacy_rights_snapshot
 
         snapshot = from_legacy_rights_snapshot(
             self.rights_selected_delivery_offer_snapshot(
@@ -248,9 +248,7 @@ class ReferenceSession(ProviderSession):
         selected_offer_id, target_dir, explicit_user_action=False,
     ):
         """Return typed v2 staged bytes, never a Core publication receipt."""
-        from cifereca.plugin_api.downloadable_resources import (
-            SourceReference, DeliveryCandidate,
-        )
+        from cifereca.plugin_api import SourceReference, DeliveryCandidate
 
         path, hint = self.rights_selected_delivery_candidate(
             account, edition_id=edition_id, right_id=resource_id,
