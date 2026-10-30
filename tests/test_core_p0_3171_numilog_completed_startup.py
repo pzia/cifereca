@@ -84,8 +84,25 @@ def test_completed_purchase_uncertain_evidence_stays_blocked(case, damage):
         })
 
     previous_downloads = tuple(case.calls)
+    requests = []
+    if damage in {"missing_file", "changed_bytes"}:
+        # Presence is no longer a permanent download veto. A verified right,
+        # opted-in source and fresh downloadable offer permit a new GET.
+        def unavailable(*_a, **_kw):
+            requests.append(True)
+            raise RuntimeError("synthetic vendor outage")
+        case.session.download_direct = unavailable
     result = startup.execute(broker, case.account.identity_id, "startup")
-    assert not result.ok and result.facts["status"] == "blocked"
-    assert result.facts["blocked"] == 1
-    assert result.changed == result.facts["attempted"] == 0
+    assert not result.ok
+    if damage in {"missing_file", "changed_bytes"}:
+        assert result.facts["status"] == "failed"
+        assert result.facts["attempted"] == result.facts["failed"] == 1
+        assert result.facts["blocked"] == 0
+        assert requests == [True]
+    else:
+        assert result.facts["status"] == "blocked"
+        assert result.facts["blocked"] == 1
+        assert result.facts["attempted"] == 0
+        assert requests == []
+    assert result.changed == 0
     assert tuple(case.calls) == previous_downloads
