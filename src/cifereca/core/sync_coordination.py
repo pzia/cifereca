@@ -28,27 +28,6 @@ from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
 
-def _source_uses_canonical_delivery(session: Any) -> bool:
-    """True only for providers with the full single A→B delivery ABI.
-
-    Their consented acquisition must be handled by the canonical executor,
-    never by a second per-loan/legacy worker that lacks OriginLink identity.
-    """
-    if session is None:
-        return False
-    try:
-        return all(
-            callable(getattr_static(session, method, None))
-            for method in (
-                "rights_observation_snapshot",
-                "rights_selected_delivery_offer_snapshot",
-                "rights_selected_delivery_candidate",
-            )
-        )
-    except (TypeError, AttributeError):
-        return False
-
-
 def _sync_loan_inventory_observation(self, account: Account, session: Any):
     """Read exactly once, preserving v1 Core normalization until migration.
 
@@ -197,10 +176,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         result["loans"] = len(loans)
         if account.provider_id == 'bnf-pret':
             from .bnf_auto_materialization import enabled, materialize
-            if enabled(self, account) and not _source_uses_canonical_delivery(session):
-                # Older BnF providers without a full selected-delivery ABI
-                # retain legacy loan materialization. The modern provider
-                # acquires through canonical A→B after this inventory stage.
+            if enabled(self, account):
                 # One private bounded inventory per source batch, not one
                 # whole-directory scan for every active loan.
                 physical_scan_cache = {}
@@ -301,6 +277,15 @@ def _run_observed_canonical_convergence(
     persisted exact SourceKey authorization and session/offers are checked by
     the original executor, under that same lock, before and after network I/O.
     """
+    if account.provider_id == "bnf-pret":
+        from .bnf_auto_materialization import enabled as bnf_legacy_auto_enabled
+        # The legacy BnF auto route still owns declared-local loan matching
+        # and receipts. Running its fulfilled ACSM again through A→B would
+        # duplicate ADEPT/placements. While that source's explicit auto
+        # switch is ON, let exactly one existing path own the acquisition.
+        # Other providers and BnF exact-right/manual scopes retain canonical.
+        if bnf_legacy_auto_enabled(self, account):
+            return None
     if (type(admitted_snapshots) is not list or len(admitted_snapshots) != 1
             or type(sync_lease) is not InterProcessLock
             or sync_lease._handle is None
@@ -1069,8 +1054,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                                     and a.provider_id == 'bnf-pret'
                                     and a.credential_id == loan.source_credential
                                     and a.unique_id == loan.source_account_id), None)
-                    if (account is not None and enabled(self, account)
-                            and not _source_uses_canonical_delivery(session)):
+                    if account is not None and enabled(self, account):
                         outcome = materialize(
                             self, account, loan, physical_scan_cache=physical_scan_cache,
                         )
