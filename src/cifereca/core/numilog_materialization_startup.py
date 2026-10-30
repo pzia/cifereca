@@ -341,11 +341,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 row.record_id for row in raw if type(row.record_id) is str
             )
             if (any(
-                row.owned not in (True, False, None)
-                or row.downloadable not in (True, False, None)
+                (row.owned is not None and type(row.owned) is not bool)
+                or (row.downloadable is not None and type(row.downloadable) is not bool)
                 or (
-                    True
-                    and (
                         type(row.id) is not str
                         or type(row.record_id) is not str
                         or row.id != row.record_id
