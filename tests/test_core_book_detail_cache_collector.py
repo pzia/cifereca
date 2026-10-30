@@ -88,7 +88,23 @@ def test_malformed_plugin_and_exception_are_isolated():
     assert [entry.plugin_id for entry in result] == ["good"]
 
 
-def test_bounded_sections_fields_and_actions_reject_unsafe_urls():
+def test_bounded_sections_fields_and_actions_reject_unsafe_urls(monkeypatch):
+    from cifereca.plugin_api import book_detail_cache as collector
+
+    # This test checks content bounds and URL validation. Run its public
+    # collector synchronously with a fixed clock so runner contention cannot
+    # consume the 100 ms worker budget before these assertions are reached.
+    # The slow-plugin tests below retain real threads and deadline checks.
+    class InlineThread:
+        def __init__(self, *, target, args, **_kwargs):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(collector, "Thread", InlineThread)
+    monkeypatch.setattr(collector, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(collector, "_CACHE_READ_SLOTS", threading.BoundedSemaphore(4))
     many = tuple(DetailSection(f"s{i}", "X" * 200, tuple(
         DetailField(f"f{j}", "Label", "y" * 1000) for j in range(12)
     )) for i in range(9))
