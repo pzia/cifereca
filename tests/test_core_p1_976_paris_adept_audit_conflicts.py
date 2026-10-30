@@ -102,3 +102,115 @@ def test_duplicate_connection_owners_can_never_attest_primary(second_identity):
     assert exposure["adept_profile_id"] is None
     assert exposure["binding_state"] == "primary_unproven"
     assert report["loans"][0]["requires_attention"] is True
+
+
+def test_duplicate_grants_for_exact_paris_account_are_not_last_row_wins():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "linked")],
+        grants=[
+            {
+                "credential_id": "paris-a", "account_id": "linked",
+                "connection_identity_id": "alice", "borrower_identity_id": "alice",
+                "profile_id": "profile-a", "confirmed_by": "explicit",
+            },
+            {
+                "credential_id": "paris-a", "account_id": "linked",
+                "connection_identity_id": "alice", "borrower_identity_id": "bob",
+                "profile_id": "profile-b", "confirmed_by": "explicit",
+            },
+        ],
+    )
+    before = build_paris_adept_audit(storage)
+    storage.grants.reverse()
+    after = build_paris_adept_audit(storage)
+    for report in (before, after):
+        exposure = report["loans"][0]["exposures"][0]
+        assert exposure["binding_state"] == "ambiguous_binding"
+        assert exposure["borrower_identity_id"] is None
+        assert exposure["adept_profile_id"] is None
+        assert report["loans"][0]["requires_attention"] is True
+
+
+def test_configured_profile_difference_is_not_an_attested_activation_conflict():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[acquisition(profile="historical-hb")],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    assert loan["profile_disagreement"] is True  # deprecated aggregate
+    assert loan["recorded_profile_conflict"] is False
+    assert loan["configured_profile_divergence"] is False
+    assert loan["configured_vs_recorded_difference"] is True
+    assert loan["origin_resolution"] == "unknown"  # no ADEPT loan reference
+    assert "n'atteste pas une mauvaise activation" in report["note"]
+
+
+def test_one_recorded_adobe_loan_is_not_an_authorized_return():
+    binding = {"adept_profile_id": "historical-hb", "adept_loan_id": "PRIVATE-ACTIVATION-01"}
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[acquisition(metadata={
+            "provider_loan_id": "shared", "adept_binding": binding,
+        })],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    exposure = loan["exposures"][0]
+    assert loan["origin_resolution"] == "single_recorded"
+    assert loan["adept_loan_reference_disagreement"] is False
+    assert len(exposure["recorded_adept_loan_refs"]) == 1
+    assert exposure["recorded_adept_loan_ref"] == exposure["recorded_adept_loan_refs"][0]
+    assert "PRIVATE-ACTIVATION" not in repr(report)
+    assert "autorisation de retour" in report["note"]
+
+
+def test_two_adept_loan_references_on_one_source_never_collapse_to_single_origin():
+    def evidence(loan_ref):
+        return acquisition(metadata={
+            "provider_loan_id": "shared",
+            "adept_binding": {
+                "adept_profile_id": "same-historical-profile",
+                "adept_loan_id": loan_ref,
+            },
+        })
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[evidence("PRIVATE-LICENSE-1"), evidence("PRIVATE-LICENSE-2")],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    exposure = loan["exposures"][0]
+    assert loan["origin_resolution"] == "conflicting_records"
+    assert loan["adept_loan_reference_disagreement"] is True
+    assert loan["recorded_profile_conflict"] is False
+    assert exposure["recorded_adept_loan_ref"] is None
+    assert len(exposure["recorded_adept_loan_refs"]) == 2
+    assert report["summary"]["adept_loan_reference_disagreements"] == 1
+    assert "PRIVATE-LICENSE" not in repr(report)
+    storage.ledger.reverse()
+    assert build_paris_adept_audit(storage) == report
+
+
+def test_reused_paris_loan_id_with_distinct_items_is_not_one_adobe_transaction():
+    first = acquisition(metadata={
+        "provider_loan_id": "shared",
+        "adept_binding": {"adept_profile_id": "profile-a", "adept_loan_id": "PRIVATE-1"},
+    })
+    other = acquisition(metadata={
+        "provider_loan_id": "shared",
+        "adept_binding": {"adept_profile_id": "profile-a", "adept_loan_id": "PRIVATE-2"},
+    })
+    other["item_id"] = "different-item"
+    storage = FakeStorage(entitlements=[
+        right("paris-a", "alice", "primary", item="book"),
+        right("paris-a", "alice", "primary", item="different-item"),
+    ], acquisitions=[first, other])
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    assert loan["multiple_item_ids"] is True
+    assert loan["origin_resolution"] == "unknown"
+    # These are two distinct items: distinct Adobe licenses do not conflict
+    # as one transaction merely because Paris reused its loan identifier.
+    assert loan["adept_loan_reference_disagreement"] is False
+    assert "PRIVATE-" not in repr(report)
