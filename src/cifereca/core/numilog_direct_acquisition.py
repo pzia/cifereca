@@ -79,8 +79,7 @@ def acquire_numilog_direct(
                             account_id=pinned_account_id, item_id=item.record_id,
                         ) == 'recoverable'
                     )
-                if (_admission is None or item.owned is not True
-                        or item.downloadable is not True
+                if (_admission is None or item.downloadable is not True
                         or not recovery_authorized()):
                     raise ProviderConfigurationError('Numilog : reprise non attestée')
             from .library_declared_links import has_active_declared_link
