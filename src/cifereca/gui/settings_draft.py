@@ -170,8 +170,11 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     except ValueError as exc:
         raise SettingsValidationError(f'Configuration Kobo invalide : {exc}')
     draft.set('library.directory', values['library_directory'].strip() or '~/EBooks')
-    draft.set('kobo_backup.enabled', values['backup_enabled'])
-    draft.set('kobo_backup.allow_unlinked_acquisition', values['allow_unlinked_acquisition'])
+    # These two legacy switches are displayed read-only in Settings.  A
+    # generic Settings save must preserve the persisted values *verbatim*,
+    # including absent or malformed historic values, instead of promoting a
+    # widget snapshot to an acquisition permission or a compatibility bypass.
+    # Only the canonical source-scoped Sync consent API may grant permission.
     draft.set('kobo_backup.directory', values['backup_directory'].strip())
     draft.set('kobo_backup.interval_minutes', backup_interval)
     selected_profile = int(values['vault_profile_index'])
