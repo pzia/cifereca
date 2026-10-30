@@ -91,10 +91,22 @@ def acquire_numilog_direct(
             ).hexdigest()[:32] + ".epub"
             expected_path = target_dir / expected_name
             stage = "acquisition_file_conflict"
+            provider_target = target_dir
             if expected_path.exists() or expected_path.is_symlink():
-                raise ProviderConfigurationError(
-                    "Numilog : fichier local candidat ; rapprochement requis"
-                )
+                if not reconcile_pending:
+                    raise ProviderConfigurationError(
+                        "Numilog : fichier local candidat ; rapprochement requis"
+                    )
+                # The hashed canonical filename belongs to some pre-existing
+                # publication. Leave it untouched and download in an isolated,
+                # bounded location under this SAME identity/provider root.
+                provider_target = target_dir / ("recovery-" + hashlib.sha256(
+                    item.record_id.encode("utf-8"),
+                ).hexdigest()[:32])
+                if provider_target.exists() or provider_target.is_symlink():
+                    raise ProviderConfigurationError(
+                        "Numilog : reprise déjà matérialisée à vérifier"
+                    )
             from .numilog_publication_guard import require_tracked_publications
             stage = "acquisition_publication_guard"
             if not reconcile_pending:
@@ -115,7 +127,7 @@ def acquire_numilog_direct(
             stage = "acquisition_delivery_failed"
             try:
                 path, _private_url = pinned_session.download_direct(
-                    item, target_dir,
+                    item, provider_target,
                 )
             except Exception as exc:
                 from ..plugin_api import Cancelled
