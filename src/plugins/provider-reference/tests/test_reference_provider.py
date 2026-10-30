@@ -356,3 +356,79 @@ def test_selected_offer_revoked_on_same_value_live_account_replacement(tmp_path)
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+def test_v2_downloadable_resource_contract_when_core_abi_is_installed(tmp_path):
+    # During the A/B split PR #3730 owns publication of this public module.
+    # This test activates automatically once A lands the ABI on main.
+    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
+    from cifereca.plugin_api.downloadable_resources import (
+        DOWNLOADABLE_RESOURCE_CONTRACT, ResourceSnapshot, DeliveryCandidate,
+    )
+    session, (a, b) = fixture()
+    try:
+        inventory = session.downloadable_resource_snapshot(a)
+        assert type(inventory) is ResourceSnapshot
+        assert inventory.schema_version == DOWNLOADABLE_RESOURCE_CONTRACT
+        assert not inventory.authorizes_acquisition
+        assert not inventory.authorizes_negative_reconciliation
+        assert len(inventory.resources) == 9
+        record = next(r for r in inventory.resources
+                      if r.source.edition_id == "epub-002")
+        assert record.right is not None and record.right.state == "unknown"
+        assert not record.can_propose_delivery  # ordinary inventory is not a preflight
+        offer = session.downloadable_selected_offer_snapshot(
+            a, edition_id="epub-002", resource_id="right-epub-002",
+            kind="purchase", branch=BRANCH, explicit_user_action=True,
+        )
+        selected = offer.resources[0]
+        assert selected.capability.downloadable
+        assert selected.right.state == "unknown"
+        assert not selected.authorizes_acquisition
+        staged = session.downloadable_selected_delivery_candidate(
+            a, edition_id="epub-002", resource_id="right-epub-002",
+            kind="purchase", branch=BRANCH,
+            selected_offer_id=selected.capability.offer_id,
+            target_dir=tmp_path, explicit_user_action=True,
+        )
+        assert type(staged) is DeliveryCandidate
+        assert not staged.authorizes_publication
+        assert staged.source.scope == inventory.scope
+        assert staged.path.parent == tmp_path
+        assert zipfile.is_zipfile(staged.path)
+        assert staged.selected_offer_id == selected.capability.offer_id
+        with pytest.raises(ProviderCapabilityError):
+            session.downloadable_selected_delivery_candidate(
+                b, edition_id="epub-002", resource_id="right-epub-002",
+                kind="purchase", branch=BRANCH,
+                selected_offer_id=selected.capability.offer_id,
+                target_dir=tmp_path, explicit_user_action=True,
+            )
+        archived = session.downloadable_selected_offer_snapshot(
+            a, edition_id="archived-006", resource_id="right-archived-006",
+            kind="purchase", branch=BRANCH, explicit_user_action=True,
+        )
+        assert archived.resources[0].capability.state == "unavailable"
+        assert archived.resources[0].capability.unavailable_reason == "archived"
+    finally:
+        session.close()
+
+
+def test_v2_bulk_pagination_when_core_abi_is_installed():
+    pytest.importorskip("cifereca.plugin_api.downloadable_resources")
+    session, (a, _) = fixture(scenario="bulk", bulk_count=351)
+    try:
+        cursor = ""
+        found = []
+        for _ in range(8):
+            snapshot = session.downloadable_resource_snapshot(
+                a, resume_cursor=cursor,
+            )
+            found.extend(r.source.resource_id for r in snapshot.resources)
+            assert not snapshot.authorizes_negative_reconciliation
+            cursor = snapshot.resume_cursor
+            if not cursor:
+                break
+        assert len(found) == 351 and len(set(found)) == 351
+    finally:
+        session.close()
