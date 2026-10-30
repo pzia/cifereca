@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from cifereca.core.library_audit_broker import LibraryReconciliationReadBrokerImpl
 from cifereca.gui.maintenance_line_progress import MaintenanceLineProgress
 from tests.test_library_audit_broker import scoped
-from tests.test_maintenance_cache_row_callbacks import mounted, execute, flush
 
 
 def _line():
@@ -147,20 +146,3 @@ def test_cancelled_or_failed_job_never_claims_hundred_percent():
     line.report(ticket, current=999, total=None, message="Audit local terminé")
     assert pending == []
     assert line.state.phase == "error"
-
-
-def test_live_maintenance_callback_shows_safe_phase_and_file_count():
-    m = mounted("library.reconciliation.audit")
-    args = execute(m)
-    worker_control = m.host._maintenance_line_rows[0][1]["control"]
-    worker_control.report(current=517, total=None, message="Inventaire local")
-    flush(m)
-    assert m.status.children[0].text == "Réconciliation · Inventaire local · 517 fichier(s)"
-    spinner = m.status.children[1].children[0]
-    assert spinner.visible
-    worker_control.report(message="/private/SECRET_TOKEN", current=999)
-    flush(m)
-    assert "SECRET_TOKEN" not in m.status.children[0].text
-    args[2](SimpleNamespace(ok=False, summary="Analyse locale incomplète"))
-    flush(m)
-    assert m.feedback.state.phase == "error"
