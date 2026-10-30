@@ -140,7 +140,13 @@ def consent_current_in_transaction(db, source: SourceKey) -> bool:
     # consent on its own.
     switched = toggle_state(db, source)
     if switched is not None:
-        return switched == "on"
+        if switched != "on":
+            return False
+        # The publisher calls this INSIDE its atomic SQLite transaction;
+        # bind the global grant to this exact active source/account too.
+        # No right-specific grant or local file is used as permission.
+        scope = _coordinates(source)[:4]
+        return _bound(db, scope, enabled=True)
     record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
     return record is not None and _payload_allowed(record[0], source)
 
