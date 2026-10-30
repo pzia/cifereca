@@ -35,7 +35,7 @@ class Widget:
 
 def _render(provider_id="paris", *, data=None, credentials=None, url=None,
             descriptor_fields=None, descriptor_options=None, descriptor_note=None,
-            legacy_values=None, configured=None):
+            legacy_values=None, provider_values=None, configured=None):
     secret = SimpleNamespace(key="password", label="Mot de passe", secret=True)
     plain = SimpleNamespace(key="card", label="Numéro de carte", secret=False)
     fields = descriptor_fields if descriptor_fields is not None else [plain, secret]
@@ -54,6 +54,7 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     config = SimpleNamespace(
         paris_base_url=lambda: url,
         get=lambda key, default=None: (legacy_values or {}).get(key, default),
+        provider_option=lambda pid, key, default=None: (provider_values or {}).get((pid, key), default),
     )
     editor, delete = build_provider_account_editor(
         data=settings, provider_id=provider_id,
@@ -194,3 +195,17 @@ def test_declared_option_prefers_saved_value_then_legacy_config_then_descriptor_
     assert saved['option_fields']['base_url'].text == 'https://saved.example'
     default, _, _, _ = _render('arbitrary-provider', descriptor_options=[field])
     assert default['option_fields']['base_url'].text == 'https://default.example'
+
+
+def test_legacy_provider_option_precedes_global_default_without_overwriting_saved_value():
+    option = _url_option('base_url', 'URL du portail',
+                         'https://default.example', 'base_url')
+    kwargs = {
+        'descriptor_options': [option],
+        'legacy_values': {'base_url': 'https://global.example'},
+        'provider_values': {('arbitrary', 'base_url'): 'https://provider.example'},
+    }
+    editor, _, _, _ = _render('arbitrary', **kwargs)
+    assert editor['option_fields']['base_url'].text == 'https://provider.example'
+    saved, _, _, _ = _render('arbitrary', data={'options': {'base_url': 'https://saved.example'}}, **kwargs)
+    assert saved['option_fields']['base_url'].text == 'https://saved.example'
