@@ -2,6 +2,7 @@ from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
 
 import logging
+import hashlib
 import httpx
 from contextvars import ContextVar
 from dataclasses import replace
@@ -41,6 +42,31 @@ from cifereca.plugin_api import (
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
+
+
+def _pnb_direct_url_observed(raw: object) -> bool:
+    """Conservative action hint, not an HTTP success or an active loan right."""
+    if (type(raw) is not str or not raw or raw != raw.strip()
+            or any(c.isspace() or not c.isprintable() for c in raw)):
+        return False
+    try:
+        parsed = urlparse(raw)
+        if parsed.scheme:
+            return (parsed.scheme in ("http", "https") and bool(parsed.hostname)
+                    and parsed.username is None and parsed.password is None)
+        # Reject scheme-relative foreign hosts and fragments. The download
+        # transport resolves a normal relative route against its account host
+        # and checks each URL/redirect before any actual content GET.
+        return not raw.startswith("//") and not parsed.netloc and not parsed.fragment
+    except ValueError:
+        return False
+
+
+def _paris_pnb_offer_id(scope, edition_id: str, right_id: str) -> str:
+    """Stable opaque scoped action ID; never encode a signed PNB URL."""
+    parts = (scope.identity_id, scope.provider_id, scope.credential_id,
+             scope.account_id, edition_id, right_id, "dilicom:pnb-direct/1")
+    return "paris.pnb:" + hashlib.sha256("\\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
 
@@ -815,12 +841,22 @@ class ParisProviderSession(ProviderSession):
                     rights_by_id.pop(right_key)
                     ambiguous_right_ids.add(right_key)
                     continue
+                # This private ListLoans card can attest a *file action*
+                # without attesting a valid/active entitlement. No PNB GET
+                # happens while observing the inventory. Actual download
+                # requires a fresh exact-card recheck and the Core consent.
+                has_pnb = _pnb_direct_url_observed(loan.ebook_url)
                 rights_by_id[right_key] = ProviderRightObservation(
                     edition_id=edition_text, right_id=right_key,
                     kind="loan", state="unknown",
                     evidence_kind="provider_response",
                     evidence_ref="paris.dilicom.listloans",
-                    observed_at=observed, delivery="unknown",
+                    observed_at=observed,
+                    delivery="available" if has_pnb else "unknown",
+                    delivery_offer_id=(
+                        _paris_pnb_offer_id(scope, edition_text, right_key)
+                        if has_pnb else ""
+                    ),
                 )
             # Core may mutate the mutable borrower independently from the
             # session lock. Revalidate its exact scope before publication.
