@@ -247,3 +247,67 @@ def test_three_local_files_without_provider_origin_do_not_veto_selected_delivery
     assert again["downloaded"] == again["failed"] == again["blocked"] == 0
     assert content_gets(gets, urls) == (urls[3:] if consent else [])
     assert len(runtime_calls) == expected_adept
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_source_wide_auto_switch_replaces_six_individual_consents(
+    purchases, synchronize, enabled,
+):
+    """#3171: a persistent Numilog source opt-in covers eligible purchases."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
+    for i, (key, path) in enumerate(zip(keys, paths)):
+        if i < 3:
+            attest(service, snapshot, key, path, root)
+        assert LocalCatalog(service.storage, root).index_path(
+            path, identity_id=account.identity_id,
+        )["status"] == "indexed"
+    before = {path: path.read_bytes() for path in paths}
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    store = service.storage
+    # Equivalent persisted result of the Core source consent confirmation.
+    # No exact-right authorization is created by this test.
+    assert store.numilog_materialization_change_consent(
+        source_id=sid, activate=enabled, expected_revision=None,
+    ) is True
+    assert broker.canonical_acquisition_choices(sid) == ()
+    result = synchronize(service, account)
+    assert result["present_attested"] == 3
+    assert result["downloaded"] == (3 if enabled else 0)
+    assert result["pending"] == (0 if enabled else 3)
+    assert result["failed"] == result["blocked"] == 0
+    assert content_gets(gets, urls) == (urls[3:] if enabled else [])
+    assert {p: p.read_bytes() for p in paths} == before
+    assert len(store.placements()) == (9 if enabled else 6)
+    assert len(runtime_calls) == (3 if enabled and kind == "acsm" else 0)
+    again = synchronize(service, account)
+    assert again["downloaded"] == 0
+    assert again["present_attested"] == (6 if enabled else 3)
+    assert content_gets(gets, urls) == (urls[3:] if enabled else [])
+
+
+def test_source_wide_revocation_blocks_existing_per_right_permission(
+    purchases, synchronize,
+):
+    """Explicit OFF suppresses a stale exact-grant without removing it."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
+    for i, (key, path) in enumerate(zip(keys, paths)):
+        if i < 3:
+            attest(service, snapshot, key, path, root)
+        LocalCatalog(service.storage, root).index_path(path, identity_id=account.identity_id)
+    service.set_canonical_acquisition_consent(account, keys[3], allowed=True)
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    assert service.storage.numilog_materialization_change_consent(
+        source_id=sid, activate=False,
+    )
+    result = synchronize(service, account)
+    assert result["present_attested"] == 3
+    assert result["pending"] == 3
+    assert result["downloaded"] == 0
+    assert content_gets(gets, urls) == []
+    assert service.storage.placements() and len(service.storage.placements()) == 6
