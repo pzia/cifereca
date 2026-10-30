@@ -45,14 +45,14 @@ def persist_attested_source_references(
     now = __import__("time").time_ns() // 1_000_000_000
     admitted = [
         row for row in snapshot.rights
-        if row.provider_attested and (
-            row.state == "active" or row.delivery_attested
-        )
+        if row.provider_attested
     ]
     # SourceReference.state is the operational sync state of an exact provider
-    # resource, NOT an independent legal/ownership entitlement. An observed
-    # downloadable offer may be synchronized even if descriptive rights
-    # metadata are missing, while a right marked inactive remains excluded.
+    # resource, NOT a legal/ownership entitlement. Every authenticated
+    # provider reference may be examined for a current selected offer; only
+    # `delivery_attested` can authorize the downstream physical GET, under
+    # explicit consent. Unknown/inactive descriptive rights cannot veto that
+    # offer inspection, and archived/unavailable rows cannot authorize GET.
     if not admitted:
         return 0
     written = 0
@@ -247,7 +247,7 @@ def observe_canonical_rights_in_sync(
         }
     # Do not promote historical receipts or unknown rights into provider A.
     admitted = sum(
-        row.provider_attested and (row.state == "active" or row.delivery_attested)
+        row.provider_attested
         for row in snapshot.rights
     )
     try:
