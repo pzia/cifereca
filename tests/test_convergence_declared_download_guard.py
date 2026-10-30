@@ -155,7 +155,9 @@ def test_unverified_declared_file_cannot_veto_consenting_download(rig):
     book.unlink()
     _authorize(broker, broker._source_id(account))
     session.library = lambda: [item]
-    session.download_direct = lambda *_a: pytest.fail('no duplicate download')
+    session.download_direct = lambda *_a: (_ for _ in ()).throw(
+        RuntimeError('synthetic provider delivery unavailable')
+    )
     result = execute(broker, account.identity_id, 'startup')
     assert not result.ok and result.facts['status'] == 'failed'
     assert result.facts['blocked'] == 0
