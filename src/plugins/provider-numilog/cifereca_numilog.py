@@ -1292,7 +1292,30 @@ class NumilogSession(ProviderSession):
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
                   authorized_link=None, authorized_kind=None, expected_owner_scope=None,
-                  stage_acsm_only=False):
+                  stage_acsm_only=False, stage_dirfd=None):
+        # The exact Core-selected staging directory is held open across the
+        # supplier GET. /proc/self/fd pins its inode if the path is replaced
+        # with a symlink while HTTPX streams the response. Legacy/manual
+        # downloads retain their existing file publication contract.
+        if stage_dirfd is not None and (
+                stage_acsm_only is not True
+                or type(stage_dirfd) is not int
+                or not Path('/proc/self/fd/' + str(stage_dirfd)).is_dir()):
+            raise ProviderCapabilityError('numilog_selected_staging_invalid')
+
+        def selected_candidate_path(file):
+            if stage_dirfd is None:
+                return file
+            try:
+                expected = os.fstat(stage_dirfd)
+                current = os.stat(destination.parent, follow_symlinks=False)
+                if ((expected.st_dev, expected.st_ino) !=
+                        (current.st_dev, current.st_ino)):
+                    raise ProviderCapabilityError('numilog_selected_staging_rebound')
+                return destination.parent / file.name
+            except (OSError, ValueError):
+                raise ProviderCapabilityError('numilog_selected_staging_rebound') from None
+
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -1650,7 +1673,10 @@ class NumilogSession(ProviderSession):
                     length = r.headers.get('content-length','')
                     if length.isdigit() and int(length) > self.maximum:
                         raise ProviderError('Numilog : téléchargement trop volumineux')
-                    fd,name = tempfile.mkstemp(prefix='.numilog-',suffix='.part',dir=destination.parent)
+                    stage_directory = (Path('/proc/self/fd') / str(stage_dirfd)
+                                       if stage_dirfd is not None else destination.parent)
+                    fd,name = tempfile.mkstemp(prefix='.numilog-',suffix='.part',
+                                               dir=stage_directory)
                     part = Path(name)
                     size = 0
                     try:
@@ -1689,7 +1715,7 @@ class NumilogSession(ProviderSession):
                                         'artifact_validation', 'acsm_candidate',
                                         hops=hop+1,
                                     )
-                                    return acsm, self.library_url
+                                    return selected_candidate_path(acsm), self.library_url
                                 except BaseException:
                                     acsm.unlink(missing_ok=True)
                                     raise
@@ -1730,7 +1756,7 @@ class NumilogSession(ProviderSession):
                                     'artifact_validation', 'epub_candidate',
                                     hops=hop+1,
                                 )
-                                return candidate, self.library_url
+                                return selected_candidate_path(candidate), self.library_url
                             except BaseException:
                                 candidate.unlink(missing_ok=True)
                                 raise
@@ -1804,7 +1830,21 @@ class NumilogSession(ProviderSession):
                 if current_offer != expected_offer_id:
                     raise ProviderCapabilityError('numilog_offer_changed')
             directory = Path(target_dir)
-            directory.mkdir(parents=True,exist_ok=True)
+            stage_dirfd = None
+            if stage_acsm_only:
+                # Core already created this attempt directory. A link swap
+                # during preflight or streaming must not redirect its bytes.
+                try:
+                    if (directory.is_symlink() or not directory.is_dir()
+                            or directory.resolve(strict=True) != directory.absolute()):
+                        raise ProviderCapabilityError('numilog_selected_staging_invalid')
+                    stage_dirfd = os.open(
+                        directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                    )
+                except (OSError, ValueError, RuntimeError):
+                    raise ProviderCapabilityError('numilog_selected_staging_invalid') from None
+            else:
+                directory.mkdir(parents=True,exist_ok=True)
             name = 'numilog-'+hashlib.sha256(self._id(row).encode()).hexdigest()[:32]+'.epub'
             try:
                 evidence = row.get('delivery')
@@ -1858,9 +1898,12 @@ class NumilogSession(ProviderSession):
                     authorized_link=evidence.url if isinstance(evidence, OwnedDelivery) else None,
                     authorized_kind=evidence.delivery_kind
                         if isinstance(evidence, OwnedDelivery) else None,
-                    stage_acsm_only=stage_acsm_only)
+                    stage_acsm_only=stage_acsm_only, stage_dirfd=stage_dirfd)
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
+            finally:
+                if stage_dirfd is not None:
+                    os.close(stage_dirfd)
 
 class NumilogPlugin(ProviderPlugin):
     descriptor = DESCRIPTOR
