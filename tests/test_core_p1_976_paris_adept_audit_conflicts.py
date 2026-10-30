@@ -342,3 +342,17 @@ def test_normal_one_connection_without_historical_adobe_claim_has_no_review_acti
     assert loan["requires_attention"] is False
     assert loan["review_reasons"] == []
     assert loan["next_read_only_review"] == "none"
+
+
+def test_shared_paris_loan_with_two_configured_profiles_requests_exact_review():
+    storage = FakeStorage(entitlements=[
+        right("paris-a", "alice", "primary"),
+        right("paris-b", "bob", "primary"),
+    ])
+    loan = build_paris_adept_audit(storage)["loans"][0]
+    assert loan["configured_profile_divergence"] is True
+    assert loan["recorded_profile_conflict"] is False
+    assert "configured_profiles_diverge" in loan["review_reasons"]
+    assert "multiple_paris_connections" in loan["review_reasons"]
+    assert loan["next_read_only_review"] == "compare_exact_loan_and_adobe_transactions"
+    assert loan["requires_attention"] is True
