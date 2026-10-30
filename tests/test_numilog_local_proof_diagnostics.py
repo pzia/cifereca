@@ -14,7 +14,7 @@ from tests.test_core_p0_3171_numilog_completed_startup import _completed_purchas
 from tests.test_numilog_owned_library_download import case
 
 
-PREFIX = "TRACE numilog local_presence_check "
+PREFIX = "Numilog local_presence_check "
 
 
 def reports(caplog):
@@ -164,3 +164,49 @@ def test_optional_log_handler_failure_does_not_change_verified_presence(case, mo
         broker, case.account, sid, case.item.record_id, source_current=lambda: True,
     )
     assert path.is_file()
+
+
+@pytest.mark.parametrize("level", ["normal", "errors"])
+@pytest.mark.parametrize("damaged", [False, True])
+def test_real_file_journal_preserves_check_at_its_effective_verbosity(
+    case, tmp_path, monkeypatch, level, damaged,
+):
+    from cifereca import logging_utils
+    from cifereca.core.diagnostic_journal import query_journal
+    from tests.test_core_p1_3133_canonical_journal import _canonical_writer
+
+    broker, sid, path = _completed_purchase(case)
+    if damaged:
+        path.write_bytes(b"%PDF-1.7\nActual changed bytes\n")
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", level)
+    journal = tmp_path / "proof-journal.log"
+    handler = _canonical_writer(journal)
+    logger = logging.getLogger("cifereca")
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        with diagnostic_task_scope():
+            task = diagnostic_task_reference()
+            assert startup._completed_local_purchase_verified(
+                broker, case.account, sid, case.item.record_id, source_current=lambda: True,
+            ) is not damaged
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        handler.close()
+    result = query_journal(journal, search="local_presence_check")
+    if level == "errors" and not damaged:
+        assert result["total"] == 0
+        return
+    assert result["total"] == 2
+    events = result["events"]
+    assert {row["operation"] for row in events} == {"local_presence_check"}
+    assert {row["detail"]["gate"] for row in events} == (
+        {"file_fingerprint_mismatch", "local_presence_unverified"} if damaged
+        else {"file_fingerprint_verified", "verified"}
+    )
+    assert all(row["detail"]["item_id"] == case.item.record_id
+               and row["task_ref"] == task for row in events)
+    assert all("file_fingerprint" not in row["message"] or str(path) in row["message"]
+               for row in events)

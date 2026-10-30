@@ -200,11 +200,14 @@ def local_proof(account, source_id, item_id, gate, *, exc_info=False, **evidence
         reference = numilog_task_reference()
         if reference is not None:
             fields["task_ref"] = reference
-        message = "TRACE numilog local_presence_check " + json.dumps(
+        # These are business check outcomes, visible at normal verbosity;
+        # a TRACE prefix would be discarded by the real journal filter.
+        message = "Numilog local_presence_check " + json.dumps(
             fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         )
         _LOG.log(
-            logging.WARNING if exc_info else logging.INFO, "%s", message,
+            logging.INFO if gate in {"verified", "file_fingerprint_verified"}
+            else logging.WARNING, "%s", message,
             exc_info=exc_info,
             extra=_core_journal_record(
                 "NUMILOG", "local_presence_check",
