@@ -92,7 +92,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi gir1.2-gtk-4.0 python3-pytest python3-venv python3-cryptography
+            python3-gi gir1.2-gtk-4.0 python3-pytest python3-venv python3-cryptography python3-httpx
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/installed-browser-venv"
           "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2' 'cryptography>=42,<48'
           "$RUNNER_TEMP/installed-browser-venv/bin/python" -m playwright install chromium
@@ -135,7 +135,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-pytest python3-venv python3-cryptography xvfb xauth xdotool
+            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-pytest python3-venv python3-cryptography python3-httpx xvfb xauth xdotool
       - name: Native GTK4 page, XTEST keyboard and ZIP review with synthetic RAM trace
         env:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/src/plugins/browser-recorder

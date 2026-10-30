@@ -550,7 +550,7 @@ def test_short_authentication_codes_always_have_secret_classification(field):
     assert _json_shape("1234", name=field, approved=frozenset({"1234"})) == "[SECRET]"
 
 
-def test_short_pin_never_reaches_any_zip_member_even_with_approved_book_id():
+def test_short_pin_never_reaches_capture_members_even_with_approved_book_id():
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
         1, "POST", url=ORIGIN + "/api/books?pinCode=0007&BookId=214",
@@ -572,10 +572,24 @@ def test_short_pin_never_reaches_any_zip_member_even_with_approved_book_id():
             review.decide(candidate.key, "keep" if candidate.value == "214"
                           else "anonymize")
         plan = prepare_reviewed_zip(review)
-        serialized = json.dumps(plan.preview(), sort_keys=True)
+        preview = plan.preview()
+        # Only the recording-derived member contents can contain a captured
+        # credential. The separately bundled public Core dev kit contains
+        # generated SHA-256 digests; a four-digit PIN can occur by chance
+        # inside an unrelated digest without being a leaked credential.
+        # Likewise preview[*].sha256 is a checksum, not a ZIP member body.
+        capture_members = [
+            item["text"] for item in preview["members"]
+            if not item["name"].startswith("plugin-dev-kit/")
+        ]
+        assert any(item["name"] == "exchanges/0001.json"
+                   for item in preview["members"])
+        assert any(item["name"] == "bodies/0001-request.txt"
+                   for item in preview["members"])
+        serialized = "\n".join(capture_members)
         for secret in ("0007", "1234", "4321", "5678", "6543"):
             assert secret not in serialized
-        body = next(item["text"] for item in plan.preview()["members"]
+        body = next(item["text"] for item in preview["members"]
                     if item["name"] == "bodies/0001-request.txt")
         shaped = json.loads(body)
         assert shaped["pin"] == "[SECRET]"
