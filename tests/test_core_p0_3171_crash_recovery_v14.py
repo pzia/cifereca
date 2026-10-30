@@ -155,6 +155,48 @@ def test_tampered_journal_context_never_adopts_a_similar_file(rig, monkeypatch):
     assert rows(service.storage) == (1, 1, 1, 1)
 
 
+@pytest.mark.parametrize("variant", ["same", "different", "escaped"])
+def test_duplicate_checkpoint_field_requires_fresh_authorized_get(
+    rig, monkeypatch, variant,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    first = run(service, account, snapshot, root, lock_path, {source},
+                fake_delivery(service, root))
+    assert first[0].status == "failed"
+    assert service.calls == 1
+    assert rows(service.storage) == (0, 0, 0, 0)
+
+    with service.storage._lock, service.storage._connect() as db:
+        record_id, metadata = db.execute(
+            "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'"
+        ).fetchone()
+        valid = json.loads(metadata)
+        # Even an identical duplicate is ambiguous; escaped names must
+        # normalize to the same key before duplicate detection.
+        key = '"' + chr(92) + 'u0072eceipt"' if variant == "escaped" else '"receipt"'
+        value = "other-receipt" if variant == "different" else valid["receipt"]
+        duplicate = metadata[:-1] + "," + key + ":" + json.dumps(value) + "}"
+        assert json.loads(duplicate)["receipt"] == value
+        db.execute(
+            "UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+            (duplicate, record_id),
+        )
+
+    monkeypatch.setattr(convergence_execution, "publish_completed_acquisition", original)
+    # Do not replay ambiguous receipt, but do not trap the acquisition in a
+    # permanent failure. The same admitted source makes a new real GET.
+    resumed = run(service, account, snapshot, root, lock_path, {source},
+                  fake_delivery(service, root))
+    assert resumed[0].status == "downloaded"
+    assert service.calls == 2
+    assert rows(service.storage) == (1, 1, 1, 1)
+    stage, = journal(service.storage)
+    assert stage[0] == "complete"
+    assert json.loads(stage[2])["receipt"] == valid["receipt"]
+
+
 def test_disabled_connection_rejects_staged_recovery_and_get(rig, monkeypatch):
     service, account, source, snapshot, root, lock_path = rig
     original = force_failure_once(monkeypatch)

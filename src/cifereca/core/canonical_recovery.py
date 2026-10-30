@@ -28,6 +28,16 @@ _SCHEMA = "canonical.completed-delivery.v1"
 _STAGED = "canonical_receipt_staged"
 
 
+def _unique_checkpoint_fields(pairs):
+    """Never turn ambiguous persisted JSON into a completed-delivery receipt."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("canonical_intake_duplicate_checkpoint_field")
+        result[key] = value
+    return result
+
+
 def _stage_id(source: SourceKey, offer_id: str) -> str:
     scope = source.scope
     return _stable(
@@ -221,7 +231,7 @@ def recover_completed_delivery(
             # the source coordinates, offer, pathname and two receipt refs.
             if type(row[6]) is not str or len(row[6]) > 65536:
                 return None
-            raw = json.loads(row[6])
+            raw = json.loads(row[6], object_pairs_hook=_unique_checkpoint_fields)
             if (type(raw) is not dict or raw.get("schema") != _SCHEMA
                     or raw.get("source") != _scope(source)
                     or raw.get("offer_id") != offer_id
