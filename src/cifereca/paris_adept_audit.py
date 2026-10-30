@@ -11,6 +11,15 @@ from typing import Any
 from .core.adept_origin_audit import _opaque_ref
 
 
+# The audit is a copyable CLI report: ledger state is an enum, never free text.
+# Unknown/historical values remain visible as `unknown`, without secrets.
+_AUDIT_STATUSES = frozenset({
+    "complete", "failed", "attention_required", "cancelled", "aborted",
+    "pending", "partial", "skipped", "running", "unknown",
+    "reconcile_required", "unchanged",
+})
+
+
 def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -> dict[str, Any]:
     """Cross-reference active Paris entitlements, acquisitions and pinned grants."""
     # A duplicate credential bound to different identities cannot prove its
@@ -67,7 +76,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             current["sources"].append(source)
         if source == "acquisition":
             statuses = current.setdefault("acquisition_statuses", [])
-            status = str(row.get("status") or "")
+            raw_status = row.get("status")
+            status = raw_status if type(raw_status) is str and raw_status in _AUDIT_STATUSES else "unknown"
             if status not in statuses:
                 statuses.append(status)
             # A completed and failed ledger row with the same transaction
@@ -75,6 +85,12 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             current["acquisition_status"] = (
                 status if len(statuses) == 1 else "ambiguous"
             )
+            # A failure/attention receipt may record a *proposed* ADEPT
+            # profile or token before the operation failed. It is diagnostic
+            # status, not a successful historical fulfillment claim. Never
+            # let it create or conflict with recorded origin evidence.
+            if status != "complete":
+                return
             metadata = row.get("metadata")
             metadata = metadata if isinstance(metadata, dict) else {}
             ade = metadata.get("adept_binding")
