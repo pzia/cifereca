@@ -53,12 +53,15 @@ une garantie identique pour le cycle OFF→ON dans une même opération.
 
 ## Droit descriptif absent et livraison
 
-Une observation `ProviderRightObservation` d’état `unknown` peut annoncer
-`delivery=available` **uniquement si elle provient d’une réponse authentifiée
-fournisseur** et possède un `delivery_offer_id` exact. L’état `inactive`,
-l’absence d’offre, une preuve `legacy_unverified` et les scopes ambigus
-restent des refus. Une référence synchronisable peut être persistée, sans créer
-un `Entitlement` légal synthétique.
+Une observation `ProviderRightObservation` d’état descriptif
+`unknown` **ou `inactive`** peut annoncer `delivery=available` uniquement
+si elle provient d’une réponse authentifiée fournisseur et possède un
+`delivery_offer_id` exact. Le Core peut enregistrer la **SourceReference**
+fournisseur indépendamment de ce droit, puis vérifier une offre sélectionnée
+même si `delivery=unknown`. La livraison demeure interdite jusqu’à l’offre
+positive réelle, le consentement et la validation du compte. Les preuves
+`legacy_unverified`, le compte ambigu et l’absence d’offre positive
+**au moment du GET** sont bloquants. Aucun `Entitlement` légal n’est créé.
 
 Le contrat Plugins n’autorise ni la publication directe de fichiers ni
 l’adoption fondée sur le titre : le Core conserve le contrôle de l’offre
@@ -91,3 +94,14 @@ Les tests utilisent des données et transports synthétiques. Ils ne prouvent
 de production. Exiger journal terrain post-06:16:34, contrôle de l’absence de
 double GET, des six OriginLinks/Placements/SHA et de la seconde Sync.
 Fusion conditionnée à CI Core, Plugins, E2E et recette installation/rollback.
+
+
+## Paris PNB : dépendance conservée hors de cette PR
+
+La PR Plugins #3711 a ajouté l'offre exacte `EbookUrl` PNB avec état
+descriptif `unknown`. Elle franchit désormais le contrat Core de livraison
+attestée, mais **aucun ancien switch de catalogue ni indicateur de capacité
+Paris n'est une autorisation utilisateur de téléchargement automatique**.
+La création et l'affichage du commutateur source/profil/type Paris est suivie
+séparément par **#3716 (P0)**, avant toute déclaration de clôture globale
+de #3171. Aucun consentement Paris n'est inféré des modes BnF/Numilog/Kobo.
