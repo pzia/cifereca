@@ -1,7 +1,7 @@
 """Actual Numilog adapter -> existing Core Sync, with six synthetic purchases.
 
-Real HTML/HTTPX, broker, SQLite, files, consent and publication. No live
-supplier, ADEPT, new reconciliation engine or production data is involved.
+Real HTML/HTTPX, broker, SQLite, files, consent and publication. HTTP and
+the ADEPT runtime boundary are simulated; no live supplier/production data.
 """
 import hashlib
 import io
@@ -24,6 +24,7 @@ from cifereca.storage import Storage
 from cifereca_numilog import NumilogSession
 from tests.test_numilog_owned_js_delivery_p0 import _card, _page
 from tests.test_numilog_not_specified_epub_confirmation_p0_2024 import SIGNED_EPUB
+from tests.test_numilog_signed_acsm_transport_p0 import SIGNED as SIGNED_ACSM
 
 
 def epub_bytes(index):
@@ -54,8 +55,8 @@ def epub_bytes(index):
     return stream.getvalue()
 
 
-@pytest.fixture
-def purchases(tmp_path, monkeypatch):
+@pytest.fixture(params=("epub", "acsm"))
+def purchases(tmp_path, monkeypatch, request):
     config = Config(tmp_path / "config.json")
     root = tmp_path / "EBooks"
     config.set("library.directory", str(root))
@@ -87,12 +88,15 @@ def purchases(tmp_path, monkeypatch):
         account_id=account.unique_id, label="Synthetic",
     ))
     payloads = [epub_bytes(i) for i in range(6)]
-    urls = [SIGNED_EPUB.replace("productid=9001", f"productid={9001 + i}")
+    delivery_kind = request.param
+    urls = [(SIGNED_EPUB.replace("productid=9001", f"productid={9001 + i}")
+             if delivery_kind == "epub" else SIGNED_ACSM.replace("orderid=FICTIONAL", f"orderid=SYNTHETIC{i}"))
             for i in range(6)]
     cards = [_card(11 * (i + 1), 9001 + i, urls[i],
                    attrs=f'onclick="ModalDownload({9001 + i}, 1)"').replace(
                        "DrmTechnlology: 'ADOBE', link:",
-                       "DrmTechnlology: 'NOT_SPECIFIED', format: 'EPUB', link:",
+                       ("DrmTechnlology: 'NOT_SPECIFIED', format: 'EPUB', link:"
+                        if delivery_kind == "epub" else "DrmTechnlology: 'ADOBE', link:"),
                    ) for i in range(6)]
     html = _page(*cards)
     gets = []
@@ -107,11 +111,45 @@ def purchases(tmp_path, monkeypatch):
         if url == session.library_url:
             return httpx.Response(200, text=html, headers={"content-type": "text/html"})
         assert url in urls, "No public enrichment or unselected delivery request"
-        return httpx.Response(200, content=payloads[urls.index(url)],
+        index = urls.index(url)
+        if delivery_kind == "acsm":
+            token = ('<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+                     f'<resourceItemInfo><resource>synthetic-{index}</resource>'
+                     '<format>application/epub+zip</format>'
+                     '</resourceItemInfo></fulfillmentToken>')
+            return httpx.Response(200, text=token,
+                                  headers={"content-type": "application/vnd.adobe.adept+xml"})
+        return httpx.Response(200, content=payloads[index],
                               headers={"content-type": "application/epub+zip"})
 
     session.client.close()
     session.client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    runtime_calls = []
+
+    def resolve_profile(identity):
+        assert identity == account.identity_id
+        return "synthetic-hugues", "configured"
+
+    def execute(request):
+        # Only the runtime boundary is simulated. Core must choose the
+        # profile/destination, validate final bytes and publish both origins.
+        assert delivery_kind == "acsm"
+        assert request["source"]["type"] == "acsm"
+        assert request["source"]["provider"] == "numilog"
+        assert request["profile"] == "synthetic-hugues"
+        assert request["metadata"]["identity_id"] == account.identity_id
+        from xml.etree import ElementTree
+        token = ElementTree.parse(request["source"]["path"])
+        resource = token.find(".//{http://ns.adobe.com/adept}resource").text
+        index = int(resource.removeprefix("synthetic-"))
+        path = Path(request["destination"])
+        path.write_bytes(payloads[index])
+        runtime_calls.append(request)
+        return dict(ok=True, profile="synthetic-hugues", artifact={"path": str(path)})
+
+    monkeypatch.setattr(service, "resolve_adept_profile_for_identity", resolve_profile)
+    monkeypatch.setattr(service, "_originating_adept_profile_id", lambda *_: "synthetic-profile-id")
+    monkeypatch.setattr(service, "execute_acquisition_request", execute)
     lock = tmp_path / "locks" / "acquisition.lock"
     for module in ("sync_coordination", "canonical_selected_offers",
                    "canonical_selected_delivery", "convergence_execution", "canonical_recovery"):
@@ -131,7 +169,7 @@ def purchases(tmp_path, monkeypatch):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payloads[i])
             paths.append(path)
-        yield service, session, account, snapshot, keys, paths, urls, gets, root
+        yield service, session, account, snapshot, keys, paths, urls, gets, root, delivery_kind, runtime_calls
     finally:
         service.close()
 
@@ -163,7 +201,7 @@ def synchronize(request):
 
 
 def test_six_exact_numilog_origins_skip_delivery_in_root_and_nested_paths(purchases, synchronize):
-    service, session, account, snapshot, keys, paths, urls, gets, root = purchases
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
     for key, path in zip(keys, paths):
         attest(service, snapshot, key, path, root)
     before = {path: path.read_bytes() for path in paths}
@@ -173,13 +211,14 @@ def test_six_exact_numilog_origins_skip_delivery_in_root_and_nested_paths(purcha
         assert counts["present_attested"] == 6
         assert counts["downloaded"] == counts["failed"] == counts["blocked"] == counts["pending"] == 0
         assert content_gets(gets, urls) == []
+        assert runtime_calls == []
         assert service.storage.placements() == placements
         assert {path: path.read_bytes() for path in paths} == before
 
 
 @pytest.mark.parametrize("consent", [False, True])
 def test_three_local_files_without_provider_origin_do_not_veto_selected_delivery(purchases, synchronize, consent):
-    service, session, account, snapshot, keys, paths, urls, gets, root = purchases
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
     for i, (key, path) in enumerate(zip(keys, paths)):
         if i < 3:
             attest(service, snapshot, key, path, root)
@@ -198,9 +237,13 @@ def test_three_local_files_without_provider_origin_do_not_veto_selected_delivery
     assert {path: path.read_bytes() for path in paths} == before
     assert len(service.storage.artifacts()) == 6
     assert len(service.storage.placements()) == (9 if consent else 6)
+    expected_adept = 3 if consent and kind == "acsm" else 0
+    assert len(runtime_calls) == expected_adept
     with service.storage._lock, service.storage._connect() as db:
-        assert db.execute("SELECT count(*) FROM origin_links").fetchone()[0] == (6 if consent else 3)
+        assert db.execute("SELECT count(*) FROM origin_links WHERE origin_kind='provider'").fetchone()[0] == (6 if consent else 3)
+        assert db.execute("SELECT count(*) FROM origin_links WHERE origin_kind='adept'").fetchone()[0] == expected_adept
     again = synchronize(service, account)
     assert again["present_attested"] == (6 if consent else 3)
     assert again["downloaded"] == again["failed"] == again["blocked"] == 0
     assert content_gets(gets, urls) == (urls[3:] if consent else [])
+    assert len(runtime_calls) == expected_adept
