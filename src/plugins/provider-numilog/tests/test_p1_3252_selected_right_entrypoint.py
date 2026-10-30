@@ -23,6 +23,33 @@ def selection(right, **overrides):
     }
 
 
+def test_numilog_exact_download_offer_survives_unknown_right_metadata():
+    from dataclasses import replace
+
+    session, broker, reads = rig()
+    original = session.rights_observation_snapshot
+
+    def unknown_right(account):
+        observed = original(account)
+        return replace(observed, rights=tuple(
+            replace(row, state="unknown") for row in observed.rights
+        ))
+
+    session.rights_observation_snapshot = unknown_right
+    try:
+        account = bound_account(session)
+        first = session.rights_observation_snapshot(account).rights[0]
+        assert first.state == "unknown"
+        qualified = session.rights_selected_delivery_offer_snapshot(
+            account, **selection(first),
+        )
+        assert qualified.rights[0].state == "unknown"
+        assert qualified.rights[0].delivery_attested
+        assert SIGNED not in json.dumps(asdict(qualified))
+    finally:
+        session.close()
+
+
 def test_selected_numilog_right_qualifies_only_one_owned_card():
     session, broker, reads = rig()
     try:
