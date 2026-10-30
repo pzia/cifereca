@@ -586,7 +586,7 @@ def test_short_pin_never_reaches_capture_members_even_with_approved_book_id():
                    for item in preview["members"])
         assert any(item["name"] == "bodies/0001-request.txt"
                    for item in preview["members"])
-        serialized = "\\n".join(capture_members)
+        serialized = "\n".join(capture_members)
         for secret in ("0007", "1234", "4321", "5678", "6543"):
             assert secret not in serialized
         body = next(item["text"] for item in preview["members"]
