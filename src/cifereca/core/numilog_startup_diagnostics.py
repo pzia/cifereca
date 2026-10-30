@@ -37,6 +37,12 @@ ITEM_DECISIONS = frozenset({
     "evidence_unavailable", "source_changed", "invalid_source",
     "invalid_item_id", "preflight_failed", "consent_revoked",
     "quota_reached", "acquired", "acquisition_failed",
+    # Local recovery rejection reasons; closed enums only, never raw SQL,
+    # paths, credential identifiers or private provider URLs.
+    "recovery_scope_invalid", "recovery_right_unproven",
+    "recovery_receipts_ambiguous", "recovery_foreign_receipt",
+    "recovery_already_attempted", "recovery_receipt_pending",
+    "recovery_foreign_placement", "recovery_evidence_unavailable",
 })
 
 COUNTS = ("attempted", "downloaded", "skipped", "failed")
