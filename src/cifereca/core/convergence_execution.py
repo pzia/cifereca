@@ -243,8 +243,11 @@ def execute_admitted_convergence(
         # A stale/unknown right, unsigned delivery, missing configured
         # consent or disabled source can never start a file GET or ADEPT.
         if (snapshot.status not in ("success", "partial")
-                or row.state != "active" or not row.provider_attested):
-            results.append(ConvergenceOutcome(key, "pending", "right_unconfirmed"))
+                or not row.provider_attested
+                or (row.state != "active" and not (
+                    row.state == "unknown" and row.delivery == "available"
+                ))):
+            results.append(ConvergenceOutcome(key, "pending", "offer_unconfirmed"))
             continue
         if row.delivery_unavailable_reason == "archived":
             results.append(ConvergenceOutcome(key, "skipped_archived", "delivery_archived"))
