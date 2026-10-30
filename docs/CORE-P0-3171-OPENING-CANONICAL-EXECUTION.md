@@ -34,6 +34,10 @@ ou, en l'absence de commutateur source configuré, l'ancien consentement exact
 `SourceKey`. Le commutateur global ON consent aux offres actuellement et
 ultérieurement téléchargeables du compte authentifié ; OFF révoque toutes les
 acquisitions automatiques nouvelles, même avec un ancien grant individuel.
+Pour Numilog, le Core épingle **l'époque CAS de consentement avant lecture**
+et la recontrôle après le GET ainsi que sous le verrou SQL de publication :
+une révocation suivie d'une réactivation ON durant la même Sync ne réhabilite
+jamais une livraison initiée sous l'ancienne époque.
 `kobo_backup.enabled` (préférence historique non scoped), un catalogue v1,
 un titre, un SHA et un ancien droit SQLite ne constituent jamais une permission.
 La lecture de l'autorisation se fait avant/après livraison **et dans la
