@@ -3786,17 +3786,16 @@ class Storage:
                 "numilog-materialization-recovery", identity, credential, account, item_id,
             )
             purchase_digest = hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:32]
-            recovery_root = Path(source_root) / ("recovery-" + purchase_digest)
-            delivery_root = Path(source_root) / ("delivery-" + purchase_digest)
-            # Only the exact-purchase, fixed Core-managed staging roots
-            # are admitted; neither a title nor an arbitrary path is allowed.
-            # The global acquisition lock and provider adapter never modify
-            # an existing root or a historical acsm-* placement.
-            approved_parent = (
-                str(parent.parent) == source_root
-                or (recovering and parent.parent == recovery_root)
-                or (not recovering and parent.parent == delivery_root)
+            stage_name = ("recovery-" if recovering else "delivery-") + purchase_digest
+            # Only one of eight bounded, exact-purchase Core staging slots.
+            # A prior uncheckpointed attempt cannot cause an overwrite;
+            # arbitrary nested paths remain invalid.
+            approved_stage = (
+                str(parent.parent.parent) == source_root
+                and re.fullmatch(re.escape(stage_name) + r"(?:-[2-8])?",
+                                 parent.parent.name) is not None
             )
+            approved_parent = str(parent.parent) == source_root or approved_stage
             if (not path.is_absolute() or not approved_parent
                     or re.fullmatch(r"acsm-([0-9a-f]{64})", parent.name) is None):
                 return refused("path_not_canonical")
