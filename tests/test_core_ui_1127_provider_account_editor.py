@@ -34,12 +34,13 @@ class Widget:
 
 
 def _render(provider_id="paris", *, data=None, credentials=None, url=None,
-            descriptor_fields=None, descriptor_options=None, configured=None):
+            descriptor_fields=None, descriptor_options=None, descriptor_note=None,
+            legacy_values=None, configured=None):
     secret = SimpleNamespace(key="password", label="Mot de passe", secret=True)
     plain = SimpleNamespace(key="card", label="Numéro de carte", secret=False)
     fields = descriptor_fields if descriptor_fields is not None else [plain, secret]
     descriptor = SimpleNamespace(display_name=provider_id.upper(), credential_fields=fields,
-                                 account_options=descriptor_options or ())
+                                 account_options=descriptor_options or (), account_note=descriptor_note)
     gtk = SimpleNamespace(
         Switch=Widget, Button=lambda label=None: Widget(),
         Align=SimpleNamespace(CENTER="center"),
@@ -52,7 +53,7 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     settings = data if data is not None else {}
     config = SimpleNamespace(
         paris_base_url=lambda: url,
-        get=lambda key, default=None: default,
+        get=lambda key, default=None: (legacy_values or {}).get(key, default),
     )
     editor, delete = build_provider_account_editor(
         data=settings, provider_id=provider_id,
@@ -141,9 +142,10 @@ def test_window_keeps_guard_id_allocation_delete_dirty_and_async_save():
 
 def test_unknown_provider_option_schema_builds_generic_rows_and_preserves_values():
     option = SimpleNamespace(key='endpoint', label='Adresse du service',
-                             default='https://default.example', secret=False)
+                             default='https://default.example', secret=False,
+                             legacy_config_key=None)
     secret = SimpleNamespace(key='auth_hint', label='Clé de compte',
-                             default='', secret=True)
+                             default='', secret=True, legacy_config_key=None)
     original = {'options': {'endpoint': 'https://saved.example', 'unmanaged': 'keep'}}
     editor, _, container, adw = _render(
         'synthetic-provider', data=original, descriptor_options=[option, secret],
@@ -156,3 +158,24 @@ def test_unknown_provider_option_schema_builds_generic_rows_and_preserves_values
     assert not any(row.title in {'Connexion indirecte au compte Kobo', 'Accès public'}
                    for row in container.children[0].children)
     assert original == {'options': {'endpoint': 'https://saved.example', 'unmanaged': 'keep'}}
+
+
+def test_declared_option_prefers_saved_value_then_legacy_config_then_descriptor_default():
+    field = SimpleNamespace(key='base_url', label='URL du portail',
+                            default='https://default.example', secret=False,
+                            legacy_config_key='base_url')
+    note = ('Accès indirect', 'Service local intermédiaire')
+    editor, _, container, _ = _render(
+        'arbitrary-provider', descriptor_options=[field], descriptor_note=note,
+        legacy_values={'base_url': 'https://legacy.example'},
+    )
+    assert editor['option_fields']['base_url'].text == 'https://legacy.example'
+    assert any(row.title == 'Accès indirect' and row.subtitle == 'Service local intermédiaire'
+               for row in container.children[0].children)
+    saved, _, _, _ = _render(
+        'arbitrary-provider', data={'options': {'base_url': 'https://saved.example'}},
+        descriptor_options=[field], legacy_values={'base_url': 'https://legacy.example'},
+    )
+    assert saved['option_fields']['base_url'].text == 'https://saved.example'
+    default, _, _, _ = _render('arbitrary-provider', descriptor_options=[field])
+    assert default['option_fields']['base_url'].text == 'https://default.example'
