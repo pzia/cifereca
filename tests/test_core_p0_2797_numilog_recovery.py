@@ -248,8 +248,10 @@ def test_foreign_placement_blocks_recovery_but_identical_sha_does_not(
         ) == "recoverable"
         # Conversely a foreign placement declaring THIS scoped source item
         # is a conflict, even if its file bytes have the same SHA.
+        claimed = foreign.parent / "foreign-claim.epub"
+        epub(claimed)
         service.storage.placement_put({
-            "path": str(foreign), "identity_id": "alex",
+            "path": str(claimed), "identity_id": "alex",
             "provider_id": "numilog", "source_item_id": item.record_id,
             "artifact_id": indexed["artifact_id"], "state": "present",
         })
