@@ -745,6 +745,50 @@ class NumilogSession(ProviderSession):
             )
             return replace(base, rights=(qualified,))
 
+    def downloadable_resource_snapshot(self, account):
+        """#3252 v2: positive-only authenticated resources, not legal rights."""
+        from cifereca.plugin_api import from_legacy_rights_snapshot
+        return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
+
+    def downloadable_selected_offer_snapshot(
+        self, account, *, edition_id, resource_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        """#3252 v2: exact signed offer independent of optional right state."""
+        from cifereca.plugin_api import from_legacy_rights_snapshot
+        return from_legacy_rights_snapshot(
+            self.rights_selected_delivery_offer_snapshot(
+                account, edition_id=edition_id, right_id=resource_id,
+                kind=kind, branch=branch,
+                explicit_user_action=explicit_user_action,
+            )
+        )
+
+    def downloadable_selected_delivery_candidate(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+    ):
+        """#3252 v2: stage candidate bytes only; Core verifies and publishes."""
+        from cifereca.plugin_api import (
+            SourceReference, ProviderRightsScope, DeliveryCandidate,
+        )
+        path, hint = self.rights_selected_delivery_candidate(
+            account, edition_id=edition_id, right_id=resource_id,
+            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+        return DeliveryCandidate(
+            source=SourceReference(
+                ProviderRightsScope(
+                    account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id,
+                ),
+                branch, edition_id, resource_id, kind,
+            ),
+            selected_offer_id=selected_offer_id,
+            path=Path(path), provider_hint=hint,
+        )
+
     def rights_selected_delivery_offer_snapshot(
         self, account, *, edition_id, right_id, kind, branch,
         explicit_user_action=False,
