@@ -110,7 +110,13 @@ se contredisent, ou contrôler les inventaires Adobe déjà disponibles.
 n'est détectée, **jamais** qu'un retour ou un fulfillment est autorisé.
 Les tentatives ADEPT non terminées ou refusées restent visibles dans les
 statuts des acquisitions, mais elles ne constituent pas une preuve de profil
-historique activé. Un statut de reçu inconnu est affiché `unknown`,
+historique activé.
+Une livraison terminée par un exécuteur non Adobe ou par une stratégie autre
+que `loan_auto` ne constitue pas une activation ADEPT, même en présence d'un
+champ historique `adept_binding`. Un ancien reçu sans exécuteur explicite reste
+une preuve `recorded` diagnostique, jamais une attestation serveur.
+Les identifiants de prêts historiques non textuels sont ignorés, sans
+projection de leur contenu potentiellement sensible dans le JSON. Un statut de reçu inconnu est affiché `unknown`,
 jamais comme un message arbitraire pouvant contenir des données privées.
 Le résolveur Core par transaction (`audit_paris_adept_loan_origins`) est
 **distinct de cette commande globale** : il qualifie séparément
