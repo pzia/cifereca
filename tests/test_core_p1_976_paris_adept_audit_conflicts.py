@@ -385,3 +385,80 @@ def test_known_single_noncompleted_acquisition_status_does_not_imply_conflict():
     assert loan["ledger_status_ambiguous"] is False
     assert loan["origin_resolution"] == "unknown"
     assert "acquisition_receipts_conflict" not in loan["review_reasons"]
+
+
+@pytest.mark.parametrize("executor,strategy", [
+    ("provider", "loan_auto"),
+    ("kobo-adept", "manual"),
+    ("kobo", "loan_auto"),
+    ("PRIVATE-TOKEN", "loan_auto"),
+])
+def test_completed_non_adobe_delivery_never_attests_historical_adept_origin(executor, strategy):
+    row = acquisition(profile="NOT-ACTIVATED")
+    row.update(executor=executor, strategy=strategy)
+    row["metadata"]["adept_binding"]["adept_loan_id"] = "PRIVATE-LICENSE-IGNORED"
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[row],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    exposure = loan["exposures"][0]
+    assert exposure["acquisition_status"] == "complete"
+    assert "acquisition" in exposure["sources"]
+    assert exposure.get("recorded_adept_profile_ids") is None
+    assert exposure.get("recorded_adept_loan_refs") is None
+    assert loan["origin_resolution"] == "unknown"
+    assert "PRIVATE-LICENSE" not in repr(report)
+    assert "NOT-ACTIVATED" not in repr(report)
+
+
+def test_completed_adept_executor_keeps_legacy_historical_origin_visibility():
+    record = acquisition(profile="actual-historical-profile")
+    record.update(executor="kobo-adept", strategy="loan_auto")
+    record["metadata"]["adept_binding"]["adept_loan_id"] = "LICENSE-RECORDED"
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[record],
+    )
+    exposure = build_paris_adept_audit(storage)["loans"][0]["exposures"][0]
+    assert exposure["recorded_adept_profile_id"] == "actual-historical-profile"
+    assert exposure["recorded_adept_loan_ref"] is not None
+    # A legacy receipt lacking executor and strategy stays diagnostic only.
+    del record["executor"], record["strategy"]
+    legacy = build_paris_adept_audit(storage)["loans"][0]["exposures"][0]
+    assert legacy["recorded_adept_profile_id"] == "actual-historical-profile"
+
+
+@pytest.mark.parametrize("bad_id", [
+    {"signed_url": "PRIVATE-URL"}, ["PRIVATE-LIST"], True, 42,
+])
+def test_malformed_provider_loan_id_never_becomes_copyable_json_group_key(bad_id):
+    record = acquisition(profile="untrusted")
+    record["metadata"]["provider_loan_id"] = bad_id
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[record],
+    )
+    report = build_paris_adept_audit(storage)
+    assert report["summary"]["loan_groups"] == 1
+    assert report["summary"]["rows_without_loan_id"] == 1
+    assert report["loans"][0]["exposures"][0]["sources"] == ["entitlement"]
+    assert "PRIVATE-" not in repr(report)
+    assert "untrusted" not in repr(report)
+
+
+def test_foreign_provider_row_never_pollutes_paris_adept_report():
+    record = acquisition(profile="foreign-profile")
+    record.update(provider_id="kobo", executor="kobo-adept", strategy="loan_auto")
+    record["metadata"]["adept_binding"]["adept_loan_id"] = "PRIVATE-FOREIGN"
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[record],
+    )
+    report = build_paris_adept_audit(storage)
+    assert report["summary"]["loan_groups"] == 1
+    assert report["loans"][0]["exposures"][0]["sources"] == ["entitlement"]
+    assert report["loans"][0]["origin_resolution"] == "unknown"
+    assert "foreign-profile" not in repr(report)
+    assert "PRIVATE-FOREIGN" not in repr(report)
