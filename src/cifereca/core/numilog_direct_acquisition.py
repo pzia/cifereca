@@ -124,12 +124,30 @@ def acquire_numilog_direct(
             # scan/legacy placement is required to make a safe provider GET.
             if automatic:
                 label = "recovery-" if reconcile_pending else "delivery-"
-                provider_target = target_dir / (
-                    label + hashlib.sha256(item.record_id.encode("utf-8")).hexdigest()[:32]
-                )
-                if provider_target.exists() or provider_target.is_symlink():
+                prefix = label + hashlib.sha256(
+                    item.record_id.encode("utf-8"),
+                ).hexdigest()[:32]
+                provider_target = None
+                # An interrupted pre-checkpoint GET may have left a directory
+                # without a receipt. Never overwrite those bytes or make the
+                # first orphan a permanent veto: allocate a bounded new slot.
+                for slot in range(1, 9):
+                    candidate = target_dir / (
+                        prefix if slot == 1 else prefix + "-" + str(slot)
+                    )
+                    try:
+                        candidate.mkdir(mode=0o700, exist_ok=False)
+                    except FileExistsError:
+                        continue
+                    if not candidate.is_dir() or candidate.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : destination de récupération non sûre"
+                        )
+                    provider_target = candidate
+                    break
+                if provider_target is None:
                     raise ProviderConfigurationError(
-                        "Numilog : destination déjà occupée ; reprise locale nécessaire"
+                        "Numilog : destinations épuisées ; reprise locale nécessaire"
                     )
             else:
                 provider_target = target_dir
