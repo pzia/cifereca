@@ -91,7 +91,7 @@ class Item:
 
 
 def test_public_api_minor_and_new_category():
-    assert PLUGIN_API_VERSION == "1.4.2"
+    assert PLUGIN_API_VERSION == "1.4.3"
     assert "maintenance.tool" in {row.id for row in CORE_CATEGORIES}
     assert normalize_language_tag("fre") == "fr"
 

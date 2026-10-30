@@ -32,7 +32,7 @@ def _manager(root: Path, brokers=None):
 
 
 def test_plugin_api_12_and_public_contract_registry():
-    assert PLUGIN_API_VERSION == "1.4.2"
+    assert PLUGIN_API_VERSION == "1.4.3"
     row = next(x for x in CONTRACT_REGISTRY if x.category == "document.transformer")
     assert row.contract_id == "cifereca.document.transformer"
     assert row.version == "1"
