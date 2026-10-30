@@ -6,6 +6,8 @@ Matching SHA alone neither authorizes adoption nor deletion of another path.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 
 from .convergence_verified_presence import _verified_copy
 
@@ -65,4 +67,72 @@ def verified_post_placement_duplicates(
     return tuple(other_id for other_id, path in candidates if valid(path))
 
 
-__all__ = ["verified_post_placement_duplicates"]
+_PENDING_PREFIX = "core.canonical-dedup-pending.v1."
+
+
+def checkpoint_post_placement_duplicates(
+    storage, *, placement_id: str, duplicate_placement_ids: tuple[str, ...],
+) -> str:
+    """Persist an advisory, profile-scoped maintenance queue entry.
+
+    The caller must already have re-hashed the paths via
+    verified_post_placement_duplicates. The checkpoint contains only opaque
+    placement IDs and an Artifact fingerprint, never a source permission,
+    historical receipt, content URL or physical path. An executor must still
+    check dependencies and verify bytes again before ANY future mutation.
+    """
+    if (type(placement_id) is not str or not 0 < len(placement_id) <= 256
+            or type(duplicate_placement_ids) is not tuple
+            or not 0 < len(duplicate_placement_ids) <= _MAX_MATCHES
+            or any(type(pid) is not str or not 0 < len(pid) <= 256
+                   or pid == placement_id for pid in duplicate_placement_ids)
+            or len(set(duplicate_placement_ids)) != len(duplicate_placement_ids)):
+        raise ValueError("canonical_dedup_invalid_candidates")
+
+    candidates = tuple(sorted(duplicate_placement_ids))
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT identity_id,artifact_id,state FROM placements "
+            "WHERE placement_id=?", (placement_id,),
+        ).fetchone()
+        if (row is None or row[2] != "present"
+                or type(row[0]) is not str or not row[0]
+                or type(row[1]) is not str or not row[1].startswith("sha256:")
+                or len(row[1]) != 71):
+            raise ValueError("canonical_dedup_target_changed")
+        identity, artifact_id, _ = row
+        matches = db.execute(
+            "SELECT placement_id FROM placements WHERE identity_id=? "
+            "AND artifact_id=? AND state='present' AND placement_id IN ("
+            + ",".join("?" for _ in candidates) + ")",
+            (identity, artifact_id, *candidates),
+        ).fetchall()
+        if {pid for (pid,) in matches} != set(candidates):
+            raise ValueError("canonical_dedup_candidate_changed")
+
+        key = _PENDING_PREFIX + hashlib.sha256(json.dumps(
+            [identity, artifact_id], separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")).hexdigest()
+        payload = json.dumps({
+            "schema": "canonical.post-placement-dedup-pending.v1",
+            "identity_id": identity,
+            "artifact_id": artifact_id,
+            "placement_ids": sorted((placement_id, *candidates)),
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        existing = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,),
+        ).fetchone()
+        if existing is None or existing[0] != payload:
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, payload),
+            )
+    return key
+
+
+__all__ = [
+    "verified_post_placement_duplicates",
+    "checkpoint_post_placement_duplicates",
+]

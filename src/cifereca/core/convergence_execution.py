@@ -37,12 +37,23 @@ _LOG = logging.getLogger("cifereca")
 
 def _check_post_placement_duplicates(storage, *, library_root: Path,
                                      placement_id: str) -> None:
-    """Retry read-only dedup inspection without touching B or triggering GET."""
+    """Checkpoint verified maintenance candidates without touching B or GET."""
     try:
-        from .canonical_post_placement import verified_post_placement_duplicates
-        if verified_post_placement_duplicates(
+        from .canonical_post_placement import (
+            checkpoint_post_placement_duplicates,
+            verified_post_placement_duplicates,
+        )
+        matches = verified_post_placement_duplicates(
             storage, library_root=library_root, placement_id=placement_id,
-        ):
+        )
+        if matches:
+            # Commit an advisory queue entry only after a successful B and a
+            # fresh physical check. This is not a licence to retire either
+            # copy: actual cleanup requires another scoped, checked transaction.
+            checkpoint_post_placement_duplicates(
+                storage, placement_id=placement_id,
+                duplicate_placement_ids=matches,
+            )
             _LOG.info("TRACE convergence code=canonical_dedup_pending")
     except Exception:
         # A separate maintenance failure cannot turn verified B into a failed

@@ -1,7 +1,11 @@
 """#3719: no cross-profile inference, no removal before reference-safe dedup."""
+import json
 import pytest
 
-from cifereca.core.canonical_post_placement import verified_post_placement_duplicates
+from cifereca.core.canonical_post_placement import (
+    checkpoint_post_placement_duplicates,
+    verified_post_placement_duplicates,
+)
 from tests.test_core_p0_3171_convergence_execution import rig
 from tests.test_core_p0_3171_atomic_publication_v14 import (
     BYTES, new_source, publish, register, rows, store, target,
@@ -159,3 +163,87 @@ def test_attested_presence_retries_post_b_probe_without_a_second_get(
     assert len(checked) == 1
     assert rows(service.storage) == (1, 1, 1, 1)
     assert service.calls == 1
+
+
+def test_verified_maintenance_checkpoint_is_durable_scoped_and_non_authoritative(
+    store, tmp_path,
+):
+    root, paths, (first, second, foreign) = _two_accounts(store, tmp_path)
+    matches = verified_post_placement_duplicates(
+        store, library_root=root, placement_id=second.placement_id,
+    )
+    assert matches == (first.placement_id,)
+    before = rows(store)
+    key = checkpoint_post_placement_duplicates(
+        store, placement_id=second.placement_id,
+        duplicate_placement_ids=matches,
+    )
+    data = store.metadata_get(key)
+    saved = json.loads(data)
+    assert saved == {
+        "schema": "canonical.post-placement-dedup-pending.v1",
+        "identity_id": "A", "artifact_id": second.artifact_id,
+        "placement_ids": sorted([first.placement_id, second.placement_id]),
+    }
+    assert "first.pdf" not in data and "second.pdf" not in data
+    assert "seller-a" not in data and "seller-b" not in data
+    again = checkpoint_post_placement_duplicates(
+        store, placement_id=second.placement_id,
+        duplicate_placement_ids=matches,
+    )
+    assert again == key and store.metadata_get(key) == data
+    assert rows(store) == before
+    assert all(p.read_bytes() == BYTES for p in paths)
+
+    # SHA is global, but a persisted maintenance marker never crosses B's
+    # identity boundary, even when those physical bytes are identical.
+    with pytest.raises(ValueError, match="canonical_dedup_candidate_changed"):
+        checkpoint_post_placement_duplicates(
+            store, placement_id=second.placement_id,
+            duplicate_placement_ids=(foreign.placement_id,),
+        )
+    assert store.metadata_get(key) == data
+    assert rows(store) == before
+
+
+def test_checkpoint_stale_candidate_is_rejected_without_relinking(store, tmp_path):
+    root, paths, (first, second, _foreign) = _two_accounts(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='missing' WHERE placement_id=?",
+            (first.placement_id,),
+        )
+    with pytest.raises(ValueError, match="canonical_dedup_candidate_changed"):
+        checkpoint_post_placement_duplicates(
+            store, placement_id=second.placement_id,
+            duplicate_placement_ids=(first.placement_id,),
+        )
+    assert all(path.exists() for path in paths)
+    assert len(store.placements()) == 3
+
+
+def test_post_b_probe_persists_advisory_checkpoint(store, tmp_path):
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, paths, (first, second, _foreign) = _two_accounts(store, tmp_path)
+    with store._lock, store._connect() as db:
+        before = db.execute("SELECT count(*) FROM metadata").fetchone()[0]
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=second.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        records = db.execute(
+            "SELECT key,value FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchall()
+        after = db.execute("SELECT count(*) FROM metadata").fetchone()[0]
+    assert len(records) == 1 and after == before + 1
+    saved = json.loads(records[0][1])
+    assert saved["placement_ids"] == sorted([first.placement_id, second.placement_id])
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=second.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        assert db.execute("SELECT count(*) FROM metadata").fetchone()[0] == after
+    assert rows(store) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
