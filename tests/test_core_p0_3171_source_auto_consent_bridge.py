@@ -179,8 +179,9 @@ def test_kobo_exact_source_opt_in_not_legacy_global_backup_pref(policy):
     assert bridge.configured_kind("kobo", "loan") is False
 
 
-def test_unknown_right_but_downloadable_provider_resource_runs_canonical_get(
-    policy,
+@pytest.mark.parametrize("state", ["unknown", "inactive"])
+def test_optional_right_state_does_not_veto_canonical_download(
+    policy, state,
 ):
     from cifereca.core.convergence_execution import CompletedDelivery
     from cifereca.core.sync_coordination import synchronize_account_source
@@ -190,7 +191,7 @@ def test_unknown_right_but_downloadable_provider_resource_runs_canonical_get(
     service, db, switch = policy
     service.snapshot = replace(
         service.snapshot, rights=(replace(
-            service.snapshot.rights[0], state="unknown",
+            service.snapshot.rights[0], state=state,
             delivery="available", delivery_offer_id="current-provider-offer",
         ),),
     )
