@@ -36,7 +36,7 @@ def test_legacy_loan_read_rejects_rebind_before_publishing_cache(
     )
     binding = service._session_key(selected.provider_id, selected.credential_id)
     service._sessions[binding] = session
-    initial_epoch = service._account_context_epoch
+    initial_epoch = service._source_context_epoch
     original_scope = (
         selected.identity_id, selected.provider_id,
         selected.credential_id, selected.unique_id,
@@ -52,7 +52,7 @@ def test_legacy_loan_read_rejects_rebind_before_publishing_cache(
         elif mutation == "borrower":
             selected.unique_id = "other-borrower"
         elif mutation == "epoch":
-            service._account_context_epoch += 1
+            service._source_context_epoch += 1
         elif mutation == "session_swap":
             service._sessions[binding] = NS(
                 connected=True, provider_id=session.provider_id,
@@ -77,7 +77,7 @@ def test_legacy_loan_read_rejects_rebind_before_publishing_cache(
     finally:
         (selected.identity_id, selected.provider_id,
          selected.credential_id, selected.unique_id) = original_scope
-        service._account_context_epoch = initial_epoch
+        service._source_context_epoch = initial_epoch
         (session.provider_id, session.credential_id,
          session.connected) = original_session
         service._sessions[binding] = session
