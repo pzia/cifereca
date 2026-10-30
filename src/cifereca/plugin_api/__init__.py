@@ -15,6 +15,11 @@ from .capability_matrix import (
 )
 from .capability_projection import project_existing_capabilities
 from .provider_rights_observation import (RIGHTS_OBSERVATION_CONTRACT, ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot)
+from .downloadable_resources import (
+    DOWNLOADABLE_RESOURCE_CONTRACT, SourceReference, DownloadCapability,
+    OptionalRightMetadata, ResourceObservation, ResourceSnapshot,
+    DeliveryCandidate, from_legacy_rights_snapshot, as_legacy_rights_snapshot,
+)
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
 from .lending_borrower_eligibility import (
     BorrowerEligibilityStatus, BorrowerOperationEvidence,
