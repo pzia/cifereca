@@ -159,6 +159,12 @@ def inspect_paris_adept_origins(
                 if isinstance(binding.get("adept_loan_id"), str) and binding["adept_loan_id"].strip() else None
             ),
             "evidence": strength,
+            # This is the last persisted Adobe inventory observation, NOT a
+            # live server read, permission to return, or Paris loan status.
+            # Unattested legacy flags cannot claim a completed Adobe return.
+            "historic_adobe_loan_state": (
+                binding.get("loan_state") if attested else "unknown"
+            ),
             "artifact_state": _artifact_state(metadata, artifact_inspector),
         })
     sources = sorted({

@@ -425,3 +425,41 @@ def test_missing_reference_is_unknown_regardless_of_record_order():
         assert report["origin_resolution"] == "unknown"
         assert report["status"] == "inventory_attested"
         assert report["profile_disagreement"] is False
+
+
+def test_historical_adobe_loan_state_requires_matching_inventory_attestation():
+    # A persisted Adobe return is not the same as the Paris loan state or a
+    # live remote check. Only the existing strict inventory contract attests it.
+    for adobe_state in ("active", "returned", "expired"):
+        row = _acq("alice", "paris-a", "adept-historical", state="attested")
+        binding = row["metadata"]["adept_binding"]
+        binding["loan_state"] = adobe_state
+        if adobe_state == "returned":
+            binding["token_present"] = False
+            binding["return_verification"] = "confirmed"
+        elif adobe_state == "expired":
+            binding["expired"] = True
+        result = _audit([], [row])
+        origin, = result["origins"]
+        assert origin["evidence"] == "inventory_attested"
+        assert origin["historic_adobe_loan_state"] == adobe_state
+        # This field makes no mutation and cannot attest the Paris state.
+        assert "paris_loan_state" not in origin
+
+
+def test_unverified_historical_return_flag_never_claims_adobe_return():
+    row = _acq("alice", "paris-a", "adept-historical", state="recorded")
+    binding = row["metadata"]["adept_binding"]
+    binding["loan_state"] = "returned"
+    binding["token_present"] = False
+    binding["return_verification"] = "confirmed"
+    result = _audit([], [row])
+    origin, = result["origins"]
+    assert origin["evidence"] == "recorded"
+    assert origin["historic_adobe_loan_state"] == "unknown"
+    assert result["origin_resolution"] == "single_recorded"
+    # A hostile/invalid enum may never leak into the closed report.
+    binding["loan_state"] = "PRIVATE-ACCOUNT-STATE"
+    second = _audit([], [row])
+    assert second["origins"][0]["historic_adobe_loan_state"] == "unknown"
+    assert "PRIVATE-ACCOUNT-STATE" not in repr(second)
