@@ -24,6 +24,9 @@ _POLICIES = {
     ("bnf-pret", "loan"): (
         "sync.source.bnf_auto.", "1", None,
     ),
+    ("kobo", "purchase"): (
+        "sync.source.materialization.on_start.", "1", None,
+    ),
 }
 _HEX = re.compile(r"[0-9a-f]{32}\Z")
 
