@@ -210,5 +210,7 @@ def test_reused_paris_loan_id_with_distinct_items_is_not_one_adobe_transaction()
     loan = report["loans"][0]
     assert loan["multiple_item_ids"] is True
     assert loan["origin_resolution"] == "unknown"
-    assert loan["adept_loan_reference_disagreement"] is True
+    # These are two distinct items: distinct Adobe licenses do not conflict
+    # as one transaction merely because Paris reused its loan identifier.
+    assert loan["adept_loan_reference_disagreement"] is False
     assert "PRIVATE-" not in repr(report)
