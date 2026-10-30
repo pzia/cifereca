@@ -98,7 +98,7 @@ Pour examiner **une transaction historique précise** par les identifiants
 exacts du prêt Paris et de l'item (sans rapprochement par titre, ISBN ou SHA) :
 
 ```bash
-cifereca-cli paris-adept audit-origin \\
+cifereca-cli paris-adept audit-origin \
   --loan-id "<id-pret-paris>" --item-id "<id-item>"
 ```
 
@@ -111,7 +111,7 @@ revendications. Une observation `inventory_attested` **n'est jamais** une
 interrogation Adobe actuelle, ni une autorisation de retour. La commande ne
 contacte aucun fournisseur et ne modifie ni les fichiers ni la base.
 
-Cette commande effectue un rapprochement **en lecture seule** des prêts actifs
+La commande globale `audit` effectue un rapprochement **en lecture seule** des prêts actifs
 et acquisitions déjà enregistrés en base, des connexions Paris et des profils
 ADEPT associés. Aucune activation, connexion fournisseur, vérification
 distante, suppression ou restitution n'est effectuée.
