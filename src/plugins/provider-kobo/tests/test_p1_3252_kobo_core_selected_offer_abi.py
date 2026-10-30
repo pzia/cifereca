@@ -26,7 +26,7 @@ def test_kobo_unknown_right_state_does_not_veto_exact_downloadable_file():
         assert selected.rights[0].state == "unknown"
         assert selected.rights[0].delivery_attested
         assert len(posts) == 1  # explicit descriptor POST, not file GET
-        assert vault.calls == 3  # inventory, selected inventory, descriptor inventory
+        assert vault.calls == 2  # one inventory read and one selected read
     finally:
         session.close()
 
