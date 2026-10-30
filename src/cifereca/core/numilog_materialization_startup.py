@@ -611,8 +611,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 observe("acquisition")
                 try:
                     from contextlib import nullcontext
-                    from .numilog_recovery import recovery_request
-                    with trace.acquisition(), (recovery_request() if is_recovery else nullcontext()):
+                    from .numilog_recovery import recovery_request, automatic_delivery_request
+                    with trace.acquisition(), automatic_delivery_request(), (recovery_request() if is_recovery else nullcontext()):
                         acquired = broker.service.acquire_direct_item(
                             row, _admission=admission,
                         )
