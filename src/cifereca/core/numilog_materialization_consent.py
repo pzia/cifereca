@@ -18,6 +18,52 @@ _MAX_ITEMS_PER_OPENING = 8
 _MIN_SECONDS_BETWEEN_STARTS = 3600
 
 
+def canonical_consent_current(db, source) -> bool:
+    """Adapt the existing explicit source opt-in, without copying grants.
+
+    Called on the reader/publisher's own SQLite connection. This authorizes
+    only purchases of the exact Numilog account; A and its offer are still
+    independently admitted by the shared executor. OFF/rebind is immediate.
+    """
+    import re
+    from ..models import Account
+    from ..brokers import SynchronizationBrokerImpl
+    scope = source.scope
+    if (scope.provider_id != "numilog" or source.kind != "purchase"
+            or source.branch != "meslivres"):
+        return False
+    sid = SynchronizationBrokerImpl._source_id(Account(
+        identity_id=scope.identity_id, provider_id=scope.provider_id,
+        credential_id=scope.credential_id, unique_id=scope.account_id,
+    ))
+    rows = dict(db.execute(
+        "SELECT key,value FROM metadata WHERE key IN (?,?)",
+        (policy_key(sid), "sync.source.numilog.materialization.epoch.v1." + sid),
+    ).fetchall())
+    epoch = rows.get("sync.source.numilog.materialization.epoch.v1." + sid)
+    return (rows.get(policy_key(sid)) == _ACTIVE and type(epoch) is str
+            and re.fullmatch(r"[0-9a-f]{32}", epoch) is not None)
+
+
+def canonical_consent_epoch(service, account):
+    """Pin the source consent generation across a canonical Sync."""
+    from ..brokers import SynchronizationBrokerImpl
+    if account.provider_id != "numilog":
+        return None
+    return service.storage.numilog_materialization_consent_revision(
+        SynchronizationBrokerImpl._source_id(account))
+
+
+def canonical_consent_epoch_current(db, account, expected):
+    from ..brokers import SynchronizationBrokerImpl
+    if account.provider_id != "numilog":
+        return expected is None
+    row = db.execute("SELECT value FROM metadata WHERE key=?", (
+        "sync.source.numilog.materialization.epoch.v1."
+        + SynchronizationBrokerImpl._source_id(account),)).fetchone()
+    return (row[0] if row else None) == expected
+
+
 def policy_key(source_id: str) -> str:
     return _PREFIX + source_id
 

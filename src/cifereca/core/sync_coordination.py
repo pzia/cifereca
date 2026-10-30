@@ -268,13 +268,14 @@ def _run_observed_canonical_convergence(
     self, account: Account, admitted_snapshots: list, *,
     admitted_epoch: int, sync_lease: InterProcessLock,
     cancelled_for_rights: Callable[[], bool],
+    attempt_limit: int | None = None,
 ) -> dict[str, int] | None:
     """Run the SAME canonical A→B executor for explicit and opening Sync.
 
     The caller must already hold the real global acquisition lease. Only one
-    freshly admitted typed source snapshot can supply A. No legacy backup
+    freshly admitted typed source snapshot can supply A. No unscoped backup
     preference, v1 list, catalog match or opening event grants consent: the
-    persisted exact SourceKey authorization and session/offers are checked by
+    persisted exact-right or configured account consent and session/offers are checked by
     the original executor, under that same lock, before and after network I/O.
     """
     if (type(admitted_snapshots) is not list or len(admitted_snapshots) != 1
@@ -307,8 +308,52 @@ def _run_observed_canonical_convergence(
             )
     if (admitted_snapshots and callable(delivery)
             and callable(consent_reader)):
+        from dataclasses import replace
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
+        snapshot = admitted_snapshots[0]
+        session = self._session_for_account(account)
+        accounts, sessions, storage = self.accounts, self._sessions, self.storage
+        coordinates = (account.identity_id, account.provider_id,
+                       account.credential_id, account.unique_id)
+
+        def current_memory():
+            # Also called inside publication's SQL lock: no Storage access.
+            cancelled_for_rights()
+            return (source_context_epoch(self) == admitted_epoch
+                    and self.accounts is accounts and self._sessions is sessions
+                    and self.storage is storage
+                    and (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id) == coordinates
+                    and sum(a is account for a in accounts) == 1
+                    and sessions.get(self._session_key(account.provider_id,
+                                                        account.credential_id)) is session
+                    and getattr(session, "connected", None) is True
+                    and getattr(session, "_closed", False) is False
+                    and sum((a.identity_id, a.provider_id, a.credential_id, a.unique_id)
+                            == coordinates for a in session.accounts) == 1)
+
+        declared = frozenset()
+        reconcile_existing = getattr(self, "_canonical_reconcile_existing", None)
+        if callable(reconcile_existing):
+            declared = reconcile_existing(
+                account, snapshot, context_current=current_memory, shared_lock=sync_lease)
+            if not current_memory():
+                raise ValueError("canonical_local_source_rebound")
+            if type(declared) is not frozenset or any(
+                type(key) is not SourceKey or key.scope != snapshot.scope
+                or key.branch != snapshot.branch for key in declared
+            ):
+                raise ValueError("invalid_canonical_declared_presence")
+            # A current declared placement is operational presence only.
+            # Do not mint a provider OriginLink or acquisition receipt for it.
+            snapshot = replace(snapshot, rights=tuple(
+                row for row in snapshot.rights
+                if SourceKey(snapshot.scope, row.edition_id, row.right_id,
+                             row.kind, snapshot.branch) not in declared))
+
+        epoch_reader = getattr(self, "_canonical_consent_epoch", lambda _: None)
+        consent_epoch = epoch_reader(account)
 
         try:
             consent = consent_reader(account)
@@ -329,6 +374,7 @@ def _run_observed_canonical_convergence(
             # after GET, rejecting consent revoked in flight.
             latest = consent_reader(account)
             return (type(latest) is frozenset
+                    and epoch_reader(account) == consent_epoch
                     and key in latest
                     and all(type(x) is SourceKey for x in latest))
 
@@ -338,15 +384,22 @@ def _run_observed_canonical_convergence(
         # It returns A only; the executor still owns all GET,
         # receipt, revalidation and atomic B publication.
         from .canonical_selected_offers import qualify_selected_offers
-        session = self._session_for_account(account)
         root = self.library_dir()
         qualified_snapshot = qualify_selected_offers(
-            self, account, session, admitted_snapshots[0],
+            self, account, session, snapshot,
             admitted_epoch=admitted_epoch, shared_lock=sync_lease,
             library_root=root, persisted_consent=consent,
             consent_still_current=current_consent,
             cancelled=cancelled_for_rights,
         )
+        publication_guard = getattr(self, "_canonical_publication_consent_current", None)
+        epoch_guard = getattr(self, "_canonical_consent_epoch_current", None)
+
+        def publication_policy(db, key):
+            return ((publication_guard is None or publication_guard(db, key) is True)
+                    and (epoch_guard is None or epoch_guard(db, account, consent_epoch) is True))
+
+        attempted = []
         outcomes = execute_admitted_convergence(
             self, account, session, qualified_snapshot,
             admitted_epoch=admitted_epoch,
@@ -354,19 +407,44 @@ def _run_observed_canonical_convergence(
             persisted_consent=consent,
             consent_still_current=current_consent,
             deliver=delivery, cancelled=cancelled_for_rights,
-            publication_guard=getattr(
-                self, "_canonical_publication_consent_current", None,
-            ),
+            publication_guard=publication_policy,
+            attempt_limit=attempt_limit, attempt_observer=attempted.append,
         )
         counts = {
             status: sum(row.status == status for row in outcomes)
             for status in ("downloaded", "recovered", "present_attested",
                            "pending", "blocked", "failed", "cancelled", "skipped_archived", "inactive")
         }
+        if declared:
+            counts["present_declared"] = len(declared)
+        if attempt_limit is not None:
+            counts["attempted"] = len(attempted)
+        for row in outcomes:
+            try:
+                from ..diagnostic_task_context import diagnostic_task_reference
+                fields = dict(
+                    operation_kind="canonical_acquisition", phase="convergence",
+                    provider_id=row.source.scope.provider_id,
+                    identity_id=row.source.scope.identity_id,
+                    credential_id=row.source.scope.credential_id,
+                    account_id=row.source.scope.account_id, branch=row.source.branch,
+                    edition_id=row.source.edition_id, right_id=row.source.right_id,
+                    kind=row.source.kind, status=row.status, reason=row.reason,
+                )
+                reference = diagnostic_task_reference()
+                if reference is not None:
+                    fields["task_ref"] = reference
+                logging.getLogger("cifereca").info(
+                    "canonical purchase decision %s", fields,
+                    extra=_core_journal_record("SYNC", "canonical_purchase_decision",
+                                               row.status, "canonical purchase decision", fields))
+            except Exception:
+                pass  # Optional telemetry cannot change a committed outcome.
         return counts
 
 
-def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
+def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None,
+                               _canonical_attempt_limit=None) -> dict[str, Any]:
     from .public_provider_diagnostics import registered_public_provider_id
     from ..plugin_api import Cancelled
     started = time.monotonic()
@@ -425,6 +503,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         self, account, admitted_snapshots,
                         admitted_epoch=admitted_epoch, sync_lease=sync_lease,
                         cancelled_for_rights=cancelled_for_rights,
+                        attempt_limit=_canonical_attempt_limit,
                     )
                     if (counts is None and canonical is not None
                             and canonical.get("pending", 0) > 0):

@@ -16,7 +16,7 @@ class Dialog:
     def present(self): pass
     def respond(self, code): self.callbacks["response"](self, code)
 
-def rig(*, allowed=False, eligible=True, malformed=False):
+def rig(*, allowed=False, eligible=True, malformed=False, source_consent=False):
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/canonical_consent_controls.py"
     node = next(n for n in ast.parse(path.read_text()).body
                 if isinstance(n, ast.FunctionDef)
@@ -43,6 +43,7 @@ def rig(*, allowed=False, eligible=True, malformed=False):
     choices = {"reference": "a" * 64, "kind": "purchase",
                "allowed": allowed, "eligible": eligible}
     if malformed: choices["secret"] = "PRIVATE"
+    if source_consent: choices["consent_scope"] = "source"
     broker.canonical_acquisition_choices = lambda _sid, *, page=0: (choices,)
     changed = []
     broker.set_canonical_acquisition_choice = (
@@ -92,3 +93,10 @@ def test_malformed_or_ineligible_right_is_not_authorizable():
     assert count == 1 and group.children[0].suffixes[0].sensitive is False
     _w, _d, malformed, count, _changed = rig(malformed=True)
     assert count == 0 and malformed.children == []
+
+
+def test_source_consent_explains_global_revocation_without_per_purchase_dialog():
+    w, dialogs, group, count, changed = rig(allowed=True, source_consent=True)
+    assert count == 1 and group.children[0].suffixes == []
+    assert "réglage de téléchargement automatique" in group.children[0].subtitle
+    assert not dialogs and not changed and not w.runner.tasks

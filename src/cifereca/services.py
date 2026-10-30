@@ -540,12 +540,33 @@ class LibraryService:
     def _canonical_persisted_consent(self, account: Account):
         """Fresh Core-owned consent route used by the existing source Sync."""
         from .core.source_acquisition_consent import read_source_acquisition_consent
-        return read_source_acquisition_consent(self, account)
+        return read_source_acquisition_consent(
+            self, account, configured_policy=LibraryService._canonical_configured_consent_current)
+
+    @staticmethod
+    def _canonical_configured_consent_current(connection, source) -> bool:
+        from .core.numilog_materialization_consent import canonical_consent_current
+        return canonical_consent_current(connection, source)
+
+    def _canonical_consent_epoch(self, account):
+        from .core.numilog_materialization_consent import canonical_consent_epoch
+        return canonical_consent_epoch(self, account)
+
+    @staticmethod
+    def _canonical_consent_epoch_current(connection, account, expected):
+        from .core.numilog_materialization_consent import canonical_consent_epoch_current
+        return canonical_consent_epoch_current(connection, account, expected)
+
+    def _canonical_reconcile_existing(self, account, snapshot, *, context_current, shared_lock):
+        from .core.numilog_materialization_startup import reconcile_existing
+        return reconcile_existing(self, account, snapshot, context_current=context_current,
+                                  shared_lock=shared_lock)
 
     def _canonical_publication_consent_current(self, connection, source) -> bool:
         """Lock-safe check on the publisher's own SQLite transaction."""
         from .core.source_acquisition_consent import consent_current_in_transaction
-        return consent_current_in_transaction(connection, source)
+        return consent_current_in_transaction(
+            connection, source, configured_policy=LibraryService._canonical_configured_consent_current)
 
     def sync_source_enabled(self, account: Account) -> bool:
         """Same fail-closed toggle as the public Sync broker.
@@ -3579,8 +3600,10 @@ class LibraryService:
         """
         return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
 
-    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
+    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None,
+                                   _canonical_attempt_limit=None) -> dict[str, Any]:
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control, _canonical_attempt_limit=_canonical_attempt_limit)
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""

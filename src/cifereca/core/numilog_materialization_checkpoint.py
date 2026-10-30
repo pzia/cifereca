@@ -5,6 +5,7 @@ No receipt is a new download permission. Recovery only indexes the exact
 original bytes in their pinned owner's current provider root, without HTTP.
 """
 from dataclasses import dataclass
+from contextlib import nullcontext
 from pathlib import Path
 from typing import ClassVar
 import re
@@ -223,13 +224,20 @@ def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, 
     return row, Path(metadata['path'])
 
 
-def index_delivered(service, acquisition, *, title=None, selected=False, expected_receipt=None):
+def index_delivered(service, acquisition, *, title=None, selected=False, expected_receipt=None,
+                    _shared_lock=None):
     """Index only the verified receipt; keep it pending on any failure/crash."""
     phase, acquisition_id, indexed = "receipt", None, None
     try:
         acquisition_id = acquisition.metadata.get('numilog_checkpoint_id')
         phase = "lock"
-        with InterProcessLock(acquisition_lock_file()):
+        if _shared_lock is not None:
+            _check_resume(type(_shared_lock) is InterProcessLock
+                          and _shared_lock._handle is not None
+                          and _shared_lock.path.resolve() == acquisition_lock_file().resolve(),
+                          "lock_unavailable")
+        with (nullcontext() if _shared_lock is not None
+              else InterProcessLock(acquisition_lock_file())):
             phase = "receipt"
             row, path = _checked_receipt(service, acquisition_id, expected=acquisition, selected=selected)
             if expected_receipt is not None:
@@ -284,11 +292,11 @@ def index_delivered(service, acquisition, *, title=None, selected=False, expecte
         raise _resume_failure(exc, phase, acquisition_id, indexed) from None
 
 
-def resume(service, acquisition_id, *, expected_receipt=None):
+def resume(service, acquisition_id, *, expected_receipt=None, selected=True, _shared_lock=None):
     """Explicit offline recovery API; never an automatic acquisition retry."""
     delegated = False
     try:
-        row, path = _checked_receipt(service, acquisition_id, selected=True)
+        row, path = _checked_receipt(service, acquisition_id, selected=selected)
         acquisition = Acquisition(
             provider_id='numilog', credential_id=row['credential_id'], account_id=row['account_id'],
             item_id=row['item_id'], loan_id=None, kind='already_local', source_url=None,
@@ -296,7 +304,8 @@ def resume(service, acquisition_id, *, expected_receipt=None):
             metadata={'identity_id': row['identity_id'], 'numilog_checkpoint_id': acquisition_id},
         )
         delegated = True
-        return index_delivered(service, acquisition, selected=True, expected_receipt=expected_receipt)
+        return index_delivered(service, acquisition, selected=selected,
+                               expected_receipt=expected_receipt, _shared_lock=_shared_lock)
     except Cancelled:
         raise
     except Exception as exc:

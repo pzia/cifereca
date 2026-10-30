@@ -46,7 +46,8 @@ def append_canonical_consent_controls(
     seen = set()
     for choice in choices:
         if (type(choice) is not dict
-                or set(choice) != {"reference", "kind", "allowed", "eligible"}
+                or set(choice) - {"consent_scope"} != {"reference", "kind", "allowed", "eligible"}
+                or ("consent_scope" in choice and choice["consent_scope"] != "source")
                 or type(choice["reference"]) is not str
                 or len(choice["reference"]) != 64
                 or any(c not in "0123456789abcdef" for c in choice["reference"])
@@ -65,6 +66,14 @@ def append_canonical_consent_controls(
         kind = "Achat" if choice["kind"] == "purchase" else "Prêt"
         row = Adw.ActionRow()
         row.set_title(f"Acquisition canonique · {kind} n°{page * 48 + number}")
+        if choice.get("consent_scope") == "source":
+            row.set_subtitle(
+                "Téléchargement automatique autorisé pour ce compte. "
+                "Révocable avec le réglage de téléchargement automatique de la source. "
+                "Le droit et l’offre restent recontrôlés pour chaque achat.")
+            row.set_subtitle_lines(0)
+            add_sync_detail(group, row)
+            continue
         row.set_subtitle(
             ("Autorisation active : révocable."
              if allowed else

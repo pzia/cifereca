@@ -1,7 +1,8 @@
 """#3171: Core-owned durable opt-in for one exact observed SourceKey.
 
-Consent is neither a provider right nor an offer/receipt. No legacy global,
-provider, title, SHA or transfer preference is promoted to this permission.
+Consent is neither a provider right nor an offer/receipt. Core can consume an
+explicit account acquisition policy through its configured-policy adapter;
+no title, SHA, transfer or historical unscoped backup flag grants permission.
 The existing executor must still check the current offer, session and bytes.
 """
 from __future__ import annotations
@@ -125,7 +126,7 @@ def set_source_acquisition_consent(service, account: Account, source: SourceKey,
             raise ValueError("acquisition_consent_scope_changed")
 
 
-def consent_current_in_transaction(db, source: SourceKey) -> bool:
+def consent_current_in_transaction(db, source: SourceKey, *, configured_policy=None) -> bool:
     """Recheck the durable exact permission under publication's SQL lock.
 
     No Storage calls, commits, network or filesystem work. BEGIN IMMEDIATE
@@ -134,7 +135,8 @@ def consent_current_in_transaction(db, source: SourceKey) -> bool:
     if type(source) is not SourceKey:
         return False
     record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
-    return record is not None and _payload_allowed(record[0], source)
+    return ((record is not None and _payload_allowed(record[0], source))
+            or (configured_policy is not None and configured_policy(db, source) is True))
 
 
 def _payload_allowed(raw, source):
@@ -149,10 +151,11 @@ def _payload_allowed(raw, source):
             and payload.get("allowed") is True)
 
 
-def read_source_acquisition_consent(service, account: Account) -> frozenset[SourceKey]:
+def read_source_acquisition_consent(service, account: Account, *, configured_policy=None) -> frozenset[SourceKey]:
     """Read fresh persisted permission for current positive exact references.
 
-    Missing, malformed, legacy, inactive and unbound records grant nothing.
+    Missing, malformed, inactive and unbound records grant nothing. An explicit
+    configured account policy is rechecked on this same SQLite connection.
     All rows and permissions are read in one SQLite snapshot, never cached.
     """
     storage, scope, current = _context(service, account)
@@ -179,8 +182,7 @@ def read_source_acquisition_consent(service, account: Account) -> frozenset[Sour
                 continue
             if not _attested(source, evidence_ref, observed_at):
                 continue
-            record = db.execute("SELECT value FROM metadata WHERE key=?", (consent_key(source),)).fetchone()
-            if record is not None and _payload_allowed(record[0], source):
+            if consent_current_in_transaction(db, source, configured_policy=configured_policy):
                 admitted.add(source)
         return frozenset(admitted) if current() else frozenset()
 
@@ -229,7 +231,9 @@ def _choices(service, account, *, page: int = 0):
                 "SELECT value FROM metadata WHERE key=?",
                 (consent_key(source),),
             ).fetchone()
-            opted_in = record is not None and _payload_allowed(record[0], source)
+            policy = getattr(service, "_canonical_configured_consent_current", None)
+            configured = policy is not None and policy(db, source) is True
+            opted_in = configured or (record is not None and _payload_allowed(record[0], source))
             admissible = (
                 bound_for_grant and enabled
                 and state == "active" and synchronizable == 1
@@ -238,7 +242,7 @@ def _choices(service, account, *, page: int = 0):
             )
             # Render even inactive records as disabled rows: ordering/paging
             # must not hide a later live right behind a legacy negative.
-            options.append((source_id[len("source:"):], kind, opted_in, admissible))
+            options.append((source_id[len("source:"):], kind, opted_in, admissible, configured))
         return tuple(options) if current() else (), current
 
 
@@ -252,7 +256,8 @@ def canonical_acquisition_choices(
     return tuple({
         "reference": reference, "kind": kind, "allowed": allowed,
         "eligible": eligible,
-    } for reference, kind, allowed, eligible in rows)
+        **({"consent_scope": "source"} if configured else {}),
+    } for reference, kind, allowed, eligible, configured in rows)
 
 
 def set_canonical_acquisition_choice(

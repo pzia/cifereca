@@ -77,6 +77,8 @@ def execute_admitted_convergence(
     deliver: Callable[[SourceKey, ProviderRightObservation], CompletedDelivery],
     cancelled: Callable[[], bool] = lambda: False,
     publication_guard: Callable[[sqlite3.Connection, SourceKey], bool] | None = None,
+    attempt_limit: int | None = None,
+    attempt_observer: Callable[[SourceKey], None] | None = None,
 ) -> tuple[ConvergenceOutcome, ...]:
     """Execute the authorized part of the same Sync; no second remote read.
 
@@ -95,6 +97,9 @@ def execute_admitted_convergence(
         or not callable(deliver) or not callable(cancelled)
         or not callable(consent_still_current)
         or (publication_guard is not None and not callable(publication_guard))
+        or (attempt_limit is not None and (type(attempt_limit) is not int
+                                          or not 0 < attempt_limit <= 2048))
+        or (attempt_observer is not None and not callable(attempt_observer))
         or not isinstance(library_root, Path)
         or type(shared_lock) is not InterProcessLock
         or shared_lock._handle is None
@@ -218,6 +223,7 @@ def execute_admitted_convergence(
     )
     plan_by_source = {decision.source: decision for decision in plan.decisions}
     results: list[ConvergenceOutcome] = []
+    attempts = 0
     for row in snapshot.rights:
         key = SourceKey(
             scope, row.edition_id, row.right_id, row.kind, snapshot.branch,
@@ -269,6 +275,12 @@ def execute_admitted_convergence(
                 completed = None
             was_recovered = completed is not None
             if completed is None:
+                if attempt_limit is not None and attempts >= attempt_limit:
+                    results.append(ConvergenceOutcome(key, "pending", "acquisition_quota"))
+                    continue
+                attempts += 1
+                if attempt_observer is not None:
+                    attempt_observer(key)
                 completed = deliver(key, row)
             if (type(completed) is not CompletedDelivery
                     or completed.source != key

@@ -146,6 +146,112 @@ def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
         return ()
 
 
+def reconcile_existing(service, account, snapshot, *, context_current, shared_lock):
+    """Translate legacy proofs into the one canonical Sync, never acquire.
+
+    Exact receipts can be published as provider origins after the existing
+    local verifier; declarations remain declarations. Failed historical
+    proofs are diagnostic candidates, never a veto on a fresh authorized GET.
+    """
+    if account.provider_id != "numilog" or snapshot.branch != "meslivres":
+        return frozenset()
+    from pathlib import Path
+    from ..locking import InterProcessLock
+    from ..paths import acquisition_lock_file
+    if (type(shared_lock) is not InterProcessLock or shared_lock._handle is None
+            or shared_lock.path.resolve() != acquisition_lock_file().resolve()):
+        raise ValueError("canonical_legacy_acquisition_lock_required")
+    from ..brokers import SynchronizationBrokerImpl
+    from .source_convergence import SourceKey
+    from .convergence_verified_presence import plan_existing_verified_presence
+    from .canonical_publication import publish_completed_acquisition
+    from .numilog_materialization_checkpoint import resume
+    from .numilog_startup_diagnostics import local_proof
+    from .library_declared_links import has_active_declared_link
+    from .library_declared_presence import verify_declared_presence
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    storage = service.storage
+    present = {d.source for d in plan_existing_verified_presence(
+        storage, snapshot, library_root=service.library_dir()).decisions if d.provider_satisfied}
+    declared = set()
+    for right in snapshot.rights:
+        key = SourceKey(snapshot.scope, right.edition_id, right.right_id,
+                        right.kind, snapshot.branch)
+        if (key in present or right.kind != "purchase" or right.state != "active"
+                or not right.provider_attested or right.edition_id != right.right_id):
+            continue
+        item = right.right_id
+        if not context_current():
+            raise ValueError("canonical_legacy_source_rebound")
+        if has_active_declared_link(
+            storage, identity_id=account.identity_id, provider_id="numilog",
+            credential_id=account.credential_id, account_id=account.unique_id, item_id=item,
+        ):
+            presence = verify_declared_presence(
+                service, identity_id=account.identity_id, provider_id="numilog",
+                credential_id=account.credential_id, account_id=account.unique_id,
+                item_id=item, source_current=context_current,
+                cancelled=lambda: False, seconds=8.0, _acquisition_lock_held=True,
+            )
+            if presence.status == "declared_current":
+                declared.add(key)
+                continue
+        evidence = storage.numilog_purchase_preflight_evidence(
+            identity_id=account.identity_id, credential_id=account.credential_id,
+            account_id=account.unique_id, item_id=item)
+        ledgers = evidence.get("acquisitions", [])
+        if len(ledgers) == 1:
+            receipt = storage.acquisition_get(ledgers[0]["acquisition_id"])
+            if (receipt and receipt.get("identity_id") == account.identity_id
+                    and receipt.get("account_id") == account.unique_id
+                    and receipt.get("attention_code") == "numilog_index_pending"):
+                try:
+                    resume(service, receipt["acquisition_id"], selected=False, _shared_lock=shared_lock)
+                except Cancelled:
+                    raise
+                except Exception:
+                    # The existing resume API journals its precise failed gate.
+                    pass
+        receipt = (storage.acquisition_get(ledgers[0]["acquisition_id"])
+                   if len(ledgers) == 1 else None)
+        if receipt is None:
+            continue
+        with storage._lock, storage._connect() as db:
+            pinned = db.execute("SELECT * FROM acquisition_ledger WHERE acquisition_id=?",
+                                (receipt["acquisition_id"],)).fetchone()
+        if not _completed_local_purchase_verified(
+            broker, account, sid, item, source_current=context_current,
+        ):
+            continue
+        if receipt != storage.acquisition_get(receipt["acquisition_id"]):
+            continue
+        placements = [p for p in storage.placements()
+                      if p.get("identity_id") == account.identity_id
+                      and p.get("artifact_id") == receipt.get("artifact_id")
+                      and p.get("provider_id") == "numilog" and p.get("source_item_id") == item
+                      and p.get("state") == "present"]
+        if len(placements) != 1:
+            continue
+        if pinned is None:
+            continue
+        try:
+            publish_completed_acquisition(
+                storage, source=key, snapshot=snapshot, library_root=service.library_dir(),
+                path=Path(placements[0]["path"]), final_sha256=receipt["artifact_id"][7:],
+                delivery_receipt_ref=receipt["acquisition_id"],
+                context_current=context_current,
+                transaction_guard=lambda db: db.execute(
+                    "SELECT * FROM acquisition_ledger WHERE acquisition_id=?",
+                    (receipt["acquisition_id"],)).fetchone() == pinned,
+            )
+        except Cancelled:
+            raise
+        except Exception:
+            local_proof(account, sid, item, "canonical_legacy_publication_failed", exc_info=True)
+    return frozenset(declared)
+
+
 def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) -> SyncResult:
     """At most eight attempts *per source*; failures never starve siblings."""
     if trigger != "startup" or type(identity_id) is not str:
@@ -238,6 +344,36 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 trace.fail("consent_revoked")
                 continue
             observe("manifest_fetch")
+            # Installed v2 adapters use the SAME source Sync, offer admission,
+            # recovery journal and atomic publisher as manual/global Sync.
+            # The legacy preflight is advisory; it cannot veto this route.
+            from inspect import getattr_static
+            if all(callable(getattr_static(session, name, None)) for name in (
+                "rights_observation_snapshot", "rights_selected_delivery_candidate",
+            )):
+                synced = broker.service.synchronize_account_source(
+                    account, control=control, _canonical_attempt_limit=_MAX_ITEMS_PER_OPENING)
+                counts = synced.get("canonical_execution")
+                if type(counts) is not dict:
+                    trace.fail("manifest_failed")
+                    failures += 1
+                    continue
+                manifest_ready = True
+                own_downloads = counts["downloaded"]
+                total += own_downloads
+                attempts += counts["attempted"]
+                skipped += (counts["present_attested"] + counts["recovered"]
+                            + counts.get("present_declared", 0))
+                blocked += counts["pending"] + counts["blocked"]
+                failures += counts["failed"]
+                declared_local += counts.get("present_declared", 0)
+                if counts["cancelled"]:
+                    raise Cancelled("canonical_startup_cancelled")
+                if counts["failed"]:
+                    trace.fail("acquisition_failed")
+                elif counts["pending"] or counts["blocked"]:
+                    trace.fail("preflight_failed")
+                continue
             raw = session.library()
             # The private catalogue can contain hundreds of purchases.
             # Bound memory without blocking ordinary 300+ book libraries.
@@ -533,7 +669,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 own_declared_local = declared_local - previous_declared_local
                 own_declared_pending = declared_pending - previous_declared_pending
                 result_status = (
-                    "partial" if own_downloaded and (own_failed or own_blocked or interrupted)
+                    "partial" if (own_downloaded or own_skipped) and (own_failed or own_blocked or interrupted)
                     else "failed" if own_failed
                     else "blocked" if own_blocked or interrupted or not manifest_ready
                     else "complete"
@@ -562,7 +698,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     trace.fail("receipt_finalize_failed")
                     failures += 1
                 final_failed = failures - previous[3]
-                final_status = ("partial" if own_downloaded and (final_failed or interrupted)
+                final_status = ("partial" if (own_downloaded or own_skipped) and (final_failed or interrupted)
                                 else "failed" if final_failed else result_status)
             else:
                 final_status = "failed" if failures > previous[3] else "blocked" if interrupted else "not_due"
@@ -574,9 +710,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
     # Likewise, a post-claim revocation/rebind has a durable "blocked"
     # receipt and must not be reported as aggregate success.
     if failures:
-        status = "partial" if total else "failed"
+        status = "partial" if total or skipped else "failed"
     elif blocked:
-        status = "partial" if total else "blocked"
+        status = "partial" if total or skipped else "blocked"
     else:
         status = "complete" if claimed else "not_due"
     return _result(
