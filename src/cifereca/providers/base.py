@@ -112,6 +112,8 @@ class AccountOptionField:
     default: str = ""
     required: bool = False
     secret: bool = False
+    # Read-only migration fallback for old top-level configuration values.
+    legacy_config_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,7 @@ class ProviderDescriptor:
     # Optional declarative settings, backward-compatible with existing plugins.
     account_options: tuple[AccountOptionField, ...] = ()
     max_accounts_per_identity: int | None = None
+    account_note: tuple[str, str] | None = None
 
 
 class ProviderSession(ABC):
