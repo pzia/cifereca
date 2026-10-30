@@ -3189,6 +3189,7 @@ class LibraryService:
             return {"status": "unsupported_source", "shared_visibility": False,
                     "profile_disagreement": False,
                     "adept_loan_reference_disagreement": False,
+                    "adobe_loan_state_disagreement": False,
                     "origin_resolution": "unknown", "sources": [], "origins": []}
         return inspect_paris_adept_origins(
             loan_id=str(loan.id or ""),

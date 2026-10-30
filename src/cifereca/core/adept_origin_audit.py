@@ -69,6 +69,7 @@ def inspect_paris_adept_origins(
             "status": "unknown", "shared_visibility": False,
             "profile_disagreement": False, "origin_resolution": "unknown",
             "adept_loan_reference_disagreement": False,
+            "adobe_loan_state_disagreement": False,
             "sources": [], "origins": [],
         }
 
@@ -183,11 +184,22 @@ def inspect_paris_adept_origins(
         for row in origins if row["recorded_adept_loan_ref"]
     }
     loan_reference_disagreement = len(adept_loan_refs) > 1
+    # Two persisted inventory snapshots may assert incompatible states for
+    # the *same* Adobe loan reference. They are historical observations, not
+    # a live ordering guarantee: never silently pick one as the return state.
+    # Unattested flags are excluded because they are not inventory evidence.
+    states_by_loan: dict[str, set[str]] = {}
+    for origin in origins:
+        ref = origin["recorded_adept_loan_ref"]
+        if (ref and origin["evidence"] == "inventory_attested"
+                and origin["historic_adobe_loan_state"] != "unknown"):
+            states_by_loan.setdefault(ref, set()).add(origin["historic_adobe_loan_state"])
+    state_disagreement = any(len(states) > 1 for states in states_by_loan.values())
     # The report-level status describes the strongest individual evidence,
     # not a consensus across transactions. In particular, one attested
     # profile does not override a different historical profile claim.
     # Keep the legacy status contract but expose resolution separately.
-    if len(profiles) > 1 or loan_reference_disagreement:
+    if len(profiles) > 1 or loan_reference_disagreement or state_disagreement:
         origin_resolution = "conflicting_records"
     elif len(profiles) == 1 and any(
         not row["recorded_adept_profile_id"]
@@ -221,6 +233,7 @@ def inspect_paris_adept_origins(
         }) > 1,
         "profile_disagreement": len(profiles) > 1,
         "adept_loan_reference_disagreement": loan_reference_disagreement,
+        "adobe_loan_state_disagreement": state_disagreement,
         "origin_resolution": origin_resolution,
         "sources": [
             {"library_identity_id": identity, "source_ref": ref}

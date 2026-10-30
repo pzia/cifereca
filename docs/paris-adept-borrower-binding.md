@@ -118,6 +118,11 @@ Le résolveur Core par transaction (`audit_paris_adept_loan_origins`) est
 `origin_resolution` (cohérence de l'ensemble) et les indices d'artefact.
 Un `status=inventory_attested` ne transforme jamais deux profils ou
 licences contradictoires en origine unique autorisée pour un retour.
+Une même référence de licence Adobe avec deux états **attestés dans les
+inventaires historiques** (par exemple `active` et `returned`) produit
+`adobe_loan_state_disagreement=true` et `origin_resolution=conflicting_records`.
+Les indicateurs historiques ne sont ni une requête serveur en temps réel ni
+une preuve de restitution Paris : aucune opération Adobe n'est déclenchée.
 Un filtre de connexion conserve les autres provenances du même identifiant
 de prêt afin de ne pas masquer les conflits. La présence d'un même identifiant
 de prêt chez deux connexions ne prouve **pas** à elle seule qu'il s'agit d'une
