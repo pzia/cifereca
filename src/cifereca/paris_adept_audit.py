@@ -270,6 +270,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             reasons.append("recorded_adobe_loan_refs_conflict")
         if inconsistent:
             reasons.append("source_binding_unverified")
+        if configured_profile_divergence:
+            reasons.append("configured_profiles_diverge")
         if ledger_status_ambiguous:
             reasons.append("acquisition_receipts_conflict")
         if configured_vs_recorded_difference:
@@ -279,7 +281,8 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
         has_recorded_claim = bool(recorded or loan_refs)
         if has_recorded_claim and origin_resolution == "unknown":
             reasons.append("historical_adobe_origin_incomplete")
-        if multiple_items or recorded_profile_conflict or loan_reference_disagreement:
+        if (multiple_items or recorded_profile_conflict
+                or loan_reference_disagreement or configured_profile_divergence):
             next_review = "compare_exact_loan_and_adobe_transactions"
         elif inconsistent:
             next_review = "inspect_paris_account_binding"
