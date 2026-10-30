@@ -14,8 +14,15 @@ from tests.test_p1_3252_rights_observation_snapshot import (
 )
 
 
-def test_typed_never_calls_v1_reader_or_recreates_mutable_error_facade():
+def test_typed_never_calls_v1_reader_or_recreates_mutable_error_facade(monkeypatch):
     session, a, _ = fixture()
+    # #3759 removed the mutable field; a hostile legacy descriptor must also
+    # remain unread if an installed extension unexpectedly reintroduces one.
+    monkeypatch.setattr(
+        type(session), "last_loan_errors",
+        property(lambda _: pytest.fail("typed inventory touched legacy errors")),
+        raising=False,
+    )
     assert "last_loan_errors" not in vars(session)
     session.loans = lambda *_: pytest.fail("typed inventory called v1 loans")
     try:
