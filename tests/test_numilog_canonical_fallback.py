@@ -350,3 +350,15 @@ def test_startup_attempt_quota_leaves_remaining_rights_pending(tmp_path):
         assert len(state.downloads) == 10
     finally:
         service.close()
+
+
+def test_revoke_and_reenable_during_inventory_does_not_revive_claimed_startup(rig):
+    authorize(rig)
+    def inventory():
+        rig.broker.revoke_numilog_materialization_consent(rig.sid)
+        authorize(rig)
+        return list(rig.rows)
+    rig.session.library = inventory
+    result = startup.execute(rig.broker, rig.account.identity_id, 'startup')
+    assert result.facts['attempted'] == 0 and result.facts['blocked'] == 6
+    assert not rig.downloads and not rig.offers

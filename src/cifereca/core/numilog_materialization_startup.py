@@ -354,7 +354,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 from .sync_coordination import synchronize_account_source
                 synced = synchronize_account_source(
                     broker.service, account, control=control,
-                    _canonical_attempt_limit=_MAX_ITEMS_PER_OPENING)
+                    _canonical_attempt_limit=_MAX_ITEMS_PER_OPENING,
+                    _canonical_expected_consent_epoch=consent_revision)
                 counts = synced.get("canonical_execution")
                 if type(counts) is not dict:
                     trace.fail("manifest_failed")

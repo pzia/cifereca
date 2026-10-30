@@ -24,6 +24,7 @@ from ..paths import acquisition_lock_file
 _OPENING_CANONICAL_LEASE: ContextVar[InterProcessLock | None] = ContextVar(
     'cifereca.opening.canonical.lease', default=None,
 )
+_CURRENT_CONSENT_EPOCH = object()
 from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
@@ -270,6 +271,7 @@ def _run_observed_canonical_convergence(
     cancelled_for_rights: Callable[[], bool],
     attempt_limit: int | None = None,
     consent_reader_override=None,
+    consent_epoch_snapshot=_CURRENT_CONSENT_EPOCH,
 ) -> dict[str, int] | None:
     """Run the SAME canonical A→B executor for explicit and opening Sync.
 
@@ -355,7 +357,8 @@ def _run_observed_canonical_convergence(
                              row.kind, snapshot.branch) not in declared))
 
         epoch_reader = getattr(self, "_canonical_consent_epoch", lambda _: None)
-        consent_epoch = epoch_reader(account)
+        consent_epoch = (epoch_reader(account) if consent_epoch_snapshot is _CURRENT_CONSENT_EPOCH
+                         else consent_epoch_snapshot)
 
         try:
             consent = consent_reader(account)
@@ -446,7 +449,8 @@ def _run_observed_canonical_convergence(
 
 
 def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None,
-                               _canonical_attempt_limit=None) -> dict[str, Any]:
+                               _canonical_attempt_limit=None,
+                               _canonical_expected_consent_epoch=_CURRENT_CONSENT_EPOCH) -> dict[str, Any]:
     from .public_provider_diagnostics import registered_public_provider_id
     from ..plugin_api import Cancelled
     started = time.monotonic()
@@ -475,6 +479,9 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                     InterProcessLock(acquisition_lock_file())
                 )
             with measure("locked_work_ms"):
+                consent_epoch = (_canonical_expected_consent_epoch
+                    if _canonical_expected_consent_epoch is not _CURRENT_CONSENT_EPOCH
+                    else getattr(self, "_canonical_consent_epoch", lambda _: None)(account))
                 result = self._synchronize_account_source_impl(account, deep=deep, control=control)
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
@@ -506,6 +513,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         admitted_epoch=admitted_epoch, sync_lease=sync_lease,
                         cancelled_for_rights=cancelled_for_rights,
                         attempt_limit=_canonical_attempt_limit,
+                        consent_epoch_snapshot=consent_epoch,
                     )
                     if (counts is None and canonical is not None
                             and canonical.get("pending", 0) > 0):

@@ -255,11 +255,14 @@ def execute_admitted_convergence(
         if row.delivery_unavailable_reason == "archived":
             results.append(ConvergenceOutcome(key, "skipped_archived", "delivery_archived"))
             continue
+        if key not in persisted_consent:
+            results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
+            continue
+        if not live_consent(key):
+            results.append(ConvergenceOutcome(key, "pending", "consent_revoked"))
+            continue
         if row.delivery != "available" or not row.delivery_offer_id:
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
-            continue
-        if key not in persisted_consent or not live_consent(key):
-            results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
             continue
 
         try:
