@@ -89,14 +89,17 @@ def build_kobo_sync_section(
         "Ancienne dérogation Kobo (compatibilité)"
     )
     unlinked_row.set_subtitle(
-        "Ancien réglage en lecture seule : il ne contourne ni la vérification "
-        "des droits ni l’anti-doublons. Tout fichier local candidat ambigu exige "
-        "un rapprochement sûr avant une nouvelle acquisition."
+        "Ancien réglage en lecture seule : il ne contourne ni les refus explicites "
+        "du fournisseur, ni l’intégrité des fichiers, ni l’anti-doublons après "
+        "placement. Une présence locale incertaine ne bloque pas à elle seule "
+        "une livraison autrement autorisée ; seul le consentement de la source "
+        "dans Synchronisation s’applique."
     )
     unlinked_switch = Gtk.Switch()
     unlinked_switch.set_active(config.get("kobo_backup.allow_unlinked_acquisition", False) is True)
-    # The old permissive bypass is inert under the P0 anti-duplicate policy.
-    # Never suggest that toggling it can override a blocked reconciliation.
+    # This historical bypass is inert. It grants no consent and does not
+    # override explicit source restrictions. Ambiguous local presence is not
+    # an automatic veto on delivery under the canonical P0 Sync contract.
     unlinked_switch.set_sensitive(False)
     unlinked_switch.set_valign(Gtk.Align.CENTER)
     unlinked_row.add_suffix(unlinked_switch)
