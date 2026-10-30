@@ -35,9 +35,17 @@ def build_provider_account_editor(
     for field in getattr(descriptor, "account_options", ()):
         entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
         entry.set_title(field.label)
-        entry.set_text(str(options.get(field.key) or field.default))
+        fallback = (config.get(field.legacy_config_key)
+                    if field.legacy_config_key and hasattr(config, "get") else None)
+        entry.set_text(str(options.get(field.key) or fallback or field.default))
         group.add(entry)
         option_fields[field.key] = entry
+    account_note = getattr(descriptor, "account_note", None)
+    if option_fields and account_note:
+        note = Adw.ActionRow()
+        note.set_title(account_note[0])
+        note.set_subtitle(account_note[1])
+        group.add(note)
     # Compatibility path until the existing providers publish their descriptors.
     base_url_row = None
     opds_url_row = None
