@@ -42,7 +42,9 @@ def complete_selected_delivery(
     """
     if (type(account) is not Account or type(source) is not SourceKey
             or type(offer) is not ProviderRightObservation
-            or offer.state != "active" or not offer.provider_attested
+            or (offer.state != "active" and not (
+                offer.state == "unknown" and offer.delivery == "available"
+            )) or not offer.provider_attested
             or offer.delivery != "available" or not offer.delivery_offer_id
             or (offer.edition_id, offer.right_id, offer.kind) !=
                (source.edition_id, source.right_id, source.kind)
