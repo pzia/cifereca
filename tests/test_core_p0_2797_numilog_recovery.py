@@ -106,6 +106,11 @@ def test_three_unverified_legacy_purchases_recovered_without_copy_deletion(
         assert first.facts["downloaded"] == 3
         assert first.facts["skipped"] == 3
         assert len(calls) == 3
+        # Six different exact purchases may share one content-addressed
+        # Artifact without losing any per-purchase right or Placement.
+        purchases = service.storage.acquisitions(provider_id="numilog")
+        assert len({x["artifact_id"] for x in purchases
+                    if x["status"] == "complete" and x["artifact_id"]}) == 1
         assert all(p.is_file() for p in legacy)
         for row in rows[3:]:
             recovered = service.storage.acquisition_get(recovery_id(
@@ -172,5 +177,86 @@ def test_failed_purchase_does_not_starve_other_five(tmp_path, monkeypatch):
         assert result.facts["failed"] == 1
         assert result.facts["status"] == "partial"
         assert len(calls) == 6
+    finally:
+        service.close()
+
+
+def test_recovery_checkpoint_survives_restart_and_resumes_without_get(
+    tmp_path, monkeypatch,
+):
+    """A crash after provider delivery must not replay a signed ACSM."""
+    from cifereca.core.numilog_recovery import recovery_request
+    from tests.test_sync_state_contract import _service
+
+    service, account, session, broker, root, rows, rights = setup_six(tmp_path, monkeypatch)
+    checkpoint_id = None
+    try:
+        row = rows[0]
+        receipt(service, account, row, rights[row.record_id], 0)
+        def deliver(item, target):
+            path = Path(target) / ("numilog-" + hashlib.sha256(
+                item.record_id.encode()).hexdigest()[:32] + ".epub")
+            epub(path)
+            return path, ""
+        session.download_direct = deliver
+        # Simulate an interruption AFTER the committed delivery checkpoint,
+        # BEFORE index_delivered's independent catalog transaction.
+        with recovery_request():
+            acquired = service.acquire_direct_item(
+                row, _admission=lambda: row,
+            )
+        checkpoint_id = acquired.metadata["numilog_checkpoint_id"]
+        pending = service.storage.acquisition_get(checkpoint_id)
+        assert pending["status"] == "attention_required"
+        assert pending["metadata"]["phase"] == "index_pending"
+    finally:
+        service.close()
+
+    restored = _service(tmp_path)
+    try:
+        resumed = restored.resume_numilog_materialization(checkpoint_id)
+        assert resumed.indexed["status"] == "indexed"
+        complete = restored.storage.acquisition_get(checkpoint_id)
+        assert complete["status"] == "complete"
+        assert complete["artifact_id"] == resumed.artifact_id
+        # No connected Numilog session/provider is required to resume indexing.
+        assert not any(a.provider_id == "numilog" for a in restored.accounts)
+    finally:
+        restored.close()
+
+
+def test_foreign_placement_blocks_recovery_but_identical_sha_does_not(
+    tmp_path, monkeypatch,
+):
+    service, account, _session, _broker, root, rows, rights = setup_six(tmp_path, monkeypatch)
+    try:
+        item = rows[0]
+        receipt(service, account, item, rights[item.record_id], 0)
+        foreign = service.library_identity_provider_dir("alex", "numilog") / "same.epub"
+        epub(foreign)
+        # A byte-identical file in another profile is an Artifact, NOT a
+        # right for the current account. A different source item is harmless.
+        indexed = service.catalog_index_path(
+            foreign, item_id="foreign-item",
+            identity_id="alex", provider_id="numilog",
+        )
+        assert indexed["status"] == "indexed"
+        assert recovery_gate(
+            service.storage, identity_id=account.identity_id,
+            credential_id=account.credential_id,
+            account_id=account.unique_id, item_id=item.record_id,
+        ) == "recoverable"
+        # Conversely a foreign placement declaring THIS scoped source item
+        # is a conflict, even if its file bytes have the same SHA.
+        service.storage.placement_put({
+            "path": str(foreign), "identity_id": "alex",
+            "provider_id": "numilog", "source_item_id": item.record_id,
+            "artifact_id": indexed["artifact_id"], "state": "present",
+        })
+        assert recovery_gate(
+            service.storage, identity_id=account.identity_id,
+            credential_id=account.credential_id,
+            account_id=account.unique_id, item_id=item.record_id,
+        ) == "recovery_foreign_placement"
     finally:
         service.close()
