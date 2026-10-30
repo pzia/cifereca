@@ -223,3 +223,54 @@ def test_unknown_right_but_downloadable_provider_resource_runs_canonical_get(
     assert again["canonical_execution"]["present_attested"] == 1
     assert again["canonical_execution"]["downloaded"] == 0
     assert calls == [service.source]
+
+
+def test_unknown_right_and_unknown_delivery_can_select_current_offer_before_get(
+    policy,
+):
+    """The descriptive right is optional even BEFORE provider offer lookup."""
+    from cifereca.core.convergence_execution import CompletedDelivery
+    from cifereca.core.sync_coordination import synchronize_account_source
+    from cifereca.services import LibraryService
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service, db, switch = policy
+    with db._lock, db._connect() as conn:
+        conn.execute("DELETE FROM source_references")
+    original = replace(service.snapshot.rights[0], state="unknown")
+    service.snapshot = replace(service.snapshot, rights=(original,))
+    assert persist_attested_source_references(db, service.snapshot) == 1
+    assert db.entitlements() == []
+    db.metadata_set(switch, "1")
+    service._canonical_persisted_consent = (
+        lambda account: LibraryService._canonical_persisted_consent(service, account)
+    )
+    service._canonical_publication_consent_current = (
+        lambda conn, source: LibraryService._canonical_publication_consent_current(
+            service, conn, source,
+        )
+    )
+    selections = []
+    def select_offer(account, *, edition_id, right_id, kind, branch, explicit_user_action):
+        selections.append((edition_id, right_id, kind, branch))
+        assert explicit_user_action is True
+        return replace(service.snapshot, rights=(replace(
+            original, delivery="available", delivery_offer_id="current-offer",
+        ),))
+    service.session.rights_selected_delivery_offer_snapshot = select_offer
+    calls = []
+    def deliver(key, offered):
+        calls.append(key)
+        path = service.root / "A" / "downloaded.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        return CompletedDelivery(key, offered.delivery_offer_id, path, SHA,
+                                 "exact-selected-offer-completion")
+    service._canonical_right_delivery = deliver
+    outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_execution"]["downloaded"] == 1
+    assert len(selections) == len(calls) == 1
+    assert db.entitlements() == []
+    again = synchronize_account_source(service, service.account)
+    assert again["canonical_execution"]["downloaded"] == 0
+    assert calls == [service.source]
