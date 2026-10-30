@@ -24,6 +24,25 @@ def recovery_request():
 def recovery_requested():
     return _RECOVERY.get() is True
 
+
+# Exact startup worker dispatch context, distinct from diagnostics/traces.
+# A test or manual caller can open a telemetry trace, but it cannot turn that
+# trace into the privilege to bypass local publication guards.
+_AUTOMATIC = ContextVar("cifereca.numilog.automatic_dispatch", default=False)
+
+
+@contextmanager
+def automatic_delivery_request():
+    token = _AUTOMATIC.set(True)
+    try:
+        yield
+    finally:
+        _AUTOMATIC.reset(token)
+
+
+def automatic_delivery_requested():
+    return _AUTOMATIC.get() is True
+
 from ..acquisition_engine import stable_id
 from .numilog_manifest_rights import _scoped_record_id
 
