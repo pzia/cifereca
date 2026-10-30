@@ -108,9 +108,8 @@ def publish_completed_acquisition(
     row: ProviderRightObservation | None = snapshot.exact(
         source.edition_id, source.right_id, source.kind,
     )
-    if (row is None or (row.state != "active" and not (
-            row.state == "unknown" and row.delivery == "available"
-        )) or not row.provider_attested
+    if (row is None or (row.state != "active" and not row.delivery_attested)
+            or not row.provider_attested
             or snapshot.status not in ("success", "partial")):
         raise ValueError("canonical_active_provider_right_required")
     if (type(delivery_receipt_ref) is not str
