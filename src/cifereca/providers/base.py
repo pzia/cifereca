@@ -104,6 +104,15 @@ class CredentialField:
 
 
 @dataclass(frozen=True)
+class ProviderAccountOptionField:
+    """Declarative account option; CoreUI does not know provider identifiers."""
+    key: str
+    label: str
+    default: str = ""
+    legacy_config_key: str | None = None
+
+
+@dataclass(frozen=True)
 class ProviderDescriptor:
     id: str
     display_name: str
@@ -117,6 +126,10 @@ class ProviderDescriptor:
     # Interactive SSO requires a deliberate UI action; never start it from
     # the generic startup connection sweep or mark it connected by presence.
     interactive_authentication: bool = False
+    account_option_fields: tuple[ProviderAccountOptionField, ...] = ()
+    account_help: tuple[tuple[str, str], ...] = ()
+    max_accounts_per_identity: int | None = None
+    account_limit_message: str = ""
 
 
 class ProviderSession(ABC):

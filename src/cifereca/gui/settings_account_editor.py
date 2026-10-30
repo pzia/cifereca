@@ -14,7 +14,7 @@ def build_provider_account_editor(
     descriptor: Any, configured_identities: list[dict[str, Any]],
     accounts_container: Any, config: Any, Gtk: Any, Adw: Any,
 ) -> tuple[dict[str, Any], Any]:
-    """Create original provider-specific rows and return (editor, delete button)."""
+    """Render descriptor fields and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
     enabled_row = Adw.ActionRow(); enabled_row.set_title("Source activée" if not descriptor.credential_fields else "Compte activé")
     enabled = Gtk.Switch(); enabled.set_active(bool(data.get("enabled", True))); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
@@ -31,29 +31,23 @@ def build_provider_account_editor(
             entry = Adw.EntryRow(); entry.set_title(field.label); entry.set_text(str(credentials.get(field.key) or ""))
         group.add(entry); fields[field.key] = entry
     options = dict(data.get("options") or {})
-    base_url_row = None
-    opds_url_row = None
-    vault_url_row = None
-    if provider_id == "paris":
-        base_url_row = Adw.EntryRow(); base_url_row.set_title("URL du portail")
-        base_url_row.set_text(str(options.get("base_url") or (config.paris_base_url() if hasattr(config, "paris_base_url") else config.get("base_url")) or "https://bibliotheques.paris.fr")); group.add(base_url_row)
-    elif provider_id == "gallica":
-        opds_url_row = Adw.EntryRow(); opds_url_row.set_title("URL du catalogue OPDS")
-        opds_url_row.set_text(str(options.get("opds_url") or "https://gallica.bnf.fr/opds")); group.add(opds_url_row)
-        public = Adw.ActionRow(); public.set_title("Accès public")
-        public.set_subtitle("Aucun identifiant requis · EPUB + documents sonores publics Gallica")
-        group.add(public)
-    elif provider_id == "kobo":
-        vault_url_row = Adw.EntryRow(); vault_url_row.set_title("URL API Kobo-Vault")
-        vault_url_row.set_text(str(options.get("base_url") or "")); group.add(vault_url_row)
-        info = Adw.ActionRow(); info.set_title("Connexion indirecte au compte Kobo")
-        info.set_subtitle("Kobo-Vault conserve la session Kobo. cifereca utilise uniquement l'URL API et un token dédié.")
-        group.add(info)
+    option_fields: dict[str, Any] = {}
+    for field in getattr(descriptor, "account_option_fields", ()):
+        row = Adw.EntryRow(); row.set_title(field.label)
+        value = options.get(field.key)
+        if not value and field.legacy_config_key and hasattr(config, "get"):
+            value = config.get(field.legacy_config_key)
+        row.set_text(str(value or field.default)); group.add(row)
+        option_fields[field.key] = row
+    for title, subtitle in getattr(descriptor, "account_help", ()):
+        hint = Adw.ActionRow(); hint.set_title(title)
+        hint.set_subtitle(subtitle); group.add(hint)
     delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
     delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
     editor = {
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
-        "label": label_row, "identity": identity_row, "fields": fields, "base_url": base_url_row, "opds_url": opds_url_row, "vault_url": vault_url_row,
+        "label": label_row, "identity": identity_row, "fields": fields,
+        "option_fields": option_fields,
         "original_options": options, "deleted": False,
     }
     return editor, delete_button

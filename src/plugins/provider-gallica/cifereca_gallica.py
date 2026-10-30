@@ -21,6 +21,7 @@ from cifereca.plugin_api import (
     ProviderSearchCapabilities,
     ProviderCapabilityError,
     ProviderDescriptor,
+    ProviderAccountOptionField,
     ProviderError, Cancelled,
     ProviderPlugin,
     ProviderSession, normalize_language_tag, sanitize_filename_component, description_text, description_element,
@@ -78,6 +79,12 @@ DESCRIPTOR = ProviderDescriptor(
             "Un filtre de format sans branche EPUB/audio activée ne constitue pas un zéro de catalogue ; avertissement explicite, aucun HTTP.",
         ),
     ),
+    account_option_fields=(
+        ProviderAccountOptionField("opds_url", "URL du catalogue OPDS",
+                                   "https://gallica.bnf.fr/opds"),
+    ),
+    account_help=(("Accès public",
+                   "Aucun identifiant requis · EPUB + documents sonores publics Gallica"),),
     homepage="https://gallica.bnf.fr",
     notes=(
         "Source publique sans authentification.",

@@ -27,6 +27,7 @@ from cifereca_paris_trace import (
 )
 from cifereca.plugin_api import (
     CredentialField,
+    ProviderAccountOptionField,
     ProviderCapabilities,
     ProviderSearchCapabilities,
     ProviderCapabilityError,
@@ -122,6 +123,10 @@ DESCRIPTOR = ProviderDescriptor(
     credential_fields=(
         CredentialField("username", "Identifiant", placeholder="Numéro de carte ou e-mail"),
         CredentialField("password", "Mot de passe", secret=True),
+    ),
+    account_option_fields=(
+        ProviderAccountOptionField("base_url", "URL du portail",
+                                   "https://bibliotheques.paris.fr", legacy_config_key="base_url"),
     ),
     homepage="https://bibliotheques.paris.fr",
 )

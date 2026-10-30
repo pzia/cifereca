@@ -7,6 +7,7 @@ GUI or service layer.
 """
 from .base import (
     CredentialField,
+    ProviderAccountOptionField,
     ProviderCapabilities,
     ProviderSearchCapabilities,
     ProviderCapabilityError,
@@ -19,6 +20,7 @@ from .registry import ProviderRegistry
 
 __all__ = [
     "CredentialField",
+    "ProviderAccountOptionField",
     "ProviderCapabilities",
     "ProviderSearchCapabilities",
     "ProviderCapabilityError",

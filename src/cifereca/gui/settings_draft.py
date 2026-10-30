@@ -76,12 +76,10 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if descriptor is None or descriptor.state != 'ready' or descriptor.id in public_ids:
             preserved.append(row)
     saved_accounts = list(preserved)
-    kobo_identity_accounts: dict[str, str] = {}
-    for row in preserved:
-        if str(row.get('provider') or '').lower() == 'kobo':
-            iid = str(row.get('identity_id') or '').strip()
-            if iid:
-                kobo_identity_accounts[iid] = str(row.get('id') or 'kobo')
+    account_counts: dict[tuple[str, str], int] = {}
+    for row in saved_accounts:
+        key = (str(row.get('provider') or '').lower(), str(row.get('identity_id') or '').strip())
+        account_counts[key] = account_counts.get(key, 0) + 1
     for editor in values['accounts']:
         if editor.get('deleted'):
             continue
@@ -90,20 +88,25 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         for field in descriptor.credential_fields:
             credentials[field.key] = editor['fields'][field.key]
         options: dict[str, Any] = dict(editor.get('original_options') or {})
-        if editor.get('base_url') is not None:
-            options['base_url'] = editor['base_url'].strip() or 'https://bibliotheques.paris.fr'
-        if editor.get('opds_url') is not None:
-            options['opds_url'] = editor['opds_url'].strip() or 'https://gallica.bnf.fr/opds'
-        if editor.get('vault_url') is not None:
-            options['base_url'] = editor['vault_url'].strip()
+        submitted_options = editor.get('option_fields') or {}
+        for field in getattr(descriptor, 'account_option_fields', ()):
+            if field.key in submitted_options:
+                value = submitted_options[field.key]
+                if type(value) is not str:
+                    raise SettingsValidationError('Option de compte invalide.')
+                options[field.key] = value.strip() or field.default
         account_identity_id = editor['identity'].strip() or saved_identities[0]['id']
         if account_identity_id not in identity_ids:
             raise SettingsValidationError(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
-        if editor['provider'] == 'kobo':
-            previous = kobo_identity_accounts.get(account_identity_id)
-            if previous and previous != editor['id']:
-                raise SettingsValidationError(f"Une identité ne peut avoir qu'un compte Kobo Vault : {account_identity_id} est déjà lié à {previous}.")
-            kobo_identity_accounts[account_identity_id] = editor['id']
+        key = (descriptor.id, account_identity_id)
+        maximum = getattr(descriptor, 'max_accounts_per_identity', None)
+        current = account_counts.get(key, 0)
+        if type(maximum) is int and maximum > 0 and current >= maximum:
+            message = getattr(descriptor, 'account_limit_message', '') or (
+                f'Limite de {maximum} compte(s) pour {descriptor.display_name}'
+            )
+            raise SettingsValidationError(f'{message} : {account_identity_id}.')
+        account_counts[key] = current + 1
         saved_accounts.append({
             'id': editor['id'], 'provider': editor['provider'],
             'identity_id': account_identity_id,

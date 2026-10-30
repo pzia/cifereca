@@ -11,7 +11,7 @@ from cifereca_kobo_policy import (
     classify_personal_manifest, _strict_account_scope, _strict_product_id,
     _SCOPE_DENIED,
 )
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderAccountOptionField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -185,6 +185,13 @@ DESCRIPTOR = ProviderDescriptor(
         ),
     ),
     credential_fields=(CredentialField("api_token", "Token API Kobo-Vault", secret=True),),
+    account_option_fields=(ProviderAccountOptionField("base_url", "URL API Kobo-Vault"),),
+    account_help=((
+        "Connexion indirecte au compte Kobo",
+        "Kobo-Vault conserve la session Kobo. cifereca utilise uniquement l'URL API et un token dédié.",
+    ),),
+    max_accounts_per_identity=1,
+    account_limit_message="Une identité ne peut avoir qu'un compte Kobo Vault",
     notes=(
         "Kobo-Vault est consommé comme fournisseur Library indépendant.",
         "cifereca résout l'acquisition via Vault puis délègue l'exécution locale au contrat public Kobo-Adept.",
