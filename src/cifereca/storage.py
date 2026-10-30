@@ -3887,9 +3887,23 @@ class Storage:
                 "WHERE provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
                 (credential_id, item_id),
             ).fetchall()
-            if len(rows) != 1:
+            # Recovery is a distinct scoped acquisition. The former complete
+            # receipt remains historical evidence; a foreign or in-flight
+            # receipt is never silently replaced or taken as our own.
+            from .core.numilog_recovery import recovery_id
+            recovering = acquisition_id == recovery_id(
+                identity_id, credential_id, account_id, item_id,
+            )
+            if not rows or len(rows) > (2 if recovering else 1):
                 return False
-            aid, owner, account, status, raw = rows[0]
+            selected = [r for r in rows if r[0] == acquisition_id]
+            if len(selected) != 1 or any(
+                r[1] != identity_id or r[2] != account_id or
+                (r[0] != acquisition_id and (not recovering or r[3] != 'complete'))
+                for r in rows
+            ):
+                return False
+            aid, owner, account, status, raw = selected[0]
             meta = self._json_load(raw)
             if (aid != acquisition_id or owner != identity_id or account != account_id
                     or status not in {'acquiring', 'retryable_error', 'attention_required', 'complete'}
