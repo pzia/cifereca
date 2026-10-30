@@ -27,16 +27,22 @@ variable mutable de service ni réacquérir le verrou. Le pipeline contrôle le
 type, le chemin et le descripteur vivant du verrou ; un appel direct à
 `_opening_sync_locked` sans lease ne peut jamais télécharger.
 
-**La seule permission d'acquisition** est le grant Core persistant et exact
-`SourceKey(identity, provider, credential, borrower, branch, edition, right,
-kind)`, conservé en SQLite. Les préférences `kobo_backup.enabled`, le
-planning Numilog historique, un catalogue v1 et les métadonnées
-bibliographiques n'octroient aucune permission. Le lecteur de consentement est
-rappelé avant et après chaque opération ; une révocation pendant la sélection
-ou la livraison bloque la publication. La session amont, le droit positif,
-l'offre exacte, le prêt, le hash final et la portée de profil sont revérifiés
-par le moteur existant. Un fichier local ne suffit qu'avec la preuve de
-Placement du profil cible et l'OriginLink exact.
+**Contrat prioritaire du 30/10/2026 (supplante l'ancien veto « droit actif »)** :
+la permission d'acquisition est le consentement **persisté** du
+profil/fournisseur/type d'acquisition (Numilog achats, BnF prêts, Kobo achats),
+ou, en l'absence de commutateur source configuré, l'ancien consentement exact
+`SourceKey`. Le commutateur global ON consent aux offres actuellement et
+ultérieurement téléchargeables du compte authentifié ; OFF révoque toutes les
+acquisitions automatiques nouvelles, même avec un ancien grant individuel.
+`kobo_backup.enabled` (préférence historique non scoped), un catalogue v1,
+un titre, un SHA et un ancien droit SQLite ne constituent jamais une permission.
+La lecture de l'autorisation se fait avant/après livraison **et dans la
+transaction SQLite** de publication, y compris en cas de révocation pendant GET.
+L'état de droit `active/unknown/inactive` reste descriptif : seule une
+**offre de fichier réellement disponible et attestée** peut entrer en
+acquisition. Identité, credential, compte, branche, édition, session et
+licence ADEPT demeurent contrôlés ; présence locale attestée uniquement par
+Placement physique vérifié et OriginLink exact.
 
 La Sync d'ouverture conserve le compteur `canonical_rights` et ajoute
 `canonical_execution` (statuts bornés) ainsi que les acquisitions
@@ -91,8 +97,10 @@ l'inventaire `success` conservé séparément. Si l'exécuteur existe, son résu
 final remplace cette appréciation préalable : une acquisition achevée ne reste
 pas artificiellement en attente à cause du plan calculé avant son GET.
 
-Un droit `inactive` attesté donne un résultat descriptif `inactive`, jamais un
-`pending` de téléchargement. Cela ne ferme aucun droit SQLite : seuls les
+Une référence avec droit `inactive` et **aucune offre téléchargeable**
+reste descriptive `inactive`. Une offre authentifiée `delivery=available`,
+même si le champ droit vaut `inactive` ou `unknown`, est examinée selon
+consentement et présence, comme toute autre offre. Cela ne ferme aucun droit SQLite : seuls les
 contrats séparés de preuve négative peuvent le faire. Liste vide, archive
 ignorée et historique inactif ne rendent donc pas le bilan partiel à eux seuls.
 Les tests de bilan couvrent explicite/ouverture avec et sans route, l'historique
