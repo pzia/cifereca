@@ -16,8 +16,6 @@ from cifereca.identities.models import Identity
 from cifereca.core.library_local_inspection import LocalInspection, open_local_inspection
 from cifereca.core.library_reconciliation import _COLUMNS
 from cifereca.gui.library_inspection_view import LocalInspectionController
-from cifereca.gui.maintenance_result_view import MaintenanceResultView
-from cifereca.plugin_api import MaintenanceResult
 
 
 def _inspection_host_size(parent):
@@ -91,7 +89,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
     group.add(row)
     host.set_content(group)
     controller=LocalInspectionController(parent=host,Gtk=Gtk,Adw=Adw,Pango=Pango,GLib=GLib,alive=lambda:not parent._closed and host.get_visible())
-    result_view=MaintenanceResultView(parent=host,Gtk=Gtk,Adw=Adw,Pango=Pango,row=row,title='Réconciliation synthétique',alive=lambda:host.get_visible(),inspector=controller)
+    controller.attach_activity_row(row)
     widgets={}
 
     def press(key):
@@ -132,57 +130,13 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
 
     def result_ready():
         report['checks']['inspection_host_mapped']=True
-        result_view.publish(MaintenanceResult(
-            True, summary='Lecture seule ; détails privés accessibles localement.',
-            details=('600 fichiers observés', '256 liens confirmés'),
-        ))
-        until(lambda: _allocated(result_view.button), open_result)
-
-    def open_result():
-        report['checks']['inspection_result_button_ready']=True
-        device.click_widget(result_view.button)
-        until(lambda: _allocated(result_view.dialog), inspect_action)
-
-    def inspect_action():
-        report['checks']['inspection_result_dialog_mapped']=True
-        # Modern GTK/libadwaita: this is now a standalone, resizable result
-        # window rather than a fixed 340px MessageDialog. Xvfb may not run a
-        # WM, so check real titlebar/button without asserting EWMH geometry.
-        results = result_view.dialog
-        assert isinstance(results, Adw.Window)
-        assert results.get_resizable() and results.get_decorated()
-        header = next(w for w in walk(results)
-                      if isinstance(w, Adw.HeaderBar))
-        assert header.get_mapped()
-        maximize = next(w for w in walk(results)
-                        if isinstance(w, Gtk.Button)
-                        and w.get_label() == "Agrandir / Restaurer")
-        assert maximize.get_mapped() and maximize.get_sensitive()
-        report['checks']['inspection_results_large_window_maximizable'] = True
-        appendix = next(
-            w for w in walk(results)
-            if isinstance(w, Gtk.Expander)
-            and (w.get_label() or '').startswith('Afficher les statistiques détaillées')
-        )
-        assert not appendix.get_expanded() and appendix.get_mapped()
-        report['checks']['P0_2712_results_statistics_collapsed'] = True
-        response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
-        def allocated():
-            if not _allocated(response):return False
-            try:
-                x,y=device.widget_point(response)
-                return x>=0 and y>=0
-            except RuntimeError:
-                return False
-        def click():
-            report['checks']['inspection_click_dispatched']=True
-            device.click_widget(response)
-            # This action performs a real 600-file offline scan before GTK
-            # can allocate its window. Keep navigation's short deadline,
-            # but allow this measured worker step its own bounded budget.
-            until(lambda: _inspection_geometry_ready(controller), initial,
-                  timeout=18.0)
-        until(allocated,click)
+        # The retired Maintenance result inspector was never mounted by the
+        # production Tools page. Exercise the real, read-only controller
+        # directly while preserving the 600-file GTK/XTEST acceptance flow.
+        report['checks']['inspection_click_dispatched']=True
+        controller.start()
+        until(lambda: _inspection_geometry_ready(controller), initial,
+              timeout=18.0)
 
     def initial():
         checkpoint('maint_inspection_opened')
@@ -754,7 +708,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         assert not session.valid() and not session.page().cases
         assert sources()==before
         report['checks']['local_inspection_epoch_revokes_window_and_sources_unchanged']=True
-        result_view.clear()
+        controller.clear()
         host.destroy()
         tmp.cleanup()
         checkpoint('maint_inspection_finished')

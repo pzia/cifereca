@@ -201,8 +201,6 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
             ("inspection_setup_entered", "inspection_setup"),
             ("inspection_fixture_created", "inspection_fixture"),
             ("inspection_host_mapped", "inspection_host"),
-            ("inspection_result_button_ready", "inspection_result_button"),
-            ("inspection_result_dialog_mapped", "inspection_result_dialog"),
             ("inspection_click_dispatched", "inspection_clicked"),
             ("inspection_window_mapped", "inspection_open"),
             ("P0_2712_initial_window_width_ok", "inspection_width_ok"),
