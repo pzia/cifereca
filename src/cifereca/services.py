@@ -554,7 +554,22 @@ class LibraryService:
         values cannot opt a source back into startup refresh (#1346).
         """
         from .core.source_enablement import source_enabled
-        raw = self.storage.metadata_get("sync.source.enabled." + self.sync_source_id(account))
+        source_id = self.sync_source_id(account)
+        # Legacy IDs represent empty primary accounts with the synthetic
+        # "provider:credential:primary" token. An upstream account may have
+        # that exact *literal* ID too. Neither is allowed to inherit the
+        # other's ON switch, even when SQLite still holds a legacy key.
+        matches = 0
+        for candidate in self.accounts:
+            try:
+                if self.sync_source_id(candidate) == source_id:
+                    matches += 1
+            except Exception:
+                # A malformed unrelated account is not an authority.
+                continue
+            if matches > 1:
+                return False
+        raw = self.storage.metadata_get("sync.source.enabled." + source_id)
         return source_enabled(raw)
 
     def select_identity(self, identity_id: str) -> Identity:

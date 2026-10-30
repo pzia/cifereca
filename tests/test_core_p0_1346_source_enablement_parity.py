@@ -10,6 +10,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from cifereca.models import Account
+
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core.source_enablement import source_enabled
 from cifereca.core import sync_coordination
@@ -50,6 +52,44 @@ def test_service_and_broker_agree_for_same_live_account(tmp_path, raw, expected)
                    if row.provider_id == "numilog")
         assert ref.enabled is expected
         assert calls == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("raw", [None, "1"])
+def test_legacy_primary_fallback_collision_denies_core_source_before_remote_io(
+    tmp_path, raw,
+):
+    service = _service(tmp_path)
+    try:
+        primary = Account(identity_id="default", provider_id="paris",
+                          credential_id="card-collision", unique_id="")
+        literal = Account(identity_id="default", provider_id="paris",
+                          credential_id="card-collision",
+                          unique_id="paris:card-collision:primary")
+        service.accounts.extend((primary, literal))
+        sid = service.sync_source_id(primary)
+        assert sid == service.sync_source_id(literal)
+        assert sid == SynchronizationBrokerImpl._source_id(primary)
+        if raw is not None:
+            service.storage.metadata_set("sync.source.enabled." + sid, raw)
+
+        # Both distinct borrowers share the old metadata key. Neither may
+        # inherit the same ON/implicit-enabled preference or start remote I/O.
+        assert service.sync_source_enabled(primary) is False
+        assert service.sync_source_enabled(literal) is False
+        broker = SynchronizationBrokerImpl(service)
+        with pytest.raises(ValueError, match="ambiguous sync source"):
+            broker._find_account(sid)
+        for account in (primary, literal):
+            result = service._synchronize_account_source_impl(account)
+            assert result["status"] == "skipped"
+            assert result["reason"] == "source_disabled"
+
+        # No blanket switch/migration: once the conflicting account leaves,
+        # the formerly valid legacy primary source retains its own preference.
+        service.accounts.remove(literal)
+        assert service.sync_source_enabled(primary) is True
     finally:
         service.close()
 
