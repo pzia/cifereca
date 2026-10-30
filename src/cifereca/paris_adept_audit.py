@@ -196,20 +196,27 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                 if row.get("recorded_adept_profile_id") else []
             ))
         }
-        # Distinguish two contradictory historical Adobe claims from a
-        # merely changed current profile association. Neither observation
-        # establishes that Adobe activated the wrong account.
-        recorded_profile_conflict = len(recorded) > 1
+        # A Paris loan ID may be reused for distinct books. Only compare
+        # historical Adobe claims within the exact (loan, item) group.
+        # Configured-vs-recorded is a clue, never proof of wrong activation.
+        recorded_by_item: dict[str, set[str]] = defaultdict(set)
+        loan_refs_by_item: dict[str, set[str]] = defaultdict(set)
+        for row in exposures_for_loan:
+            item = row["item_id"]
+            recorded_by_item[item].update(row.get("recorded_adept_profile_ids", ()))
+            loan_refs_by_item[item].update(row.get("recorded_adept_loan_refs", ()))
+        recorded_profile_conflict = any(
+            len(items) > 1 for items in recorded_by_item.values()
+        )
         configured_profile_divergence = len(profiles) > 1
         configured_vs_recorded_difference = bool(
             profiles and recorded and profiles != recorded
         )
         profiles_in_conflict = len(profiles | recorded) > 1
-        loan_refs = {
-            reference for row in exposures_for_loan
-            for reference in row.get("recorded_adept_loan_refs", ())
-        }
-        loan_reference_disagreement = len(loan_refs) > 1
+        loan_refs = set().union(*loan_refs_by_item.values()) if loan_refs_by_item else set()
+        loan_reference_disagreement = any(
+            len(items) > 1 for items in loan_refs_by_item.values()
+        )
         acquisition_rows = [
             row for row in exposures_for_loan if "acquisition" in row["sources"]
         ]
