@@ -364,8 +364,16 @@ def target_for_entry(service, entry):
             account_id=right['account_id'], item_id=right['item_id'])
         _require(len(evidence['entitlements']) == 1
                  and right.get('metadata', {}).get('source') == 'numilog.authenticated_library')
-        aid = stable_id('numilog-materialization', owner, right['credential_id'],
-                        right['account_id'], right['item_id'])
+        # Recovery keeps the legacy complete receipt intact. Its own
+        # index-pending receipt is the actionable offline resume target.
+        from .numilog_recovery import recovery_id
+        recovery = recovery_id(
+            owner, right['credential_id'], right['account_id'], right['item_id'],
+        )
+        aid = recovery if service.storage.acquisition_get(recovery) is not None else (
+            stable_id('numilog-materialization', owner, right['credential_id'],
+                      right['account_id'], right['item_id'])
+        )
         row, _path = _checked_receipt(service, aid, selected=True, verify_file=False)
         _require(row['status'] == 'attention_required' and row['metadata']['phase'] == _PENDING)
         return _resume_target(row)
