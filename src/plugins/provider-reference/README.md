@@ -74,3 +74,7 @@ traitement de 300+ lignes et absence d'acquisition double.
 **Limites de réception** : ni preuve E2E du moteur Core sur ce provider, ni
 compte réel, ni comportement ADEPT/KDRM. Aucune action utilisateur réelle
 requise pour ce banc d'essai.
+
+**Revalidation ABI v2 :** PR Core #3730 est désormais fusionnée. Les tests
+`test_v2_*` ne doivent plus être ignorés par `pytest.importorskip` lors
+de la CI sur `main` et doivent réussir pour chaque compte/ressource.
