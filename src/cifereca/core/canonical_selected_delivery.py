@@ -139,14 +139,14 @@ def complete_selected_delivery(
     attempt.mkdir(mode=0o700)
     created = os.stat(attempt, follow_symlinks=False)
     attempt_inode = (created.st_dev, created.st_ino)
-    if not bound():
-        raise ValueError("canonical_delivery_source_rebound")
     # The staging namespace belongs to this failed attempt until the Core
     # issues a completed delivery receipt. Failed GET, invalid candidates and
     # rejected ADEPT results must not leave signed ACSM/partial bytes behind.
     # Once this method returns, the executor owns the verified bytes for its
     # durable crash-recovery checkpoint: never delete that successful run.
     try:
+        if not bound():
+            raise ValueError("canonical_delivery_source_rebound")
         candidate = getattr(session, reader_name)(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
