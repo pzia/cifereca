@@ -214,3 +214,68 @@ def test_reused_paris_loan_id_with_distinct_items_is_not_one_adobe_transaction()
     # as one transaction merely because Paris reused its loan identifier.
     assert loan["adept_loan_reference_disagreement"] is False
     assert "PRIVATE-" not in repr(report)
+
+
+def test_failed_adept_attempt_does_not_overrule_successful_recorded_origin():
+    completed = acquisition(profile="historical-hb", status="complete", metadata={
+        "provider_loan_id": "shared",
+        "adept_binding": {
+            "adept_profile_id": "historical-hb", "adept_loan_id": "ADOBE-COMPLETED",
+        },
+    })
+    failed = acquisition(profile="wrong-profile", status="failed", metadata={
+        "provider_loan_id": "shared",
+        "adept_binding": {
+            "adept_profile_id": "wrong-profile", "adept_loan_id": "ADOBE-FAILED",
+        },
+    })
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[completed, failed],
+    )
+    first = build_paris_adept_audit(storage)
+    storage.ledger.reverse()
+    second = build_paris_adept_audit(storage)
+    for report in (first, second):
+        loan = report["loans"][0]
+        row = loan["exposures"][0]
+        assert row["acquisition_statuses"] == ["complete", "failed"]
+        assert loan["ledger_status_ambiguous"] is True
+        assert loan["recorded_profile_conflict"] is False
+        assert loan["adept_loan_reference_disagreement"] is False
+        assert loan["origin_resolution"] == "single_recorded"
+        assert row["recorded_adept_profile_ids"] == ["historical-hb"]
+        assert "wrong-profile" not in repr(report)
+        assert "ADOBE-FAILED" not in repr(report)
+
+
+@pytest.mark.parametrize("status", ["attention_required", "failed", "pending", "cancelled"])
+def test_noncomplete_acquisition_is_not_adept_origin_evidence(status):
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[acquisition(profile="unattested-proposed", status=status)],
+    )
+    report = build_paris_adept_audit(storage)
+    loan = report["loans"][0]
+    row = loan["exposures"][0]
+    assert row["acquisition_status"] == status
+    assert row.get("recorded_adept_profile_id") is None
+    assert row.get("recorded_adept_loan_ref") is None
+    assert loan["origin_resolution"] == "unknown"
+    assert "unattested-proposed" not in repr(report)
+
+
+def test_unknown_ledger_status_is_closed_and_never_leaks_sensitive_text():
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "primary")],
+        acquisitions=[acquisition(
+            profile="proposed-only", status="PRIVATE-ACSM-STATUS-WITH-TOKEN"
+        )],
+    )
+    report = build_paris_adept_audit(storage)
+    row = report["loans"][0]["exposures"][0]
+    assert row["acquisition_statuses"] == ["unknown"]
+    assert row["acquisition_status"] == "unknown"
+    assert report["loans"][0]["origin_resolution"] == "unknown"
+    assert "PRIVATE-ACSM" not in repr(report)
+    assert "proposed-only" not in repr(report)
