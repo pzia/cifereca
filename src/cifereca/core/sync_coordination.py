@@ -319,14 +319,15 @@ def _run_observed_canonical_convergence(
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
         from .source_auto_consent_bridge import (
-            numilog_generation, numilog_generation_in_transaction,
+            consent_generation, consent_generation_in_transaction,
         )
-        # Capture the source-wide consent epoch BEFORE the initial SQLite
-        # grant read. An ON→OFF→ON between reads must never become this run's
-        # permission, even if the latest boolean is ON again.
-        frozen_numilog_epoch = (
-            numilog_generation(self.storage, admitted_snapshots[0].scope)
-            if account.provider_id == "numilog" else None
+        # Freeze an exact source/type epoch BEFORE the first grant read.
+        # The legacy unversioned Kobo switch remains admissible; any later
+        # ON→OFF→ON advances its revision and invalidates this older attempt.
+        versioned_source = account.provider_id in {"numilog", "kobo", "bnf-pret"}
+        frozen_epoch = (
+            consent_generation(self.storage, admitted_snapshots[0].scope)
+            if versioned_source else None
         )
 
         try:
@@ -343,17 +344,15 @@ def _run_observed_canonical_convergence(
         ):
             consent = frozenset()
 
-        # Numilog's source-wide ON/OFF is a cross-process CAS with a new
-        # generation on *every* transition. A frozen consent boolean alone
-        # cannot detect ON→OFF→ON during one signed/one-use HTTP delivery.
-        # Pin the initial epoch before selected-offer I/O and require that
-        # identical epoch before/after GET and in the publication transaction.
+        # An unchanged final boolean is insufficient: a new source-wide
+        # consent generation must not revive an old signed/one-use delivery.
         def epoch_current(key: SourceKey) -> bool:
             return (
-                frozen_numilog_epoch is None
-                or (key.scope == admitted_snapshots[0].scope
-                    and numilog_generation(self.storage, key.scope)
-                    == frozen_numilog_epoch)
+                not versioned_source
+                or (frozen_epoch not in {"unavailable", "invalid"}
+                    and key.scope == admitted_snapshots[0].scope
+                    and consent_generation(self.storage, key.scope)
+                    == frozen_epoch)
             )
 
         def current_consent(key: SourceKey) -> bool:
@@ -372,9 +371,11 @@ def _run_observed_canonical_convergence(
 
         def publication_consent(db, key: SourceKey) -> bool:
             # Execute in publisher's BEGIN IMMEDIATE, not a stale read.
-            if (frozen_numilog_epoch is not None and
-                    numilog_generation_in_transaction(db, key)
-                    != frozen_numilog_epoch):
+            if versioned_source and (
+                frozen_epoch in {"unavailable", "invalid"}
+                or key.scope != admitted_snapshots[0].scope
+                or consent_generation_in_transaction(db, key) != frozen_epoch
+            ):
                 return False
             return (existing_publication_guard(db, key)
                     if callable(existing_publication_guard) else True)
@@ -817,6 +818,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     expired_before = self.acquisition_reconciler.realize_expired_loans()
     summaries: list[dict[str, Any]] = []
     all_loans: list[Loan] = []
+    # One opening cycle must not schedule a second Kobo GET after Core A→B.
+    # Exact scoped IDs are safer than a credential-only flag (multi-profiles).
+    # Value records whether Core convergence completed without pending errors.
+    canonical_kobo_sources: dict[str, bool] = {}
     # Device/profile state is provider-owned by Kobo-Adept. Read it once per
     # opening sync and only project it into the dashboard summary; Paris does
     # not persist a competing device inventory.
@@ -1011,6 +1016,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             and canonical.get("pending", 0) > 0):
                         inventory_partial = True
                     if counts is not None:
+                        # The canonical executor has already decided acquisition
+                        # for this exact Kobo source (including pending/blocked).
+                        # A legacy worker must not make a second decision/GET.
+                        if account.provider_id == "kobo":
+                            canonical_kobo_sources[source_id] = not any(
+                                counts[name] for name in (
+                                    "pending", "blocked", "failed", "cancelled"
+                                )
+                            )
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts
                         })
@@ -1257,10 +1271,16 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         and account.credential_id in scheduled_credentials
     }
     if kobo_decision["status"] in {"started", "fresh_cache"}:
+        legacy_eligible = [
+            session for session in eligible_kobo
+            if self.sync_source_id(
+                scheduled_accounts[session.credential_id]
+            ) not in canonical_kobo_sources
+        ]
         # The outer opening-sync already owns the cross-process lock.
         # The scoped helper is the ONLY automatic materialization path.
         due = [
-            session for session in eligible_kobo
+            session for session in legacy_eligible
             if on_start_due(self, scheduled_accounts[session.credential_id])
         ]
         executed: list[dict[str, Any]] = []
@@ -1301,7 +1321,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 scheduled_accounts[session.credential_id].identity_id,
                 session.credential_id,
             ).rsplit(".", 1)[-1]
-            for session in eligible_kobo
+            for session in legacy_eligible
             if session.credential_id not in due_credentials
         }
         cached_sources = [
@@ -1316,15 +1336,16 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         states = {str(row.get("status") or "partial") for row in sources}
         if any(result.get("status") == "error" for result in executed):
             batch_status = "error"
-        elif counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
+        elif (counters["errors"] or any(not ok for ok in canonical_kobo_sources.values())
+              or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states):
             batch_status = "partial"
         elif "attention_required" in states:
             batch_status = "attention_required"
-        elif len(sources) < len(eligible_kobo):
+        elif len(sources) < len(legacy_eligible):
             batch_status = "partial"
         else:
             batch_status = "complete"
-        if not due:
+        if not due and not canonical_kobo_sources:
             batch_status = (
                 "fresh_cache" if batch_status == "complete"
                 else "fresh_cache_partial"
@@ -1332,8 +1353,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         kobo_summary = {
             **counters, "scope": "accounts", "status": batch_status,
             "sessions": len(eligible_kobo), "synced_accounts": len(due),
-            "cached_accounts": len(eligible_kobo) - len(due),
-            "sources": sources, "skipped_fresh": not bool(due),
+            "cached_accounts": len(legacy_eligible) - len(due),
+            "canonical_sources": len(canonical_kobo_sources),
+            "sources": sources, "skipped_fresh": not bool(due or canonical_kobo_sources),
         }
         kobo_decision["status"] = (
             "error" if batch_status == "error"

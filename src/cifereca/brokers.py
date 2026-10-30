@@ -742,16 +742,13 @@ class SynchronizationBrokerImpl:
             # Check the binding before granting a persistent acquisition mode.
             if not self._enabled(source_id) or not self._account_bound_for_bnf(account):
                 raise ValueError('BnF source not eligible')
-        # A disabled policy can be re-enabled while a signed GET or ADEPT
-        # import is in flight. A final boolean '1' is not authority to revive
-        # that older consent: advance a durable opaque generation BEFORE the
-        # new enabled/disabled value is published. Even a failed second write
-        # invalidates old in-flight work, never grants new work accidentally.
-        from secrets import token_hex
-        self.service.storage.metadata_set(
-            policy_key(account) + '.revision', token_hex(16),
+        # BnF's ON->OFF->ON generation and its visible switch are one SQLite
+        # commit. Neither the legacy worker nor canonical A->B may observe an
+        # old consent with a newer epoch during a partially written toggle.
+        self.service.storage.metadata_set_with_revision(
+            policy_key(account), '1' if value else '0',
+            policy_key(account) + '.revision',
         )
-        self.service.storage.metadata_set(policy_key(account), '1' if value else '0')
         self._notify()
         return enabled(self.service, account)
 
@@ -778,8 +775,9 @@ class SynchronizationBrokerImpl:
             raise ValueError("local materialization not supported")
         if mode == "on_start" and not can_enable_kobo_on_start(self.service, account):
             raise ValueError("source not eligible for automatic materialization")
-        self.service.storage.metadata_set(
+        self.service.storage.metadata_set_with_revision(
             policy_key(source_id), "1" if mode == "on_start" else "0",
+            policy_key(source_id) + ".revision",
         )
         self._notify()
         return mode

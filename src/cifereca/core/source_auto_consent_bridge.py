@@ -109,3 +109,52 @@ def numilog_generation_in_transaction(db, source):
     ).fetchone()
     value = row[0] if row else None
     return value if type(value) is str and _HEX.fullmatch(value) else None
+
+
+def _consent_generation_key(scope):
+    """Generation key for every source-wide automatic acquisition switch."""
+    sid = _source_id(scope)
+    if scope.provider_id == "numilog":
+        return "sync.source.numilog.materialization.epoch.v1." + sid
+    if scope.provider_id == "kobo":
+        return "sync.source.materialization.on_start." + sid + ".revision"
+    if scope.provider_id == "bnf-pret":
+        return "sync.source.bnf_auto." + sid + ".revision"
+    return None
+
+
+def consent_generation(storage, scope):
+    """Read pre-grant epoch (None means an unversioned legacy switch).
+
+    An unreadable/malformed revision is never equivalent to no revision:
+    deny rather than permitting a stale ON->OFF->ON delivery.
+    """
+    key = _consent_generation_key(scope)
+    if key is None:
+        return None
+    try:
+        raw = storage.metadata_get(key)
+    except Exception:
+        return "unavailable"
+    if raw is None:
+        return None
+    return raw if type(raw) is str and _HEX.fullmatch(raw) else "invalid"
+
+
+def consent_generation_in_transaction(db, source):
+    """Read the exact epoch under Core's final BEGIN IMMEDIATE publication."""
+    if type(source) is not SourceKey:
+        return "invalid"
+    key = _consent_generation_key(source.scope)
+    if key is None:
+        return None
+    try:
+        row = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,),
+        ).fetchone()
+    except Exception:
+        return "unavailable"
+    raw = row[0] if row else None
+    if raw is None:
+        return None
+    return raw if type(raw) is str and _HEX.fullmatch(raw) else "invalid"

@@ -284,6 +284,28 @@ class Storage:
                 (str(key), str(value)),
             )
 
+    def metadata_set_with_revision(self, key: str, value: str, revision_key: str) -> None:
+        """Atomically replace a source acquisition toggle and its CAS epoch.
+
+        Every ON/OFF transition advances the epoch, including ON->OFF->ON.
+        Publishing the two fields in one SQLite transaction avoids exposing
+        a new generation with an old value to concurrent Core readers.
+        """
+        from secrets import token_hex
+
+        if (type(key) is not str or type(revision_key) is not str
+                or type(value) is not str or not key or not revision_key
+                or key == revision_key or value not in ("0", "1")):
+            raise ValueError("invalid_acquisition_policy_revision")
+        generation = token_hex(16)
+        with self._lock, self._connect() as db:
+            for field, state in ((revision_key, generation), (key, value)):
+                db.execute(
+                    "INSERT INTO metadata(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (field, state),
+                )
+
     @staticmethod
     def _read_schema_version(db: sqlite3.Connection) -> int:
         row = db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
