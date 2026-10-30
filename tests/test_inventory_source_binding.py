@@ -27,7 +27,8 @@ def rig(provider):
     storage = NS(metadata_get=metadata_get,
                  identity_for_connection=lambda p, c: state.owner,
                  provider_connections=lambda **kw: state.connections)
-    service = NS(accounts=[account], _sessions={'current': session}, storage=storage,
+    service = NS(accounts=[account], _sessions={(provider, account.credential_id): session},
+                 _session_key=lambda p, c: (p, c), storage=storage,
                  identity_by_id=lambda identity: NS(identity_id=identity) if state.identity else None,
                  sync_source_enabled=lambda a: state.source_enabled,
                  current_identity=NS(identity_id='bob'))
@@ -118,6 +119,21 @@ class InventorySourceBindingTests(unittest.TestCase):
         service.storage.metadata_get = fail
         self.assertFalse(inventory_source_eligible(service, account))
         self.assertEqual(len(state.reads), 1)
+
+    def test_schedule_uses_sync_binding_for_closed_epoch_and_upstream_accounts(self):
+        for provider in PROVIDERS:
+            for mutation in ('closed', 'corrupt_epoch', 'upstream_mismatch', 'missing_route'):
+                with self.subTest(provider=provider, mutation=mutation):
+                    service, account, session, state = rig(provider)
+                    if mutation == 'closed':
+                        session._closed = True
+                    elif mutation == 'corrupt_epoch':
+                        service._source_context_epoch = 'invalid'
+                    elif mutation == 'upstream_mismatch':
+                        session.accounts = [NS(**dict(vars(account), unique_id='other'))]
+                    else:
+                        service._session_key = lambda p, c: ('foreign', p, c)
+                    self.assertFalse(inventory_source_eligible(service, account))
 
     def test_compatibility_names_preserve_provider_scope(self):
         for provider in PROVIDERS:

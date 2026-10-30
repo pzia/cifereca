@@ -11,7 +11,11 @@ connexion et le profil doit encore exister. La source et l’unique connexion
 persistée doivent être activées. Une préférence d’activation corrompue ne
 permet pas un lancement automatique. Une seule session connectée doit
 correspondre aux mêmes fournisseur et connexion, avec `personal_library`
-explicitement vrai. La capacité `backup` et le profil sélectionné dans
+explicitement vrai. La décision réemploie le garde Core
+`private_inventory_binding_current` utilisé par la Sync explicite et le
+miroir d’ouverture : même session inscrite sous sa clé canonique, session
+non fermée, génération de contexte valide et projection upstream de comptes
+non contradictoire. La capacité `backup` et le profil sélectionné dans
 l’interface ne participent pas à cette décision.
 
 Les noms `kobo_inventory_source_eligible` et
