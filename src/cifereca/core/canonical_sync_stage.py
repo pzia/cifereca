@@ -45,10 +45,7 @@ def persist_attested_source_references(
     now = __import__("time").time_ns() // 1_000_000_000
     admitted = [
         row for row in snapshot.rights
-        if row.provider_attested and (
-            row.state == "active"
-            or (row.state == "unknown" and row.delivery == "available")
-        )
+        if row.provider_attested
     ]
     # SourceReference.state is the operational sync state of an exact provider
     # resource, NOT an independent legal/ownership entitlement. An observed
