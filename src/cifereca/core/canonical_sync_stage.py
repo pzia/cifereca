@@ -243,11 +243,10 @@ def observe_canonical_rights_in_sync(
             "source_references_changed": 0, "present_attested": 0,
             "read_only_plan": True, "acquisition_authorized": False,
         }
-    # Do not promote historical receipts or unknown rights into provider A.
-    admitted = sum(
-        row.provider_attested and row.state == "active"
-        for row in snapshot.rights
-    )
+    # A provider-authenticated personal RESOURCE is a positive reference.
+    # Descriptive right state (including inactive/unknown) does not define
+    # download capability. A GET still requires a fresh exact selected offer.
+    admitted = sum(row.provider_attested for row in snapshot.rights)
     try:
         changed = persist_attested_source_references(
             service.storage, snapshot, context_current=current_context,
