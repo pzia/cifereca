@@ -240,6 +240,11 @@ def test_legacy_kobo_switch_cannot_claim_authorization_by_itself():
     assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
     assert "anti-doublons" in group.children[2].subtitle
     assert "contourne" in group.children[2].subtitle
+    # A candidate of uncertain presence no longer acts as a veto against
+    # delivery under the canonical Sync contract; legacy settings grant none.
+    assert "présence locale incertaine ne bloque pas" in group.children[2].subtitle
+    assert "seul le consentement de la source" in group.children[2].subtitle
+    assert "rapprochement sûr avant" not in group.children[2].subtitle
 
 
 def test_obsolete_global_kobo_switches_remain_inert_read_only_with_saved_values():
