@@ -155,11 +155,12 @@ def execute_admitted_convergence(
                 for candidate in session_accounts
             ) != 1:
                 return False
-            if sum(
-                candidate is session for candidate in sessions.values()
+            registered = [
+                candidate for candidate in sessions.values()
                 if getattr(candidate, "provider_id", None) == scope.provider_id
                 and getattr(candidate, "credential_id", None) == scope.credential_id
-            ) != 1:
+            ]
+            if len(registered) != 1 or registered[0] is not session:
                 return False
             return (
                 service._sessions.get(service._session_key(
