@@ -10,6 +10,27 @@ def select(**changes):
     value.update(changes)
     return value
 
+def test_kobo_unknown_right_state_does_not_veto_exact_downloadable_file():
+    session, vault, broker, account, posts = setup()
+    # Authenticated personal manifest, exact downloadable product, but no
+    # owned claim. Its descriptor is still an independently observed offer.
+    vault.rows[0].pop("owned")
+    try:
+        inventory = session.rights_observation_snapshot(account)
+        observed = inventory.exact("book-1", "book-1", "purchase")
+        assert observed is not None and observed.state == "unknown"
+        assert observed.delivery == "unknown"
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, **select(),
+        )
+        assert selected.rights[0].state == "unknown"
+        assert selected.rights[0].delivery_attested
+        assert len(posts) == 1  # explicit descriptor POST, not file GET
+        assert vault.calls == 3  # inventory, selected inventory, descriptor inventory
+    finally:
+        session.close()
+
+
 def test_selected_kobo_one_right_one_preflight():
     session, vault, broker, account, posts = setup()
     try:
