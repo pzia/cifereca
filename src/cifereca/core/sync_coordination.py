@@ -817,6 +817,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     expired_before = self.acquisition_reconciler.realize_expired_loans()
     summaries: list[dict[str, Any]] = []
     all_loans: list[Loan] = []
+    # One opening cycle must not schedule a second Kobo GET after Core A→B.
+    # Exact scoped IDs are safer than a credential-only flag (multi-profiles).
+    canonical_kobo_sources: set[str] = set()
     # Device/profile state is provider-owned by Kobo-Adept. Read it once per
     # opening sync and only project it into the dashboard summary; Paris does
     # not persist a competing device inventory.
@@ -1011,6 +1014,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             and canonical.get("pending", 0) > 0):
                         inventory_partial = True
                     if counts is not None:
+                        # The canonical executor has already decided acquisition
+                        # for this exact Kobo source (including pending/blocked).
+                        # A legacy worker must not make a second decision/GET.
+                        if account.provider_id == "kobo":
+                            canonical_kobo_sources.add(source_id)
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts
                         })
@@ -1261,7 +1269,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         # The scoped helper is the ONLY automatic materialization path.
         due = [
             session for session in eligible_kobo
-            if on_start_due(self, scheduled_accounts[session.credential_id])
+            if self.sync_source_id(
+                scheduled_accounts[session.credential_id]
+            ) not in canonical_kobo_sources
+            and on_start_due(self, scheduled_accounts[session.credential_id])
         ]
         executed: list[dict[str, Any]] = []
         for session in due:
