@@ -3762,9 +3762,10 @@ class Storage:
                         (identity, credential, account, item_id))
                     or _scoped_record_id(item_id, credential) is None
                     or status not in {"acquiring", "retryable_error", "attention_required"}
-                    or acquisition_id != self._stable_id(
-                        "numilog-materialization", identity, credential, account, item_id,
-                    )):
+                    or acquisition_id not in {
+                        self._stable_id("numilog-materialization", identity, credential, account, item_id),
+                        self._stable_id("numilog-materialization-recovery", identity, credential, account, item_id),
+                    }):
                 return refused("receipt_scope_invalid")
             receipt = self._json_load(receipt_raw)
             if (type(receipt) is not dict
@@ -3848,11 +3849,19 @@ class Storage:
             if other is not None:
                 return refused("artifact_shared_elsewhere")
             competitors = db.execute(
-                "SELECT acquisition_id FROM acquisition_ledger WHERE "
-                "provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
+                "SELECT acquisition_id,identity_id,account_id,status FROM acquisition_ledger WHERE "
+                "provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 3",
                 (credential, item_id),
             ).fetchall()
-            if len(competitors) != 1 or competitors[0][0] != acquisition_id:
+            recovering = acquisition_id == self._stable_id(
+                "numilog-materialization-recovery", identity, credential, account, item_id,
+            )
+            if (not competitors or len(competitors) > (2 if recovering else 1)
+                    or sum(row[0] == acquisition_id for row in competitors) != 1
+                    or any(row[1] != identity or row[2] != account
+                           or (row[0] != acquisition_id
+                               and (not recovering or row[3] != 'complete'))
+                           for row in competitors)):
                 return refused("competing_receipts")
             # Both provenance rows change together. A crash/SQL error cannot
             # leave a placement adopted without its matching catalog entry.
