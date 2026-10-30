@@ -994,6 +994,55 @@ class ParisProviderSession(ProviderSession):
         ]
         return state
 
+    def downloadable_resource_snapshot(self, account):
+        """#3723 v2: exact source observations, not permission or delivery."""
+        from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
+        return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
+
+    def downloadable_selected_offer_snapshot(
+        self, account, *, edition_id, resource_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        """#3723 v2: selected provider offer, rights state descriptive only."""
+        from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
+        return from_legacy_rights_snapshot(
+            self.rights_selected_delivery_offer_snapshot(
+                account, edition_id=edition_id, right_id=resource_id,
+                kind=kind, branch=branch,
+                explicit_user_action=explicit_user_action,
+            )
+        )
+
+    def downloadable_selected_delivery_candidate(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+    ):
+        """#3723 v2: stage the *existing* exact ACSM/EPUB path; Core owns SHA."""
+        from cifereca.plugin_api.downloadable_resources import (
+            SourceReference, DeliveryCandidate,
+        )
+        path, hint = self.rights_selected_delivery_candidate(
+            account, edition_id=edition_id, right_id=resource_id,
+            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+        return DeliveryCandidate(
+            source=SourceReference(
+                self._downloadable_scope(account), branch,
+                edition_id, resource_id, kind,
+            ),
+            selected_offer_id=selected_offer_id, path=Path(path),
+            provider_hint=hint,
+        )
+
+    @staticmethod
+    def _downloadable_scope(account):
+        from cifereca.plugin_api import ProviderRightsScope
+        return ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+
     def rights_selected_delivery_offer_snapshot(
         self, account: Account, *, edition_id: str, right_id: str,
         kind: str, branch: str, explicit_user_action: bool = False,
