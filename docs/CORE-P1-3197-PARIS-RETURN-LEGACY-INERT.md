@@ -17,11 +17,12 @@ ou liste excessive => **refus fermé** de certifier l'absence du prêt. Les
 observations positives restent admises selon le périmètre exact du compte.
 Aucune consultation réseau, mutation de retour, ACSM ni ADEPT supplémentaire.
 
-Ce lot n'érige **pas** le canal `last_loan_errors` en preuve atomique :
-le risque résiduel de changement concurrent et d'absence non exhaustive
-est documenté dans #3197. La suppression complète du canal legacy nécessite
-une migration des fixtures et des fournisseurs vers les revendications de
-pagination DILICOM, sans dégrader les protections anti-rejeu du retour.
+**État au 30/10/2026 :** Paris ne produit plus `last_loan_errors`
+([#3759](https://github.com/pzia/cifereca/pull/3759)). Le Core ne consulte
+plus ce canal, même dans le fallback v1. Il conserve les prêts positifs du
+lecteur historique, jamais une preuve d'absence ni de retour. La suppression
+versionnée de l'adaptateur v1 exige encore la qualification des extensions
+installées et de la compatibilité Plugin API (#3197).
 
 Recette : `tests/test_core_p1_3197_paris_return_static_inventory.py`,
 avec getters et `__getattr__` hostiles, séquence Python surchargée, borne

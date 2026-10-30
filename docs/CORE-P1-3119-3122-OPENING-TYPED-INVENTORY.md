@@ -10,8 +10,9 @@ clients HTTP Paris/BnF.
 
 Pour Paris, le statut atomique distingue les branches indépendantes sans
 inférer leur exhaustivité ; pour BnF, même une réponse HTML vide demeure
-`partial`. Le canal historique mutable `last_loan_errors` n'est lu que
-pour les plugins legacy, jamais comme seconde preuve d'un snapshot.
+`partial`. Le Core ne consulte plus `last_loan_errors`, y compris pour
+les plugins v1 : leurs positifs restent compatibles, mais la couverture
+est toujours non vérifiée. Paris a retiré ce champ en #3759.
 
 ## Révocation et commit
 
