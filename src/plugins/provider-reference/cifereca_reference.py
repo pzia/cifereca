@@ -147,8 +147,11 @@ class ReferenceSession(ProviderSession):
 
     def _offer_id(self, account: Account, row: ReferenceResource) -> str:
         # Opaque, scope- and session-qualified. Not a reusable right or token.
+        # Even A->A replacement with identical account strings invalidates
+        # the previous offer: this live session object is not the old owner.
+        live = next(a for a in self._accounts if self._coords(a) == self._coords(account))
         payload = "\x00".join((*self._coords(account), BRANCH, row.edition_id,
-                                row.kind, str(self._epoch)))
+                                row.kind, str(self._epoch), str(id(live))))
         return "reference.offer:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _observation(self, row, *, account, observed, qualified=False):
