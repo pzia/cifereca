@@ -287,3 +287,61 @@ def test_real_core_reader_drops_v2_if_upstream_rebinds_during_read(rig):
     assert result.status == "failed"
     assert result.rights == ()
     assert refs(db) == ([], 0)
+
+
+@pytest.mark.parametrize("optional_state", [None, "unknown", "inactive"])
+def test_v2_authenticated_available_offer_reaches_real_core_file_and_origin(
+    rig, monkeypatch, optional_state,
+):
+    from cifereca.core.canonical_selected_delivery import complete_selected_delivery
+    from tests.test_core_p0_3171_selected_candidate_finalization import _native
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service, db, root = rig
+    acquisition_lock = root.parent / "state" / "acquisition.lock"
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_delivery.acquisition_lock_file",
+        lambda: acquisition_lock,
+    )
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_offers.acquisition_lock_file",
+        lambda: acquisition_lock,
+    )
+    v2 = from_legacy_rights_snapshot(service.snapshot)
+    item = replace(
+        v2.resources[0],
+        right=(OptionalRightMetadata(optional_state) if optional_state else None),
+        capability=DownloadCapability("available", "signed-right-offer"),
+    )
+    v2 = replace(v2, resources=(item,))
+    reads = []
+    gets = []
+
+    def rights(_account):
+        reads.append(True)
+        return v2
+
+    def candidate(*args, **kwargs):
+        gets.append(kwargs["delivery_offer_id"])
+        return _native(*args, **kwargs)
+
+    service.session.rights_observation_snapshot = rights
+    service.session.rights_selected_delivery_candidate = candidate
+    service._canonical_persisted_consent = lambda _account: frozenset({service.source})
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert gets == ["signed-right-offer"]
+    placements = db.placements()
+    assert len(placements) == 1
+    assert Path(placements[0]["path"]).read_bytes() == BYTES
+    assert placements[0]["artifact_id"] == "sha256:" + SHA
+    with db._lock, db._connect() as sql:
+        origins = sql.execute(
+            "SELECT origin_kind,identity_id FROM origin_links"
+        ).fetchall()
+    assert origins == [("provider", "A")]
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["present_attested"] == 1
+    assert second["canonical_execution"]["downloaded"] == 0
+    assert gets == ["signed-right-offer"]
+    assert len(reads) == 2
