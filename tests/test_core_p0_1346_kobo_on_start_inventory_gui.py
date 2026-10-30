@@ -75,7 +75,9 @@ def test_bad_identity_or_phase_never_authorizes_startup_inventory(change):
     if change == "disabled": row.enabled = False
     if change == "disconnected": row.connected = False
     if change == "not_sync_capable": row.sync_capable = False
-    if change == "foreign_provider": row.provider_id = "paris"
+    if change == "foreign_provider":
+        row.provider_id = "paris"
+        row.sync_capabilities = ()  # Broker does not advertise this for Paris.
     if change == "wrong_identity": row.identity_id = "bob"
     if change == "bad_status": row.phase_states = (_phase(status="unknown"),)
     if change == "bad_clock":
@@ -364,3 +366,19 @@ def test_bad_first_source_does_not_starve_same_identity_on_start_inventory(
     r.jobs[0].work()
     assert ("dispatch", "alice", "startup") in r.records["calls"]
     assert "NEVER_ECHO_PRIVATE" not in repr(r.jobs)
+
+
+def test_unknown_provider_startup_is_broker_capability_driven():
+    row = NS(
+        identity_id="alice", source_id=SOURCE_ID, provider_id="fixture-provider",
+        sync_capabilities=("scheduled_refresh",), enabled=True, connected=True,
+        sync_capable=True, status="idle", last_attempt="",
+        phase_states=(_phase(),),
+    )
+    r = _rig(accounts=[row])
+    assert startup.due_startup_identities(r.window, r.broker) == ("alice",)
+    assert startup.dispatch_after_opening(r.window)
+    r.jobs[0].work()
+    assert ("dispatch", "alice", "startup") in r.records["calls"]
+    row.sync_capabilities = ()
+    assert startup.due_startup_identities(r.window, r.broker) == ()

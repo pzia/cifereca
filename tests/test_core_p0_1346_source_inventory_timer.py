@@ -24,6 +24,15 @@ def rig(*, modes=None, accounts=None):
             connected=True, enabled=True, sync_capable=True,
             status="idle", last_attempt="",
         )]
+    # Real SyncSourceRef carries the broker's scheduled_refresh capability.
+    # Historical fixture rows without metadata opt in only for existing stores.
+    for row in accounts:
+        if not hasattr(row, "sync_capabilities"):
+            row.sync_capabilities = (
+                ("scheduled_refresh",)
+                if getattr(row, "provider_id", None) in ("kobo", "numilog")
+                else ()
+            )
     identities = [NS(identity_id=i) for i in sorted(set(r.identity_id for r in accounts))]
     policies = dict(modes or {})
     listeners = []
@@ -213,7 +222,9 @@ def test_source_revocation_or_mismatch_never_dispatches(change):
     if change == "disabled": row.enabled = False
     if change == "disconnected": row.connected = False
     if change == "unsupported": row.sync_capable = False
-    if change == "wrong_provider": row.provider_id = "paris"
+    if change == "wrong_provider":
+        row.provider_id = "paris"
+        row.sync_capabilities = ()  # Broker would not advertise this for Paris.
     if change == "wrong_identity": row.identity_id = "bob"
     assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ()
 
@@ -438,3 +449,36 @@ def test_one_corrupt_source_cannot_starve_healthy_periodic_sibling(corrupt):
     r.jobs[0].work()
     assert ("dispatch", "alice", "periodic") in r.records["calls"]
     assert "DO_NOT_ECHO" not in repr(r.jobs)
+
+
+def test_unknown_provider_is_scheduled_only_with_broker_declared_capability():
+    unknown = NS(
+        identity_id="alice", source_id=SOURCE_ID, provider_id="synthetic-provider",
+        sync_capabilities=("scheduled_refresh",), connected=True, enabled=True,
+        sync_capable=True, status="idle", last_attempt="",
+        phase_states=(NS(phase="discover_rights", status="idle", last_attempt=""),),
+    )
+    r = rig(accounts=[unknown], modes={
+        SOURCE_ID: {"mode": "periodic", "interval_minutes": 15},
+    })
+    assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ("alice",)
+    assert r.configure() is False
+    assert len(r.records["timers"]) == 1
+    unknown.sync_capabilities = ()
+    assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ()
+    assert r.configure() is False
+    assert r.records["timers"] == {}
+    assert not r.jobs
+
+
+@pytest.mark.parametrize("bad_caps", [
+    None, ["scheduled_refresh"], ("scheduled_refresh", "scheduled_refresh" * 100),
+    ("scheduled_refresh", object()), ("private_only",),
+])
+def test_scheduled_refresh_refuses_missing_or_malformed_capabilities(bad_caps):
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}})
+    row = r.broker.sources("alice")[0]
+    row.sync_capabilities = bad_caps
+    assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ()
+    assert r.configure() is False
+    assert r.records["timers"] == {}

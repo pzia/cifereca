@@ -13,6 +13,7 @@ from ..core.source_refresh_policy import source_refresh_due
 from ..task_queue import TaskPriority
 from .source_inventory_timer import (
     _MAX_SOURCES, _broker, _configured_identity_ids, _policy,
+    _scheduled_refresh_capable,
 )
 
 _MAX_STARTUP_IDENTITIES = 64
@@ -33,7 +34,7 @@ def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
                 try:
                     if (
                         getattr(source, "identity_id", None) != identity
-                        or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
+                        or not _scheduled_refresh_capable(source)
                         or getattr(source, "enabled", None) is not True
                         or getattr(source, "connected", None) is not True
                         or getattr(source, "sync_capable", None) is not True
