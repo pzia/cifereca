@@ -62,6 +62,24 @@ def test_interchangeable_providers_positive_claim_is_not_a_ledger_mutation(provi
     assert observed.authorizes_negative_reconciliation is False
 
 
+@pytest.mark.parametrize("provider", ("kobo", "numilog"))
+@pytest.mark.parametrize("state", ("active", "unknown", "inactive"))
+def test_exact_provider_delivery_is_independent_from_optional_right_state(provider, state):
+    offered = replace(purchase(), state=state)
+    report = snap(provider, rights=(offered,))
+    assert offered.delivery_attested
+    assert offered.provider_attested
+    assert offered.authorizes_mutation is False
+    assert report.rights[0].state == state
+    assert report.rights[0].delivery_offer_id == "offer:42"
+
+
+def test_historical_evidence_cannot_create_live_delivery_offer_even_if_active():
+    # Contract validation happens while constructing the changed observation.
+    with pytest.raises(ValueError, match="unproven_rights_delivery"):
+        replace(purchase(), evidence_kind="historical_receipt")
+
+
 def test_same_edition_in_two_identities_and_credentials_does_not_join():
     first = snap(rights=(purchase(),))
     second = snap(
@@ -203,18 +221,3 @@ def test_archive_reason_requires_attested_unavailable_delivery(delivery):
     with pytest.raises(ValueError, match="invalid_rights_delivery_reason"):
         ProviderRightObservation("edition", "right", "purchase", delivery="unavailable",
                                  delivery_unavailable_reason="archived")
-
-
-def test_current_download_offer_is_valid_with_unknown_descriptive_right():
-    # A genuine provider-admitted delivery offer is the acquisition criterion.
-    # The right remains unknown rather than being fabricated as an active one.
-    current = replace(purchase(), state="unknown")
-    assert current.state == "unknown"
-    assert current.delivery == "available"
-    assert current.provider_attested is True
-    assert current.authorizes_mutation is False
-    with pytest.raises(ValueError, match="unproven_rights_delivery"):
-        replace(current, evidence_kind="legacy_unverified",
-                evidence_ref="", observed_at=None)
-    with pytest.raises(ValueError, match="unproven_rights_delivery"):
-        replace(current, state="inactive")
