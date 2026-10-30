@@ -318,6 +318,16 @@ def _run_observed_canonical_convergence(
             and callable(consent_reader)):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
+        from .source_auto_consent_bridge import (
+            numilog_generation, numilog_generation_in_transaction,
+        )
+        # Capture the source-wide consent epoch BEFORE the initial SQLite
+        # grant read. An ON→OFF→ON between reads must never become this run's
+        # permission, even if the latest boolean is ON again.
+        frozen_numilog_epoch = (
+            numilog_generation(self.storage, admitted_snapshots[0].scope)
+            if account.provider_id == "numilog" else None
+        )
 
         try:
             consent = consent_reader(account)
@@ -338,14 +348,6 @@ def _run_observed_canonical_convergence(
         # cannot detect ON→OFF→ON during one signed/one-use HTTP delivery.
         # Pin the initial epoch before selected-offer I/O and require that
         # identical epoch before/after GET and in the publication transaction.
-        from .source_auto_consent_bridge import (
-            numilog_generation, numilog_generation_in_transaction,
-        )
-        frozen_numilog_epoch = (
-            numilog_generation(self.storage, admitted_snapshots[0].scope)
-            if account.provider_id == "numilog" else None
-        )
-
         def epoch_current(key: SourceKey) -> bool:
             return (
                 frozen_numilog_epoch is None
