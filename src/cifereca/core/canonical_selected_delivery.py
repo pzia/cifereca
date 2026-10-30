@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import shutil
 
 from ..adept_binding import capture_binding
 from ..artifact_inspection import detect_artifact_format, detect_acsm_format, inspect_artifact
@@ -136,113 +137,133 @@ def complete_selected_delivery(
     base.mkdir(parents=True, exist_ok=True, mode=0o700)
     attempt = base / ("run-" + secrets.token_hex(16))
     attempt.mkdir(mode=0o700)
+    created = os.stat(attempt, follow_symlinks=False)
+    attempt_inode = (created.st_dev, created.st_ino)
     if not bound():
         raise ValueError("canonical_delivery_source_rebound")
-    candidate = getattr(session, reader_name)(
-        account, edition_id=source.edition_id,
-        **({"resource_id": source.right_id,
-            "selected_offer_id": offer.delivery_offer_id}
-           if reader_name == "downloadable_selected_delivery_candidate"
-           else {"right_id": source.right_id,
-                 "delivery_offer_id": offer.delivery_offer_id}),
-        kind=source.kind, branch=source.branch,
-        target_dir=attempt, explicit_user_action=True,
-    )
-    if not bound():
-        raise ValueError("canonical_delivery_source_rebound_after_get")
-    if reader_name == "downloadable_selected_delivery_candidate":
-        expected = SourceReference(
-            scope, source.branch, source.edition_id, source.right_id, source.kind,
+    # The staging namespace belongs to this failed attempt until the Core
+    # issues a completed delivery receipt. Failed GET, invalid candidates and
+    # rejected ADEPT results must not leave signed ACSM/partial bytes behind.
+    # Once this method returns, the executor owns the verified bytes for its
+    # durable crash-recovery checkpoint: never delete that successful run.
+    try:
+        candidate = getattr(session, reader_name)(
+            account, edition_id=source.edition_id,
+            **({"resource_id": source.right_id,
+                "selected_offer_id": offer.delivery_offer_id}
+               if reader_name == "downloadable_selected_delivery_candidate"
+               else {"right_id": source.right_id,
+                     "delivery_offer_id": offer.delivery_offer_id}),
+            kind=source.kind, branch=source.branch,
+            target_dir=attempt, explicit_user_action=True,
         )
-        if (type(candidate) is not DeliveryCandidate
-                or candidate.source != expected
-                or candidate.selected_offer_id != offer.delivery_offer_id):
-            raise ValueError("canonical_delivery_candidate_scope_mismatch")
-        candidate = (candidate.path, candidate.provider_hint)
-    if (type(candidate) is not tuple or len(candidate) != 2
-            or (type(candidate[0]) is not str
-                and not isinstance(candidate[0], Path))
-            or type(candidate[1]) is not str):
-        raise ValueError("canonical_delivery_candidate_invalid")
-
-    raw_path = Path(candidate[0])
-    received = _physical_target(raw_path, root, directory)
-    if not received.is_relative_to(attempt.resolve(strict=True)):
-        raise ValueError("canonical_delivery_candidate_outside_staging")
-    if received.stat().st_size <= 0:
-        raise ValueError("canonical_delivery_candidate_empty")
-    kind = detect_artifact_format(received)
-    adept_receipt_ref = ""
-
-    if kind == "acsm":
-        # The ACSM token is not an Artifact. The configured ADEPT runtime,
-        # selected borrower's profile and final bytes must ALL be confirmed.
-        fmt = detect_acsm_format(received)
-        if fmt not in ("epub", "pdf"):
-            raise ValueError("canonical_delivery_adept_format_unconfirmed")
-        profile, _profile_source = service.resolve_adept_profile_for_identity(
-            scope.identity_id)
-        if type(profile) is not str or not profile:
-            raise ValueError("canonical_delivery_adept_profile_missing")
-        destination = attempt / ("fulfilled." + fmt)
-        if destination.exists() or destination.is_symlink():
-            raise ValueError("canonical_delivery_adept_target_occupied")
-        profile_id = service._originating_adept_profile_id(scope.identity_id, profile)
-        request = {
-            "schema_version": 2,
-            "source": {"type": "acsm", "provider": scope.provider_id,
-                       "path": str(received), "headers": {}},
-            "destination": str(destination), "format": fmt,
-            "profile": profile,
-            "metadata": {"identity_id": scope.identity_id},
-            "options": {"force": False},
-        }
-        result = service.execute_acquisition_request(request)
-        if type(result) is not dict:
-            raise ValueError("canonical_delivery_adept_result_invalid")
-        capture_binding(result, profile_name=profile, profile_id=profile_id)
-        artifact = result.get("artifact")
-        if type(artifact) is not dict or type(artifact.get("path")) is not str:
-            raise ValueError("canonical_delivery_adept_artifact_missing")
-        produced = _physical_target(Path(artifact["path"]), root, directory)
-        if produced != destination.resolve(strict=True):
-            raise ValueError("canonical_delivery_adept_artifact_foreign")
         if not bound():
-            raise ValueError("canonical_delivery_source_rebound_after_adept")
-        received = produced
-        kind = detect_artifact_format(received)
-        if kind != fmt:
-            raise ValueError("canonical_delivery_adept_format_mismatch")
-        adept_receipt_ref = "core-adept:" + secrets.token_hex(32)
+            raise ValueError("canonical_delivery_source_rebound_after_get")
+        if reader_name == "downloadable_selected_delivery_candidate":
+            expected = SourceReference(
+                scope, source.branch, source.edition_id, source.right_id, source.kind,
+            )
+            if (type(candidate) is not DeliveryCandidate
+                    or candidate.source != expected
+                    or candidate.selected_offer_id != offer.delivery_offer_id):
+                raise ValueError("canonical_delivery_candidate_scope_mismatch")
+            candidate = (candidate.path, candidate.provider_hint)
+        if (type(candidate) is not tuple or len(candidate) != 2
+                or (type(candidate[0]) is not str
+                    and not isinstance(candidate[0], Path))
+                or type(candidate[1]) is not str):
+            raise ValueError("canonical_delivery_candidate_invalid")
 
-    if kind not in ("epub", "pdf"):
-        raise ValueError("canonical_delivery_final_format_unavailable")
-    final = _physical_target(received, root, directory)
-    if not final.is_relative_to(attempt.resolve(strict=True)):
-        raise ValueError("canonical_delivery_final_outside_staging")
-    before = os.stat(final, follow_symlinks=False)
-    if not stat.S_ISREG(before.st_mode) or before.st_size == 0:
-        raise ValueError("canonical_delivery_final_not_regular")
-    inspection = inspect_artifact(final, strict_structure=False)
-    valid, _ = LocalCatalog._validate(final, kind)
-    if (not inspection.valid or inspection.media_format != kind
-            or inspection.protected is True or not valid):
-        raise ValueError("canonical_delivery_final_invalid")
-    digest = LocalCatalog.sha256(final)
-    if not _same_file(final, before) or not bound():
-        raise ValueError("canonical_delivery_final_changed")
-    # This receipt is a Core witness issued AFTER the verified, in-scope
-    # candidate callback. It is deliberately distinct from provider A's
-    # inventory evidence and signed-offer ID, and contains no private URL.
-    fact = json.dumps(
-        [*coords, source.branch, source.edition_id, source.right_id,
-         source.kind, offer.delivery_offer_id, digest, secrets.token_hex(32)],
-        ensure_ascii=False, separators=(",", ":"),
-    )
-    receipt = "core-delivery:" + hashlib.sha256(fact.encode("utf-8")).hexdigest()
-    return CompletedDelivery(
-        source, offer.delivery_offer_id, final, digest, receipt, adept_receipt_ref,
-    )
+        raw_path = Path(candidate[0])
+        received = _physical_target(raw_path, root, directory)
+        if not received.is_relative_to(attempt.resolve(strict=True)):
+            raise ValueError("canonical_delivery_candidate_outside_staging")
+        if received.stat().st_size <= 0:
+            raise ValueError("canonical_delivery_candidate_empty")
+        kind = detect_artifact_format(received)
+        adept_receipt_ref = ""
+
+        if kind == "acsm":
+            # The ACSM token is not an Artifact. The configured ADEPT runtime,
+            # selected borrower's profile and final bytes must ALL be confirmed.
+            fmt = detect_acsm_format(received)
+            if fmt not in ("epub", "pdf"):
+                raise ValueError("canonical_delivery_adept_format_unconfirmed")
+            profile, _profile_source = service.resolve_adept_profile_for_identity(
+                scope.identity_id)
+            if type(profile) is not str or not profile:
+                raise ValueError("canonical_delivery_adept_profile_missing")
+            destination = attempt / ("fulfilled." + fmt)
+            if destination.exists() or destination.is_symlink():
+                raise ValueError("canonical_delivery_adept_target_occupied")
+            profile_id = service._originating_adept_profile_id(scope.identity_id, profile)
+            request = {
+                "schema_version": 2,
+                "source": {"type": "acsm", "provider": scope.provider_id,
+                           "path": str(received), "headers": {}},
+                "destination": str(destination), "format": fmt,
+                "profile": profile,
+                "metadata": {"identity_id": scope.identity_id},
+                "options": {"force": False},
+            }
+            result = service.execute_acquisition_request(request)
+            if type(result) is not dict:
+                raise ValueError("canonical_delivery_adept_result_invalid")
+            capture_binding(result, profile_name=profile, profile_id=profile_id)
+            artifact = result.get("artifact")
+            if type(artifact) is not dict or type(artifact.get("path")) is not str:
+                raise ValueError("canonical_delivery_adept_artifact_missing")
+            produced = _physical_target(Path(artifact["path"]), root, directory)
+            if produced != destination.resolve(strict=True):
+                raise ValueError("canonical_delivery_adept_artifact_foreign")
+            if not bound():
+                raise ValueError("canonical_delivery_source_rebound_after_adept")
+            received = produced
+            kind = detect_artifact_format(received)
+            if kind != fmt:
+                raise ValueError("canonical_delivery_adept_format_mismatch")
+            adept_receipt_ref = "core-adept:" + secrets.token_hex(32)
+
+        if kind not in ("epub", "pdf"):
+            raise ValueError("canonical_delivery_final_format_unavailable")
+        final = _physical_target(received, root, directory)
+        if not final.is_relative_to(attempt.resolve(strict=True)):
+            raise ValueError("canonical_delivery_final_outside_staging")
+        before = os.stat(final, follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode) or before.st_size == 0:
+            raise ValueError("canonical_delivery_final_not_regular")
+        inspection = inspect_artifact(final, strict_structure=False)
+        valid, _ = LocalCatalog._validate(final, kind)
+        if (not inspection.valid or inspection.media_format != kind
+                or inspection.protected is True or not valid):
+            raise ValueError("canonical_delivery_final_invalid")
+        digest = LocalCatalog.sha256(final)
+        if not _same_file(final, before) or not bound():
+            raise ValueError("canonical_delivery_final_changed")
+        # This receipt is a Core witness issued AFTER the verified, in-scope
+        # candidate callback. It is deliberately distinct from provider A's
+        # inventory evidence and signed-offer ID, and contains no private URL.
+        fact = json.dumps(
+            [*coords, source.branch, source.edition_id, source.right_id,
+             source.kind, offer.delivery_offer_id, digest, secrets.token_hex(32)],
+            ensure_ascii=False, separators=(",", ":"),
+        )
+        receipt = "core-delivery:" + hashlib.sha256(fact.encode("utf-8")).hexdigest()
+        return CompletedDelivery(
+            source, offer.delivery_offer_id, final, digest, receipt, adept_receipt_ref,
+        )
+    except BaseException:
+        # Best effort, without masking the original provider/cancellation
+        # error or trusting a path that the provider may have replaced.
+        try:
+            now = os.stat(attempt, follow_symlinks=False)
+            if (stat.S_ISDIR(now.st_mode)
+                    and (now.st_dev, now.st_ino) == attempt_inode
+                    and not base.is_symlink()):
+                shutil.rmtree(attempt)
+        except (OSError, ValueError):
+            pass
+        raise
 
 
 __all__ = ["complete_selected_delivery"]

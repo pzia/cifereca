@@ -120,6 +120,36 @@ def test_no_persisted_consent_means_no_private_offer_or_candidate_get(rig):
     assert db.placements() == [] and refs(db)[1] == 0
 
 
+@pytest.mark.parametrize("failure", ["callback", "foreign_path", "bad_bytes"])
+def test_rejected_candidate_removes_private_staging_without_publishing(
+    rig, failure,
+):
+    service, db, root = rig
+    _prepare(service)
+    original = root / "A" / "manual" / "original.pdf"
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_bytes(BYTES)
+
+    def candidate(_account, *, target_dir, **_kwargs):
+        staged = Path(target_dir) / "private.acsm"
+        staged.write_text("synthetic-private-ACSM-token", encoding="utf-8")
+        if failure == "callback":
+            raise ValueError("synthetic-provider-rejection")
+        if failure == "foreign_path":
+            return original, ""
+        return staged, ""
+
+    service.session.rights_selected_delivery_candidate = candidate
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["failed"] == 1
+    assert refs(db)[1] == 0 and db.placements() == []
+    assert original.read_bytes() == BYTES
+    # Failed attempt contains no recoverable completed-delivery receipt;
+    # provider tokens and rejected candidates must not remain on disk.
+    base = root / "A" / ".canonical-delivery"
+    assert base.is_dir() and not list(base.glob("run-*"))
+
+
 def test_provider_candidate_outside_fresh_staging_cannot_publish(rig):
     service, db, root = rig
     _prepare(service)
