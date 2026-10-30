@@ -121,3 +121,40 @@ def test_numilog_epoch_and_bnf_mode_cannot_leak_across_types(policy):
     with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, loan) == "on"
         assert bridge.toggle_state(conn, purchase) == "on"
+
+
+def test_unknown_right_with_authenticated_downloadable_file_publishes_without_entitlement(
+    policy, tmp_path,
+):
+    """No SQLite right record is required to publish a proven file OriginLink."""
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+    from cifereca.core.source_convergence import SourceKey
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service, db, switch = policy
+    row = replace(service.snapshot.rights[0],
+                  state="unknown", delivery="available",
+                  delivery_offer_id="scoped-synthetic-offer")
+    snapshot = replace(service.snapshot, rights=(row,))
+    # Canonical A may record this synchronizable resource, but never invent an
+    # owned entitlement merely because its provider permits downloading.
+    assert persist_attested_source_references(db, snapshot) in (0, 1)
+    db.metadata_set(switch, "1")
+    assert read_source_acquisition_consent(service, service.account) == frozenset({
+        service.source,
+    })
+    book = tmp_path / "EBooks" / "A" / "direct.pdf"
+    book.parent.mkdir(parents=True, exist_ok=True)
+    book.write_bytes(BYTES)
+    result = publish_completed_acquisition(
+        db, library_root=tmp_path / "EBooks", path=book,
+        source=service.source, snapshot=snapshot, final_sha256=SHA,
+        delivery_receipt_ref="authenticated-delivery-receipt",
+    )
+    assert result.artifact_id == "sha256:" + SHA
+    assert len(db.placements()) == 1
+    assert db.entitlements() == []
+    with db._lock, db._connect() as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM origin_links WHERE origin_kind='provider'"
+        ).fetchone()[0] == 1
