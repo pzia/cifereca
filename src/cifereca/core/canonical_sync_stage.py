@@ -46,8 +46,7 @@ def persist_attested_source_references(
     admitted = [
         row for row in snapshot.rights
         if row.provider_attested and (
-            row.state == "active"
-            or (row.state == "unknown" and row.delivery == "available")
+            row.state == "active" or row.delivery_attested
         )
     ]
     # SourceReference.state is the operational sync state of an exact provider
@@ -248,7 +247,7 @@ def observe_canonical_rights_in_sync(
         }
     # Do not promote historical receipts or unknown rights into provider A.
     admitted = sum(
-        row.provider_attested and row.state == "active"
+        row.provider_attested and (row.state == "active" or row.delivery_attested)
         for row in snapshot.rights
     )
     try:
