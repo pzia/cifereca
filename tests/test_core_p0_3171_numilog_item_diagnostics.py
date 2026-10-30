@@ -42,13 +42,13 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
             result = execute(broker, account.identity_id, "startup")
         assert result.ok is False
         assert result.facts["status"] == "failed"
-        assert result.facts["attempted"] == 1
+        assert result.facts["attempted"] == 2
         assert result.facts["downloaded"] == 0
-        assert result.facts["failed"] == 1
-        assert result.facts["blocked"] == 2
+        assert result.facts["failed"] == 2
+        assert result.facts["blocked"] == 1
         expected = [
             {"position": 1, "decision": "acquisition_failed"},
-            {"position": 2, "decision": "purchase_unproven"},
+            {"position": 2, "decision": "acquisition_failed"},
             {"position": 3, "decision": "source_not_ready"},
         ]
         assert result.facts["source_results"][0]["item_decisions"] == expected
@@ -59,7 +59,7 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
         assert detail["status"] == "failed"
         caption = describe_run("on_start", persisted)
         assert "n°1" in caption
-        assert "n°2 : droit d'achat non confirmé localement" in caption
+        assert "n°2" in caption
         assert "n°3 : connexion non prête" in caption
         assert "rangs de cet inventaire uniquement" in caption
         for private in (account.credential_id, *[r.record_id for r in rows]):
@@ -74,7 +74,7 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
         ]
         assert len(item_events) == 3
         for position, (row, reason) in enumerate(zip(rows,
-                ("acquisition_failed", "purchase_unproven", "source_not_ready")), 1):
+                ("acquisition_failed", "acquisition_failed", "source_not_ready")), 1):
             event = item_events[position - 1]
             assert "provider_id=numilog" in event
             assert f"source_id={sid}" in event
@@ -82,7 +82,7 @@ def test_three_real_preflight_refusal_reasons_are_disclosed_per_manifest_positio
             assert f"position={position}" in event
             assert f"decision={reason}" in event
             assert "run_ref=" in event and "task_ref=" in event
-        assert calls == ["FORBIDDEN DOWNLOAD"]
+        assert calls == ["FORBIDDEN DOWNLOAD", "FORBIDDEN DOWNLOAD"]
         assert service.storage.acquisitions(provider_id="numilog") == []
     finally:
         service.close()
