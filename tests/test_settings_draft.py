@@ -5,6 +5,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.config import Config
+from cifereca.plugin_api import AccountOptionField, ProviderDescriptor, ProviderCapabilities
 from cifereca.gui.settings_draft import build_settings_draft, SettingsValidationError
 from cifereca.gui.settings_model import SettingsRevisionState
 
@@ -188,3 +189,50 @@ def test_revision_snapshot_is_independent_and_later_edits_remain_dirty():
     assert state.snapshot()['accounts'] == 2
     state.commit(state.snapshot())
     assert not state.dirty('accounts')
+
+
+def test_unknown_provider_descriptor_options_are_defaults_not_core_provider_rules(editor):
+    config, values = editor
+    values['accounts'] = [account('synthetic-provider')]
+    values['accounts'][0]['original_options'] = {'untouched': 'kept', 'endpoint': 'old'}
+    values['accounts'][0]['option_fields'] = {'endpoint': '   '}
+    spec = AccountOptionField('endpoint', 'Endpoint', default='https://source.example/api')
+    provider = ProviderDescriptor(
+        id='synthetic-provider', display_name='Synthetic', description='', state='ready',
+        capabilities=ProviderCapabilities(), account_options=(spec,),
+        max_accounts_per_identity=1,
+    )
+    draft = validate(editor, descriptors={'synthetic-provider': provider})
+    assert draft.data['providers']['accounts'][0]['options'] == {
+        'untouched': 'kept', 'endpoint': 'https://source.example/api',
+    }
+    assert config.provider_accounts() == []  # draft is non-mutating
+
+
+def test_descriptor_limit_is_enforced_for_arbitrary_providers(editor):
+    values = editor[1]
+    values['accounts'] = [account('synthetic', account_id='first'),
+                          account('synthetic', account_id='second')]
+    spec = descriptor('synthetic')
+    spec.max_accounts_per_identity = 1
+    with pytest.raises(SettingsValidationError, match='au plus 1 compte'):
+        validate(editor, descriptors={'synthetic': spec})
+    values['identities'].append(dict(id='bob', label='Bob', directory='bob',
+        adept_profile='', languages='fr', prefer_vo=False))
+    values['accounts'][1]['identity'] = 'bob'
+    assert len(validate(editor, descriptors={'synthetic': spec}).data['providers']['accounts']) == 2
+
+
+def test_descriptor_required_option_refuses_blank_without_dropping_existing_config(editor):
+    config, values = editor
+    values['accounts'] = [account('synthetic')]
+    values['accounts'][0]['option_fields'] = {'endpoint': '  '}
+    spec = descriptor('synthetic')
+    spec.account_options = (AccountOptionField('endpoint', 'Endpoint', required=True),)
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='Option obligatoire : Endpoint'):
+        validate(editor, descriptors={'synthetic': spec})
+    assert config.data == before
+    values['accounts'][0]['option_fields']['endpoint'] = ' https://source.example '
+    result = validate(editor, descriptors={'synthetic': spec})
+    assert result.data['providers']['accounts'][0]['options']['endpoint'] == 'https://source.example'

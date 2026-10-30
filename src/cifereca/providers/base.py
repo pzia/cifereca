@@ -104,6 +104,19 @@ class CredentialField:
 
 
 @dataclass(frozen=True)
+class AccountOptionField:
+    """Provider-declared account setting; CoreUI treats its key as opaque data."""
+
+    key: str
+    label: str
+    default: str = ""
+    required: bool = False
+    secret: bool = False
+    # Read-only migration fallback for old top-level configuration values.
+    legacy_config_key: str | None = None
+
+
+@dataclass(frozen=True)
 class ProviderDescriptor:
     id: str
     display_name: str
@@ -117,6 +130,10 @@ class ProviderDescriptor:
     # Interactive SSO requires a deliberate UI action; never start it from
     # the generic startup connection sweep or mark it connected by presence.
     interactive_authentication: bool = False
+    # Optional declarative settings, backward-compatible with existing plugins.
+    account_options: tuple[AccountOptionField, ...] = ()
+    max_accounts_per_identity: int | None = None
+    account_note: tuple[str, str] | None = None
 
 
 class ProviderSession(ABC):

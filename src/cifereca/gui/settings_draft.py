@@ -76,12 +76,16 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if descriptor is None or descriptor.state != 'ready' or descriptor.id in public_ids:
             preserved.append(row)
     saved_accounts = list(preserved)
-    kobo_identity_accounts: dict[str, str] = {}
+    # A declared cardinality is a provider contract, never CoreUI provider policy.
+    scoped_accounts: dict[tuple[str, str], list[str]] = {}
+    kobo_identity_accounts: dict[str, str] = {}  # legacy fallback until plugin migration
     for row in preserved:
-        if str(row.get('provider') or '').lower() == 'kobo':
-            iid = str(row.get('identity_id') or '').strip()
-            if iid:
-                kobo_identity_accounts[iid] = str(row.get('id') or 'kobo')
+        provider_id = str(row.get('provider') or '').lower()
+        iid = str(row.get('identity_id') or '').strip()
+        if iid:
+            scoped_accounts.setdefault((provider_id, iid), []).append(str(row.get('id') or ''))
+        if provider_id == 'kobo' and iid:
+            kobo_identity_accounts[iid] = str(row.get('id') or 'kobo')
     for editor in values['accounts']:
         if editor.get('deleted'):
             continue
@@ -90,6 +94,13 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         for field in descriptor.credential_fields:
             credentials[field.key] = editor['fields'][field.key]
         options: dict[str, Any] = dict(editor.get('original_options') or {})
+        for field in getattr(descriptor, 'account_options', ()):
+            if field.key not in editor.get('option_fields', {}):
+                continue  # A legacy editor does not silently reset saved options.
+            value = str(editor['option_fields'][field.key]).strip() or str(field.default)
+            if field.required and not value:
+                raise SettingsValidationError(f'Option obligatoire : {field.label}')
+            options[field.key] = value
         if editor.get('base_url') is not None:
             options['base_url'] = editor['base_url'].strip() or 'https://bibliotheques.paris.fr'
         if editor.get('opds_url') is not None:
@@ -99,7 +110,21 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         account_identity_id = editor['identity'].strip() or saved_identities[0]['id']
         if account_identity_id not in identity_ids:
             raise SettingsValidationError(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
-        if editor['provider'] == 'kobo':
+        provider_id = str(editor['provider']).lower()
+        limit = getattr(descriptor, 'max_accounts_per_identity', None)
+        if limit is not None:
+            if type(limit) is not int or limit < 1:
+                raise SettingsValidationError(f'Limite de comptes invalide pour {descriptor.display_name}.')
+            key = (provider_id, account_identity_id)
+            linked = scoped_accounts.setdefault(key, [])
+            if editor['id'] not in linked and len(linked) >= limit:
+                raise SettingsValidationError(
+                    f'{descriptor.display_name} : au plus {limit} compte(s) par identité ({account_identity_id}).'
+                )
+            if editor['id'] not in linked:
+                linked.append(editor['id'])
+        elif provider_id == 'kobo':
+            # Preserve historical Kobo validation until its descriptor is migrated.
             previous = kobo_identity_accounts.get(account_identity_id)
             if previous and previous != editor['id']:
                 raise SettingsValidationError(f"Une identité ne peut avoir qu'un compte Kobo Vault : {account_identity_id} est déjà lié à {previous}.")
