@@ -73,6 +73,39 @@ def fixture(html):
     return session, account, client
 
 
+def test_bnf_signed_offer_observed_even_when_loan_state_is_unknown():
+    from test_p1_3252_bnf_signed_delivery_offer import signed_action
+
+    session, account, client = fixture(
+        activity(("edition-1", "loan-1")) + signed_action("loan-1")
+    )
+    original = session._read_live_loans_locked
+
+    def unknown_status(bound):
+        result = original(bound)
+        for loan in result:
+            loan.state = "unknown"
+        return result
+
+    session._read_live_loans_locked = unknown_status
+    try:
+        observed = session.rights_observation_snapshot(account)
+        right = observed.exact("edition-1", "loan-1", "loan")
+        assert right is not None and right.state == "unknown"
+        assert right.delivery_attested
+        assert right.delivery_offer_id.startswith("bnf.reader_acs4:")
+        assert client.calls == ["login", "activity"]
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, edition_id="edition-1", right_id="loan-1",
+            kind="loan", branch="bnf_html", explicit_user_action=True,
+        )
+        assert selected.rights[0].state == "unknown"
+        assert selected.rights[0].delivery_attested
+        assert client.calls == ["login", "activity", "activity"]
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize("pairs", [
     (), (("edition-1", "loan-1"),),
     (("edition-1", "loan-1"), ("edition-2", "loan-2")),
