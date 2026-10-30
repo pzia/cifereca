@@ -79,6 +79,9 @@ def test_legacy_primary_fallback_collision_denies_core_source_before_remote_io(
         assert service.sync_source_enabled(primary) is False
         assert service.sync_source_enabled(literal) is False
         broker = SynchronizationBrokerImpl(service)
+        assert broker._enabled(sid) is False
+        assert broker._ref(primary).enabled is False
+        assert broker._ref(literal).enabled is False
         with pytest.raises(ValueError, match="ambiguous sync source"):
             broker._find_account(sid)
         for account in (primary, literal):
@@ -90,6 +93,8 @@ def test_legacy_primary_fallback_collision_denies_core_source_before_remote_io(
         # the formerly valid legacy primary source retains its own preference.
         service.accounts.remove(literal)
         assert service.sync_source_enabled(primary) is True
+        assert broker._enabled(sid) is True
+        assert broker._ref(primary).enabled is True
     finally:
         service.close()
 

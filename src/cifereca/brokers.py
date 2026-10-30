@@ -178,6 +178,19 @@ class SynchronizationBrokerImpl:
         return "sync.source.enabled." + source_id
 
     def _enabled(self, source_id: str) -> bool:
+        # The legacy primary-account fallback can collide with an upstream
+        # literal "provider:credential:primary" account ID. Mirror Core's
+        # fail-closed source decision in the Sync/UI projection: a single
+        # saved ON preference may never appear to activate two borrowers.
+        matches = 0
+        for account in (getattr(self.service, "accounts", ()) or ()):
+            try:
+                if self._source_id(account) == source_id:
+                    matches += 1
+            except Exception:
+                continue
+            if matches > 1:
+                return False
         from .core.source_enablement import source_enabled
         raw = self.service.storage.metadata_get(self._preference_key(source_id))
         return source_enabled(raw)
