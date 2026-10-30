@@ -1302,187 +1302,121 @@ class LibraryService:
         return kobo_personal_right_states(self, identity_id)
 
     def mirror_personal_libraries(self) -> dict[str, int]:
-        """Refresh owned-store inventory without initiating local acquisition.
+        """Refresh private metadata with the same pinned binding as source Sync.
 
-        personal_library and direct_download describe different provider
-        contracts. The latter authorizes explicit direct acquisition of a
-        selected SearchResult, not bulk download_library_item backups.
-        In particular Numilog does not implement that backup contract (#1862).
+        This v1 library() projection has no account argument. It therefore
+        requires one unambiguous registered account for the connection; typed
+        per-account convergence keeps its own independent observation path.
+        Neither this mirror nor direct_download is acquisition consent.
         """
         from .core.personal_library_mirror import PersonalLibraryMirrorCounts
+        from .core.private_inventory_binding import private_inventory_binding_current
+        from .core.source_context import source_context_epoch
+        from .plugin_api import Cancelled
+
         result = PersonalLibraryMirrorCounts()
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.personal_library:
+        seen = set()
+        # A provider callback may replace/add a session during its read.
+        # It cannot invalidate iteration or enroll a new source in this batch.
+        for session in tuple(self._sessions.values()):
+            if (getattr(session, "connected", False) is not True
+                    or getattr(getattr(session, "capabilities", None),
+                               "personal_library", False) is not True):
                 continue
             provider_id = str(session.provider_id)
             credential_id = str(session.credential_id)
-            account = next((
-                a for a in self.accounts
-                if a.provider_id == provider_id and a.credential_id == credential_id
-            ), None)
-            if account is not None and not self.sync_source_enabled(account):
+            route = (provider_id, credential_id)
+            if route in seen:
                 continue
-            if provider_id == "numilog":
-                # The connected session alone is NOT ownership. Verify one
-                # enabled durable account/identity before reading private
-                # pages; no current_identity fallback (#1905).
-                from .core.numilog_manifest_rights import numilog_inventory_binding_valid
-                if account is None or not numilog_inventory_binding_valid(
-                    self, account, session=session,
-                ):
-                    result.blocked_sources += 1
-                    _TRACE_LOG.warning(
-                        "TRACE catalog personal-library inventory skipped "
-                        "provider=numilog reason=source_binding_unavailable"
-                    )
-                    continue
-                identity = self.identity_by_id(account.identity_id)
-            elif provider_id == "kobo":
-                # An authenticated session alone is not an authorized source.
-                # The opening mirror must not fetch a disconnected/rebound or
-                # orphan Kobo account, or project its purchases into whichever
-                # identity happens to be selected (#1346).
-                accounts = [
-                    a for a in self.accounts
-                    if a.provider_id == "kobo" and a.credential_id == credential_id
-                ]
-                try:
-                    bound_identity = self.storage.identity_for_connection(
-                        "kobo", credential_id,
-                    )
-                    connections = (
-                        self.storage.provider_connections(identity_id=bound_identity)
-                        if bound_identity else []
-                    )
-                except Exception:
-                    bound_identity = None
-                    connections = []
-                bound_connections = [
-                    row for row in connections
-                    if row.get("provider_id") == "kobo"
-                    and row.get("credential_id") == credential_id
-                    and row.get("enabled") is True
-                ]
-                identity = self.identity_by_id(bound_identity) if bound_identity else None
-                if (
-                    len(accounts) != 1
-                    or identity is None
-                    or accounts[0].identity_id != bound_identity
-                    or len(bound_connections) != 1
-                ):
-                    result.blocked_sources += 1
-                    _TRACE_LOG.warning(
-                        "TRACE catalog personal-library inventory skipped "
-                        "provider=kobo reason=source_binding_unavailable"
-                    )
-                    continue
-            else:
-                # Preserve the behavior of other providers; their contracts
-                # require separate binding qualification before stricter rules.
-                identity = self.identity_for_connection(provider_id, credential_id)
+            seen.add(route)
+            accounts = [
+                account for account in self.accounts
+                if account.provider_id == provider_id
+                and account.credential_id == credential_id
+            ]
+            if len(accounts) != 1:
+                result.blocked_sources += 1
+                _TRACE_LOG.warning(
+                    "TRACE catalog personal-library inventory skipped "
+                    "provider=%s reason=source_binding_unavailable", provider_id,
+                )
+                continue
+            account = accounts[0]
+            if not self.sync_source_enabled(account):
+                continue
+            scope = (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id)
             try:
-                # One-shot iterators feed the owned-rights projection and
-                # remote catalog exactly once. Neither phase downloads files.
+                epoch = source_context_epoch(self)
+            except ValueError:
+                result.blocked_sources += 1
+                continue
+
+            def source_current():
+                return private_inventory_binding_current(
+                    self, account, session, scope=scope, epoch=epoch,
+                )
+
+            if not source_current():
+                result.blocked_sources += 1
+                _TRACE_LOG.warning(
+                    "TRACE catalog personal-library inventory skipped "
+                    "provider=%s reason=source_binding_unavailable", provider_id,
+                )
+                continue
+            identity = self.identity_by_id(scope[0])
+            try:
+                # Consume a one-shot iterable once for both metadata mirrors.
                 rows = list(session.library())
-                if provider_id == "numilog" and not numilog_inventory_binding_valid(
-                    self, account, session=session,
-                ):
-                    # A connection can be rebound while private pages are
-                    # fetched. Discard the entire stale response, not just its
-                    # rights: otherwise another identity may see its metadata.
+                if not source_current():
                     result.blocked_sources += 1
                     _TRACE_LOG.warning(
                         "TRACE catalog personal-library inventory skipped "
-                        "provider=numilog reason=source_binding_changed"
+                        "provider=%s reason=source_binding_changed", provider_id,
                     )
                     continue
                 if provider_id == "numilog":
                     from .core.numilog_private_rows import private_library_rows_valid
                     if not private_library_rows_valid(rows, credential_id):
-                        # Reject a mixed public/foreign-account response in its
-                        # entirety; none may be persisted under this identity.
                         result.blocked_sources += 1
                         _TRACE_LOG.warning(
                             "TRACE catalog personal-library inventory skipped "
-                            "provider=numilog reason=invalid_private_rows"
+                            "provider=%s reason=invalid_private_rows", provider_id,
                         )
                         continue
+                # Compatibility observations remain until their canonical
+                # bibliographic projection replaces them without losing data.
                 if provider_id == "kobo":
-                    # A source may be disabled/rebound or replaced while
-                    # library() fetches remote pages. Never project the stale
-                    # response into entitlements or the catalog (#1346).
-                    current_accounts = [
-                        a for a in self.accounts
-                        if a.provider_id == "kobo"
-                        and a.credential_id == credential_id
-                    ]
-                    current_identity = self.storage.identity_for_connection(
-                        "kobo", credential_id,
-                    )
-                    current_connections = (
-                        self.storage.provider_connections(identity_id=current_identity)
-                        if current_identity else []
-                    )
-                    if (
-                        len(current_accounts) != 1
-                        or account is None
-                        or current_accounts[0].identity_id != identity.identity_id
-                        or current_accounts[0].unique_id != account.unique_id
-                        or current_identity != identity.identity_id
-                        or sum(
-                            row.get("provider_id") == "kobo"
-                            and row.get("credential_id") == credential_id
-                            and row.get("enabled") is True
-                            for row in current_connections
-                        ) != 1
-                        or not self.sync_source_enabled(current_accounts[0])
-                        or self._sessions.get(
-                            self._session_key("kobo", credential_id)
-                        ) is not session
-                        or session.connected is not True
-                    ):
-                        result.blocked_sources += 1
-                        _TRACE_LOG.warning(
-                            "TRACE catalog personal-library inventory skipped "
-                            "provider=kobo reason=source_binding_changed"
-                        )
-                        continue
-                if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
                         self, rows, identity_id=identity.identity_id,
                         credential_id=credential_id,
                         account_id=account.unique_id or None,
                     )
-                elif provider_id == "numilog" and account is not None:
+                elif provider_id == "numilog":
                     from .core.numilog_manifest_rights import mirror_numilog_manifest_rights
                     mirror_numilog_manifest_rights(
                         self, rows, identity_id=identity.identity_id,
                         credential_id=credential_id,
                         account_id=account.unique_id or None,
                     )
-                if provider_id == "numilog" and not numilog_inventory_binding_valid(
-                    self, account, session=session,
-                ):
-                    # Rights projection can itself take time; do not publish
-                    # its stale catalogue snapshot after source revocation.
+                if not source_current():
                     result.blocked_sources += 1
                     _TRACE_LOG.warning(
                         "TRACE catalog personal-library inventory skipped "
-                        "provider=numilog reason=source_binding_changed"
+                        "provider=%s reason=source_binding_changed", provider_id,
                     )
                     continue
                 result[f"{provider_id}:{credential_id}"] = self._mirror_remote_results(
                     rows, identity_id=identity.identity_id,
                 )
+            except Cancelled:
+                raise
             except Exception as exc:
                 result.failed_sources += 1
-                # Do not print a provider exception: it can contain a signed
-                # ACSM URL, cookie, private title or credential.
                 _TRACE_LOG.warning(
                     "TRACE catalog personal-library inventory error "
-                    "provider=%s reason=%s",
-                    provider_id, type(exc).__name__,
+                    "provider=%s reason=%s", provider_id, type(exc).__name__,
                 )
         return result
 
