@@ -15,7 +15,7 @@ from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_bindin
 
 def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any, str]:
     """Recheck provider, source and live session before/after the download."""
-    refused = "Numilog : achat ou compte non attesté ; actualiser mes achats"
+    refused = "Numilog : offre téléchargeable ou compte non attesté ; actualiser le fournisseur"
     try:
         if (
             type(item) is not SearchResult
@@ -24,7 +24,8 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
             or not item.source_credential
             or item.source_collection != "library"
             or item.scenario != "NUMILOG_LIBRARY"
-            or item.owned is not True
+            # Download capability comes from the exact authenticated library
+            # observation; an optional cached ownership label is not a veto.
             or item.downloadable is not True
             or type(item.record_id) is not str
             or item.id != item.record_id
