@@ -886,6 +886,15 @@ class KoboSession(ProviderSession):
             meta = row.metadata
             if type(meta) is not dict:
                 continue
+            # A positive provider file flag must be a JSON boolean, not
+            # a coerced string/number paired with an untrusted owned value.
+            # This guard does not infer any entitlement from metadata.
+            if any(
+                key in meta and meta[key] is not None
+                and type(meta[key]) is not bool
+                for key in ("owned", "downloadable")
+            ):
+                continue
             if ("account_id" in meta and
                     (type(meta["account_id"]) is not str
                      or meta["account_id"] != account_id)):
