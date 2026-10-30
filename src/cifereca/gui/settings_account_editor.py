@@ -42,18 +42,16 @@ def build_provider_account_editor(
     base_url_row = None
     opds_url_row = None
     vault_url_row = None
-    if option_fields:
-        pass
-    elif provider_id == "paris":
+    if not option_fields and provider_id == "paris":
         base_url_row = Adw.EntryRow(); base_url_row.set_title("URL du portail")
         base_url_row.set_text(str(options.get("base_url") or (config.paris_base_url() if hasattr(config, "paris_base_url") else config.get("base_url")) or "https://bibliotheques.paris.fr")); group.add(base_url_row)
-    elif provider_id == "gallica":
+    elif not option_fields and provider_id == "gallica":
         opds_url_row = Adw.EntryRow(); opds_url_row.set_title("URL du catalogue OPDS")
         opds_url_row.set_text(str(options.get("opds_url") or "https://gallica.bnf.fr/opds")); group.add(opds_url_row)
         public = Adw.ActionRow(); public.set_title("Accès public")
         public.set_subtitle("Aucun identifiant requis · EPUB + documents sonores publics Gallica")
         group.add(public)
-    elif provider_id == "kobo":
+    elif not option_fields and provider_id == "kobo":
         vault_url_row = Adw.EntryRow(); vault_url_row.set_title("URL API Kobo-Vault")
         vault_url_row.set_text(str(options.get("base_url") or "")); group.add(vault_url_row)
         info = Adw.ActionRow(); info.set_title("Connexion indirecte au compte Kobo")
