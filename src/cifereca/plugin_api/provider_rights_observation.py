@@ -108,7 +108,11 @@ class ProviderRightObservation:
                     self.delivery != "unavailable" or not self.provider_attested))):
             raise ValueError("invalid_rights_delivery_reason")
         if self.delivery == "available" and (
-                self.evidence_kind == "legacy_unverified" or self.state != "active"):
+                self.evidence_kind != "provider_response" or self.state == "inactive"):
+            # A fresh positive delivery offer is independent of a separately
+            # reported ownership/right state. Unknown RIGHT != unavailable
+            # FILE. Only a provider-authenticated offer, never cached legacy
+            # evidence or an explicit inactive state, can be accepted.
             raise ValueError("unproven_rights_delivery")
 
     @property
