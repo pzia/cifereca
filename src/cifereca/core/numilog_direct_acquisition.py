@@ -22,7 +22,7 @@ def acquire_numilog_direct(
     # detached account or to race an existing manual/materialize run.
     # Numilog resolves delivery URLs afresh *inside* download_direct.
     from .numilog_manual_acquisition import require_source
-    from .numilog_startup_diagnostics import acquisition_refusal
+    from .numilog_startup_diagnostics import acquisition_refusal, startup_acquisition_active
     from ..plugin_api import Cancelled
     # Only the *first* failed boundary is recorded by the opt-in startup
     # trace. These closed values never expose the error's private contents.
@@ -117,25 +117,37 @@ def acquire_numilog_direct(
             ).hexdigest()[:32] + ".epub"
             expected_path = target_dir / expected_name
             stage = "acquisition_file_conflict"
-            provider_target = target_dir
-            if expected_path.exists() or expected_path.is_symlink():
-                if not reconcile_pending:
-                    raise ProviderConfigurationError(
-                        "Numilog : fichier local candidat ; rapprochement requis"
-                    )
-                # The hashed canonical filename belongs to some pre-existing
-                # publication. Leave it untouched and download in an isolated,
-                # bounded location under this SAME identity/provider root.
-                provider_target = target_dir / ("recovery-" + hashlib.sha256(
-                    item.record_id.encode("utf-8"),
-                ).hexdigest()[:32])
+            automatic = startup_acquisition_active() and callable(_admission)
+            # Automatic acquisition works in an exclusive, exact-purchase
+            # staging namespace. Old files in numilog/ or acsm-*/ are NEVER
+            # interpreted as rights and are NEVER overwritten. No directory
+            # scan/legacy placement is required to make a safe provider GET.
+            if automatic:
+                label = "recovery-" if reconcile_pending else "delivery-"
+                provider_target = target_dir / (
+                    label + hashlib.sha256(item.record_id.encode("utf-8")).hexdigest()[:32]
+                )
                 if provider_target.exists() or provider_target.is_symlink():
                     raise ProviderConfigurationError(
-                        "Numilog : reprise déjà matérialisée à vérifier"
+                        "Numilog : destination déjà occupée ; reprise locale nécessaire"
                     )
+            else:
+                provider_target = target_dir
+                if expected_path.exists() or expected_path.is_symlink():
+                    if not reconcile_pending:
+                        raise ProviderConfigurationError(
+                            "Numilog : fichier local candidat ; rapprochement requis"
+                        )
+                    provider_target = target_dir / ("recovery-" + hashlib.sha256(
+                        item.record_id.encode("utf-8"),
+                    ).hexdigest()[:32])
+                    if provider_target.exists() or provider_target.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : reprise déjà matérialisée à vérifier"
+                        )
             from .numilog_publication_guard import require_tracked_publications
             stage = "acquisition_publication_guard"
-            if not reconcile_pending:
+            if not automatic and not reconcile_pending:
                 require_tracked_publications(service, identity.identity_id, target_dir)
             # A recovery cannot claim any historical file by name or by SHA.
             # A fresh provider GET is permitted ONLY into its otherwise empty
