@@ -226,3 +226,58 @@ def test_source_ids_are_exact_and_right_metadata_is_not_a_source_key(scope):
     # The legacy slot carries a stable resource key, not a made-up grant.
     assert v1.rights[0].right_id == "resource-1"
     assert v1.rights[0].state == "inactive"
+
+
+# The versioned v2 observation is accepted by the EXISTING source-Sync
+# reader, without a second loop, provider-name dispatch or new consent.
+from cifereca.core.rights_snapshot_read import read_account_rights_snapshot
+from cifereca.core.sync_coordination import synchronize_account_source
+from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
+
+
+def test_real_core_sync_accepts_v2_from_existing_typed_reader_once(rig):
+    service, db, _root = rig
+    v2 = from_legacy_rights_snapshot(service.snapshot)
+    resource = replace(
+        v2.resources[0], right=None,
+        capability=DownloadCapability("available", "signed-resource-offer"),
+    )
+    v2 = replace(v2, resources=(resource,))
+    observed = []
+    service.session.rights_observation_snapshot = lambda account: (
+        observed.append(account) or v2
+    )
+    result = synchronize_account_source(service, service.account)
+    assert observed == [service.account]
+    assert result["canonical_rights"]["observed"] == 1
+    assert result["canonical_rights"]["source_references_changed"] == 1
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["pending"] == 1
+    assert refs(db)[0][0][0:4] == ("A", "seller-a", "card-a", "buyer-a")
+    assert db.placements() == [] and db.entitlements() == []
+
+
+def test_real_core_reader_rejects_v2_cross_account_binding(rig):
+    service, db, _root = rig
+    foreign = ProviderRightsScope("other-profile", "seller-a", "card-a", "buyer-a")
+    v2 = snapshot(foreign, observed(foreign))
+    service.session.rights_observation_snapshot = lambda _account: v2
+    result = read_account_rights_snapshot(service, service.account)
+    assert result.status == "failed"
+    assert result.rights == ()
+    assert refs(db) == ([], 0)
+
+
+def test_real_core_reader_drops_v2_if_upstream_rebinds_during_read(rig):
+    service, db, _root = rig
+    v2 = from_legacy_rights_snapshot(service.snapshot)
+
+    def switched(_account):
+        service._source_context_epoch += 1
+        return v2
+
+    service.session.rights_observation_snapshot = switched
+    result = read_account_rights_snapshot(service, service.account)
+    assert result.status == "failed"
+    assert result.rights == ()
+    assert refs(db) == ([], 0)
