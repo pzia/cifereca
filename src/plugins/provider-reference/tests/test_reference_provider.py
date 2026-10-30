@@ -319,3 +319,40 @@ def test_plugin_factory_never_receives_core_storage_and_is_not_default_enabled()
     row = json.loads(manifest.read_text("utf-8"))
     assert row["plugins"][0]["enabled_by_default"] is False
     assert row["plugins"][0]["requires_brokers"] == ["identities"]
+
+
+def test_staging_parent_symlink_swap_is_refused_without_writing_outside(tmp_path):
+    session, (a, _) = fixture()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    renamed = tmp_path / "original-stage"
+
+    def swap():
+        stage.rename(renamed)
+        stage.symlink_to(outside, target_is_directory=True)
+
+    try:
+        session._before_write = swap
+        offer = qualify(session, a, "epub-001")
+        with pytest.raises(ProviderCapabilityError, match="reference_staging_rebound"):
+            candidate(session, a, offer, stage)
+        assert list(outside.iterdir()) == []
+        assert list(renamed.iterdir()) == []
+    finally:
+        session.close()
+
+
+def test_selected_offer_revoked_on_same_value_live_account_replacement(tmp_path):
+    session, (a, _) = fixture()
+    offer = qualify(session, a, "epub-001")
+    replacement = replace(a)
+    session._accounts[0] = replacement
+    session.identity_broker.accounts_live[0] = replacement
+    try:
+        with pytest.raises(ProviderCapabilityError, match="reference_offer_unavailable"):
+            candidate(session, replacement, offer, tmp_path)
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
