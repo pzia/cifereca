@@ -101,6 +101,17 @@ distante, suppression ou restitution n'est effectuée.
 
 La sortie JSON signale `multiple_connections`, `profile_disagreement`,
 `binding_state`, `recorded_adept_profile_id` et `multiple_item_ids`.
+Chaque prêt porte aussi `review_reasons` (motifs normalisés) et
+`next_read_only_review` (prochaine **vérification humaine en lecture seule**),
+par exemple : examiner les comptes Paris lorsque la liaison est incertaine,
+rapprocher les transactions lorsque des profils/licences Adobe historiques
+se contredisent, ou contrôler les inventaires Adobe déjà disponibles.
+`none` signifie uniquement qu'aucune anomalie couverte par cette matrice
+n'est détectée, **jamais** qu'un retour ou un fulfillment est autorisé.
+Les tentatives ADEPT non terminées ou refusées restent visibles dans les
+statuts des acquisitions, mais elles ne constituent pas une preuve de profil
+historique activé. Un statut de reçu inconnu est affiché `unknown`,
+jamais comme un message arbitraire pouvant contenir des données privées.
 Le résolveur Core par transaction (`audit_paris_adept_loan_origins`) est
 **distinct de cette commande globale** : il qualifie séparément
 `status` (force de la meilleure preuve individuelle),
