@@ -30,3 +30,20 @@ Le provider ne scanne pas les fichiers, ne déduit pas une origine du chemin et
 ne crée aucun moteur de réconciliation/SHA. Les tests synthétiques couvrent les
 six références avec trois fichiers à la racine et trois en sous-répertoires,
 trois profils/sélecteurs et les vrais refus de propriétaire/credential.
+
+## Conformance avec le moteur unique
+
+`tests/test_six_purchase_core_conformance.py` exerce le vrai adaptateur Numilog
+(parseur MesLivres, offres ciblées et téléchargement EPUB), le broker public,
+LibraryService et SQLite. Seul le transport HTTP est simulé. Les six EPUB ont
+des contenus distincts ; trois sont à la racine `numilog/`, trois dans des
+sous-répertoires. Le sélecteur UI change à chaque réponse HTTP.
+
+Les mêmes cas passent par Sync individuelle et globale : six origines exactes
+donnent zéro GET de contenu sur deux Sync ; trois fichiers scannés sans origine
+fournisseur ne donnent aucun GET sans consentement ; avec consentement exact,
+les trois acquisitions ciblées réutilisent les six Artifacts au SHA final,
+conservent les neuf Placements et les six fichiers d'origine, puis la deuxième
+Sync ne retélécharge rien. Le provider ne publie ni SHA ni OriginLink : ces
+assertions observent la publication du Core existant. Aucun ADEPT ni compte
+réel n'est employé ; ce résultat ne certifie pas la réparation de la base terrain.
