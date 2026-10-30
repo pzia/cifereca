@@ -118,7 +118,11 @@ def test_unavailable_or_negative_snapshot_does_not_infer_remote_absence(store, t
     inactive = replace(snapshot, rights=(replace(snapshot.rights[0], state="inactive"),))
     decisions = plan(store, inactive, tmp_path)
     assert len(decisions) == 1
-    assert decisions[0].provider_satisfied is False
+    # An inactive *descriptive* right cannot erase an exact physical proof:
+    # the provider OriginLink, final SHA and owner Placement still match.
+    assert decisions[0].provider_satisfied is True
+    path.unlink()
+    assert plan(store, inactive, tmp_path)[0].provider_satisfied is False
 
 
 def test_rebound_provider_connection_disables_presence_without_erasing_origin(store, tmp_path):
