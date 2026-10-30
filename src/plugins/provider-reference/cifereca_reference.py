@@ -214,9 +214,15 @@ class ReferenceSession(ProviderSession):
         """
         from cifereca.plugin_api.downloadable_resources import from_legacy_rights_snapshot
 
-        return from_legacy_rights_snapshot(
+        snapshot = from_legacy_rights_snapshot(
             self.rights_observation_snapshot(account, resume_cursor=resume_cursor)
         )
+        # A legitimate downloadable item can have NO right metadata at all.
+        # This distinction is not representable in the legacy right envelope.
+        return replace(snapshot, resources=tuple(
+            replace(item, right=None) if item.source.edition_id == "epub-002"
+            else item for item in snapshot.resources
+        ))
 
     def downloadable_selected_offer_snapshot(
         self, account: Account, *, edition_id, resource_id, kind, branch,
