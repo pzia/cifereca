@@ -119,3 +119,43 @@ def test_probe_runs_after_commit_and_failure_cannot_unpublish(rig, monkeypatch):
     )
     assert again[0].status == "present_attested"
     assert service.calls == 1
+
+
+@pytest.mark.parametrize("probe_fails", [False, True])
+def test_attested_presence_retries_post_b_probe_without_a_second_get(
+    rig, monkeypatch, probe_fails,
+):
+    from cifereca.core import canonical_post_placement
+    from tests.test_core_p0_3171_convergence_execution import fake_delivery, run
+
+    service, account, source, snapshot, root, lock_path = rig
+    first = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert first[0].status == "downloaded"
+    assert rows(service.storage) == (1, 1, 1, 1)
+    assert service.calls == 1
+    checked = []
+
+    def probe(storage, *, library_root, placement_id):
+        assert storage is service.storage and library_root == root
+        assert rows(storage) == (1, 1, 1, 1)
+        assert storage.placement_get(placement_id)["identity_id"] == "A"
+        checked.append(placement_id)
+        if probe_fails:
+            raise RuntimeError("synthetic deferred maintenance failure")
+        return ("synthetic-duplicate-id",)
+
+    monkeypatch.setattr(
+        canonical_post_placement, "verified_post_placement_duplicates", probe,
+    )
+    second = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("verified provider OriginLink must avoid GET"),
+    )
+    assert second[0].status == "present_attested"
+    assert second[0].reason == "exact_verified_origin"
+    assert len(checked) == 1
+    assert rows(service.storage) == (1, 1, 1, 1)
+    assert service.calls == 1

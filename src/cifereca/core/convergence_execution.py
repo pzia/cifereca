@@ -35,6 +35,21 @@ from .source_convergence import SourceKey
 _LOG = logging.getLogger("cifereca")
 
 
+def _check_post_placement_duplicates(storage, *, library_root: Path,
+                                     placement_id: str) -> None:
+    """Retry read-only dedup inspection without touching B or triggering GET."""
+    try:
+        from .canonical_post_placement import verified_post_placement_duplicates
+        if verified_post_placement_duplicates(
+            storage, library_root=library_root, placement_id=placement_id,
+        ):
+            _LOG.info("TRACE convergence code=canonical_dedup_pending")
+    except Exception:
+        # A separate maintenance failure cannot turn verified B into a failed
+        # acquisition, revoke its OriginLink or authorize re-download.
+        _LOG.warning("TRACE convergence code=canonical_dedup_probe_failed")
+
+
 @dataclass(frozen=True, slots=True)
 class CompletedDelivery:
     """Final bytes explicitly bound to the exact admitted right and offer.
@@ -231,6 +246,14 @@ def execute_admitted_convergence(
             results.append(ConvergenceOutcome(key, "blocked", "scope_rebound"))
             break
         if decision.provider_satisfied:
+            # A fully verified provider presence prevents a second GET, but
+            # must not skip a previously deferred, post-B duplicate probe.
+            # Rechecking is read-only, profile-scoped and never changes B.
+            if decision.placement_ids:
+                _check_post_placement_duplicates(
+                    initial_storage, library_root=library_root,
+                    placement_id=decision.placement_ids[0],
+                )
             results.append(
                 ConvergenceOutcome(key, "present_attested", "exact_verified_origin")
             )
@@ -347,19 +370,11 @@ def execute_admitted_convergence(
                     )
             except Exception:
                 _LOG.warning("TRACE convergence code=canonical_catalog_index_failed")
-            # Post-B deduplication is intentionally advisory until the
-            # Core can atomically migrate every active path/receipt reference.
-            # A failed probe must never roll back a delivered book or retry GET.
-            try:
-                from .canonical_post_placement import verified_post_placement_duplicates
-                matches = verified_post_placement_duplicates(
-                    initial_storage, library_root=library_root,
-                    placement_id=published.placement_id,
-                )
-                if matches:
-                    _LOG.info("TRACE convergence code=canonical_dedup_pending")
-            except Exception:
-                _LOG.warning("TRACE convergence code=canonical_dedup_probe_failed")
+            # A completed B is authoritative regardless of maintenance.
+            _check_post_placement_duplicates(
+                initial_storage, library_root=library_root,
+                placement_id=published.placement_id,
+            )
             results.append(ConvergenceOutcome(
                 key,
                 "recovered" if was_recovered else (
