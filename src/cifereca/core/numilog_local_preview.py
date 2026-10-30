@@ -15,8 +15,9 @@ import re
 from typing import Any
 
 from ..library_files import safe_library_component
-from ..plugin_api import SyncResult
+from ..plugin_api import Cancelled, SyncResult
 from .kobo_local_audit import _read_hash_within
+from .numilog_startup_diagnostics import local_proof
 
 _MAX_ROWS = 100_000
 _ID = re.compile(r"numilog:([0-9a-f]{20}):([A-Za-z0-9_.-]{1,160}):([0-9a-f]{16})\Z")
@@ -177,6 +178,13 @@ def preview(
             return _refused("source_changed")
 
         counts = dict.fromkeys(_COUNT_NAMES, 0)
+
+        def note(item, gate, **facts):
+            # Only the worker's already selected purchase is traced here.
+            # Passive whole-library previews keep their existing behavior.
+            if _only_item_id is not None:
+                local_proof(account, source_id, item, gate, **facts)
+
         scoped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rights:
             if _only_item_id is not None and row.get("item_id") != _only_item_id:
@@ -221,12 +229,14 @@ def preview(
 
         for item_id, item_rights in scoped.items():
             if len(item_rights) != 1:
+                note(item_id, "multiple_rights", right_count=len(item_rights))
                 counts["needs_reconciliation"] += 1
                 continue
             right = item_rights[0]
             metadata = right["metadata"]
             acquisitions = acquired.get(item_id, [])
             if not acquisitions:
+                note(item_id, "receipt_missing")
                 if metadata.get("downloadable") is False:
                     counts["not_downloadable"] += 1
                 else:
@@ -237,18 +247,24 @@ def preview(
                 continue
 
             if len(acquisitions) != 1:
+                note(item_id, "multiple_receipts", receipt_count=len(acquisitions))
                 counts["needs_reconciliation"] += 1
                 continue
             acquisition = acquisitions[0]
             if (acquisition.get("identity_id") != identity
                     or acquisition.get("account_id") != account_id
                     or acquisition.get("entitlement_id") != right.get("entitlement_id")):
+                note(item_id, "receipt_scope_mismatch", acquisition_id=acquisition.get("acquisition_id"))
                 counts["needs_reconciliation"] += 1
                 continue
             if acquisition.get("status") in {"attention_required", "blocked"}:
+                note(item_id, "receipt_attention", acquisition_id=acquisition.get("acquisition_id"),
+                     receipt_status=acquisition.get("status"))
                 counts["attention_required"] += 1
                 continue
             if acquisition.get("status") != "complete":
+                note(item_id, "receipt_incomplete", acquisition_id=acquisition.get("acquisition_id"),
+                     receipt_status=acquisition.get("status"))
                 counts["needs_reconciliation"] += 1
                 continue
 
@@ -257,6 +273,8 @@ def preview(
             artifact = artifact_by_id.get(artifact_id)
             if (type(artifact_id) is not str or len(matched) != 1
                     or not isinstance(artifact, dict)):
+                note(item_id, "placement_or_artifact_missing", artifact_id=artifact_id,
+                     matching_placements=len(matched), acquisition_id=acquisition.get("acquisition_id"))
                 counts["needs_reconciliation"] += 1
                 continue
             placement = matched[0]
@@ -280,6 +298,14 @@ def preview(
                     or type(artifact.get("media_format")) is not str
                     or artifact["media_format"].casefold() not in {"epub", "kepub", "pdf"}
                     or type(size) is not int or size <= 0):
+                note(item_id, "placement_or_artifact_invalid", artifact_id=artifact_id,
+                     placement_id=placement.get("placement_id"), path=placement.get("path"),
+                     placement_identity_id=placement.get("identity_id"),
+                     placement_provider_id=placement.get("provider_id"),
+                     placement_item_id=placement.get("source_item_id"),
+                     placement_state=placement.get("state"), sha256=sha, size=size,
+                     artifact_kind=artifact.get("kind"), media_format=artifact.get("media_format"),
+                     identity_roots=[str(root) for root in roots])
                 counts["needs_reconciliation"] += 1
                 continue
 
@@ -295,9 +321,17 @@ def preview(
                 return _refused("source_changed")
             observed = _read_hash_within(placement.get("path"), roots)
             if observed is None or observed[:2] != (sha, size):
+                note(item_id, "file_unavailable" if observed is None else "file_fingerprint_mismatch",
+                     artifact_id=artifact_id, placement_id=placement.get("placement_id"),
+                     path=placement.get("path"), expected_sha256=sha, expected_size=size,
+                     observed_sha256=observed[0] if observed is not None else None,
+                     observed_size=observed[1] if observed is not None else None)
                 counts["already_local_linked"] -= 1
                 counts["needs_reconciliation"] += 1
             else:
+                note(item_id, "file_fingerprint_verified", artifact_id=artifact_id,
+                     placement_id=placement.get("placement_id"), path=placement.get("path"),
+                     observed_sha256=observed[0], observed_size=observed[1])
                 counts["already_local_verified"] += 1
 
         # If a source was disabled/reassigned during DB reads, no preview can
@@ -313,9 +347,15 @@ def preview(
             "known_item_count": counts["owned_purchases"],
             "counts": counts,
         })
+    except Cancelled:
+        raise
     except ValueError as exc:
+        if _only_item_id is not None:
+            local_proof(account, source_id, _only_item_id, "preview_failed", exc_info=True)
         if str(exc) == "evidence_budget_exhausted":
             return _refused("evidence_budget_exhausted")
         return _refused("preview_unavailable")
     except Exception:
+        if _only_item_id is not None:
+            local_proof(account, source_id, _only_item_id, "preview_failed", exc_info=True)
         return _refused("preview_unavailable")
