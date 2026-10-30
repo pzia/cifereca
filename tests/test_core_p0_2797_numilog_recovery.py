@@ -151,7 +151,7 @@ def test_legacy_receipt_gate_is_scoped_and_fails_closed(tmp_path, monkeypatch, h
             service.storage, identity_id="another-profile",
             credential_id=account.credential_id,
             account_id=account.unique_id, item_id=rows[0].record_id,
-        ) == "recovery_right_unproven"
+        ) == "recovery_foreign_receipt"
     finally:
         service.close()
 
