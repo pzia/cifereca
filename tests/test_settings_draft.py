@@ -254,3 +254,39 @@ def test_retired_global_unlinked_bypass_is_preserved_not_rewritten(editor):
     assert config.data == original
     config.set("kobo_backup.allow_unlinked_acquisition", False)
     assert validate(editor).data["kobo_backup"]["allow_unlinked_acquisition"] is False
+
+
+@pytest.mark.parametrize(
+    ("persisted", "spoofed"),
+    [(False, True), (True, False), ("true", True), (1, False), (None, True)],
+)
+def test_generic_settings_save_preserves_readonly_legacy_kobo_enable_flag(
+    editor, persisted, spoofed,
+):
+    config, values = editor
+    config.set("kobo_backup.enabled", persisted)
+    config.set("kobo_backup.allow_unlinked_acquisition", persisted)
+    before = deepcopy(config.data)
+    values["backup_enabled"] = spoofed
+    # Another Settings section may be edited and saved simultaneously.
+    values["identities"][0]["label"] = "Updated without global Kobo opt-in"
+    draft = validate(editor)
+    assert draft.data["kobo_backup"]["enabled"] == persisted
+    assert draft.data["kobo_backup"]["allow_unlinked_acquisition"] == persisted
+    assert draft.data["identities"][0]["label"] == "Updated without global Kobo opt-in"
+    assert config.data == before
+    assert not config.path.exists()
+
+
+def test_kobo_legacy_enabled_absent_stays_absent_after_unrelated_settings_save(editor):
+    config, values = editor
+    config.data.setdefault("kobo_backup", {}).pop("enabled", None)
+    original = deepcopy(config.data)
+    values["backup_enabled"] = True
+    values["backup_interval"] = "90"
+    values["backup_directory"] = "KoboBooks"
+    draft = validate(editor)
+    assert "enabled" not in draft.data["kobo_backup"]
+    assert draft.data["kobo_backup"]["interval_minutes"] == 90
+    assert draft.data["kobo_backup"]["directory"] == "KoboBooks"
+    assert config.data == original
