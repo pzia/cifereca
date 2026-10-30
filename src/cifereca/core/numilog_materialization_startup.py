@@ -351,12 +351,21 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # performs its own account/session re-admission before writing.
             # This is still NOT permission to acquire: each edition passes
             # preflight plus the locked admission after this read.
-            mirrored = mirror_numilog_manifest_rights(
-                broker.service, raw,
-                identity_id=identity_id,
-                credential_id=account.credential_id,
-                account_id=account.unique_id,
-            )
+            try:
+                mirrored = mirror_numilog_manifest_rights(
+                    broker.service, raw,
+                    identity_id=identity_id,
+                    credential_id=account.credential_id,
+                    account_id=account.unique_id,
+                )
+            except Cancelled:
+                raise
+            except Exception:
+                # Metadata projection is best effort. Preserve the reason in
+                # the local journal; the fresh downloadable offer stays valid.
+                from .numilog_startup_diagnostics import mirror_observation_error
+                mirror_observation_error(source_id)
+                mirrored = None
             # A cached entitlement is informational, not a mandatory
             # predecessor to provider delivery (#3171/2026-10-30).
             # Failed metadata mirroring must not veto an independently
@@ -415,14 +424,14 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 if prior.facts.get('status') == 'declared_link_recorded':
                     from .library_declared_presence import verify_declared_presence
                     if presence_seconds_remaining <= 0:
-                        blocked += 1
+                        # A verification budget is not a download permission
+                        # veto; the declared link remains only an observation.
+                        prior_status = 'needs_reconciliation'
                         declared_pending += 1
-                        trace.record_item(position, 'declared_needs_review', item_id=row.record_id)
-                        trace.fail('preflight_failed')
-                        continue
-                    presence_started = monotonic()
-                    try:
-                        presence = verify_declared_presence(
+                    else:
+                        presence_started = monotonic()
+                        try:
+                            presence = verify_declared_presence(
                             broker.service, identity_id=account.identity_id,
                             provider_id='numilog', credential_id=account.credential_id,
                             account_id=account.unique_id, item_id=row.record_id,
@@ -434,22 +443,20 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             cancelled=lambda: bool(control is not None
                                 and callable(getattr(control, 'cancelled', None)) and control.cancelled()),
                             seconds=presence_seconds_remaining,
-                        )
-                    finally:
-                        presence_seconds_remaining = max(0.0, presence_seconds_remaining
-                            - max(0.0, monotonic() - presence_started))
-                    if control is not None and callable(getattr(control, 'check_cancelled', None)):
-                        control.check_cancelled()
-                    if presence.status == 'declared_current':
-                        declared_local += 1
-                        skipped += 1
-                        trace.record_item(position, 'already_local_declared', item_id=row.record_id)
-                        continue
-                    # Invalid/obsolete declarations are not a veto on a
-                    # fresh provider-admitted download. The existing file and
-                    # declaration remain historical evidence.
-                    declared_pending += 1
-                    prior_status = 'needs_reconciliation'
+                            )
+                        finally:
+                            presence_seconds_remaining = max(0.0, presence_seconds_remaining
+                                - max(0.0, monotonic() - presence_started))
+                        if control is not None and callable(getattr(control, 'check_cancelled', None)):
+                            control.check_cancelled()
+                        if presence.status == 'declared_current':
+                            declared_local += 1
+                            skipped += 1
+                            trace.record_item(position, 'already_local_declared', item_id=row.record_id)
+                            continue
+                        # Invalid/obsolete declaration stays historical.
+                        declared_pending += 1
+                        prior_status = 'needs_reconciliation'
                 else:
                     prior_status = prior.facts.get('status')
                 # The offline preflight conservatively reports *any*
@@ -458,7 +465,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # the existing exact receipt, placement and current SHA all
                 # agree. Unknown/foreign/damaged evidence remains blocked.
                 is_recovery = False
-                if prior_status == 'needs_reconciliation':
+                if prior_status in {
+                    'needs_reconciliation', 'purchase_unproven', 'not_downloadable',
+                }:
                     if presence_seconds_remaining > 0:
                         proof_started = monotonic()
                         try:
@@ -491,8 +500,19 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         credential_id=account.credential_id,
                         account_id=account.unique_id, item_id=row.record_id,
                     )
+                    # A fresh delivery without an existing receipt/placement
+                    # can use the normal checkpoint. Legacy files or receipts
+                    # use the isolated recovery receipt, never overwriting.
+                    evidence = broker.service.storage.numilog_purchase_preflight_evidence(
+                        identity_id=account.identity_id,
+                        credential_id=account.credential_id,
+                        account_id=account.unique_id, item_id=row.record_id,
+                    )
+                    conflicts = bool(evidence.get('acquisitions')
+                                     or evidence.get('placement_conflict')
+                                     or prior_status == 'needs_reconciliation')
                     if gate == 'recoverable':
-                        is_recovery = True
+                        is_recovery = conflicts
                     else:
                         blocked += 1
                         trace.record_item(position, gate, item_id=row.record_id)
@@ -546,6 +566,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         status_ok = (
                             check.facts.get('status') in {
                                 'needs_reconciliation', 'declared_link_recorded',
+                                'purchase_unproven', 'not_downloadable',
                             }
                             and recovery_gate(
                                 broker.service.storage,
