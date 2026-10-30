@@ -373,3 +373,100 @@ def test_postcommit_catalogue_failure_does_not_rollback_origin_or_repeat_get(
     assert second[0].status == "present_attested"
     assert service.calls == 1
     assert rows(service.storage) == (1, 1, 1, 1)
+
+@pytest.mark.parametrize("alias", [False, True], ids=["second-instance", "same-instance"])
+def test_duplicate_registered_session_before_get_denies_admission(rig, alias):
+    service, account, source, snapshot, root, lock_path = rig
+    session = service._sessions[("seller-a", "card-A")]
+    service._sessions["duplicate"] = session if alias else NS(**vars(session))
+    with pytest.raises(ValueError, match="convergence_session_rebound"):
+        run(
+            service, account, snapshot, root, lock_path, {source},
+            lambda *_: pytest.fail("ambiguous session must not GET"),
+        )
+    assert service.calls == 0
+    assert rows(service.storage) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("alias", [False, True], ids=["second-instance", "same-instance"])
+def test_duplicate_session_added_during_get_blocks_publication(rig, alias):
+    service, account, source, snapshot, root, lock_path = rig
+    session = service._sessions[("seller-a", "card-A")]
+
+    def duplicate(_key):
+        service._sessions["duplicate"] = session if alias else NS(**vars(session))
+
+    result = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root, on_get=duplicate),
+    )
+    assert [(row.status, row.reason) for row in result] == [
+        ("blocked", "scope_rebound_after_get"),
+    ]
+    assert service.calls == 1
+    assert rows(service.storage) == (0, 0, 0, 0)
+    assert service.storage.acquisitions() == []
+    assert (root / "A" / "book.pdf").read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("alias", [False, True], ids=["second-instance", "same-instance"])
+def test_duplicate_session_at_sql_commit_rolls_back_then_recovers_without_get(
+    rig, monkeypatch, alias,
+):
+    from cifereca.core import convergence_execution
+
+    service, account, source, snapshot, root, lock_path = rig
+    session = service._sessions[("seller-a", "card-A")]
+    original = convergence_execution.publish_completed_acquisition
+    checks = []
+
+    def inject_before_commit(*args, **kwargs):
+        current = kwargs["context_current"]
+        def guarded():
+            checks.append(1)
+            if len(checks) == 2:
+                # The first check admitted BEGIN IMMEDIATE; canonical rows
+                # have now been written but are not committed yet.
+                service._sessions["duplicate"] = session if alias else NS(**vars(session))
+            return current()
+        return original(*args, **dict(kwargs, context_current=guarded))
+
+    monkeypatch.setattr(convergence_execution, "publish_completed_acquisition", inject_before_commit)
+    first = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert len(checks) == 2
+    assert first[0].status == "failed"
+    assert service.calls == 1
+    assert rows(service.storage) == (0, 0, 0, 0)
+    assert (root / "A" / "book.pdf").read_bytes() == BYTES
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute("SELECT status FROM acquisition_ledger").fetchall() == [
+            ("canonical_receipt_staged",),
+        ]
+    service._sessions.pop("duplicate")
+    monkeypatch.setattr(convergence_execution, "publish_completed_acquisition", original)
+    recovered = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("valid completed receipt must avoid a second GET"),
+    )
+    assert recovered[0].status == "recovered"
+    assert rows(service.storage) == (1, 1, 1, 1)
+    assert service.calls == 1
+
+
+@pytest.mark.parametrize("coordinate", ["provider_id", "credential_id"])
+def test_unrelated_registered_session_does_not_block_own_delivery(rig, coordinate):
+    service, account, source, snapshot, root, lock_path = rig
+    session = service._sessions[("seller-a", "card-A")]
+    unrelated = NS(**vars(session))
+    setattr(unrelated, coordinate, "other-source")
+    service._sessions["unrelated"] = unrelated
+    result = run(
+        service, account, snapshot, root, lock_path, {source},
+        fake_delivery(service, root),
+    )
+    assert result[0].status == "downloaded"
+    assert service.calls == 1
+    assert rows(service.storage) == (1, 1, 1, 1)
