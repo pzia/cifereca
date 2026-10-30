@@ -145,107 +145,68 @@ def source_refresh_due(
         return False
 
 
-def kobo_inventory_source_eligible(service: Any, account: Any) -> bool:
-    """Authorize only an exact, enabled Kobo *inventory* source binding.
+def inventory_source_eligible(service: Any, account: Any) -> bool:
+    """Check one exact private-inventory binding, independently of provider.
 
-    This is deliberately independent of the provider's backup capability.
-    Source refresh cannot authorize file acquisition or ADEPT operations.
-    A stale connection, duplicate credential, disabled source or corrupt
-    stored enablement always blocks scheduled requests.
+    This passive check grants neither acquisition nor a schedule. A live
+    profile, one account, one enabled persisted connection and one connected
+    personal-library session must all agree on the same opaque coordinates.
+    No selected UI identity, public result or backup capability is authority.
     """
     try:
-        if getattr(account, "provider_id", None) != "kobo":
-            return False
+        provider = getattr(account, "provider_id", None)
         identity = getattr(account, "identity_id", None)
         credential = getattr(account, "credential_id", None)
-        if (
-            type(identity) is not str or not identity
-            or type(credential) is not str or not credential
-        ):
+        account_id = getattr(account, "unique_id", None)
+        if not all(type(value) is str and value.strip() and "\x00" not in value
+                   for value in (provider, identity, credential, account_id)):
             return False
         accounts = [
             row for row in service.accounts
-            if getattr(row, "provider_id", None) == "kobo"
+            if getattr(row, "provider_id", None) == provider
             and getattr(row, "credential_id", None) == credential
         ]
         if len(accounts) != 1 or accounts[0] is not account:
             return False
+        if (service.identity_by_id(identity) is None
+                or service.sync_source_enabled(account) is not True):
+            return False
         from ..brokers import SynchronizationBrokerImpl
         source_id = SynchronizationBrokerImpl._source_id(account)
-        if not service.sync_source_enabled(account):
-            return False
-        # Legacy enablement may be permissive for inventory reads. A new
-        # automatic schedule must require an unambiguous exact stored bool.
         enabled = service.storage.metadata_get("sync.source.enabled." + source_id)
         if enabled is not None and enabled not in {"1", "true", "yes", "on"}:
             return False
-        if service.storage.identity_for_connection("kobo", credential) != identity:
+        if service.storage.identity_for_connection(provider, credential) != identity:
             return False
         bindings = [
             row for row in service.storage.provider_connections(identity_id=identity)
-            if row.get("provider_id") == "kobo"
+            if row.get("provider_id") == provider
             and row.get("credential_id") == credential
-            and row.get("enabled") is True
         ]
-        if len(bindings) != 1:
+        if len(bindings) != 1 or bindings[0].get("enabled") is not True:
             return False
         sessions = [
             session for session in service._sessions.values()
-            if getattr(session, "provider_id", None) == "kobo"
+            if getattr(session, "provider_id", None) == provider
             and getattr(session, "credential_id", None) == credential
         ]
-        if len(sessions) != 1 or not getattr(sessions[0], "connected", False):
+        if len(sessions) != 1 or getattr(sessions[0], "connected", False) is not True:
             return False
         caps = getattr(sessions[0], "capabilities", None)
         return getattr(caps, "personal_library", False) is True
     except Exception:
-        # A failed permission check never grants scheduled network access.
+        # Permission failures never grant automatic private network access.
         return False
 
+
+def kobo_inventory_source_eligible(service: Any, account: Any) -> bool:
+    """Compatibility name; the shared guard owns the binding decision."""
+    return (getattr(account, "provider_id", None) == "kobo"
+            and inventory_source_eligible(service, account))
 
 
 def numilog_inventory_source_eligible(service: Any, account: Any) -> bool:
-    """Admit only a current, unambiguous, *private* Numilog inventory source.
+    """Compatibility name; the shared guard owns the binding decision."""
+    return (getattr(account, "provider_id", None) == "numilog"
+            and inventory_source_eligible(service, account))
 
-    Inventory refresh is not materialization consent. Reject stale sessions,
-    account rebindings, ambiguous credentials and malformed source switches
-    before the caller performs any network request.
-    """
-    try:
-        if getattr(account, "provider_id", None) != "numilog":
-            return False
-        from ..brokers import SynchronizationBrokerImpl
-        from .numilog_manifest_rights import numilog_inventory_binding_valid
-
-        source_id = SynchronizationBrokerImpl._source_id(account)
-        stored_enabled = service.storage.metadata_get(
-            "sync.source.enabled." + source_id
-        )
-        if stored_enabled is not None and stored_enabled not in {
-            "1", "true", "yes", "on",
-        }:
-            return False
-        sessions = [
-            row for row in getattr(service, "_sessions", {}).values()
-            if getattr(row, "provider_id", None) == "numilog"
-            and getattr(row, "credential_id", None)
-            == getattr(account, "credential_id", None)
-        ]
-        return (
-            len(sessions) == 1
-            and numilog_inventory_binding_valid(
-                service, account, session=sessions[0],
-            )
-        )
-    except Exception:
-        return False
-
-
-def inventory_source_eligible(service: Any, account: Any) -> bool:
-    """Dispatch strictly by provider; never reuse a private entitlement."""
-    provider = getattr(account, "provider_id", None)
-    if provider == "kobo":
-        return kobo_inventory_source_eligible(service, account)
-    if provider == "numilog":
-        return numilog_inventory_source_eligible(service, account)
-    return False

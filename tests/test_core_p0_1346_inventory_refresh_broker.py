@@ -35,6 +35,7 @@ def _rig(tmp_path):
             a for a in source.accounts if identity is None or a.identity_id == identity
         ],
         sync_source_enabled=lambda _account: True,
+        identity_by_id=lambda identity: NS(identity_id=identity) if identity == "alice" else None,
         synchronize_account_source=lambda a, **options: (
             calls.append((a.identity_id, a.credential_id, options))
             or {"library": 1}
@@ -264,3 +265,4 @@ def test_clients_cannot_override_due_clock_to_bypass_refresh_throttle(tmp_path):
         assert len(calls) == 1
     finally:
         service.storage.close()
+
