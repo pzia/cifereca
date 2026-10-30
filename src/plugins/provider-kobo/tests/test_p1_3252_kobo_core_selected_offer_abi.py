@@ -31,6 +31,81 @@ def test_kobo_unknown_right_state_does_not_veto_exact_downloadable_file():
         session.close()
 
 
+def test_kobo_personal_downloadable_file_with_owned_false_can_offer_delivery():
+    session, vault, broker, account, posts = setup()
+    # Ownership metadata is not a delivery capability. The private per-account
+    # manifest reports a downloadable file and Vault attests its exact HTTPS
+    # descriptor only after Core-selected preflight.
+    vault.rows[0]["owned"] = False
+    try:
+        rights = session.rights_observation_snapshot(account)
+        row = rights.exact("book-1", "book-1", "purchase")
+        assert row is not None and row.state == "unknown"
+        assert row.delivery == "unknown" and len(posts) == 0
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, **select(),
+        )
+        assert selected.rights[0].state == "unknown"
+        assert selected.rights[0].delivery_attested
+        assert len(posts) == 1
+    finally:
+        session.close()
+
+
+def test_kobo_explicit_not_owned_without_downloadable_flag_is_not_a_file():
+    session, vault, broker, account, posts = setup()
+    vault.rows[0]["owned"] = False
+    vault.rows[0]["downloadable"] = None
+    try:
+        inventory = session.rights_observation_snapshot(account)
+        assert inventory.exact("book-1", "book-1", "purchase") is None
+        with pytest.raises(ProviderCapabilityError, match="right_unobserved"):
+            session.rights_selected_delivery_offer_snapshot(account, **select())
+        assert posts == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("owned", "false"), ("owned", 0), ("downloadable", "true"),
+    ("downloadable", 1),
+])
+def test_kobo_malformed_manifest_permission_flags_never_become_file_capability(
+    field, bad,
+):
+    session, vault, broker, account, posts = setup()
+    vault.rows[0][field] = bad
+    try:
+        inventory = session.rights_observation_snapshot(account)
+        assert inventory.exact("book-1", "book-1", "purchase") is None
+        with pytest.raises(ProviderCapabilityError, match="right_unobserved"):
+            session.rights_selected_delivery_offer_snapshot(
+                account, **select(),
+            )
+        assert posts == []
+    finally:
+        session.close()
+
+
+def test_kobo_downloadable_owned_false_archive_remains_skipped_without_post():
+    session, vault, broker, account, posts = setup()
+    vault.rows[0].update(owned=False, downloadable=True, archived=True)
+    try:
+        inventory = session.rights_observation_snapshot(account)
+        right = inventory.exact("book-1", "book-1", "purchase")
+        assert right is not None and right.state == "unknown"
+        assert right.delivery == "unavailable"
+        assert right.delivery_unavailable_reason == "archived"
+        selected = session.rights_selected_delivery_offer_snapshot(
+            account, **select(),
+        )
+        assert selected.rights[0].delivery == "unavailable"
+        assert selected.rights[0].delivery_offer_id == ""
+        assert posts == []
+    finally:
+        session.close()
+
+
 def test_selected_kobo_one_right_one_preflight():
     session, vault, broker, account, posts = setup()
     try:
