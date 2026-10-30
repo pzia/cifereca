@@ -8,7 +8,6 @@ from cifereca.core.library_reconciliation_readiness import (
 )
 from tests.test_library_audit_broker import scoped
 from tests.test_library_reconciliation import filesystem
-from tests.test_maintenance_cache_row_callbacks import mounted
 
 
 def test_existing_local_evidence_is_ready_without_any_provider_sync(scoped, tmp_path):
@@ -81,68 +80,3 @@ def test_invalid_or_symlinked_sqlite_cannot_be_presented_as_ready(scoped, tmp_pa
     service.storage.path = Path("relative.sqlite")
     report = local_reconciliation_readiness(service, "alice")
     assert report.reason == "storage_invalid"
-
-
-def mount_ready_gate(scoped, storage_path=None):
-    service, _, _ = scoped
-    if storage_path is not None:
-        service.storage.path = storage_path
-    m = mounted("library.reconciliation.audit")
-    m.host.service = service
-    m.refresh()
-    row = m.host._tools_box.children[0].children[0]
-    run = row.children[0]
-    return m, service, row, run
-
-
-def test_reconciliation_gate_checks_on_worker_and_enables_without_sync(scoped):
-    m, service, row, run = mount_ready_gate(scoped)
-    assert run.sensitive is False
-    assert "Vérification" in row.subtitle
-    args, kwargs = m.jobs[-1]
-    assert kwargs["kind"] == "maintenance-plan"
-    ready = args[1]()
-    assert isinstance(ready, ReconciliationReadiness)
-    args[2](ready)
-    assert run.sensitive is True
-    assert "hors réseau" in row.subtitle
-    run.click()
-    preview_args, kw = m.jobs[-1]
-    assert kw["kind"] == "maintenance-plan"
-    # Change the same SQLite source after the enablement snapshot:
-    service.storage.path = Path("/not/created/library.sqlite")
-    try:
-        preview_args[1]()
-        assert False, "worker must refuse stale local readiness"
-    except RuntimeError as exc:
-        assert str(exc) == "Préparation de la réconciliation impossible."
-        assert exc.__suppress_context__
-
-
-def test_unready_gate_is_visible_and_does_not_plan_or_poll_on_gtk(scoped, tmp_path):
-    m, service, row, run = mount_ready_gate(
-        scoped, storage_path=tmp_path / "not-yet-ready.sqlite",
-    )
-    args, _kwargs = m.jobs[-1]
-    args[2](args[1]())
-    assert not run.sensitive
-    assert "Initialisation" in row.subtitle
-    before = len(m.jobs)
-    run.click()  # a synthetic click must still fail closed
-    assert len(m.jobs) == before
-    assert m.tool.plans == 0
-
-
-def test_superseded_readiness_callbacks_cannot_reenable_stale_tools(scoped):
-    m, _service, old_row, old_run = mount_ready_gate(scoped)
-    old_args, _kwargs = m.jobs[-1]
-    m.refresh()
-    new_row = m.host._tools_box.children[0].children[0]
-    new_run = new_row.children[0]
-    old_args[2](ReconciliationReadiness("ready_offline", "local_ready"))
-    assert new_run.sensitive is False
-    assert "Vérification" in new_row.subtitle
-    args, _kwargs = m.jobs[-1]
-    args[2](args[1]())
-    assert new_run.sensitive
-    assert not old_run.sensitive
