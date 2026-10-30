@@ -6,6 +6,7 @@ same modules can later be moved to package entry points without changing the
 GUI or service layer.
 """
 from .base import (
+    AccountOptionField,
     CredentialField,
     ProviderCapabilities,
     ProviderSearchCapabilities,
@@ -18,6 +19,7 @@ from .base import (
 from .registry import ProviderRegistry
 
 __all__ = [
+    "AccountOptionField",
     "CredentialField",
     "ProviderCapabilities",
     "ProviderSearchCapabilities",
