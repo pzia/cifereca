@@ -23,8 +23,9 @@ def _ready_source(tmp_path):
     return service, account
 
 
-def test_canonical_pending_kobo_does_not_fall_through_to_legacy_get(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize("canonical_pending", (False, True))
+def test_canonical_kobo_does_not_fall_through_to_legacy_get(
+    tmp_path, monkeypatch, canonical_pending,
 ):
     service, account = _ready_source(tmp_path)
     calls = []
@@ -33,7 +34,7 @@ def test_canonical_pending_kobo_does_not_fall_through_to_legacy_get(
         if observed.provider_id == "kobo":
             calls.append(("canonical", observed.identity_id, observed.credential_id))
             return {
-                field: (1 if field == "pending" else 0)
+                field: (1 if field == "pending" and canonical_pending else 0)
                 for field in (
                     "present_attested", "downloaded", "recovered", "pending",
                     "blocked", "failed", "cancelled", "skipped_archived", "inactive",
@@ -51,7 +52,12 @@ def test_canonical_pending_kobo_does_not_fall_through_to_legacy_get(
         owner = next(
             row for row in result["identities"] if row["identity_id"] == "alice"
         )
-        assert owner["canonical_execution"]["pending"] == 1
+        assert owner["canonical_execution"]["pending"] == int(canonical_pending)
+        assert result["kobo"]["status"] == (
+            "partial" if canonical_pending else "complete"
+        )
+        assert result["kobo"]["canonical_sources"] == 1
+        assert result["kobo"]["synced_accounts"] == 0
         assert calls == [("canonical", account.identity_id, account.credential_id)]
         assert service.storage.metadata_get(
             "sync.source.materialization.last_attempt." +
