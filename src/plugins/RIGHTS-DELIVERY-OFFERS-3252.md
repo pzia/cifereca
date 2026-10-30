@@ -76,3 +76,29 @@ jetons, signatures, EPUB/PDF finaux et ADEPT.
 
 Ne fermer ni #3252 ni #3171 sur ces seules qualifications. Pas de file
 parallèle de réconciliation ni de décision d'autorisation déportée dans B.
+
+## Réception synthétique Numilog : six achats / six candidats EPUB (#3727)
+
+Le test `src/plugins/provider-numilog/tests/test_p0_3252_six_epub_safe_staging.py`
+exécute le véritable parseur des six cartes `MesLivres` synthétiques,
+l'inventaire d'achats positifs, le préflight ciblé de chaque action et les
+six GET HTTPX simulés pour livrer **six EPUB distincts** dans six répertoires
+de staging créés par l'appelant Core. Il interdit la publication legacy ;
+aucun contenu ou cookie réel Numilog n'est utilisé.
+
+Le mode `stage_acsm_only=True` conserve désormais un descripteur de
+répertoire Linux `O_DIRECTORY|O_NOFOLLOW` ouvert pendant le GET signé, et
+crée les fichiers temporaires sous `/proc/self/fd/<fd>`. Si le chemin de
+staging est remplacé pendant le GET, la livraison est refusée et le candidat
+est nettoyé **dans le répertoire d'origine**, sans écriture par le nouveau
+lien symbolique. Les cas EPUB direct et ACSM sont testés. Le Core vérifie
+séparément que le chemin retourné est encore sous son staging canonique.
+
+**Frontière de réception :** ces six EPUB sont des *candidats fournisseur* ;
+le moteur Core #3719/#3171 reste seul responsable de l'admission du GET,
+de la vérification du SHA final, de la publication atomique du Placement et
+des OriginLink, et de la **déduplication physique après placement**, dans
+le même profil seulement. Si la présence exacte est incertaine, le Core doit
+télécharger même si un SHA identique est connu. Une déduplication échouée
+ne doit ni annuler la réception ni supprimer un candidat de l'utilisateur.
+Cette recette ne certifie ni les six achats réels ni la réexécution zéro GET.
