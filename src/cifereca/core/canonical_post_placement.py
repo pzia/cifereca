@@ -51,7 +51,9 @@ def verified_post_placement_duplicates(
             "AND placement_id<>? ORDER BY placement_id LIMIT ?",
             (identity, artifact_id, placement_id, _MAX_MATCHES + 1),
         ).fetchall()
-        if len(candidates) > _MAX_MATCHES:
+        if not candidates or len(candidates) > _MAX_MATCHES:
+            # No duplicate => no extra full-file SHA pass on every successful
+            # delivery. The publisher has already verified its own bytes.
             return ()
     def valid(path):
         return _verified_copy(

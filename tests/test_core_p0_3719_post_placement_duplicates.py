@@ -65,6 +65,24 @@ def test_tamper_symlink_missing_cannot_be_accepted(store, tmp_path):
     assert rows(store) == (1, 3, 3, 3)
 
 
+def test_no_candidates_avoids_second_full_file_hash(store, tmp_path, monkeypatch):
+    from cifereca.catalog import LocalCatalog
+    root = tmp_path / "EBooks"
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    publication = publish(store, root, path, source, snapshot)
+
+    def forbid_rehash(*_args, **_kwargs):
+        pytest.fail("unique publication must not rehash all its bytes")
+
+    monkeypatch.setattr(LocalCatalog, "sha256", forbid_rehash)
+    assert verified_post_placement_duplicates(
+        store, library_root=root, placement_id=publication.placement_id,
+    ) == ()
+    assert path.read_bytes() == BYTES
+
+
 def test_unknown_and_missing_owner_are_never_proof(store, tmp_path):
     assert verified_post_placement_duplicates(
         store, library_root=tmp_path / "EBooks", placement_id="absent",
