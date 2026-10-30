@@ -63,7 +63,9 @@ def toggle_state(db, source: SourceKey):
         "SELECT value FROM metadata WHERE key=?", (prefix + sid,),
     ).fetchone()
     if row is None:
-        return "off"
+        # An installation without this optional source-wide switch keeps
+        # its legacy explicit per-right grants, not an implicit opt-out.
+        return None
     if row[0] != active:
         return "off"
     if epoch_prefix is not None:
