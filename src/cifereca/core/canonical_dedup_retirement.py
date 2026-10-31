@@ -25,7 +25,6 @@ from .duplicate_maintenance_guard import (
 
 _RETIRE_KEY = "core.canonical-dedup-retirement.v1"
 _PENDING = "dedup_cleanup_pending"
-_RETIRED = "dedup_retired"
 
 
 def _unique_json_keys(pairs):
@@ -186,8 +185,8 @@ def recover_canonical_duplicate_retirement(
     A recovered file must be the EXACT inode/stat observed before commit, not
     merely an arbitrary equal-SHA replacement at the same path. Unknown
     references, missing keeper or foreign identity leave the original intact.
-    The final non-present Placement is retained as a durable audit trail and
-    permits the existing post-placement queue to check physical absence.
+    The pending Placement remains durable until cleanup completes. After a
+    verified unlink, its unique path is released for future acquisitions.
     """
     if (not isinstance(library_root, Path) or not _lock_ok(shared_lock)
             or type(candidate_placement_id) is not str
@@ -205,8 +204,10 @@ def recover_canonical_duplicate_retirement(
             )
             candidate = db.execute(columns, (candidate_placement_id,)).fetchone()
             keeper = db.execute(columns, (keeper_placement_id,)).fetchone()
-            if (candidate is None or keeper is None
-                    or candidate[3] not in (_PENDING, _RETIRED)
+            if candidate is None:
+                # Already finalized, or never staged: never infer ownership.
+                return CanonicalRetirementResult(False, False, False)
+            if (keeper is None or candidate[3] != _PENDING
                     or keeper[3] != "present"
                     or candidate[0] == keeper[0]
                     or candidate[1:3] != keeper[1:3]
@@ -276,10 +277,6 @@ def recover_canonical_duplicate_retirement(
                 current = os.stat(copy_path, follow_symlinks=False)
             except FileNotFoundError:
                 current = None
-            if candidate[3] == _RETIRED:
-                # A path reused after successful retirement is NEVER an
-                # orphan this task may delete, even if bytes happen to match.
-                return CanonicalRetirementResult(True, False, current is not None)
             if current is not None:
                 if (not stat.S_ISREG(current.st_mode)
                         or _file_signature(current) != marker["stat"]
@@ -300,10 +297,10 @@ def recover_canonical_duplicate_retirement(
                     or not _same_file(keeper_path, keeper_stat)):
                 return CanonicalRetirementResult(True, removed, True)
             changed = db.execute(
-                "UPDATE placements SET state=?,updated_at=? WHERE "
-                "placement_id=? AND path=? AND state=?",
-                (_RETIRED, int(time.time()), candidate_placement_id,
-                 candidate[0], _PENDING),
+                "DELETE FROM placements WHERE placement_id=? AND path=? "
+                "AND identity_id=? AND artifact_id=? AND state=?",
+                (candidate_placement_id, candidate[0], candidate[1],
+                 candidate[2], _PENDING),
             )
             if changed.rowcount != 1:
                 return CanonicalRetirementResult(True, removed, True)
