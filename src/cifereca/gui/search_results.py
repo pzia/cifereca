@@ -250,7 +250,7 @@ def _render_search_results(self) -> int:
             extras.append("Catalogue public Numilog · aucun achat attesté")
         elif item.source_provider == "numilog" and result_row(item)["state"] == "remote_owned":
             # Private inventory, NOT a locally available EPUB/ACSM.
-            extras.append("Mes achats Numilog · fichier local non présumé")
+            extras.append("Mes achats Numilog · fichier local non présumé · offre à vérifier")
         # Core's exact identity/credential/product entitlement is the only
         # purchase authority, not the provider's raw catalogue owned flag.
         right_state = (
@@ -296,7 +296,7 @@ def _render_search_results(self) -> int:
             callback = lambda button, selected=item: self.download_direct_item(selected, button)
         ui_rows.append(BookListItem(
             key, item.title, item.author or "", meta, source, item.thumbnail_url,
-            action_label="Ouvrir" if placement else (("Sauvegarder" if item.source_provider == "kobo" else "Télécharger") if direct else None),
+            action_label="Ouvrir" if placement else (("Sauvegarder" if item.source_provider == "kobo" else "Vérifier et télécharger" if item.source_provider == "numilog" else "Télécharger") if direct else None),
             action_callback=callback,
             action_icon_name="document-open-symbolic" if placement else ("document-save-symbolic" if direct else None),
         ))
