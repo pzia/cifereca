@@ -53,6 +53,45 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     The service still owns migration and rollback. Provider descriptors contain
     credential and account-option schemas; values contain no widgets.
     """
+    # A Settings snapshot is not trusted to retain the GTK editor's types.
+    # Guard global strings and toggles before any Path/shlex operation or
+    # draft.set(), so an unrelated save cannot coerce a stale widget value.
+    text_fields = (
+        'library_directory', 'download_command', 'post_download_command',
+        'download_directory', 'ebook_directory', 'audiobook_directory',
+    )
+    if any(type(values.get(key)) is not str for key in text_fields):
+        raise SettingsValidationError(
+            'Paramètres de répertoire ou de téléchargement invalides : recharger les paramètres.'
+        )
+    if type(values.get('experimental_actions')) is not bool:
+        raise SettingsValidationError(
+            'Préférence expérimentale invalide : recharger les paramètres.'
+        )
+    levels = values.get('levels')
+    level_index = values.get('diagnostics_level_index')
+    if (type(levels) not in (list, tuple)
+            or not levels or len(levels) > 32
+            or any(type(value) is not str for value in levels)
+            or type(level_index) is not int
+            or not 0 <= level_index < len(levels)):
+        raise SettingsValidationError(
+            'Niveau de diagnostic invalide : recharger les paramètres.'
+        )
+    provider_downloads = values.get('provider_downloads')
+    if type(provider_downloads) is not dict:
+        raise SettingsValidationError(
+            'Réglages de téléchargement fournisseur invalides : recharger les paramètres.'
+        )
+    for provider_id, fields in provider_downloads.items():
+        if (type(provider_id) is not str or not provider_id
+                or type(fields) is not dict
+                or any(type(fields.get(key)) is not str for key in (
+                    'command', 'post',
+                ))):
+            raise SettingsValidationError(
+                'Réglages de téléchargement fournisseur invalides : recharger les paramètres.'
+            )
     draft = deepcopy(config)
     # A malformed snapshot such as accounts={} is iterable but empty:
     # rebuilding from it could silently delete every editable provider account.
@@ -316,6 +355,16 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             )
     except ValueError as exc:
         raise SettingsValidationError(f'Commande de téléchargement invalide : {exc}')
+    # Preserve the existing priority of the detailed shlex error over an
+    # incomplete legacy provider row, then reject missing directory widgets
+    # before any new download settings can be constructed.
+    for editor in provider_downloads.values():
+        if any(type(editor.get(key)) is not str for key in (
+            'directory', 'ebook', 'audiobook',
+        )):
+            raise SettingsValidationError(
+                'Réglages de téléchargement fournisseur invalides : recharger les paramètres.'
+            )
     draft.set('downloads', _merge_download_config(
         draft.get('downloads', {}),
         directory=values['download_directory'].strip(),
