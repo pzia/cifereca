@@ -61,8 +61,10 @@ def test_activation_switch_states_file_consent_is_separate(provider, sync_capabl
     window, broker, calls, build, page = _fixture(sources=[source])
     group = window._sync_sources_box.children[0]
     activation = group.children[0].suffixes[0]
-    assert "autorisation distincte" in activation.tooltip if sync_capable else (
-        "n’autorise aucun téléchargement automatique" in activation.tooltip
+    expected = (
+        "autorisation distincte" if sync_capable
+        else "n’autorise aucun téléchargement automatique"
     )
+    assert expected in activation.tooltip
     assert window.runner.tasks == []
     assert not any(name == "set-enabled" for name, *_ in calls)
