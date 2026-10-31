@@ -67,6 +67,9 @@ def _safe_audit(value: Any) -> dict[str, Any]:
     """Reconstruct only closed Core evidence, never stringify raw payloads."""
     if type(value) is not dict or value.get("schema_version") != 1:
         raise ValueError("report_audit_invalid")
+    availability = value.get("snapshot_availability", "available")
+    if availability not in ("available", "unavailable"):
+        raise ValueError("report_audit_invalid")
     count = value.get("source_count")
     receipts = value.get("receipt_count")
     rows = value.get("sources")
@@ -117,12 +120,13 @@ def _safe_audit(value: Any) -> dict[str, Any]:
         raise ValueError("report_coverage_invalid")
     return {
         "schema_version": 1, "scope": "exact_account",
+        "snapshot_availability": availability,
         "scope_ref": _require_ref(value.get("scope_ref")), "read_only": True,
         "network": False, "source_count": count, "receipt_count": receipts,
         "counts": dict(sorted(counts.items())), "sources": safe_sources,
         "receipts": safe_receipts,
         "coverage": {
-            "source_references": "persisted_only",
+            "source_references": "persisted_only" if availability == "available" else "unavailable",
             "staging": ("configured_roots_only" if coverage.get("staging") == "configured_roots_only"
                         else "unavailable"),
             "filesystem": ("sha_checked" if coverage.get("filesystem") == "sha_checked"
@@ -225,8 +229,8 @@ def write_sync_report(
         "Cifereca — rapport de synchronisation ciblée",
         f"Provider: {provider_id}", f"Statut: {summary['status']}",
         f"Exit: {exit_code}", f"Build: {identity['commit_sha'] or 'unavailable'}",
-        f"Sources avant: {selected_before['source_count']}",
-        f"Sources après: {selected_after['source_count']}",
+        f"Sources avant: {selected_before['source_count'] if selected_before['snapshot_availability'] == 'available' else 'unavailable'}",
+        f"Sources après: {selected_after['source_count'] if selected_after['snapshot_availability'] == 'available' else 'unavailable'}",
         "État des placements (après) :",
     ]
     for key, number in selected_after["counts"].items():
