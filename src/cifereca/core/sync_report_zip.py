@@ -228,7 +228,7 @@ def write_sync_report(
         "run_ref": run_ref, "source_scope_ref": selected_before["scope_ref"],
         "started_at": start, "finished_at": end,
         "exit_code": exit_code, "status": summary["status"],
-        "events_coverage": "closed_correlation_only" if safe_events else "unavailable",
+        "events_coverage": "cli_phases_only" if safe_events else "unavailable",
         "http_trace_included": False, "file_paths_included": False,
         "provenance": "local_snapshots_not_provider_inventory",
     }
