@@ -94,9 +94,21 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         descriptor = descriptors.get(editor['provider'])
         if descriptor is None or descriptor.state != 'ready':
             raise SettingsValidationError('Fournisseur indisponible : recharger les paramètres avant de sauvegarder.')
+        # A plugin may change its descriptor after Settings was opened.
+        # Refuse stale or untyped snapshots rather than dropping a credential,
+        # coercing an activation flag, or raising an unhandled KeyError.
+        if type(editor.get('enabled')) is not bool:
+            raise SettingsValidationError('Activation de compte invalide : recharger les paramètres.')
+        submitted_fields = editor.get('fields')
+        if type(submitted_fields) is not dict:
+            raise SettingsValidationError('Identifiants de compte indisponibles : recharger les paramètres.')
         credentials: dict[str, str] = {}
         for field in descriptor.credential_fields:
-            credentials[field.key] = editor['fields'][field.key]
+            if field.key not in submitted_fields or type(submitted_fields[field.key]) is not str:
+                raise SettingsValidationError(
+                    'Schéma des identifiants modifié : recharger les paramètres.'
+                )
+            credentials[field.key] = submitted_fields[field.key]
         options: dict[str, Any] = dict(editor.get('original_options') or {})
         for field in getattr(descriptor, 'account_options', ()):
             if field.key not in editor.get('option_fields', {}):
