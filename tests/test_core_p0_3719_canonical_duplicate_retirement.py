@@ -75,9 +75,9 @@ def test_relinked_unreferenced_canonical_copy_can_retire_without_losing_origins(
     assert not result.cleanup_pending
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
     assert not paths[1].exists()
-    assert storage.placement_get(publications[1].placement_id) is None
+    assert storage.placement_get(publications[1].placement_id)["state"] == "dedup_retired"
     assert storage.placement_get(publications[0].placement_id)["state"] == "present"
-    assert rows(storage) == (1, 2, 3, 3)
+    assert rows(storage) == (1, 3, 3, 3)
 
     # Both provider OriginLinks still bind to a real same-profile verified
     # Artifact even though their former copies are no longer both on disk.
@@ -133,7 +133,8 @@ def test_sql_failure_never_precedes_physical_file_loss(rig):
     storage, _root, paths, publications, _snapshot, _lock = rig
     with storage._lock, storage._connect() as db:
         db.execute(
-            "CREATE TRIGGER refuse_retirement BEFORE DELETE ON placements "
+            "CREATE TRIGGER refuse_retirement BEFORE UPDATE OF state ON placements "
+            "WHEN NEW.state='dedup_cleanup_pending' "
             "BEGIN SELECT RAISE(ABORT,'synthetic_retire_failure'); END"
         )
     with pytest.raises(sqlite3.IntegrityError, match="synthetic_retire_failure"):
@@ -156,7 +157,7 @@ def test_post_commit_unlink_denial_keeps_extra_recoverable_copy(rig, monkeypatch
     assert result.retired_placement
     assert not result.removed_file and result.cleanup_pending
     assert all(path.read_bytes() == BYTES for path in paths)
-    assert storage.placement_get(publications[1].placement_id) is None
+    assert storage.placement_get(publications[1].placement_id)["state"] == "dedup_cleanup_pending"
     assert storage.placement_get(publications[0].placement_id)["state"] == "present"
 
 
