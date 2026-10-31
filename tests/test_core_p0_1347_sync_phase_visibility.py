@@ -74,7 +74,7 @@ def test_phase_list_is_bounded_and_extra_untrusted_phases_ignored():
 
 
 
-def test_numilog_generic_phase_points_to_separate_backup_without_claiming_success():
+def test_unknown_materialization_capability_is_not_rewritten_by_provider_name():
     item = _source((
         phase("discover_rights", "success"),
         phase("materialize", "not_supported"),
@@ -84,8 +84,7 @@ def test_numilog_generic_phase_points_to_separate_backup_without_claiming_succes
     item.sync_capabilities = ("remote_inventory", "entitlements")
     summary = sync_source_presentation(item).summary
     assert "Notices et droits : Réussie" in summary
-    assert "Téléchargement local : Voir « Sauvegarde automatique des achats Numilog »" in summary
-    assert "Non prise en charge" not in summary
+    assert "Téléchargement local : Non prise en charge" in summary
     assert "Téléchargement local : Réussie" not in summary
     # A genuine materialization failure is never replaced by this pointer.
     item.phase_states = (phase("materialize", "failed"),)
