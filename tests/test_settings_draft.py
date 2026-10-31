@@ -953,3 +953,29 @@ def test_invalid_provider_identity_widget_snapshot_fails_closed(editor, invalid)
     with pytest.raises(SettingsValidationError, match="Identité de compte fournisseur invalide"):
         validate(editor, descriptors={"provider.future": descriptor("provider.future")})
     assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("legacy_owner", [None, 123, True, [], {"bad": "owner"}])
+def test_existing_account_malformed_owner_cannot_rebind_to_first_profile(
+    editor, legacy_owner,
+):
+    """Even corrupt persisted owner metadata must not grant a new destination."""
+    config, values = editor
+    original = dict(
+        id="legacy", provider="provider.future",
+        identity_id=legacy_owner, enabled=False,
+        credentials={"username": "private-saved"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(original)])
+    item = account("provider.future", identity="", account_id="legacy")
+    item.update(
+        enabled=False, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        fields={"username": "private-saved"},
+    )
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
