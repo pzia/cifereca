@@ -118,13 +118,18 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 'Options du fournisseur invalides : recharger les paramètres.'
             )
         options: dict[str, Any] = dict(original_options)
+        option_fields = editor.get('option_fields', {})
+        if type(option_fields) is not dict:
+            raise SettingsValidationError(
+                'Schéma des options modifié : recharger les paramètres.'
+            )
         for field in getattr(descriptor, 'account_options', ()):
-            if field.key not in editor.get('option_fields', {}):
+            if field.key not in option_fields:
                 continue  # A legacy editor does not silently reset saved options.
             # AccountOptionField is a declarative TEXT schema. Never turn
             # None/bool/dicts from a stale widget snapshot into a plausible
             # provider option by applying str() (e.g. endpoint='None').
-            raw_value = editor['option_fields'][field.key]
+            raw_value = option_fields[field.key]
             if type(raw_value) is not str:
                 raise SettingsValidationError(f'Valeur d’option invalide : {field.label}')
             if field.default is None:
