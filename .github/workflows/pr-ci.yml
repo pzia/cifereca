@@ -140,6 +140,13 @@ jobs:
             IFS=$'\t' read -r core_mode core_targets e2e_scenario < <(
               python3 scripts/ci-select-core-tests.py "$changed_file"
             )
+            # Deleted or renamed tests can invalidate other suites even when
+            # another changed test remains. Never skip their consumers.
+            if git diff --name-status "$BASE_SHA...$HEAD_SHA" -- tests/ | \
+               grep -Eq '^(D|R[0-9]*|C[0-9]*|T|U)[[:space:]]'; then
+              core_mode=full
+              core_targets=tests
+            fi
           fi
 
           if matches '^\.github/workflows/'; then
