@@ -1,4 +1,4 @@
-"""#2888: original PNB borrow exceptions remain in the canonical local log.
+"""#3867: signed PNB borrow exceptions never enter the canonical local log.
 
 No Paris account, HTTP request, actual borrow/PNB or extra log capture is made.
 """
@@ -19,7 +19,7 @@ class Diagnostics:
         self.rows.append((args, kwargs))
 
 
-def test_existing_pnb_borrow_failure_trace_retains_original_type_message_and_stack(caplog):
+def test_pnb_borrow_failure_keeps_type_and_closed_code_without_private_trace(caplog):
     diagnostics = Diagnostics()
     client = ParisClient("https://example.test", diagnostics=diagnostics)
     # Value is synthetic, never a real signed token or real user's credentials.
@@ -38,17 +38,18 @@ def test_existing_pnb_borrow_failure_trace_retains_original_type_message_and_sta
                    if "TRACE paris pnb-loan failed" in row.getMessage()]
         assert len(records) == 1  # do not invent a second attempted action
         event = records[0]
-        assert event.exc_info is not None
-        assert event.exc_info[0] is RuntimeError
-        assert event.exc_info[1] is original
-        assert "fail_borrow" in caplog.text
-        assert original_text in caplog.text
+        assert event.exc_info is None
+        assert "fail_borrow" not in caplog.text
+        assert original_text not in caplog.text
         assert "RuntimeError" in caplog.text
         # Public diagnostics remain at their previous shape and status.
         assert len(diagnostics.rows) >= 1
         category, operation, status, _duration, detail = diagnostics.rows[-1][0]
         assert (category, operation, status) == ("PNB", "borrow digital", "error")
         assert detail["error"] == "RuntimeError"
+        assert detail["code"] == "paris_pnb_operation_failed"
+        assert detail["message"] == detail["code"]
+        assert original_text not in repr(diagnostics.rows)
     finally:
         client.close()
 
