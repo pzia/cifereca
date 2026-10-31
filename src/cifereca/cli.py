@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         command_parser.add_argument("--provider", default="")
         command_parser.add_argument("--identity", default="")
         command_parser.add_argument("--credential", default="")
-        command_parser.add_argument("--account-id", default="")
+        command_parser.add_argument("--account-id", default=None)
         command_parser.add_argument("--json", action="store_true")
     generic_sub.choices["run"].add_argument(
         "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
@@ -312,6 +312,9 @@ def main(argv: list[str] | None = None) -> int:
                 # list reads persisted bindings only: no connect, no
                 # provider session and no remote inventory request.
                 if a.sync_cmd == "run":
+                    if not (a.provider and a.identity and a.credential
+                            and a.account_id is not None):
+                        raise SyncSelectionError("source_scope_required")
                     service.connect_configured()
                 selectors = dict(
                     provider=a.provider, identity=a.identity,
