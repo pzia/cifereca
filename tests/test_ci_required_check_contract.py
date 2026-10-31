@@ -34,6 +34,7 @@ def test_required_job_identity_and_read_only_permissions_cannot_drift():
     assert re.search(r"(?m)^jobs:\n  ci:\n    name: PR CI\s*$", workflow)
     assert re.search(r"(?m)^permissions:\n  contents: read\s*$", workflow)
     assert "  cancel-in-progress: true\n" in workflow
+    assert "group: pr-ci-${{ github.event.pull_request.number || github.run_id }}" in workflow
     # A job-level/step-level condition must not silence the one required
     # context; skip expensive steps through the normal scope selector.
     assert not re.search(r"(?m)^  ci:\n(?:    (?!name:)[^\n]*\n)*    if:", workflow)
