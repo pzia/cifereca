@@ -695,6 +695,20 @@ def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
 class LibraryMaintenanceBrokerImpl:
     service: Any
 
+    def canonical_reference_migration_plan(
+        self, *, candidate_placement_id: str, keeper_placement_id: str,
+    ):
+        """Read-only historical dependency plan, not an unlink authorization."""
+        from .core.canonical_dedup_reference_plan import (
+            plan_verified_canonical_reference_migration,
+        )
+        return plan_verified_canonical_reference_migration(
+            self.service.storage,
+            library_root=_canonical_maintenance_root(self.service),
+            candidate_placement_id=candidate_placement_id,
+            keeper_placement_id=keeper_placement_id,
+        )
+
     def pending_canonical_advisories(self, *, identity_id: str | None = None):
         """Read-only post-publication duplicate inventory, not deletion consent."""
         from .core.canonical_dedup_advisory_review import (
