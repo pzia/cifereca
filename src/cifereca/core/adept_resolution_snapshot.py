@@ -93,14 +93,23 @@ def snapshot_paris_adept_local_evidence(
         # JSON canonicalization is deliberately strict: a nonserializable
         # legacy value must fail closed instead of being coerced with str()
         # into a misleadingly reproducible attestation.
+        def sorted_records(rows: list[Any]) -> list[str]:
+            return sorted(json.dumps(
+                row, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":"), allow_nan=False,
+            ) for row in rows)
+
         encoded = json.dumps(
             {
                 "version": 1,
                 "provider_id": "paris",
                 "loan_id": loan_id,
                 "item_id": item_id,
-                "historical_rights": rights,
-                "historical_acquisitions": acquisitions,
+                # Persisted SQL order is not an authority. Sorting keeps a
+                # snapshot stable if the same evidence is returned in a
+                # different order; duplicates remain visible and hashed.
+                "historical_rights": sorted_records(rights),
+                "historical_acquisitions": sorted_records(acquisitions),
                 "canonical_rows": [list(row) for row in canonical],
             },
             sort_keys=True, ensure_ascii=False, separators=(",", ":"),
