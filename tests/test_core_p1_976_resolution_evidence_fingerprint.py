@@ -75,7 +75,7 @@ def test_snapshot_has_stable_digest_and_never_exposes_credential_or_receipts(tmp
         db.close()
 
 
-@pytest.mark.parametrize("kind", ["change_receipt", "change_source_state", "add_origin"])
+@pytest.mark.parametrize("kind", ["change_receipt", "change_source_state", "add_origin", "change_artifact_size"])
 def test_canonical_provenance_change_invalidates_previous_local_snapshot(
     tmp_path, kind,
 ):
@@ -92,6 +92,13 @@ def test_canonical_provenance_change_invalidates_previous_local_snapshot(
                 sql.execute(
                     "UPDATE source_references SET state='inactive' "
                     "WHERE source_reference_id='source-a'"
+                )
+            elif kind == "change_artifact_size":
+                # DB metadata changed under an otherwise unchanged SHA/link.
+                # Actual ebook bytes are NOT rehashed by this read-only review.
+                sql.execute(
+                    "UPDATE artifacts SET size=43 "
+                    "WHERE artifact_id=?", ("sha256:" + "a" * 64,)
                 )
             else:
                 sql.execute(
