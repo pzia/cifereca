@@ -73,6 +73,12 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if identity_id in identity_ids:
             raise SettingsValidationError(f'Identité dupliquée : {identity_id}')
         identity_ids.add(identity_id)
+        if any(type(editor.get(key)) is not str for key in (
+            'directory', 'label', 'adept_profile', 'languages'
+        )):
+            raise SettingsValidationError('Champs d’identité invalides : recharger les paramètres.')
+        if type(editor.get('prefer_vo')) is not bool:
+            raise SettingsValidationError('Préférence de langue invalide : recharger les paramètres.')
         try:
             directory_name = directory_choice(editor['directory'], Path(values['library_directory'].strip() or '~/EBooks'))
         except ValueError as exc:
