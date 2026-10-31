@@ -176,3 +176,56 @@ def test_postcheck_must_not_claim_success_on_unconfirmed_deletion(rig, monkeypat
     assert result.status == "postcheck_failed" and not result.finished
     assert all(path.read_bytes() == BYTES for path in paths)
     assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+
+
+
+def test_sql_interruption_between_reference_relinks_is_safe_to_retry(rig):
+    import sqlite3
+
+    storage, _root, paths, pubs, _ = rig
+    _catalogue(rig)
+    backup(rig)
+    _journal(rig)
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "CREATE TRIGGER stop_backup_relink BEFORE UPDATE OF local_path "
+            "ON backup_items BEGIN SELECT RAISE(ABORT,'synthetic_sql_failure'); END"
+        )
+    failed = inspect(rig, action="commit", confirmed=True)
+    assert (failed.status, failed.reason) == ("blocked", "relink_refused")
+    assert storage.catalog_entry_get("catalogue:seller-b")["placement_id"] == pubs[0].placement_id
+    assert next(x for x in storage.backup_list()
+                if x["credential_id"] == "card-b")["local_path"] == str(paths[1])
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+    assert all(p.read_bytes() == BYTES for p in paths)
+    with storage._lock, storage._connect() as db:
+        db.execute("DROP TRIGGER stop_backup_relink")
+    restored = inspect(rig, action="commit", confirmed=True)
+    assert restored.status == "retired" and restored.finished
+    assert not paths[1].exists()
+    assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
+    assert rows(storage) == (1, 2, 3, 3)
+
+
+def test_postcheck_rejects_orphan_file_even_when_candidate_sql_row_disappears(
+    rig, monkeypatch,
+):
+    storage, _root, paths, pubs, _ = rig
+
+    def forged_sql_only_retirement(_storage, **_kwargs):
+        with _storage._lock, _storage._connect() as db:
+            db.execute(
+                "DELETE FROM placements WHERE placement_id=?",
+                (pubs[1].placement_id,),
+            )
+        # Synthetic faulty writer: claims success after SQL DELETE only.
+        return CanonicalRetirementResult(True, False, False)
+
+    monkeypatch.setattr(core, "retire_verified_canonical_duplicate",
+                        forged_sql_only_retirement)
+    result = inspect(rig, action="commit", confirmed=True)
+    assert result.status == "postcheck_failed"
+    assert not result.finished
+    assert all(path.read_bytes() == BYTES for path in paths)
+    assert storage.placement_get(pubs[1].placement_id) is None
+    assert storage.placement_get(pubs[0].placement_id)["state"] == "present"
