@@ -51,7 +51,7 @@ def test_write_exception_is_logged_without_credentials_and_no_retry(caplog):
 
 @pytest.mark.parametrize("provider,sync_capable", [
     ("provider.future", True), ("kobo", True), ("numilog", True),
-    ("paris", True), ("bnf-pret", True), ("catalogue.future", False),
+    ("paris", True), ("bnf-pret", False), ("catalogue.future", False),
 ])
 def test_activation_switch_states_file_consent_is_separate(provider, sync_capable):
     source = _source(
