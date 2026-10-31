@@ -149,15 +149,52 @@ jobs:
             fi
           fi
 
-          if matches '^\.github/workflows/'; then
-            core=true
-            core_mode=full
-            core_targets=tests
-            plugins=true
-            plugin_scope_all=true
-            packaging=true
-            install=true
-            dataset=true
+          if matches '^\\.github/workflows/'; then
+            # Scope only an isolated, recognized workflow edit. Any mixed or
+            # unknown diff keeps the existing exhaustive CI contract.
+            workflow_changed=""
+            if [[ "$(wc -l < "$changed_file")" -eq 1 ]]; then
+              workflow_changed="$(head -n 1 "$changed_file")"
+            fi
+            case "$workflow_changed" in
+              .github/workflows/core-tests.yml)
+                core=true
+                core_mode=ci-contract
+                core_targets="tests/test_ci_core_main_selection.py tests/test_ci_core_test_selection.py tests/test_ci_main_path_filters.py tests/test_ci_required_check_contract.py"
+                ;;
+              .github/workflows/plugin-tests.yml)
+                core=true
+                core_mode=ci-contract
+                core_targets="tests/test_ci_main_path_filters.py tests/test_ci_plugin_selection.py"
+                plugins=true
+                plugin_scope_all=true
+                ;;
+              .github/workflows/e2e-smoke.yml)
+                # E2E Smoke runs the full real GTK gate on its own PR trigger.
+                core=true
+                core_mode=ci-contract
+                core_targets="tests/test_ci_2027_e2e_replay_completeness.py tests/test_ci_select_e2e.py tests/test_e2e_ci_paths.py tests/test_ci_gtk_smoke_privacy.py tests/test_ci_required_check_contract.py"
+                ;;
+              .github/workflows/core-install.yml)
+                core=true
+                core_mode=ci-contract
+                core_targets="tests/test_ci_main_path_filters.py tests/test_ci_required_check_contract.py"
+                install=true
+                ;;
+              .github/workflows/dataset-harness.yml)
+                dataset=true
+                ;;
+              *)
+                core=true
+                core_mode=full
+                core_targets=tests
+                plugins=true
+                plugin_scope_all=true
+                packaging=true
+                install=true
+                dataset=true
+                ;;
+            esac
           fi
 
           python=false
