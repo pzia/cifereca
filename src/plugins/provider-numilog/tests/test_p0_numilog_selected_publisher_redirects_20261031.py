@@ -79,6 +79,10 @@ def test_core_selected_acsm_follows_attested_publisher_redirects(
         assert all("MesLivres" not in req.headers.get("referer", "")
                    for req in requested)
         assert len(public_clients) == 1
+        assert public_clients[0][2] == (
+            [SIGNED, publisher, FINAL] if with_second_redirect
+            else [SIGNED, publisher]
+        )
         # All signed hops are driven by the Core transport; static DNS
         # preflight is not security proof of the actual connected TCP peer.
     finally:
@@ -113,6 +117,7 @@ def test_selected_publisher_redirect_rejects_unsafe_target_without_second_get(
             )
         assert requested == [SIGNED]
         assert len(public_clients) == 1
+        assert public_clients[0][2] == [SIGNED]
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
@@ -139,6 +144,7 @@ def test_selected_redirect_owner_change_blocks_next_supplier_get(tmp_path, monke
             )
         assert requested == [SIGNED]
         assert len(public_clients) == 1
+        assert public_clients[0][2] == [SIGNED]
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
