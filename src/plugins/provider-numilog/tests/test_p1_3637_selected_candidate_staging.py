@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 import cifereca_numilog as provider
-from cifereca.plugin_api import ProviderCapabilityError
+from cifereca.plugin_api import ProviderCapabilityError, ProviderError
 from tests.test_p1_3252_selected_delivery_candidate import setup, selected
 from tests.test_p1_3252_targeted_delivery_offer import rig
 from tests.test_p1_3252_rights_observation_snapshot import bound_account
@@ -262,10 +262,10 @@ def test_selected_acsm_rejects_valid_epub_without_legacy_publication(
     (
         httpx.Response(
             302, headers={"location": (
-                "https://entrepot2r.numilog.com/fulfillment/another.acsm"
+                "https://127.0.0.1/fulfillment/another.acsm"
             )},
         ),
-        "redirect_unexpected",
+        "redirection réseau inattendue",
     ),
     (
         httpx.Response(
@@ -275,7 +275,7 @@ def test_selected_acsm_rejects_valid_epub_without_legacy_publication(
         "html_unexpected",
     ),
 ])
-def test_selected_numilog_signed_link_never_follows_unexpected_second_get(
+def test_selected_numilog_signed_link_never_follows_unsafe_or_html_second_get(
     tmp_path, response, reason,
 ):
     from tests.test_numilog_owned_js_delivery_p0 import SIGNED
@@ -291,7 +291,7 @@ def test_selected_numilog_signed_link_never_follows_unexpected_second_get(
         trust_env=False, follow_redirects=False,
     )
     try:
-        with pytest.raises(ProviderCapabilityError, match=reason):
+        with pytest.raises((ProviderError, ProviderCapabilityError), match=reason):
             session.rights_selected_delivery_candidate(
                 account, **selected(right, tmp_path),
             )
