@@ -1686,7 +1686,7 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
-        from cifereca.plugin_api import LibraryMutationRequest
+        from cifereca.plugin_api import Conflict, LibraryMutationRequest
 
         # Validate the entire potentially restored plan before the destructive
         # broker is accessed; never stringify untrusted placement IDs.
@@ -1778,11 +1778,28 @@ class DuplicateCleanupTool(_ReadOnlyTool):
             control.check_cancelled()
             control.report(current=index - 1, total=total, message=f"Doublon {index}/{total}")
             try:
-                mutation = broker.plan(LibraryMutationRequest(
+                legacy_request = LibraryMutationRequest(
                     "delete_duplicate",
                     placement_id=duplicate_id,
                     keep_placement_id=keep_id,
-                ))
+                )
+                try:
+                    mutation = broker.plan(legacy_request)
+                except Conflict as exc:
+                    # This tool's run() is reached after the destructive
+                    # confirmation dialog in the Maintenance host. A B
+                    # placement cannot use the historical DB-first deleter.
+                    # Only Core's *exact* supervised-required signal opts in
+                    # to its new confirmed, locked and recoverable engine.
+                    # Never infer canonical status from view metadata/SHA.
+                    if getattr(exc, "code", "") != "canonical_dedup_supervised_required":
+                        raise
+                    mutation = broker.plan(LibraryMutationRequest(
+                        "canonical_dedup",
+                        placement_id=duplicate_id,
+                        keep_placement_id=keep_id,
+                        options={"action": "commit", "confirmed": True},
+                    ))
                 result = broker.run(mutation, control)
                 # A changed counter is evidence of completed mutations, not
                 # an arbitrary provider value to coerce with int(). Refuse
