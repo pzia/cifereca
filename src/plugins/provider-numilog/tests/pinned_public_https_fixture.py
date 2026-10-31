@@ -29,3 +29,16 @@ def mock_selected_public_client(monkeypatch, provider, handler):
 
     monkeypatch.setattr(provider.HTTPX_TRANSPORT, "public_client", factory)
     return calls
+
+
+def mock_selected_public_client_from_session(monkeypatch, provider, session):
+    """Replay the legacy test's mocked transport via the Core public seam.
+
+    This is test-only and preserves the exact synthetic response script while
+    proving that a selected external GET cannot use session.client.
+    """
+    transport = session.client._transport
+    assert isinstance(transport, httpx.MockTransport)
+    return mock_selected_public_client(
+        monkeypatch, provider, transport.handle_request,
+    )
