@@ -30,6 +30,16 @@ def epub(path: Path):
             archive.writestr(info, payload)
 
 
+def test_legacy_recovery_epub_fixture_has_deterministic_zip_headers(tmp_path):
+    left, right = tmp_path / "a.epub", tmp_path / "nested" / "b.epub"
+    epub(left)
+    epub(right)
+    assert left.read_bytes() == right.read_bytes()
+    with zipfile.ZipFile(left) as archive:
+        assert all(info.date_time == (2020, 1, 1, 0, 0, 0)
+                   for info in archive.infolist())
+
+
 def setup_six(tmp_path, monkeypatch):
     service, account, session, _calls, broker, sid = _setup(tmp_path)
     _authorize(broker, sid)
