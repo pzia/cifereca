@@ -44,11 +44,54 @@ _NUMILOG_INDEX_REFUSAL_LABELS = {
 
 
 def _add_owned_download(window, detail, item, TaskPriority):
+    """Expose a Core-admitted action, or an explicit *read-only* refusal.
+
+    A remote-owned search result is not itself a delivery authorization.
+    Without a unique Core target we cannot offer an active download, but
+    silently omitting the action leaves the user unable to distinguish that
+    state from a missing GUI feature (#3848).
+    """
     resolve = getattr(window.service, 'owned_library_download_target', None)
-    if not callable(resolve):
-        return
-    target = resolve(item)
+    target = None
+    if callable(resolve):
+        try:
+            target = resolve(item)
+        except Exception:
+            # A failed target resolution must not crash Library rendering or
+            # put an upstream URL, credential or path into a GTK message.
+            diagnostic = getattr(window, 'diagnostics', None)
+            if diagnostic is not None:
+                try:
+                    diagnostic.add('UI', 'owned download target', 'error',
+                                   detail={'code': 'owned_download_target_unavailable'})
+                except Exception:
+                    pass
     if target is None:
+        # This indicator is not a right or an offer. Only an explicitly
+        # recognized remote purchase (or Core's positive scoped possession)
+        # can receive it; public notices and local-only files do not.
+        if type(item) is dict and not any(
+            item.get(key) for key in ('local', 'local_path', 'placement_id')
+        ):
+            identity = getattr(getattr(window.service, 'current_identity', None),
+                               'identity_id', None)
+            remote_purchase = item.get('state') == 'remote_owned'
+            possessions = item.get('possessions')
+            scoped_possession = (
+                type(possessions) in (tuple, list)
+                and any(
+                    type(row) is dict
+                    and row.get('identity_id') == identity
+                    and row.get('kind') == 'owned'
+                    and row.get('state') == 'active'
+                    for row in possessions
+                )
+            )
+            if remote_purchase or scoped_possession:
+                detail.add_group('Acquisition', [
+                    ('Téléchargement manuel',
+                     'Indisponible : aucune cible exacte vérifiée pour ce compte et cette identité.'),
+                ])
         return
     provider = getattr(target, 'provider_id', 'kobo')
     if provider not in {'kobo', 'numilog'}:
