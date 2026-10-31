@@ -322,7 +322,6 @@ def main(argv: list[str] | None = None) -> int:
                     connections = {
                         (row["identity_id"], row["provider_id"], row["credential_id"]): row
                         for row in core.storage.provider_connections()
-                        if row.get("enabled") is True
                     }
                     persisted = [
                         SimpleNamespace(
@@ -339,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
                     result = {"status": "success", "sources": [
                         {"provider": x.provider_id, "identity": x.identity_id,
                          "credential": x.credential_id, "account_id": x.unique_id,
-                         "connection_enabled": True}
+                         "connection_enabled": bool(connections[(x.identity_id, x.provider_id, x.credential_id)]["enabled"])}
                         for x in selected
                     ]}
                     code = 0
