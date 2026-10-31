@@ -160,12 +160,12 @@ jobs:
               .github/workflows/core-tests.yml)
                 core=true
                 core_mode=ci-contract
-                core_targets="tests/test_ci_core_main_selection.py tests/test_ci_core_test_selection.py tests/test_ci_main_path_filters.py tests/test_ci_required_check_contract.py"
+                core_targets="tests/test_ci_core_main_selection.py tests/test_ci_core_test_selection.py tests/test_ci_main_path_filters.py tests/test_ci_required_check_contract.py tests/test_ci_pr_workflow_scopes.py"
                 ;;
               .github/workflows/plugin-tests.yml)
                 core=true
                 core_mode=ci-contract
-                core_targets="tests/test_ci_main_path_filters.py tests/test_ci_plugin_selection.py"
+                core_targets="tests/test_ci_main_path_filters.py tests/test_ci_plugin_selection.py tests/test_ci_pr_workflow_scopes.py"
                 plugins=true
                 plugin_scope_all=true
                 ;;
@@ -178,7 +178,7 @@ jobs:
               .github/workflows/core-install.yml)
                 core=true
                 core_mode=ci-contract
-                core_targets="tests/test_ci_main_path_filters.py tests/test_ci_required_check_contract.py"
+                core_targets="tests/test_ci_main_path_filters.py tests/test_ci_required_check_contract.py tests/test_ci_pr_workflow_scopes.py"
                 install=true
                 ;;
               .github/workflows/dataset-harness.yml)
