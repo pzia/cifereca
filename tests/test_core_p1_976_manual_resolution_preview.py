@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from types import SimpleNamespace
 
 import pytest
+
+from cifereca import cli
 
 from cifereca.core.adept_origin_audit import _opaque_ref
 from cifereca.core.adept_resolution_preview import (
@@ -195,3 +199,56 @@ def test_invalid_selection_fails_without_storage_or_artifact_access(
     assert report["acquisition_ref"] is None
     _no_permission(report)
     assert "PRIVATE" not in repr(report)
+
+
+def test_cli_preview_selection_is_offline_and_cannot_mutate_adobe(tmp_path, monkeypatch, capsys):
+    db, store = _setup(tmp_path)
+    try:
+        core = SimpleNamespace(
+            storage=store, close=lambda: None,
+            library=SimpleNamespace(
+                connect_configured=lambda: (_ for _ in ()).throw(
+                    AssertionError("preview must not connect to providers")
+                ),
+            ),
+        )
+        monkeypatch.setattr(cli.CiferecaCore, "open", lambda **_: core)
+        assert cli.main([
+            "paris-adept", "preview-resolution",
+            "--loan-id", "paris-loan", "--item-id", "item-1",
+            "--source-reference-id", "source-a",
+            "--acquisition-ref", ACQUISITION_REF,
+        ]) == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["status"] == "review_candidate"
+        assert report["recorded_adept_profile_id"] == "adobe-a"
+        _no_permission(report)
+        assert store.calls == ["rights", "ledger"]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(("loan", "source", "acquisition"), [
+    ("", "source-a", ACQUISITION_REF),
+    (" paris-loan ", "source-a", ACQUISITION_REF),
+    ("paris-loan", " source-a", ACQUISITION_REF),
+    ("paris-loan", "source-a", "not-opaque"),
+    ("paris-loan", "source-a", "f" * 15),
+])
+def test_cli_preview_rejects_invalid_selection_without_opening_core(
+    monkeypatch, loan, source, acquisition,
+):
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("bad selection should not open Core")
+        ),
+    )
+    with pytest.raises(SystemExit) as caught:
+        cli.main([
+            "paris-adept", "preview-resolution",
+            "--loan-id", loan, "--item-id", "item-1",
+            "--source-reference-id", source,
+            "--acquisition-ref", acquisition,
+        ])
+    assert caught.value.code == 2
