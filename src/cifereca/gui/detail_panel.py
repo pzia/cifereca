@@ -41,7 +41,7 @@ def _commercial_search_usage(item: SearchResult, service=None) -> str:
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_provider == "numilog":
         if result_row(item)["state"] == "remote_owned":
-            return "Mes achats Numilog · fichier local non présumé"
+            return "Mes achats Numilog · fichier local non présumé · offre à vérifier"
         return "Notice Numilog · aucun droit d'achat attesté"
     if item.source_provider != "kobo":
         return ""
@@ -546,7 +546,9 @@ class DetailPanel(Gtk.Box):
             return
         content_type = self.window.service.content_type_for(item)
         action_label = "le livre audio" if content_type == "audiobook" else (file_format(item.format).upper() or "le fichier")
-        label = "Sauvegarder via kobo-adept" if item.source_provider == "kobo" else f"Télécharger {action_label}"
+        label = ("Sauvegarder via kobo-adept" if item.source_provider == "kobo"\
+                 else "Vérifier et télécharger" if item.source_provider == "numilog"\
+                 else f"Télécharger {action_label}")
         direct = self.window.action_button(label, "document-save-symbolic", suggested=True)
         direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
         self._actions([direct])
