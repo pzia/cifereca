@@ -10,6 +10,7 @@ from typing import Any
 
 from ..identities.directory_selection import directory_choice
 from .llm_settings import LLMSettingsError, normalize_llm_settings
+from .settings_legacy_kobo import apply_legacy_kobo_settings
 
 
 class SettingsValidationError(ValueError):
@@ -213,31 +214,8 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             raise SettingsValidationError(str(exc), 'Configuration IA invalide')
         ai_restart_required = new_ai_settings != config.get('llm', {})
         draft.set('llm', new_ai_settings)
-    try:
-        backup_interval = max(15, int(values['backup_interval'].strip() or '60'))
-    except ValueError as exc:
-        raise SettingsValidationError(f'Configuration Kobo invalide : {exc}')
     draft.set('library.directory', values['library_directory'].strip() or '~/EBooks')
-    # This historical global switch is rendered read-only. A Settings save
-    # must not turn its (possibly stale) widget snapshot into acquisition
-    # permission. Preserve its persisted value verbatim for migration and
-    # rollback; only source-scoped Sync consent grants new authorization.
-    # The retired global bypass is likewise not a user setting.
-    draft.set('kobo_backup.directory', values['backup_directory'].strip())
-    draft.set('kobo_backup.interval_minutes', backup_interval)
-    try:
-        raw_profile = values['vault_profile_index']
-        if type(raw_profile) is not int:
-            raise ValueError('profile index must be an integer')
-        selected_profile = raw_profile
-    except (KeyError, ValueError, TypeError) as exc:
-        raise SettingsValidationError('Profil de sauvegarde historique invalide') from exc
-    draft.set('kobo_backup.display_profile',
-              values['vault_profiles'][selected_profile]
-              if 0 <= selected_profile < len(values['vault_profiles']) else 'Android')
-    # Preserve the configured Kobo format: this Settings form has no
-    # editable format control. Defaulting is the executor's responsibility;
-    # saving another section must not silently turn kepub into epub.
+    apply_legacy_kobo_settings(draft, values, validation_error=SettingsValidationError)
     directory_change = any(
         row['id'] in current_dirs and row['directory_name'] != current_dirs[row['id']]
         for row in saved_identities
