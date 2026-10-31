@@ -179,3 +179,38 @@ def test_dataset_only_edits_cannot_disable_manual_smoke_contract():
     ):
         assert command in source, command
     assert "if: always()" in source
+
+
+@pytest.mark.parametrize(("workflow", "required"), [
+    (
+        "core-tests.yml",
+        (
+            "  core:\n",
+            "python3 scripts/ci_select_core_push.py",
+            "CORE_TEST_TARGETS: ${{ steps.scope.outputs.core_targets }}",
+            "python -m pytest -q --durations=10",
+        ),
+    ),
+    (
+        "plugin-tests.yml",
+        (
+            "  plugins:\n",
+            "python3 scripts/ci_select_plugin_tests.py",
+            "bash scripts/ci-run-plugin-tests.sh",
+        ),
+    ),
+    (
+        "core-install.yml",
+        (
+            "  installed-core:\n",
+            "python-version: [\"3.11\", \"3.12\", \"3.13\"]",
+            "python -m pip wheel --no-deps --no-build-isolation",
+            "bash scripts/ci-smoke-installed-wheel.sh",
+        ),
+    ),
+])
+def test_specialized_workflow_only_edits_preserve_actual_test_jobs(workflow, required):
+    source = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
+    assert "\njobs:\n" in source
+    for expected in required:
+        assert expected in source, (workflow, expected)
