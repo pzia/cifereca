@@ -158,6 +158,18 @@ def checkpoint_post_placement_duplicates(
     return key
 
 
+
+
+def _unique_checkpoint_fields(pairs):
+    """Reject ambiguous advisory JSON rather than selecting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("canonical_dedup_duplicate_checkpoint_field")
+        result[key] = value
+    return result
+
+
 def clear_checkpoint_if_no_duplicates(
     storage, *, library_root: Path, placement_id: str,
 ) -> bool:
@@ -190,7 +202,7 @@ def clear_checkpoint_if_no_duplicates(
         if marked is None or type(marked[0]) is not str:
             return False
         try:
-            record = json.loads(marked[0])
+            record = json.loads(marked[0], object_pairs_hook=_unique_checkpoint_fields)
         except (ValueError, TypeError, RecursionError):
             return False
         if (type(record) is not dict or set(record) != {
