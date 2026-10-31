@@ -80,7 +80,8 @@ def test_exact_selected_candidate_becomes_core_receipt_once_then_no_second_get(r
     assert placement["artifact_id"] == "sha256:" + SHA
     path = Path(placement["path"])
     assert path.read_bytes() == BYTES
-    assert path.is_relative_to(root / "A" / ".canonical-delivery")
+    assert path.parent == root / "A" / "Acquisitions"
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
     immediate = db.catalog_entries()
     assert len(immediate) == 1
     assert immediate[0]["placement_id"] == placement["placement_id"]
@@ -365,7 +366,8 @@ def test_uncommitted_staging_is_invisible_until_atomic_provider_publication(rig)
     service.session.rights_selected_delivery_candidate = candidate
     synced = synchronize_account_source(service, service.account)
     assert synced["canonical_execution"]["downloaded"] == 1
-    assert len(staged) == 1 and staged[0].is_file()
+    assert len(staged) == 1 and not staged[0].exists()
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
     # Only after Core commits both the exact OriginLink and Placement may
     # the physical library scanner reveal the EPUB/PDF as a local catalogue.
     scanned = catalog.scan()
@@ -412,3 +414,52 @@ def test_candidate_after_commit_catalogue_failure_recovers_without_second_get(ri
     entries = db.catalog_entries()
     assert len(entries) == 1
     assert entries[0]["placement_id"] == db.placements()[0]["placement_id"]
+
+
+def test_post_staging_sql_failure_retains_receipt_then_promotes_without_second_get(
+    rig, monkeypatch,
+):
+    """#3909: a crashed B cannot strand valid bytes or require another HTTP GET."""
+    from cifereca.core import convergence_execution
+
+    service, db, root = rig
+    _prepare(service)
+    gets = []
+    staged = []
+
+    def candidate(*args, **kwargs):
+        gets.append(kwargs["delivery_offer_id"])
+        delivery = _native(*args, **kwargs)
+        staged.append(delivery[0])
+        return delivery
+
+    service.session.rights_selected_delivery_candidate = candidate
+    publisher = convergence_execution.publish_completed_acquisition
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("private synthetic failure after verified promotion")
+
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", unavailable,
+    )
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["failed"] == 1
+    assert gets == ["signed-right-offer"]
+    assert len(staged) == 1 and staged[0].read_bytes() == BYTES
+    assert db.placements() == []
+
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", publisher,
+    )
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert db.placements()[0]["artifact_id"] == "sha256:" + SHA
+    final = Path(db.placements()[0]["path"])
+    assert final.parent == root / "A" / "Acquisitions"
+    assert final.read_bytes() == BYTES
+    assert not staged[0].exists()
+
+    third = synchronize_account_source(service, service.account)
+    assert third["canonical_execution"]["present_attested"] == 1
+    assert gets == ["signed-right-offer"]
