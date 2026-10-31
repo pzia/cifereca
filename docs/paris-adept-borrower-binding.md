@@ -161,8 +161,10 @@ cifereca-cli paris-adept preview-resolution \
 
 Cette prévisualisation ne crée **aucun** grant ni association. Elle refuse
 les choix absents/ambigus, les profils concurrents, les droits non attestés,
-les liens canoniques incomplets et les acquisitions enregistrées dans une
-autre bibliothèque sans preuve transactionnelle. Même `review_candidate`
+les liens canoniques incomplets, plusieurs branches v14 portant le même scope
+historique, les reçus ADEPT complets concurrents sous le même compte local et
+les acquisitions enregistrées dans une autre bibliothèque sans preuve
+transactionnelle. Même `review_candidate`
 exige encore la preuve du profil Adobe ayant réellement activé le prêt et
 `return_authorized=false`, `commit_available=false` restent constants.
 Les références sont des sélecteurs locaux, **jamais** des jetons d'autorisation.
