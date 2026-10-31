@@ -107,6 +107,11 @@ Les identifiants de prêt, d'item et de droit historique doivent être de
 JSON n'est jamais converti en texte pour fabriquer une égalité de
 transaction. Une métadonnée `provider_loan_id` présente mais malformée
 ne bénéficie pas du repli historique par `entitlement_id`.
+Les coordonnées d'origine (`identity_id`, `credential_id`, `account_id`)
+suivent la même règle : une valeur **présente** mais non textuelle ou contenant
+NUL est ignorée comme preuve de provenance. Un champ réellement **absent**
+conserve la valeur vide historique afin de ne pas invalider les anciens reçus.
+La comparaison ne se fait jamais sur la représentation texte d'un objet JSON.
 
 `audit-origin` reprend le résolveur Core `inspect_paris_adept_origins` :
 `sources` = visibilités issues des droits Paris persistés,
