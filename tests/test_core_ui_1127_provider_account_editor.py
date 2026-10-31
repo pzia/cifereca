@@ -261,3 +261,30 @@ def test_unknown_provider_option_declared_empty_default_stays_empty():
     )
     editor, _, _, _ = _render('future-provider', descriptor_options=[option])
     assert editor['option_fields']['endpoint'].text == ''
+
+
+
+def test_unknown_provider_malformed_credential_values_are_not_stringified():
+    """#3731: stored untyped credentials are never invented as secret strings."""
+    for invalid in (None, False, True, 17, ["secret"], {"secret": "x"}):
+        original = {
+            'id': 'source-existing', 'credentials': {
+                'card': invalid, 'password': invalid,
+            },
+        }
+        editor, _, _, _ = _render('synthetic-provider', data=original)
+        assert editor['fields']['card'].text == ''
+        assert editor['fields']['password'].text == ''
+        assert original['credentials']['card'] is invalid
+        assert original['credentials']['password'] is invalid
+
+
+def test_unknown_provider_valid_text_credentials_remain_unchanged():
+    original = {
+        'id': 'source-existing', 'credentials': {
+            'card': 'abc-0123', 'password': 'private-value',
+        },
+    }
+    editor, _, _, _ = _render('synthetic-provider', data=original)
+    assert editor['fields']['card'].text == 'abc-0123'
+    assert editor['fields']['password'].text == 'private-value'
