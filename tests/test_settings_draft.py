@@ -1178,3 +1178,136 @@ def test_clearing_required_option_of_active_account_is_rejected(editor):
     with pytest.raises(SettingsValidationError, match="Option obligatoire : Portail"):
         validate(editor, descriptors={"provider.future": desc})
     assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("invalid", [None, False, 42, "not-a-dict", ["account"], ("account",)])
+def test_stale_provider_account_row_is_a_validation_error_not_crash(editor, invalid):
+    config, values = editor
+    values["accounts"] = [invalid]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [False, 17, [], {}, None, " ", "\t"])
+def test_stale_provider_account_id_never_coerces_to_a_routable_id(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["id"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identifiant de compte fournisseur vide ou dupliqué"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, False, 42, [], {}, {"provider": "provider.future"}, ""])
+def test_invalid_provider_selector_fails_closed_without_python_type_error(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["provider"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Fournisseur indisponible"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, False, 12, ["PRIVATE"], {"bad": "name"}])
+def test_invalid_provider_account_label_fails_closed(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["label"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Libellé de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+def test_provider_account_valid_id_and_label_preserved_without_rebinding(editor):
+    config, values = editor
+    item = account("provider.future", account_id="source-012")
+    item["label"] = "Fournisseur fictif"
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    row, = draft.data["providers"]["accounts"]
+    assert row["id"] == "source-012"
+    assert row["provider"] == "provider.future"
+    assert row["label"] == "Fournisseur fictif"
+    assert row["identity_id"] == "alice"
+    assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("malformed", ["false", "true", 1, 0, None, [], {}, ["delete"]])
+def test_provider_account_delete_flag_must_be_exact_bool(editor, malformed):
+    """A truthy string such as 'false' must never remove a saved account."""
+    config, values = editor
+    prior = dict(
+        id="original", provider="provider.future", identity_id="alice",
+        enabled=False, credentials={"username": "original-user"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(prior)])
+    item = account("provider.future", account_id="original")
+    item["deleted"] = malformed
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Suppression de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+def test_provider_account_deletion_requires_explicit_true_and_does_not_write(editor):
+    config, values = editor
+    prior = dict(
+        id="original", provider="provider.future", identity_id="alice",
+        enabled=False, credentials={"username": "original-user"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(prior)])
+    item = account("provider.future", account_id="original")
+    item["deleted"] = True
+    values["accounts"] = [item]
+    draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert draft.data["providers"]["accounts"] == []
+    assert config.provider_accounts() == [prior]
+    assert not config.path.exists()
+
+
+
+@pytest.mark.parametrize("bad_flag", ["false", "true", 1, 0, None, [], {}])
+def test_identity_delete_requires_literal_bool_not_truthiness(editor, bad_flag):
+    """A false-looking string must never drop an existing identity on Save."""
+    config, values = editor
+    values["identities"].append(dict(
+        id="bob", label="Bob", directory="bob", adept_profile="",
+        languages="fr", prefer_vo=False,
+    ))
+    values["identities"][0]["deleted"] = bad_flag
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Suppression d’identité invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid_row", [None, 1, False, "invalid", ["alice"]])
+def test_malformed_identity_editor_is_a_validation_error(editor, invalid_row):
+    config, values = editor
+    values["identities"] = [invalid_row]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Éditeur d’identité invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid_id", [None, 1, False, ["alice"], {"id": "alice"}])
+def test_invalid_identity_id_type_is_not_coerced_on_save(editor, invalid_id):
+    config, values = editor
+    values["identities"][0]["id"] = invalid_id
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()

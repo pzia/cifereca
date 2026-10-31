@@ -58,8 +58,15 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     identity_ids: set[str] = set()
     directory_names: set[str] = set()
     for editor in values['identities']:
-        if editor.get('deleted'):
+        if type(editor) is not dict:
+            raise SettingsValidationError('Éditeur d’identité invalide : recharger les paramètres.')
+        delete_identity = editor.get('deleted', False)
+        if type(delete_identity) is not bool:
+            raise SettingsValidationError('Suppression d’identité invalide : recharger les paramètres.')
+        if delete_identity:
             continue
+        if type(editor.get('id')) is not str:
+            raise SettingsValidationError('Identité invalide : utilisez uniquement lettres, chiffres, point, tiret ou underscore.')
         identity_id = editor['id'].strip()
         if not identity_id or not re.fullmatch('[A-Za-z0-9._-]+', identity_id):
             raise SettingsValidationError('Identité invalide : utilisez uniquement lettres, chiffres, point, tiret ou underscore.')
@@ -106,13 +113,29 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if iid:
             scoped_accounts.setdefault((provider_id, iid), []).append(str(row.get('id') or ''))
     for editor in values['accounts']:
-        if editor.get('deleted'):
+        if type(editor) is not dict:
+            raise SettingsValidationError('Compte fournisseur invalide : recharger les paramètres.')
+        deletion_flag = editor.get('deleted', False)
+        if type(deletion_flag) is not bool:
+            raise SettingsValidationError(
+                'Suppression de compte fournisseur invalide : recharger les paramètres.'
+            )
+        if deletion_flag:
             continue
-        account_id = str(editor.get('id') or '')
-        if not account_id or account_id in account_ids:
+        # A stale or malformed GTK snapshot must never stringify a numeric ID,
+        # coerce a provider selector or raise on an unhashable provider value.
+        account_id = editor.get('id')
+        if (type(account_id) is not str or not account_id.strip()
+                or account_id in account_ids):
             raise SettingsValidationError('Identifiant de compte fournisseur vide ou dupliqué.')
+        provider_id = editor.get('provider')
+        if type(provider_id) is not str or not provider_id:
+            raise SettingsValidationError('Fournisseur indisponible : recharger les paramètres avant de sauvegarder.')
+        label_text = editor.get('label')
+        if type(label_text) is not str:
+            raise SettingsValidationError('Libellé de compte fournisseur invalide : recharger les paramètres.')
         account_ids.add(account_id)
-        descriptor = descriptors.get(editor['provider'])
+        descriptor = descriptors.get(provider_id)
         if descriptor is None or descriptor.state != 'ready':
             raise SettingsValidationError('Fournisseur indisponible : recharger les paramètres avant de sauvegarder.')
         if editor.get('invalid_saved_snapshot') is True:
@@ -233,7 +256,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         account_identity_id = selected_identity or saved_identities[0]['id']
         if account_identity_id not in identity_ids:
             raise SettingsValidationError(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
-        provider_id = str(editor['provider']).lower()
+        provider_id = provider_id.lower()
         limit = getattr(descriptor, 'max_accounts_per_identity', None)
         if limit is not None:
             if type(limit) is not int or limit < 1:
@@ -258,7 +281,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         saved_account.update({
             'id': editor['id'], 'provider': editor['provider'],
             'identity_id': account_identity_id,
-            'label': editor['label'].strip() or descriptor.display_name,
+            'label': label_text.strip() or descriptor.display_name,
             'enabled': editor['enabled'],
             'anonymous': not bool(descriptor.credential_fields),
             'credentials': credentials, 'options': options,
