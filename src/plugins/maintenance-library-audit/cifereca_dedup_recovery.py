@@ -70,6 +70,7 @@ class CanonicalDedupRecoveryTool:
         unverified = getattr(review, "unverified_count", None)
         listed = getattr(review, "candidates", None)
         pairs = []
+        keepers = set()
         good = (
             state == "reviewed" and type(unverified) is int and unverified == 0
             and type(listed) in (tuple, list) and len(listed) <= 1000
@@ -91,6 +92,9 @@ class CanonicalDedupRecoveryTool:
                     break
                 pairs.append(pair)
                 seen.add(pair[0])
+                keepers.add(pair[1])
+        if good and seen.intersection(keepers):
+            good = False
         if not good:
             # Never turn a partial or unclassifiable queue into a safe
             # destructive plan. Expose only an opaque failed preflight.
@@ -140,6 +144,7 @@ class CanonicalDedupRecoveryTool:
         identity_id = facts["identity_id"]
         pairs = facts["pairs"]
         seen = set()
+        keepers = set()
         for pair in pairs:
             if (
                 type(pair) is not tuple or len(pair) != 3
@@ -153,6 +158,13 @@ class CanonicalDedupRecoveryTool:
                     facts={"attempted": 0, "failures": 1},
                 )
             seen.add(pair[0])
+            keepers.add(pair[1])
+        if seen.intersection(keepers):
+            return MaintenanceResult(
+                False, 0, "Reprise non exécutée : plan invalide.",
+                warnings=("Aucune suppression : plan de reprise invalide.",),
+                facts={"attempted": 0, "failures": 1},
+            )
         broker = self._broker()
         # The host confirms a destructive plan, then replans while holding
         # the same acquisition lock. Repeat that read-only check here before
