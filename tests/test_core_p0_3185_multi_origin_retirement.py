@@ -3,7 +3,7 @@ from pathlib import Path
 
 from tests.test_core_p0_3185_canonical_backup_relink import rig
 from tests.test_core_p0_3185_dedup_supervisor import inspect
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
+from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, store
 
 
 def provenance(storage):
