@@ -63,6 +63,18 @@ La racine est exclusivement celle de `service.config.get('library.directory')`; 
 
 L'opération historique `delete_duplicate` reste réservée aux Placements non canoniques avec contrat de portée legacy. Elle **ne peut pas** supprimer un Placement B `provider_id IS NULL AND source_item_id IS NULL`. L'outil GTK `library.duplicates.cleanup` doit utiliser l'API supervisée après son dialogue destructif (raccordement #3821).
 
+## Inventaire des avis de doublon post-placement (PR #3980)
+
+Les checkpoints consultatifs `core.canonical-dedup-pending.v1.*` sont une **file de diagnostic**, pas des tombstones et encore moins une autorisation de supprimer. Compter les **enregistrements distincts**, jamais le nombre de lignes de log `canonical_dedup_pending` qui ont pu être répétées.
+
+API Core (lecture seule) : `review_canonical_dedup_advisories(storage, identity_id=...)`, accessible à la maintenance par `LibraryMaintenanceBrokerImpl.pending_canonical_advisories(identity_id=...)`. Le snapshot SQLite applique des limites fermées (250 checkpoints / 64 Kio de JSON par checkpoint), vérifie l'identité, l'Artifact et la portée de chaque Placement. Il ne renvoie aucun chemin privé.
+
+- `pending_preview` / `physical_review_required` : enregistrements SQLite cohérents **mais octets NON vérifiés** par ce lecteur ; demander ensuite un `preview` Core frais. Cela ne constitue pas une autorisation.
+- `blocked` : checkpoint invalide, changement de Placement, propriétaire incohérent, Artifact absent ou retrait en cours ; conserver le marqueur et examiner.
+- `partial`, `over_budget`, `unavailable` : absence de preuve d'inventaire complet ; ne jamais convertir en « zéro doublon ».
+
+Un checkpoint de **paire exacte** est acquitté seulement à la fin d'un retrait supervisé entièrement vérifié (#3976), dans la transaction de finalisation de la tombstone, après effacement, `fsync` et contrôle du keeper. En présence d'une troisième copie, d'un marqueur inconnu ou d'une interruption, le marqueur reste pour examen. Les changements d'origine et de droits sont interdits.
+
 ## Points de reprise et matrice de refus
 
 | Frontière | État conservé | Action autorisée |
