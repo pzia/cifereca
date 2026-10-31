@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from functools import wraps
 import hashlib
 import ipaddress
-import math
 import os
 from pathlib import Path
 import secrets
@@ -162,7 +161,6 @@ def download_attested_https(
             or type(max_redirects) is not int
             or not 0 <= max_redirects <= _MAX_REDIRECTS
             or type(max_duration) not in (int, float)
-            or not math.isfinite(max_duration)
             or not 0 < max_duration <= 3600):
         raise ValueError("delivery_parameters_invalid")
     origin = _destination(url)
