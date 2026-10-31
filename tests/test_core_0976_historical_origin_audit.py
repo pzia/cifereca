@@ -569,3 +569,33 @@ def test_invalid_nontext_scope_cannot_call_artifact_inspector():
         assert result["origins"] == result["sources"] == []
         assert result["origin_resolution"] == "unknown"
         assert "PRIVATE-TOKEN" not in repr(result)
+
+
+def test_same_paris_borrower_with_distinct_library_destination_is_an_indication():
+    right = _right("alice", "paris-a")
+    completed = _acq("bob", "paris-a", "adept-historical", state="attested")
+    before = deepcopy((right, completed))
+    report = _audit([right], [completed])
+    source, = report["sources"]
+    origin, = report["origins"]
+    assert source["library_identity_id"] == "alice"
+    assert origin["library_identity_id"] == "bob"
+    assert source["source_ref"] != origin["source_ref"]
+    assert source["paris_borrower_ref"] == origin["paris_borrower_ref"]
+    assert origin["source_visibility_evidence"] == "acquisition_only"
+    assert report["shared_visibility"] is False
+    assert (right, completed) == before
+
+
+def test_borrower_only_reference_rejects_malformed_historical_account_coordinates():
+    right = _right("alice", "paris-a")
+    right["account_id"] = {"not": "a-paris-account"}
+    origin = _acq("bob", "paris-a", "adept-historical", state="attested")
+    origin["account_id"] = ["primary"]
+    report = _audit([right], [origin])
+    source, = report["sources"]
+    historical, = report["origins"]
+    assert source["paris_borrower_ref"] is None
+    assert historical["paris_borrower_ref"] is None
+    assert source["source_ref"] != historical["source_ref"]
+    assert historical["source_visibility_evidence"] == "acquisition_only"

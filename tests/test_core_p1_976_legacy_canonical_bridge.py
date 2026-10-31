@@ -368,3 +368,81 @@ def test_multiple_canonical_branches_without_historical_record_are_not_false_con
         assert not result["return_authorized"]
     finally:
         db.close()
+
+
+def test_other_library_destination_same_paris_borrower_is_visible_but_not_authority(
+    tmp_path,
+):
+    db = Storage(tmp_path / "other-library.db")
+    try:
+        _artifact(db)
+        with db._lock, db._connect() as conn:
+            _canonical(conn, "right-alice", identity="alice", credential="paris-a")
+        # The Paris right belongs to Alice's local library, while a complete,
+        # inventory-attested ADEPT acquisition was recorded under Bob's
+        # library identity for the *same* Paris credential and account.
+        store = EvidenceStore(
+            db, rights=[_historical_right("alice", "paris-a")],
+            acquisitions=[_historical_acq("bob", "paris-a", profile="historical-hb")],
+        )
+        report = _review(store)
+        assert report["historical_inventory_status"] == "inventory_attested"
+        assert report["historical_origin_resolution"] == "single_inventory_attested"
+        assert report["status"] == "evidence_gap"
+        assert "historical_acquisition_other_library_identity" in report["review_reasons"]
+        assert "historical_acquisition_without_canonical_source" in report["review_reasons"]
+        assert report["historical_other_library_acquisition_count"] == 1
+        assert report["historical_unmatched_acquisition_count"] == 1
+        source, = report["sources"]
+        assert source["historical_entitlement_present"] is True
+        assert source["historical_acquisition_count"] == 0
+        assert source["historical_other_library_acquisition_count"] == 1
+        assert source["legacy_scope_overlap"] == "persisted_entitlement_scope_only"
+        assert report["adobe_profile_resolution"] == "unknown"
+        assert report["requires_explicit_review"] is True
+        assert report["return_authorized"] is False
+    finally:
+        db.close()
+
+
+def test_different_paris_borrower_never_looks_like_cross_library_destination(
+    tmp_path,
+):
+    db = Storage(tmp_path / "other-borrower.db")
+    try:
+        _artifact(db)
+        with db._lock, db._connect() as conn:
+            _canonical(conn, "right-alice", identity="alice", credential="paris-a")
+        report = _review(EvidenceStore(
+            db, rights=[_historical_right("alice", "paris-a")],
+            acquisitions=[_historical_acq("bob", "paris-b", profile="historical-hb")],
+        ))
+        assert report["status"] == "evidence_gap"
+        assert report["historical_unmatched_acquisition_count"] == 1
+        assert report["historical_other_library_acquisition_count"] == 0
+        assert "historical_acquisition_other_library_identity" not in report["review_reasons"]
+        assert report["sources"][0]["historical_other_library_acquisition_count"] == 0
+        assert not report["return_authorized"]
+    finally:
+        db.close()
+
+
+def test_malformed_historical_account_never_looks_like_same_paris_borrower(
+    tmp_path,
+):
+    db = Storage(tmp_path / "invalid-account.db")
+    try:
+        _artifact(db)
+        with db._lock, db._connect() as conn:
+            _canonical(conn, "right-alice", identity="alice", credential="paris-a")
+        origin = _historical_acq("bob", "paris-a", profile="historical-hb")
+        origin["account_id"] = ["primary"]
+        report = _review(EvidenceStore(
+            db, rights=[_historical_right("alice", "paris-a")],
+            acquisitions=[origin],
+        ))
+        assert report["historical_other_library_acquisition_count"] == 0
+        assert report["historical_unmatched_acquisition_count"] == 1
+        assert "historical_acquisition_other_library_identity" not in report["review_reasons"]
+    finally:
+        db.close()

@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .adept_canonical_origin_review import review_paris_canonical_adept_links
-from .adept_origin_audit import _opaque_ref, inspect_paris_adept_origins
+from .adept_origin_audit import (
+    _opaque_ref, _paris_borrower_ref, inspect_paris_adept_origins,
+)
 
 
 def review_paris_adept_transaction(
@@ -67,6 +69,25 @@ def review_paris_adept_transaction(
         (row["library_identity_id"], row["credential_id"], row["account_id"])
         for row in canonical["sources"]
     )
+    # The borrower scope omits the destination library identity. A historical
+    # ADEPT acquisition stored under another identity is *only* a claim about
+    # this Paris account, not evidence of who fulfilled the Adobe licence.
+    canonical_borrowers: dict[str, set[str]] = {}
+    for row in canonical["sources"]:
+        borrower_ref = _paris_borrower_ref(
+            row["credential_id"], row["account_id"],
+        )
+        if borrower_ref:
+            canonical_borrowers.setdefault(borrower_ref, set()).add(
+                row["library_identity_id"]
+            )
+    cross_library_origins = [
+        origin for origin in historical["origins"]
+        if origin.get("paris_borrower_ref") in canonical_borrowers
+        and origin["library_identity_id"] not in canonical_borrowers[
+            origin["paris_borrower_ref"]
+        ]
+    ]
     matched_refs: set[str] = set()
     sources = []
     for source in canonical["sources"]:
@@ -77,6 +98,12 @@ def review_paris_adept_transaction(
         historical_ref = _opaque_ref("paris", *scope)
         exact_right = historical_ref in seen_historical_rights
         history_count = historical_origins.get(historical_ref, 0)
+        borrower_ref = _paris_borrower_ref(scope[1], scope[2])
+        other_destination_count = sum(
+            1 for origin in historical["origins"]
+            if borrower_ref and origin.get("paris_borrower_ref") == borrower_ref
+            and origin["library_identity_id"] != scope[0]
+        )
         if exact_right or history_count:
             matched_refs.add(historical_ref)
         # Multiple v14 branches under one legacy scope cannot be resolved
@@ -99,6 +126,7 @@ def review_paris_adept_transaction(
             "legacy_scope_overlap": overlap,
             "historical_entitlement_present": exact_right,
             "historical_acquisition_count": history_count,
+            "historical_other_library_acquisition_count": other_destination_count,
             "canonical_artifact_count": len(source["artifacts"]),
             "canonical_link_pairs_unverified": sum(
                 1 for row in source["artifacts"]
@@ -129,6 +157,8 @@ def review_paris_adept_transaction(
         reasons.append("historical_entitlement_without_canonical_source")
     if unmatched_origins:
         reasons.append("historical_acquisition_without_canonical_source")
+    if cross_library_origins:
+        reasons.append("historical_acquisition_other_library_identity")
     if any(row["canonical_source_state"] != "active" for row in sources):
         # An inactive or unknown source is not necessarily revoked; do not
         # turn historical state into a live negative provider observation.
@@ -159,6 +189,7 @@ def review_paris_adept_transaction(
         "sources": sources,
         "historical_unmatched_source_count": len(unmatched_sources),
         "historical_unmatched_acquisition_count": unmatched_origins,
+        "historical_other_library_acquisition_count": len(cross_library_origins),
         # This cannot progress to a binding/return decision without explicit
         # Adobe inventory evidence tied to the *exact* transaction.
         "adobe_profile_resolution": "unknown",
@@ -168,6 +199,8 @@ def review_paris_adept_transaction(
         "note": (
             "Un recouvrement exact des scopes Paris est un indice local, "
             "pas une preuve de la branche historique, du profil Adobe "
-            "réellement activé, ni de l'autorisation de restitution."
+            "réellement activé, ni de l'autorisation de restitution. "
+            "Une acquisition enregistrée dans une autre bibliothèque reste "
+            "un indice sans autorité d'emprunt ou de retour."
         ),
     }
