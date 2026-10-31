@@ -135,9 +135,10 @@ def test_gtk_source_row_never_coerces_malformed_flags_into_actions(
 ):
     from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
 
+    flags = dict(enabled=True, connected=True, sync_capable=True)
+    flags[field] = invalid
     source = _source(
-        provider_id="provider.future", source_id="future-account",
-        enabled=True, connected=True, sync_capable=True, **{field: invalid},
+        provider_id="provider.future", source_id="future-account", **flags,
     )
     window, broker, calls, _build, _page = _fixture(sources=[source])
     group = window._sync_sources_box.children[0]
