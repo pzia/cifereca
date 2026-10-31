@@ -75,3 +75,18 @@ def test_other_unrelated_placement_can_be_updated_while_tombstone_pending(rig):
     assert own == pubs[0].placement_id
     assert storage.placement_get(pubs[1].placement_id)["state"] == "dedup_cleanup_pending"
     assert all(p.read_bytes() == BYTES for p in paths)
+
+
+def test_plain_placement_delete_cannot_erase_recovery_evidence(rig):
+    storage, _root, paths, pubs, _snapshot, _lock = rig
+    raw = _mark_pending(rig)
+    before = rows(storage)
+    with pytest.raises(ValueError, match="dedup_cleanup_pending"):
+        storage.placement_delete(pubs[1].placement_id)
+    with storage._lock, storage._connect() as db:
+        assert db.execute(
+            "SELECT state,metadata_json FROM placements WHERE placement_id=?",
+            (pubs[1].placement_id,),
+        ).fetchone() == ("dedup_cleanup_pending", raw)
+    assert rows(storage) == before
+    assert paths[1].read_bytes() == BYTES
