@@ -509,3 +509,47 @@ def test_cancelled_staging_write_removes_partial_epub(tmp_path, monkeypatch):
         assert session.diagnostic_state()["staged_attempts"] == 1
     finally:
         session.close()
+
+
+def test_v2_inventory_failure_preserves_positive_only_pagination():
+    session, (a, _) = fixture(
+        scenario="bulk", bulk_count=2, page_size=1,
+        inventory_failures_per_page=1,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.downloadable_resource_snapshot(a)
+        first = session.downloadable_resource_snapshot(a)
+        assert not first.authorizes_negative_reconciliation
+        assert len(first.resources) == 1
+        assert first.resources[0].source.edition_id == "bulk-0000"
+        assert first.resume_cursor == "offset:1"
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.downloadable_resource_snapshot(a, resume_cursor=first.resume_cursor)
+        second = session.downloadable_resource_snapshot(
+            a, resume_cursor=first.resume_cursor,
+        )
+        assert not second.authorizes_negative_reconciliation
+        assert [r.source.edition_id for r in second.resources] == ["bulk-0001"]
+        assert second.resume_cursor == ""
+    finally:
+        session.close()
+
+
+def test_reconnect_restarts_synthetic_inventory_failure_budget():
+    session, (a, _) = fixture(
+        scenario="empty", mode="one", inventory_failures_per_page=1,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.rights_observation_snapshot(a)
+        assert session.rights_observation_snapshot(a).rights == ()
+        session.close()
+        (fresh,) = session.connect()
+        fresh.identity_id = "identity-a"
+        session.identity_broker = Broker([fresh])
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.rights_observation_snapshot(fresh)
+        assert session.rights_observation_snapshot(fresh).rights == ()
+    finally:
+        session.close()
