@@ -14,10 +14,6 @@
       "version": "0.3.4",
       "name": "Cifereca EPUB/PDF Optimizer"
     },
-    "org.cifereca.integration.cifericaopds": {
-      "version": "0.1.0",
-      "name": "CifericaOPDS — sources dynamiques (pilote)"
-    },
     "org.cifereca.literary-criticism": {
       "version": "0.3.8",
       "name": "Critique littéraire"

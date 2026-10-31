@@ -658,7 +658,7 @@ def test_2332_baen_native_gtk_offline_partial_and_failures_are_routed():
         encoding="utf-8"
     )
     section = matrix.split("[package.baen]", 1)[1].split(
-        "[package.cifericaopds]", 1
+        "[package.dev-updater]", 1
     )[0]
     assert 'gtk_scenarios = ["e2e/public_fault_search_probe.py"]' in section
     from importlib.util import module_from_spec, spec_from_file_location

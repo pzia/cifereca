@@ -11,11 +11,6 @@ gtk_scenarios = ["e2e/public_fault_search_probe.py"]
 data = []
 gap = "Baen : faux catalogue/fiches/EPUB HTTP et recette GTK synthétique 429/503/partiel ; aucune preuve du serveur Baen réel, de ses règles q/page ou de comptes"
 
-[package.cifericaopds]
-contract_tests = ["src/plugins/cifericaopds/tests/test_cifericaopds.py"]
-data = []
-gap = "Collection de providers virtuels en pilote fixture ; aucune preuve de service HTTP ni E2E GTK certifiée"
-
 [package.dev-updater]
 contract_tests = ["src/plugins/dev-updater/tests/test_release_discovery.py"]
 data = []
