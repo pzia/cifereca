@@ -283,7 +283,11 @@ def download_attested_https(
                             try:
                                 os.unlink(temporary, dir_fd=descriptor)
                                 os.fsync(descriptor)
-                            except FileNotFoundError:
+                            except OSError:
+                                # The candidate hard link is already durable
+                                # when this runs after successful publication.
+                                # Cleanup cannot falsely report a failed GET
+                                # or provoke a second download.
                                 pass
                     return PublicDelivery(
                         physical, digest.hexdigest(), total, content_type, redirects,
