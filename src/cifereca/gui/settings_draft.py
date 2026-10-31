@@ -181,7 +181,9 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     draft.set('kobo_backup.display_profile',
               values['vault_profiles'][selected_profile]
               if 0 <= selected_profile < len(values['vault_profiles']) else 'Android')
-    draft.set('kobo_backup.format', 'epub')
+    # Preserve the configured Kobo format: this Settings form has no
+    # editable format control. Defaulting is the executor's responsibility;
+    # saving another section must not silently turn kepub into epub.
     directory_change = any(
         row['id'] in current_dirs and row['directory_name'] != current_dirs[row['id']]
         for row in saved_identities

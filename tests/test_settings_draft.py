@@ -290,3 +290,33 @@ def test_kobo_legacy_enabled_absent_stays_absent_after_unrelated_settings_save(e
     assert draft.data["kobo_backup"]["interval_minutes"] == 90
     assert draft.data["kobo_backup"]["directory"] == "KoboBooks"
     assert config.data == original
+
+
+@pytest.mark.parametrize("persisted", ["epub", "kepub", "pdf", "", None, 42])
+def test_settings_save_preserves_legacy_kobo_format_without_ui_control(
+    editor, persisted,
+):
+    config, values = editor
+    config.set("kobo_backup.format", persisted)
+    before = deepcopy(config.data)
+    values["backup_interval"] = "90"
+    values["identities"][0]["label"] = "Updated without changing Kobo format"
+    draft = validate(editor)
+    assert draft.data["kobo_backup"]["format"] == persisted
+    assert draft.data["kobo_backup"]["interval_minutes"] == 90
+    assert draft.data["identities"][0]["label"] == (
+        "Updated without changing Kobo format"
+    )
+    assert config.data == before
+    assert not config.path.exists()
+
+
+def test_settings_save_does_not_create_missing_obsolete_kobo_format(editor):
+    config, values = editor
+    config.data.setdefault("kobo_backup", {}).pop("format", None)
+    before = deepcopy(config.data)
+    values["backup_interval"] = "90"
+    draft = validate(editor)
+    assert "format" not in draft.data["kobo_backup"]
+    assert draft.data["kobo_backup"]["interval_minutes"] == 90
+    assert config.data == before
