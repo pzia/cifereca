@@ -95,11 +95,30 @@ def review_canonical_dedup_advisories(
                     data = None
                 owner = data.get("identity_id") if type(data) is dict else None
                 if identity_id is not None and owner != identity_id:
-                    # Malformed records have no trustworthy owner. Hiding them
-                    # as an empty, fully reviewed profile would claim a clean
-                    # queue that this snapshot cannot actually attest.
-                    if not _valid_id(owner):
+                    # A syntactically valid OTHER identity is not sufficient
+                    # proof of ownership. The opaque metadata key must match
+                    # the claimed owner + Artifact fingerprint. Otherwise a
+                    # forged owner could silently hide an A checkpoint from A.
+                    artifact_claim = (
+                        data.get("artifact_id") if type(data) is dict else None
+                    )
+                    claim_valid = (
+                        _valid_id(owner)
+                        and type(artifact_claim) is str
+                        and len(artifact_claim) == 71
+                        and artifact_claim.startswith("sha256:")
+                        and all(ch in "0123456789abcdef"
+                                for ch in artifact_claim[7:])
+                    )
+                    if not claim_valid:
                         unattributed += 1
+                    else:
+                        claimed_key = _PENDING_PREFIX + hashlib.sha256(json.dumps(
+                            [owner, artifact_claim],
+                            separators=(",", ":"), ensure_ascii=True,
+                        ).encode("ascii")).hexdigest()
+                        if claimed_key != key:
+                            unattributed += 1
                     continue
                 if (type(data) is not dict or set(data) != {
                         "schema", "identity_id", "artifact_id", "placement_ids",
