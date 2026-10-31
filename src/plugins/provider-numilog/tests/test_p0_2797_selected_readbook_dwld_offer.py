@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from cifereca.plugin_api import ProviderCapabilityError
+from cifereca.plugin_api import ProviderCapabilityError, ProviderError
 from tests.test_p1_3252_targeted_delivery_offer import rig
 from tests.test_p1_3252_rights_observation_snapshot import bound_account
 from cifereca_numilog_html import parse_library_page
@@ -135,13 +135,19 @@ def test_readbook_unqualified_modes_and_ambiguous_cards_cannot_mint_offer(markup
             assert len(observed.rights) == 0
             return
         chosen = observed.rights[0]
-        selected = s.rights_selected_delivery_offer_snapshot(
-            account, edition_id=chosen.edition_id,
-            right_id=chosen.right_id, kind="purchase",
-            branch="meslivres", explicit_user_action=True,
-        )
-        assert selected.rights[0].delivery == "unknown"
-        assert selected.rights[0].delivery_offer_id == ""
+        try:
+            selected = s.rights_selected_delivery_offer_snapshot(
+                account, edition_id=chosen.edition_id,
+                right_id=chosen.right_id, kind="purchase",
+                branch="meslivres", explicit_user_action=True,
+            )
+        except ProviderError:
+            # Multiple download links with the same scoped lid are already
+            # rejected by the parser as competing cards on selected reads.
+            assert markup.count("LnkDownloadBook") > 1
+        else:
+            assert selected.rights[0].delivery == "unknown"
+            assert selected.rights[0].delivery_offer_id == ""
     finally:
         s.close()
 

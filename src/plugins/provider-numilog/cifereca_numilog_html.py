@@ -431,7 +431,11 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 elif (confirmation_href is None
                       and len(links) == 1 and len(title_nodes) == 1
                       and not any(
-                          (n.tag == 'script' and _js_delivery_shape_count(n))
+                          (n.tag == 'script' and (
+                              _js_delivery_shape_count(n)
+                              or 'ProductId' in n.text()
+                              or 'IndexExemplaire' in n.text()
+                          ))
                           or ('ModalDownload' in str(n.attrs.get('onclick') or ''))
                           for n in nodes
                       )):
