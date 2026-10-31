@@ -303,3 +303,17 @@ def test_unknown_provider_corrupt_enabled_value_never_activates_source():
     # new accounts without any saved state stay disabled.
     assert _render("future-provider", data={"id": "existing"})[0]["enabled"].active is True
     assert _render("future-provider", data={})[0]["enabled"].active is False
+
+
+def test_corrupt_provider_account_containers_render_safely_but_block_save():
+    """#3731: never crash GTK or quietly replace corrupted persisted data."""
+    for corrupt in ("bad", ["bad"], True, 7, None):
+        for field in ("credentials", "options"):
+            data = {"id": "existing", field: corrupt}
+            editor, _, _, _ = _render("future-provider", data=data)
+            assert editor["invalid_saved_snapshot"] is True
+            assert data[field] is corrupt
+    valid, _, _, _ = _render(
+        "future-provider", data={"id": "existing", "credentials": {}, "options": {}},
+    )
+    assert valid["invalid_saved_snapshot"] is False

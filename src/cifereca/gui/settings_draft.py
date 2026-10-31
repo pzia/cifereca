@@ -94,6 +94,10 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         descriptor = descriptors.get(editor['provider'])
         if descriptor is None or descriptor.state != 'ready':
             raise SettingsValidationError('Fournisseur indisponible : recharger les paramètres avant de sauvegarder.')
+        if editor.get('invalid_saved_snapshot') is True:
+            raise SettingsValidationError(
+                'Données du compte fournisseur invalides : recharger les paramètres.'
+            )
         # A plugin may change its descriptor after Settings was opened.
         # Refuse stale or untyped snapshots rather than dropping a credential,
         # coercing an activation flag, or raising an unhandled KeyError.
