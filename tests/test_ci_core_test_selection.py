@@ -206,6 +206,23 @@ def test_test_filename_used_only_as_data_remains_targeted(tmp_path):
     )
 
 
+def test_dynamic_and_pytest_plugin_consumers_prevent_narrow_selection(tmp_path):
+    selector = _module()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_fixture.py").write_text("VALUE = 1\n")
+    for consumer in (
+        'importlib.import_module("tests." + name)\n',
+        'pytest_plugins = ["tests.test_fixture"]\n',
+    ):
+        (tests / "test_consumer.py").write_text(consumer)
+        assert selector.select(["tests/test_fixture.py"], tmp_path) == ("full", ["tests"])
+    (tests / "test_consumer.py").write_text('pytest_plugins = ["pytest_cov"]\n')
+    assert selector.select(["tests/test_fixture.py"], tmp_path) == (
+        "changed", ["tests/test_fixture.py"]
+    )
+
+
 def test_pr_ci_forces_full_for_removed_or_renamed_test_modules():
     workflow = (ROOT / ".github/workflows/pr-ci.yml").read_text(encoding="utf-8")
     assert 'git diff --name-status "$BASE_SHA...$HEAD_SHA" -- tests/' in workflow
