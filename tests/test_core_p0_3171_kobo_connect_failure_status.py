@@ -78,3 +78,19 @@ def test_connection_failures_are_scoped_to_configured_identity(tmp_path):
         assert sync_coordination._opening_failed_configured_connections(service, "another-identity") == 1
     finally:
         service.close()
+
+
+def test_reconnected_session_is_not_counted_from_stale_error(tmp_path):
+    service = _service(tmp_path)
+    try:
+        service.config.set("providers.accounts", [{
+            "id": "vault", "provider": "kobo", "identity_id": "default",
+            "enabled": True,
+        }])
+        key = service._session_key("kobo", "vault")
+        service._session_errors = {key: "historical connection failure"}
+        from types import SimpleNamespace
+        service._sessions[key] = SimpleNamespace(connected=True)
+        assert sync_coordination._opening_failed_configured_connections(service, "default") == 0
+    finally:
+        service.close()
