@@ -23,6 +23,8 @@ from cifereca.http_trace import BROWSER_USER_AGENT
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 from cifereca_numilog import NumilogSession
+import cifereca_numilog as provider
+from tests.pinned_public_https_fixture import mock_selected_public_client_from_session
 from tests.test_numilog_owned_js_delivery_p0 import _card, _page
 from tests.test_numilog_not_specified_epub_confirmation_p0_2024 import SIGNED_EPUB
 from tests.test_numilog_signed_acsm_transport_p0 import SIGNED as SIGNED_ACSM
@@ -129,6 +131,12 @@ def purchases(tmp_path, monkeypatch, request):
         producer='provider.numilog.six-purchase-test',
         transport=httpx.MockTransport(handler), trust_env=False,
         follow_redirects=False,
+    )
+    # The selected supplier GET must now use the Core's public pinned
+    # transport. Replay the same synthetic handler there; the first-party
+    # MesLivres inventory remains on the authenticated session client.
+    core_requests = mock_selected_public_client_from_session(
+        monkeypatch, provider, session,
     )
     runtime_calls = []
 
