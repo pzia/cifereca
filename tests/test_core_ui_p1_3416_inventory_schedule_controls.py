@@ -198,6 +198,9 @@ def test_stale_policy_is_not_overwritten_with_an_old_mode():
     {"mode": "manual", "interval_minutes": 1},
     {"mode": "manual", "interval_minutes": 60, "extra": "private"},
     {"mode": "invalid", "interval_minutes": 60},
+    {"mode": [], "interval_minutes": 60},
+    {"mode": {}, "interval_minutes": 60},
+    {"mode": None, "interval_minutes": 60},
 ])
 def test_malformed_policy_never_creates_an_action(policy):
     fn, w, b, s, scope, group, state, reads, writes, dialogs = rig()
