@@ -195,6 +195,15 @@ jobs:
                 dataset=true
                 ;;
             esac
+            # A deleted specialized workflow cannot be treated as a safe
+            # workflow-only edit: its dedicated gate no longer exists.
+            if [[ "$core_mode" == ci-contract ||
+                  "$workflow_changed" == .github/workflows/dataset-harness.yml ]]; then
+              if [[ ! -f "$workflow_changed" ]]; then
+                echo "Specialized CI workflow was deleted: $workflow_changed" >&2
+                exit 1
+              fi
+            fi
           fi
 
           python=false
