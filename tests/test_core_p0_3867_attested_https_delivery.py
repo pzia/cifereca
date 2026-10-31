@@ -202,6 +202,7 @@ def test_existing_target_is_never_replaced(tmp_path, monkeypatch):
     "https://127.0.0.1/file",
     "https://[2606:4700:4700::1111]/file",
     "https://user@books.provider.example/file",
+    "https://books.provider.example:0/file",
     "https://books.provider.example/file#fragment",
     "https://books.provider.example/%ZZ\\bad",
 ])
