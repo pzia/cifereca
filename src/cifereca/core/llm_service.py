@@ -17,6 +17,8 @@ from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from cifereca.http_trace import BROWSER_USER_AGENT
+
 from cifereca.plugin_api.llm import LLMRequest, LLMResult
 
 # Timed-out calls do not spawn an unbounded number of worker threads.
@@ -215,7 +217,7 @@ class OptionalLLMService:
             raw = json.dumps(payload).encode("utf-8")
             if len(raw) > _MAX_REQUEST_BYTES:
                 return failed("request_too_large")
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", "User-Agent": BROWSER_USER_AGENT}
             if api_key:
                 headers["Authorization"] = "Bearer " + api_key
             http_request = Request(endpoint, data=raw, headers=headers, method="POST")
