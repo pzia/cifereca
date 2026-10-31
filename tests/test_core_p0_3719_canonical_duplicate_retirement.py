@@ -75,9 +75,9 @@ def test_relinked_unreferenced_canonical_copy_can_retire_without_losing_origins(
     assert not result.cleanup_pending
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
     assert not paths[1].exists()
-    assert storage.placement_get(publications[1].placement_id)["state"] == "dedup_retired"
+    assert storage.placement_get(publications[1].placement_id) is None
     assert storage.placement_get(publications[0].placement_id)["state"] == "present"
-    assert rows(storage) == (1, 3, 3, 3)
+    assert rows(storage) == (1, 2, 3, 3)
 
     # Both provider OriginLinks still bind to a real same-profile verified
     # Artifact even though their former copies are no longer both on disk.
