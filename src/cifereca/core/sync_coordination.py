@@ -207,12 +207,28 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # purchases. Public search, even with owned=True, cannot grant
             # ownership. No signed ACSM resolution or download happens here.
             from .numilog_manifest_rights import mirror_numilog_manifest_rights
-            with measure("rights_mirror_ms"):
-                result["owned_rights"] = mirror_numilog_manifest_rights(
-                    self, rows, identity_id=account.identity_id,
-                    credential_id=account.credential_id,
-                    account_id=account.unique_id or None,
+            from ..plugin_api import Cancelled
+            try:
+                with measure("rights_mirror_ms"):
+                    result["owned_rights"] = mirror_numilog_manifest_rights(
+                        self, rows, identity_id=account.identity_id,
+                        credential_id=account.credential_id,
+                        account_id=account.unique_id or None,
+                    )
+            except Cancelled:
+                raise
+            except Exception:
+                # This legacy projection is descriptive, not authorization.
+                # Its failure must not prevent the separately admitted v14
+                # selected-offer/GET/OriginLink path from processing the same
+                # authenticated source. Do not report a fully successful Sync
+                # while the optional SQLite mirror is incomplete.
+                logging.getLogger("cifereca").warning(
+                    "TRACE source sync code=numilog_optional_rights_mirror_failed"
                 )
+                result["owned_rights"] = 0
+                result["rights_mirror_deferred"] = True
+                result["status"] = "partial"
         # A private metadata observation is not acquisition consent. The
         # canonical resource/offer stage below retains its own admission.
         # Revalidate after compatibility mirroring too: a callback must not
