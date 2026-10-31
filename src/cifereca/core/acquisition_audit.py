@@ -101,6 +101,7 @@ def inspect_exact_source(
         raise ValueError("invalid_acquisition_audit_pseudonym_key")
     coords = (account.identity_id, account.provider_id,
               account.credential_id, account.unique_id)
+    from .acquisition_staging_evidence import receipt_staging_evidence
     with storage._lock, storage._connect() as db:
         refs = db.execute(
             "SELECT source_reference_id,reference_kind,state "
@@ -123,6 +124,13 @@ def inspect_exact_source(
                 "WHERE o.source_reference_id=? AND o.identity_id=?",
                 (ref_id, coords[0]),
             ).fetchall()
+        staging = receipt_staging_evidence(
+            db, coords=coords,
+            staging_root=(storage.path.parent / "acquisition-work")
+            if isinstance(getattr(storage, "path", None), Path) else None,
+            verify_files=verify_files,
+            reference=lambda value: _reference(secret, "receipt", value),
+        )
     directory = None
     if verify_files:
         try:
@@ -183,6 +191,7 @@ def inspect_exact_source(
         "verify_files": verify_files,
         "truncated": len(refs) > _MAX_ROWS or len(ledger) > _MAX_ROWS,
         "rights": rights_out, "receipts": receipt_out,
+        "staging_evidence": staging,
     }
 
 
