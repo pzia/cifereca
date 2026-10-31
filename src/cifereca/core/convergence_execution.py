@@ -333,8 +333,10 @@ def execute_admitted_convergence(
                     "canonical_promotion_destination_conflict": "stock_destination_conflict",
                     "canonical_promotion_sha_mismatch": "stock_bytes_changed",
                 }
-                code = safe.get(str(exc), "canonical_stock_repair_deferred") \
+                code = (
+                    safe.get(str(exc), "canonical_stock_repair_deferred")
                     if type(exc) is ValueError else "canonical_stock_repair_deferred"
+                )
                 _LOG.warning("TRACE convergence code=%s", code)
                 results.append(ConvergenceOutcome(key, "failed", code))
                 continue
