@@ -1392,3 +1392,75 @@ def test_tuple_editor_collections_remain_compatible_with_valid_snapshots(editor)
     assert draft.data["identities"][0]["id"] == "alice"
     assert draft.data["providers"]["accounts"][0]["id"] == "source"
     assert config.provider_accounts() == [] and not config.path.exists()
+@pytest.mark.parametrize("field", [
+    "library_directory", "download_command", "post_download_command",
+    "download_directory", "ebook_directory", "audiobook_directory",
+])
+@pytest.mark.parametrize("invalid", [None, False, 24, [], {"wrong": "value"}])
+def test_untyped_global_download_widget_refused_without_mutation(editor, field, invalid):
+    config, values = editor
+    values[field] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Paramètres de répertoire ou de téléchargement invalides"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, 0, 1, "false", "true", [], {}])
+def test_experimental_settings_toggle_must_remain_boolean(editor, invalid):
+    config, values = editor
+    values["experimental_actions"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Préférence expérimentale invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("bad_levels,bad_index", [
+    ([], 0), (None, 0), ("normal", 0), (["normal"], True),
+    (["normal"], -1), (["normal"], 1), (["normal"], "0"),
+    (["normal", None], 0),
+])
+def test_stale_diagnostics_selection_is_non_mutating_validation_error(
+    editor, bad_levels, bad_index,
+):
+    config, values = editor
+    values["levels"] = bad_levels
+    values["diagnostics_level_index"] = bad_index
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Niveau de diagnostic invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [
+    None, False, 0, "provider.future", [], {"provider.future": None},
+    {"provider.future": []}, {12: {}},
+    {"provider.future": {"directory": "", "ebook": "", "audiobook": "",
+                          "command": None, "post": ""}},
+])
+def test_untyped_provider_download_snapshot_refused_without_mutation(editor, invalid):
+    config, values = editor
+    values["provider_downloads"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Réglages de téléchargement fournisseur invalides"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+def test_valid_download_and_diagnostics_snapshot_preserves_current_behavior(editor):
+    config, values = editor
+    values["experimental_actions"] = False
+    values["diagnostics_level_index"] = 2
+    values["provider_downloads"] = {
+        "future-provider": dict(directory="books", ebook="epub", audiobook="audio",
+                                command="tool --safe", post="")
+    }
+    before = deepcopy(config.data)
+    draft = validate(editor)
+    assert draft.data["diagnostics"]["level"] == "verbose"
+    assert draft.data["experimental_actions"] is False
+    assert draft.data["providers"]["settings"]["future-provider"]["downloads"]["command"] == [
+        "tool", "--safe",
+    ]
+    assert config.data == before and not config.path.exists()
