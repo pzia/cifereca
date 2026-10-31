@@ -435,6 +435,26 @@ class _HTTPXTransportService:
                                trust_env=False, follow_redirects=False,
                                transport=PublicOnlyHTTPTransport())
 
+    def attested_https_download(
+        self, *, producer: str, url: str, target: Path,
+        admission_current, headers=None, timeout: float = 20,
+        max_bytes: int = 512 * 1024 * 1024, max_redirects: int = 8,
+        max_duration: float = 900,
+    ):
+        """Transport only for an already-admitted, source-bound HTTPS GET.
+
+        This service never authorizes acquisition or publishes a Placement.
+        The Core admission callback MUST recheck source/account/consent; the
+        selected-delivery caller MUST still verify content and publish via B.
+        """
+        from .core.attested_https_delivery import download_attested_https
+        return download_attested_https(
+            producer=producer, url=url, target=target,
+            admission_current=admission_current, headers=headers,
+            timeout=timeout, max_bytes=max_bytes,
+            max_redirects=max_redirects, max_duration=max_duration,
+        )
+
     def async_client(self, *, producer: str, **options) -> httpx.AsyncClient:
         if 'capture' in options:
             raise TypeError("The Core HTTPX service owns the capture session")
