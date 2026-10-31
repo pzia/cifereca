@@ -7,7 +7,6 @@ import logging
 import re
 from uuid import uuid4
 import time
-import traceback
 from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
@@ -21,6 +20,19 @@ ACTIVITY = ORIGIN + '/my_profile/activity'
 
 class ReaderHTTPError(RuntimeError):
     """Only closed codes may leave this transport boundary."""
+
+
+# A provider exception may embed a signed ACSM URL, nonce, session cookie
+# or response text. Only these closed technical codes can enter DIAG_JSON.
+_JOURNAL_READER_CODES = frozenset({
+    "url_refused", "mutation_refused", "post_redirect_refused",
+    "redirect_invalid", "redirect_limit", "auth_required", "access_denied",
+    "rate_limited", "http_unavailable", "unexpected_content", "html_limit",
+    "invalid_dom", "transport_unavailable", "operation_timeout",
+    "auth_interactive_required", "unsupported_form",
+    "authentication_failed", "auth_step_limit",
+    "download_redirect_refused", "invalid_loan_token", "token_limit",
+})
 
 
 def allowed_url(url: str, *, authenticating: bool = False) -> str:
@@ -128,16 +140,16 @@ class ReaderHTTPClient:
                 self._observe(dict(detail, event='response'), 'running', started)
                 yield response
         except Exception as exc:
-            code = (str(exc) if isinstance(exc, ReaderHTTPError) else
+            raw_code = str(exc) if isinstance(exc, ReaderHTTPError) else ""
+            code = (raw_code if raw_code in _JOURNAL_READER_CODES else
                     'transport_unavailable' if isinstance(exc, (httpx.HTTPError, UnicodeError))
                     else 'unexpected_failure')
-            # Keep the compatibility error code but never replace the raw
-            # technical cause in the one canonical diagnostic event. This is
-            # the exception already observed, not a new HTTP capture.
+            # The exception class and bounded code are diagnostic evidence.
+            # Raw messages/tracebacks can expose signed URLs, cookies or SAML.
             self._observe(dict(
                 detail, event='terminal', code=code,
-                error_type=type(exc).__name__, error_message=str(exc),
-                error_traceback=traceback.format_exc(),
+                error_type=type(exc).__name__, error_message=code,
+                error_traceback='redacted',
             ), 'failed', started)
             raise
         else:
