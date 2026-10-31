@@ -481,3 +481,36 @@ def test_preserved_unknown_provider_account_id_cannot_be_reused(editor):
     with pytest.raises(SettingsValidationError, match='dupliqué'):
         validate(editor, descriptors={'future-provider': descriptor('future-provider')})
     assert config.provider_accounts() == [old]
+
+
+@pytest.mark.parametrize("invalid", ["true", "false", 1, 0, None, [], {}])
+def test_generic_provider_rejects_nonboolean_activation_without_mutation(editor, invalid):
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    values['accounts'][0]['enabled'] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='Activation de compte invalide'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert config.data == before
+
+
+@pytest.mark.parametrize("invalid", [None, False, 17, [], {}, {"username": None}, {"username": True}])
+def test_generic_provider_rejects_stale_credential_fields_without_mutation(editor, invalid):
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    values['accounts'][0]['fields'] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='Identifiants de compte indisponibles|Schéma des identifiants modifié'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert config.data == before
+
+
+def test_generic_provider_descriptor_new_required_credential_fails_closed(editor):
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    before = deepcopy(config.data)
+    future = descriptor('future-provider')
+    future.credential_fields.append(NS(key='second-credential'))
+    with pytest.raises(SettingsValidationError, match='Schéma des identifiants modifié'):
+        validate(editor, descriptors={'future-provider': future})
+    assert config.data == before
