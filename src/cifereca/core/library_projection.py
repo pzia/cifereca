@@ -545,23 +545,25 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 continue
         provider_id = str(row.get("provider_id") or "local")
         artifact_id = str(row.get("artifact_id") or "")
-        # The v0.7 backup mirror can create local_state='local' for an
-        # unverified placeholder, even when its recorded path was deleted or
-        # moved. It is history, not physical presence. Only an exact current
-        # present Placement in this identity can make that row local in UI.
-        # Keep the SQLite catalogue/backup unchanged for later reconciliation.
+        # Catalogue local_state='local' is a descriptive projection, not
+        # physical proof. An explicitly bound Placement (not only a v0.7
+        # backup placeholder) must still be present in this identity, match
+        # this Artifact, and point to an openable file. A stale scan or
+        # renamed/deleted physical file must not appear as a usable book.
+        #
+        # Unbound, non-legacy local declarations remain on their established
+        # compatibility path; we cannot silently invent a Placement for them.
         metadata = dict(row.get("metadata") or {})
-        if metadata.get("imported_from") == "backup_items":
-            placement_id = str(row.get("placement_id") or "")
+        placement_id = str(row.get("placement_id") or "")
+        if placement_id or metadata.get("imported_from") == "backup_items":
             if not placement_id or not any(
                 str(p.get("placement_id") or "") == placement_id
                 for p in placements_by_artifact.get(artifact_id, ())
             ):
                 continue
-            # A "present" SQLite snapshot can outlive the physical file.
-            # Check the same scoped openability contract as Library actions;
-            # do not revive a 0.7 ghost after the file disappeared again.
             owner = row_identity or default_identity_id
+            if not owner:
+                continue
             try:
                 self.local_book_path(placement_id, identity_id=owner)
             except ProviderConfigurationError:
