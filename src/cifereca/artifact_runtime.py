@@ -695,6 +695,20 @@ def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
 class LibraryMaintenanceBrokerImpl:
     service: Any
 
+    def legacy_placement_scope_review(
+        self, *, candidate_placement_id: str, keeper_placement_id: str,
+    ):
+        """Review old provider-bound copies; never authorize scope adoption."""
+        from .core.canonical_legacy_scope_review import (
+            review_legacy_placement_scope,
+        )
+        return review_legacy_placement_scope(
+            self.service.storage,
+            library_root=_canonical_maintenance_root(self.service),
+            candidate_placement_id=candidate_placement_id,
+            keeper_placement_id=keeper_placement_id,
+        )
+
     def canonical_reference_migration_plan(
         self, *, candidate_placement_id: str, keeper_placement_id: str,
     ):

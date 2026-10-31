@@ -75,6 +75,32 @@ API Core (lecture seule) : `review_canonical_dedup_advisories(storage, identity_
 
 Un checkpoint de **paire exacte** est acquitté seulement à la fin d'un retrait supervisé entièrement vérifié (#3976), dans la transaction de finalisation de la tombstone, après effacement, `fsync` et contrôle du keeper. En présence d'une troisième copie, d'un marqueur inconnu ou d'une interruption, le marqueur reste pour examen. Les changements d'origine et de droits sont interdits.
 
+## Placement historique encore lié directement au fournisseur
+
+`canonical_legacy_scope_review.review_legacy_placement_scope` est accessible par
+`library.maintenance.legacy_placement_scope_review(candidate_placement_id=..., keeper_placement_id=...)`.
+Ce diagnostic est **strictement en lecture seule**. Il compare un ancien Placement
+`provider_id/source_item_id` à un Placement canonique `provider_id/source_item_id=NULL`
+dans **la même identité et le même Artifact**, et exige le rehash des **deux fichiers**
+dans leur répertoire de profil déclaré.
+
+Même lorsqu'un seul `OriginLink(provider)` atteste exactement le même
+fournisseur et la même édition sur l'Artifact, **le Placement historique ne porte
+pas le compte ni la credential** : cette concordance ne prouve *jamais*
+que le fichier particulier appartenait à ce compte. Le résultat
+`legacy_file_source_unbound` demeure `blocked`, sans suppression,
+transfert de droit ou correction SQL. Une provenance manquante produit
+`origin_unverified`, des comptes distincts donnent
+`multiple_borrower_scopes`, une cible hors profil ou des octets altérés
+produisent un refus. Les compteurs portent sur les preuves liées à l'Artifact,
+**pas sur le chemin candidat** ; aucun compte, credential, chemin ou reçu
+n'est exposé.
+
+Ce lecteur ne remplace **pas** un contrat de migration des Placements
+hérités. Le superviseur canonique reste interdit pour ces lignes.
+Une migration future exigera une preuve de rattachement plus forte, une
+prévisualisation distincte, le verrou et une confirmation explicite.
+
 ## Plan historique des références avant suppression (Core #3185)
 
 `canonical_dedup_reference_plan.plan_verified_canonical_reference_migration`, exposé par `library.maintenance.canonical_reference_migration_plan(candidate_placement_id=..., keeper_placement_id=...)`, produit un **inventaire en lecture seule** après vérification physique des deux copies du même profil via le preview canonique. Il ne fait aucun unlink, GET, relink ou changement de droits et ne rend **jamais** une autorisation.
