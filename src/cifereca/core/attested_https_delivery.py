@@ -140,8 +140,10 @@ def _redact_transport_error(fn):
             return fn(*args, **kwargs)
         except httpx.RequestError:
             # HTTPX's exception messages may embed signed URLs and headers.
-            # Callers can safely include the closed code in normal logs.
             raise ValueError("delivery_transport_unavailable") from None
+        except OSError:
+            # Filesystem errors can include a private staging directory.
+            raise ValueError("delivery_staging_unavailable") from None
     return invoked
 
 
