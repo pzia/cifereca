@@ -328,3 +328,92 @@ def test_legacy_projection_cannot_replace_unmarked_canonical_metadata(tmp_path):
         assert storage.backup_list("kobo")[0]["status"] == "complete"
     finally:
         storage.close()
+
+
+
+@pytest.mark.parametrize("legacy_status", [
+    "pending", "complete", "acquiring", "attention_required",
+])
+def test_independently_inactive_right_prevents_all_passive_legacy_canonical_writes(
+    tmp_path, legacy_status,
+):
+    """Preserve the 0.7 history but never materialize an acquisition for revoked ownership."""
+    import hashlib
+
+    storage = Storage(tmp_path / "revoked.sqlite3")
+    try:
+        row = {
+            **_row(), "status": legacy_status, "revision_id": "legacy-revision",
+            "local_path": str(tmp_path / "historic.epub"),
+            "sha256": hashlib.sha256(b"historical bytes").hexdigest(),
+            "size": len(b"historical bytes"),
+            "format": "epub",
+        }
+        # Even a physically present historical file does not grant a
+        # provider right or provenance after an independent revocation.
+        (tmp_path / "historic.epub").write_bytes(b"historical bytes")
+        canonical_id = storage.entitlement_put({
+            "provider_id": "kobo", "credential_id": "card-a",
+            "account_id": "reader", "identity_id": "alice",
+            "item_id": "book", "entitlement_type": "owned",
+            "revision_id": "attested-provider-revision",
+            "state": "inactive", "metadata": {"source": "fresh-provider-right"},
+        })
+        before_rights = storage.entitlements()
+        assert before_rights[0]["entitlement_id"] == canonical_id
+        with storage._lock, storage._connect() as db:
+            before = {name: db.execute("SELECT * FROM " + name).fetchall()
+                      for name in ("entitlements", "acquisition_ledger",
+                                   "artifacts", "placements", "catalog_entries",
+                                   "source_references", "origin_links")}
+        for attempt in range(2):
+            storage.backup_put({**row, "title": "Legacy replay " + str(attempt)})
+            assert storage.entitlements() == before_rights
+            with storage._lock, storage._connect() as db:
+                for name, rows in before.items():
+                    assert db.execute("SELECT * FROM " + name).fetchall() == rows
+        backup = storage.backup_get("kobo", "card-a", "book")
+        assert backup["status"] == legacy_status
+        assert backup["title"] == "Legacy replay 1"
+        assert backup["local_path"] == str(tmp_path / "historic.epub")
+        assert (tmp_path / "historic.epub").read_bytes() == b"historical bytes"
+    finally:
+        storage.close()
+
+
+def test_independently_revoked_right_legacy_replay_cannot_reopen_completed_receipt(
+    tmp_path,
+):
+    import hashlib
+
+    storage = Storage(tmp_path / "existing.sqlite3")
+    try:
+        row = {
+            **_row(), "status": "complete",
+            "sha256": hashlib.sha256(b"unverified legacy").hexdigest(),
+            "local_path": str(tmp_path / "obsolete.epub"),
+            "size": len(b"unverified legacy"), "format": "epub",
+        }
+        entitlement_id = storage.entitlement_put({
+            "provider_id": "kobo", "credential_id": "card-a",
+            "account_id": "reader", "identity_id": "alice",
+            "item_id": "book", "entitlement_type": "owned",
+            "revision_id": "canonical", "state": "inactive",
+            "metadata": {"attested": True},
+        })
+        storage.acquisition_put({
+            "acquisition_id": storage._acquisition_id_for(row),
+            "entitlement_id": entitlement_id,
+            "provider_id": "kobo", "credential_id": "card-a",
+            "identity_id": "alice", "account_id": "reader",
+            "item_id": "book", "status": "attention_required",
+            "metadata": {"provenance": "canonical-provider"},
+        })
+        receipts = storage.acquisitions(provider_id="kobo")
+        storage.backup_put(row)
+        assert storage.acquisitions(provider_id="kobo") == receipts
+        assert storage.backup_get("kobo", "card-a", "book")["status"] == "complete"
+        assert storage.artifacts() == []
+        assert storage.placements() == []
+    finally:
+        storage.close()
