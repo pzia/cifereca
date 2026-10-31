@@ -314,13 +314,29 @@ def execute_admitted_convergence(
                         ),
                     ):
                         repaired = True
-            except Exception:
-                # No raw persisted journal/OS exception: path, title,
-                # credentials and signed tokens must remain private.
-                _LOG.warning("TRACE convergence code=canonical_stock_repair_deferred")
-                results.append(ConvergenceOutcome(
-                    key, "failed", "canonical_stock_repair_deferred",
-                ))
+            except Exception as exc:
+                # Never render arbitrary exception text: it may contain
+                # paths, private account IDs, tokens or journal contents.
+                # Only exact allowlisted Core error codes are diagnostic.
+                safe = {
+                    "canonical_stock_exact_origin_missing": "stock_origin_unproven",
+                    "canonical_stock_receipt_missing_or_ambiguous": "stock_receipt_unproven",
+                    "canonical_stock_account_unbound": "stock_account_unbound",
+                    "canonical_stock_consent_changed": "stock_consent_changed",
+                    "canonical_stock_context_or_consent_changed": "stock_consent_changed",
+                    "canonical_stock_placement_unverified": "stock_placement_unverified",
+                    "canonical_stock_bytes_changed": "stock_bytes_changed",
+                    "canonical_stock_bytes_or_destination_changed": "stock_bytes_changed",
+                    "canonical_stock_catalog_path_conflict": "stock_catalog_conflict",
+                    "canonical_stock_placement_path_conflict": "stock_catalog_conflict",
+                    "canonical_promotion_destination_symlink": "stock_destination_unsafe",
+                    "canonical_promotion_destination_conflict": "stock_destination_conflict",
+                    "canonical_promotion_sha_mismatch": "stock_bytes_changed",
+                }
+                code = safe.get(str(exc), "canonical_stock_repair_deferred") \
+                    if type(exc) is ValueError else "canonical_stock_repair_deferred"
+                _LOG.warning("TRACE convergence code=%s", code)
+                results.append(ConvergenceOutcome(key, "failed", code))
                 continue
             # A fully verified provider presence prevents a second GET, but
             # must not skip a previously deferred, post-B duplicate probe.
