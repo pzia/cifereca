@@ -1532,13 +1532,14 @@ class NumilogSession(ProviderSession):
                         cookie_header_present=bool(r.request.headers.get('cookie')))
                     trace.fail(public_http_code(r.status_code))
                     if r.status_code in REDIRECTS:
-                        if stage_acsm_only and attested_hop:
-                            # A Core-selected signed action is a one-GET
-                            # candidate route, not permission to navigate to
-                            # another supplier URL or a login/renewal flow.
-                            raise ProviderCapabilityError(
-                                'numilog_candidate_redirect_unexpected'
-                            )
+                        # A Core-selected offer may redirect through its
+                        # publisher's HTTPS delivery chain (Numilog -> Dilicom
+                        # or Eden in production). It remains *the same* scoped
+                        # purchase: signed_redirect_chain carries the attested
+                        # provenance, while every subsequent GET independently
+                        # validates HTTPS, public DNS, owner and hop limits.
+                        # Staging still rejects HTML/login and format changes;
+                        # no cookies from Numilog may follow cross-origin.
                         # The P0 pre-normalization guard can reject this hop
                         # before another GET. Attribute that failure safely.
                         trace.fail('origin_rejected')
