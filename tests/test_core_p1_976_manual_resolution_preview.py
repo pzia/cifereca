@@ -223,7 +223,9 @@ def test_cli_preview_selection_is_offline_and_cannot_mutate_adobe(tmp_path, monk
         assert report["status"] == "review_candidate"
         assert report["recorded_adept_profile_id"] == "adobe-a"
         _no_permission(report)
-        assert store.calls == ["rights", "ledger"]
+        # CLI wraps the original preview in two independent snapshots:
+        # before, preview, after. A hash is diagnostic, never an Adobe grant.
+        assert store.calls == ["rights", "ledger"] * 3
     finally:
         db.close()
 

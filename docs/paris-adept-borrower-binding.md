@@ -174,6 +174,32 @@ exige encore la preuve du profil Adobe ayant réellement activé le prêt et
 `return_authorized=false`, `commit_available=false` restent constants.
 Les références sont des sélecteurs locaux, **jamais** des jetons d'autorisation.
 
+La commande `preview-resolution` encadre maintenant la lecture des deux
+audits par **deux empreintes locales** : si les preuves changent pendant la
+prévisualisation, elle répond
+`local_evidence_changed_during_preview` et ne révèle **aucune** proposition
+de profil ou de reçu. Si les preuves sont observées inchangées, elle ajoute
+`local_evidence_fingerprint` et
+`local_evidence_status=observed_unchanged_during_preview`.
+
+Pour recontrôler ultérieurement cette empreinte, toujours **hors réseau** :
+
+```bash
+cifereca-cli paris-adept validate-resolution-snapshot \
+  --loan-id "<id-pret-paris>" --item-id "<id-item>" \
+  --fingerprint "<sha256-de-preview-resolution>"
+```
+
+`local_evidence_unchanged_remote_attestation_required` signifie seulement
+que les éléments **persistés localement** correspondent encore à ce hash.
+`local_evidence_changed` impose une nouvelle prévisualisation. Les fichiers
+physiques ne sont pas rehachés, le serveur Adobe et le prêt Paris ne sont pas
+interrogés, et ces lectures ne verrouillent pas les futurs écrivains.
+Aucune valeur d'empreinte ne vaut une autorisation ; une opération future
+devra revalider **atomiquement** les preuves sous verrou et obtenir une
+attestation serveur exacte. Voir
+[le contrat du snapshot](CORE-P1-976-RESOLUTION-SNAPSHOT.md).
+
 La commande globale `audit` effectue un rapprochement **en lecture seule** des prêts actifs
 et acquisitions déjà enregistrés en base, des connexions Paris et des profils
 ADEPT associés. Aucune activation, connexion fournisseur, vérification
