@@ -102,6 +102,14 @@ cifereca-cli paris-adept audit-origin \
   --loan-id "<id-pret-paris>" --item-id "<id-item>"
 ```
 
+La sélection d'un reçu historique par `--acquisition-ref` exige également un
+`acquisition_id` **textuel et exact** dans le ledger. Un identifiant de reçu
+malformé, absent, vide, comportant NUL ou des espaces en tête/fin reste
+**observable** dans `audit-origin` mais porte `acquisition_ref=null` et
+`unselectable_historical_acquisition_count` ; il ne peut pas être choisi par
+`preview-resolution`. Même avec un inventaire ADEPT anciennement attesté,
+`origin_resolution=unknown` dans ce cas, sans masquer les observations.
+
 Les identifiants de prêt, d'item et de droit historique doivent être de
 **véritables chaînes de caractères** : un nombre, booléen, liste ou objet
 JSON n'est jamais converti en texte pour fabriquer une égalité de
