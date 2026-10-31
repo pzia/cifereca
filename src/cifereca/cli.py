@@ -168,6 +168,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     adept_exact.add_argument("--loan-id", required=True, help="ID exact de prêt Paris")
     adept_exact.add_argument("--item-id", required=True, help="ID exact de l'item du prêt")
+    adept_canonical = adept_sub.add_parser(
+        "audit-canonical",
+        help="Revue locale v14 des liens fournisseur/ADEPT d'un prêt Paris exact",
+    )
+    adept_canonical.add_argument("--loan-id", required=True, help="ID exact du prêt Paris")
+    adept_canonical.add_argument("--item-id", required=True, help="ID exact de l'item")
     adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
     adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
     adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
@@ -208,11 +214,11 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "paris-adept":
         if a.username or a.account:
             p.error("paris-adept exige --credential, pas --username ou --account")
-        if a.paris_adept_cmd == "audit-origin":
+        if a.paris_adept_cmd in {"audit-origin", "audit-canonical"}:
             # Reject unusable transaction keys before Core can be opened.
             if (not a.loan_id.strip() or not a.item_id.strip()
                     or "\x00" in a.loan_id or "\x00" in a.item_id):
-                p.error("audit-origin exige --loan-id et --item-id non vides et sans NUL")
+                p.error("audit-origin/audit-canonical exigent --loan-id et --item-id non vides et sans NUL")
         if a.paris_adept_cmd == "bind" and not a.confirm_ownership:
             p.error(
                 "paris-adept bind exige --confirm-ownership : "
@@ -293,6 +299,16 @@ def main(argv: list[str] | None = None) -> int:
                         entitlements=core.storage.entitlements(provider_id="paris"),
                         acquisitions=core.storage.acquisitions(provider_id="paris"),
                         artifact_inspector=inspect_artifact,
+                    )
+                elif a.paris_adept_cmd == "audit-canonical":
+                    from .core.adept_canonical_origin_review import (
+                        review_paris_canonical_adept_links,
+                    )
+                    # SELECT-only canonical v14: no profile inference from a
+                    # common SHA or destination library, no server side effects.
+                    result = review_paris_canonical_adept_links(
+                        core.storage, loan_id=a.loan_id.strip(),
+                        item_id=a.item_id.strip(),
                     )
                 elif a.paris_adept_cmd == "list":
                     bindings = core.storage.paris_borrower_adept_bindings(
