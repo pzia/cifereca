@@ -152,3 +152,35 @@ def test_readbook_owner_change_refuses_external_get(tmp_path):
         assert list(staging.iterdir()) == []
     finally:
         session.close()
+
+
+def test_unselected_readbook_never_promotes_external_publisher_302(
+    tmp_path, monkeypatch,
+):
+    """Only an exact Core offer can authorize the public-pinned route."""
+    session, _broker, _ = rig(page(card()))
+    visited = []
+
+    def handler(request):
+        visited.append(str(request.url))
+        assert str(request.url) == READBOOK
+        return httpx.Response(302, headers={"location": DILICOM})
+
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=False, trust_env=False,
+    )
+    monkeypatch.setattr(
+        provider.HTTPX_TRANSPORT, "public_client",
+        lambda **kwargs: pytest.fail("unselected link must not enter Core delivery"),
+    )
+    try:
+        with pytest.raises(ProviderError):
+            session._download(
+                READBOOK, tmp_path / "unselected.epub", source="readbook",
+            )
+        assert visited == [READBOOK]
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
