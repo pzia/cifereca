@@ -27,13 +27,23 @@ def _legacy_placement(rig, monkeypatch):
 
     service.session.rights_selected_delivery_candidate = candidate
     genuine = convergence_execution.promote_completed_delivery
+    genuine_cleanup = convergence_execution.cleanup_published_staging
+    # Reproduce the PRE-#3912 Core behavior: publish the temporary path,
+    # and retain its bytes even after the B/receipt commit.
     monkeypatch.setattr(
         convergence_execution, "promote_completed_delivery",
         lambda _storage, *, source, completed, library_root: completed.path,
     )
+    monkeypatch.setattr(
+        convergence_execution, "cleanup_published_staging",
+        lambda *_args, **_kwargs: None,
+    )
     first = synchronize_account_source(service, service.account)
     monkeypatch.setattr(
         convergence_execution, "promote_completed_delivery", genuine,
+    )
+    monkeypatch.setattr(
+        convergence_execution, "cleanup_published_staging", genuine_cleanup,
     )
     assert first["canonical_execution"]["downloaded"] == 1
     assert gets == ["signed-right-offer"]
