@@ -224,3 +224,17 @@ def test_facade_is_compact_and_importing_composition_does_not_load_gtk():
     assert 'settings_page.build_settings_page' in ast.unparse(facade)
     import subprocess, sys
     subprocess.run([sys.executable, '-c', "import sys; from cifereca.gui.settings_page import build_settings_page; assert 'gi' not in sys.modules; assert 'cifereca.gui.main_window' not in sys.modules"], check=True)
+
+
+
+def test_settings_save_does_not_capture_retired_global_kobo_consent():
+    """#3731: legacy switch remains visible read-only, never a save input."""
+    root = Path(__file__).resolve().parents[1]
+    commit = ast.parse((root / "src/cifereca/gui/settings_commit_actions.py").read_text(encoding="utf-8"))
+    source = ast.unparse(commit)
+    assert "values['backup_enabled']" not in source
+    assert "backup_switch.get_active()" not in source
+    # Compatibility settings remain editable without generating acquisition permission.
+    assert "values['backup_directory']" in source
+    assert "values['backup_interval']" in source
+    assert "values['vault_profile_index']" in source

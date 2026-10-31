@@ -20,7 +20,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
     exp_switch = application_ui.experimental_switch
     level_drop = application_ui.level_dropdown
     levels = application_ui.levels
-    backup_switch = kobo_settings.backup_switch
     library_dir_row = kobo_settings.library_dir_row
     backup_dir_row = kobo_settings.backup_dir_row
     backup_interval_row = kobo_settings.backup_interval_row
@@ -65,7 +64,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
         }
         values["backup_directory"] = backup_dir_row.get_text()
         values["backup_interval"] = backup_interval_row.get_text()
-        values["backup_enabled"] = backup_switch.get_active()
         values["diagnostics_enabled"] = True
         values["experimental_actions"] = exp_switch.get_active()
         values["audiobook_directory"] = global_audio_row.get_text()
