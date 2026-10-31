@@ -16,7 +16,7 @@ import zipfile
 import pytest
 
 from cifereca.plugin_api import (
-    Account, ProviderCapabilityError, ProviderRightObservation, ProviderRightsSnapshot,
+    Account, ProviderCapabilityError, ProviderConfigurationError, ProviderRightObservation, ProviderRightsSnapshot,
 )
 from cifereca_reference import BRANCH, PLUGIN, ReferenceSession
 
@@ -41,11 +41,12 @@ class Broker:
 
 
 def fixture(*, scenario="mixed", mode="two", credential="card-a",
-            bulk_count=350, page_size=50):
+            bulk_count=350, page_size=50, inventory_failures_per_page=0):
     session = ReferenceSession(
         credential_id=credential, label="Test", credentials={},
         options={"scenario": scenario, "accounts": mode,
-                 "bulk_count": bulk_count, "page_size": page_size},
+                 "bulk_count": bulk_count, "page_size": page_size,
+                 "inventory_failures_per_page": inventory_failures_per_page},
     )
     accounts = session.connect()
     for index, account in enumerate(accounts):
@@ -428,5 +429,127 @@ def test_v2_bulk_pagination_when_core_abi_is_installed():
             if not cursor:
                 break
         assert len(found) == 351 and len(set(found)) == 351
+    finally:
+        session.close()
+
+
+def test_inventory_interruption_retries_exact_cursor_independently_per_account():
+    # Every account and page fails once; successful retries keep exact order.
+    session, (a, b) = fixture(
+        scenario="bulk", bulk_count=3, page_size=1,
+        inventory_failures_per_page=1,
+    )
+    try:
+        for account in (a, b):
+            cursor = ""
+            seen = []
+            for _ in range(3):
+                with pytest.raises(
+                    ProviderCapabilityError, match="reference_inventory_interrupted"
+                ):
+                    session.rights_observation_snapshot(
+                        account, resume_cursor=cursor,
+                    )
+                page = session.rights_observation_snapshot(
+                    account, resume_cursor=cursor,
+                )
+                assert page.status == page.coverage == "partial"
+                assert not page.authorizes_negative_reconciliation
+                assert not page.authorizes_mutation
+                assert len(page.rights) == 1
+                seen.append(page.rights[0].edition_id)
+                cursor = page.resume_cursor
+            assert seen == ["bulk-0000", "bulk-0001", "bulk-0002"]
+            assert cursor == ""
+        assert session.diagnostic_state()["staged_attempts"] == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("invalid", [True, -1, 4, 1.5, "1", None])
+def test_inventory_failure_option_rejects_invalid_values(invalid):
+    with pytest.raises(
+        ProviderConfigurationError, match="reference_invalid_fixture_options"
+    ):
+        ReferenceSession(
+            credential_id="fixture", label="Test", credentials={},
+            options={"inventory_failures_per_page": invalid},
+        )
+
+
+def test_invalid_cursor_does_not_consume_inventory_failure_fixture():
+    session, (a, _) = fixture(
+        scenario="bulk", bulk_count=2, page_size=1,
+        inventory_failures_per_page=1,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match="reference_invalid_cursor"):
+            session.rights_observation_snapshot(a, resume_cursor="offset:999")
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.rights_observation_snapshot(a)
+        assert len(session.rights_observation_snapshot(a).rights) == 1
+    finally:
+        session.close()
+
+
+def test_cancelled_staging_write_removes_partial_epub(tmp_path, monkeypatch):
+    import cifereca_reference as reference
+
+    session, (a, _) = fixture()
+    offer = qualify(session, a, "epub-001")
+
+    def cancelled(_):
+        raise KeyboardInterrupt("synthetic cancelled write")
+
+    monkeypatch.setattr(reference, "epub_bytes", cancelled)
+    try:
+        with pytest.raises(KeyboardInterrupt, match="synthetic cancelled write"):
+            candidate(session, a, offer, tmp_path)
+        assert list(tmp_path.iterdir()) == []
+        assert session.diagnostic_state()["staged_attempts"] == 1
+    finally:
+        session.close()
+
+
+def test_v2_inventory_failure_preserves_positive_only_pagination():
+    session, (a, _) = fixture(
+        scenario="bulk", bulk_count=2, page_size=1,
+        inventory_failures_per_page=1,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.downloadable_resource_snapshot(a)
+        first = session.downloadable_resource_snapshot(a)
+        assert not first.authorizes_negative_reconciliation
+        assert len(first.resources) == 1
+        assert first.resources[0].source.edition_id == "bulk-0000"
+        assert first.resume_cursor == "offset:1"
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.downloadable_resource_snapshot(a, resume_cursor=first.resume_cursor)
+        second = session.downloadable_resource_snapshot(
+            a, resume_cursor=first.resume_cursor,
+        )
+        assert not second.authorizes_negative_reconciliation
+        assert [r.source.edition_id for r in second.resources] == ["bulk-0001"]
+        assert second.resume_cursor == ""
+    finally:
+        session.close()
+
+
+def test_reconnect_restarts_synthetic_inventory_failure_budget():
+    session, (a,) = fixture(
+        scenario="empty", mode="one", inventory_failures_per_page=1,
+    )
+    try:
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.rights_observation_snapshot(a)
+        assert session.rights_observation_snapshot(a).rights == ()
+        session.close()
+        (fresh,) = session.connect()
+        fresh.identity_id = "identity-a"
+        session.identity_broker = Broker([fresh])
+        with pytest.raises(ProviderCapabilityError, match="reference_inventory_interrupted"):
+            session.rights_observation_snapshot(fresh)
+        assert session.rights_observation_snapshot(fresh).rights == ()
     finally:
         session.close()

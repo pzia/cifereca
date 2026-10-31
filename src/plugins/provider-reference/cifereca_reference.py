@@ -48,6 +48,10 @@ class ReferenceSession(ProviderSession):
         self._epoch = 0
         self._closed = False
         self._interrupted: set[tuple[str, str, str]] = set()
+        # Explicit, deterministic negative fixture: every account/page may
+        # fail N times before returning its positive-only inventory.
+        self._inventory_attempts: dict[tuple[str, str, str, str], int] = {}
+        self._inventory_failures = self.options.get("inventory_failures_per_page", 0)
         self._before_write = None  # Optional deterministic race hook, only in tests.
         self._delivery_calls = 0
         scenario = self.options.get("scenario", "mixed")
@@ -58,7 +62,9 @@ class ReferenceSession(ProviderSession):
                 or self._mode not in ("one", "two")
                 or type(self._page_size) is not int
                 or not 1 <= self._page_size <= 100
-                or type(count) is not int or not 1 <= count <= 500):
+                or type(count) is not int or not 1 <= count <= 500
+                or type(self._inventory_failures) is not int
+                or not 0 <= self._inventory_failures <= 3):
             raise ProviderConfigurationError("reference_invalid_fixture_options")
         self._resources = resources(scenario, bulk_count=count)
         self._by_id = {row.edition_id: row for row in self._resources}
@@ -68,6 +74,7 @@ class ReferenceSession(ProviderSession):
             self._epoch += 1
             self._closed = False
             self._interrupted.clear()
+            self._inventory_attempts.clear()
             ids = ("reader-a",) if self._mode == "one" else ("reader-a", "reader-b")
             self._accounts = [
                 Account(
@@ -191,6 +198,15 @@ class ReferenceSession(ProviderSession):
             if offset > len(self._resources) or (
                     offset and offset % self._page_size != 0):
                 raise ProviderCapabilityError("reference_invalid_cursor")
+            # A failed page is never an empty/complete inventory. Retrying
+            # the exact cursor (or another account) cannot manufacture
+            # negative authority or skip resources.
+            key = (account.identity_id, account.credential_id,
+                   account.unique_id, resume_cursor)
+            attempts = self._inventory_attempts.get(key, 0)
+            if attempts < self._inventory_failures:
+                self._inventory_attempts[key] = attempts + 1
+                raise ProviderCapabilityError("reference_inventory_interrupted")
             observed = self._observed()
             end = min(offset + self._page_size, len(self._resources))
             rows = tuple(self._observation(row, account=account, observed=observed)
