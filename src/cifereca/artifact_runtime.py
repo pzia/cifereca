@@ -695,6 +695,15 @@ def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
 class LibraryMaintenanceBrokerImpl:
     service: Any
 
+    def pending_canonical_advisories(self, *, identity_id: str | None = None):
+        """Read-only post-publication duplicate inventory, not deletion consent."""
+        from .core.canonical_dedup_advisory_review import (
+            review_canonical_dedup_advisories,
+        )
+        return review_canonical_dedup_advisories(
+            self.service.storage, identity_id=identity_id,
+        )
+
     def pending_canonical_cleanups(self, *, identity_id: str | None = None):
         """Read-only maintenance discovery; never an unlink authorization."""
         from .core.canonical_dedup_pending_review import (
