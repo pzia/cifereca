@@ -82,6 +82,7 @@ def build_provider_account_editor(
         "label": label_row, "identity": identity_row, "fields": fields,
         "option_fields": option_fields,
         "original_options": options, "original_credentials": credentials,
+        "original_account": dict(data),
         "invalid_saved_snapshot": invalid_saved_snapshot,
         "deleted": False,
     }
