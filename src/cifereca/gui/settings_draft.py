@@ -205,8 +205,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         original_for_identity = editor.get('original_account', {})
         if (not selected_identity and type(original_for_identity) is dict
                 and original_for_identity.get('id') == editor['id']
-                and type(original_for_identity.get('identity_id')) is str
-                and original_for_identity['identity_id'].strip()):
+                and 'identity_id' in original_for_identity):
             raise SettingsValidationError(
                 'Identité du compte fournisseur vide : sélectionnez explicitement une identité.'
             )
