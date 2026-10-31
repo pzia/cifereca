@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     generic_sub.choices["run"].add_argument(
         "--trace-export", type=Path, metavar="ZIP",
-        help="Capture HTTP brute privée 0600 de cette sync uniquement ; contient possiblement des credentials"
+        help="Capture HTTP brute privée 0600 pendant la sync ciblée ; peut contenir des credentials"
     )
     generic_sub.choices["run"].add_argument(
         "--confirm-trace-export", action="store_true",
@@ -317,6 +317,10 @@ def main(argv: list[str] | None = None) -> int:
             preflight_code = "trace_export_confirmation_required"
         elif a.confirm_trace_export and a.trace_export is None:
             preflight_code = "trace_export_destination_required"
+        elif a.trace_export is not None and os.path.lexists(a.trace_export):
+            # Refuse before any remote provider connection or acquisition.
+            # Core export also checks O_EXCL against symlink/concurrent races.
+            preflight_code = "trace_export_destination_exists"
         if preflight_code is not None:
             print(json.dumps({"status": "failed", "code": preflight_code},
                              ensure_ascii=False))
