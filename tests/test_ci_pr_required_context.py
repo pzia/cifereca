@@ -68,3 +68,15 @@ def test_httpx_ast_gate_is_scoped_to_plugin_and_guard_changes():
     for path in ("docs/notes.md", "README.md", "tests/test_storage.py",
                  "src/cifereca/gui/main_window.py", ".agents/roles/cicd.md"):
         assert not re.search(pattern, path), path
+
+
+def test_push_selector_changes_trigger_full_core_pr_checks():
+    source = _workflow()
+    scope = re.search(
+        r"(?m)^          if matches '([^']+)'; then\n            core=true$",
+        source,
+    )
+    assert scope, "missing Core PR scope"
+    assert re.search(scope.group(1), "scripts/ci_select_core_push.py")
+    selector = (ROOT / "scripts/ci-select-core-tests.py").read_text(encoding="utf-8")
+    assert '"scripts/ci_select_core_push.py"' in selector
