@@ -1275,3 +1275,39 @@ def test_provider_account_deletion_requires_explicit_true_and_does_not_write(edi
     assert draft.data["providers"]["accounts"] == []
     assert config.provider_accounts() == [prior]
     assert not config.path.exists()
+
+
+
+@pytest.mark.parametrize("bad_flag", ["false", "true", 1, 0, None, [], {}])
+def test_identity_delete_requires_literal_bool_not_truthiness(editor, bad_flag):
+    """A false-looking string must never drop an existing identity on Save."""
+    config, values = editor
+    values["identities"].append(dict(
+        id="bob", label="Bob", directory="bob", adept_profile="",
+        languages="fr", prefer_vo=False,
+    ))
+    values["identities"][0]["deleted"] = bad_flag
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Suppression d’identité invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid_row", [None, 1, False, "invalid", ["alice"]])
+def test_malformed_identity_editor_is_a_validation_error(editor, invalid_row):
+    config, values = editor
+    values["identities"] = [invalid_row]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Éditeur d’identité invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid_id", [None, 1, False, ["alice"], {"id": "alice"}])
+def test_invalid_identity_id_type_is_not_coerced_on_save(editor, invalid_id):
+    config, values = editor
+    values["identities"][0]["id"] = invalid_id
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
