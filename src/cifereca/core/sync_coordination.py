@@ -278,8 +278,16 @@ def _run_observed_canonical_convergence(
     # fallback or implied consent for older sessions.
     delivery = getattr(self, "_canonical_right_delivery", None)
     consent_reader = getattr(self, "_canonical_persisted_consent", None)
+    # Canonical source-level ON does not depend on the retired per-right
+    # consent reader. Keep that reader only for legacy/unset sources.
+    from .source_sync_consent import read_policy
+    canonical_on = False
+    if type(admitted_snapshots) is list and len(admitted_snapshots) == 1:
+        canonical_on = (
+            read_policy(self.storage, admitted_snapshots[0].scope).mode == "on"
+        )
     if (delivery is None and admitted_snapshots
-            and callable(consent_reader)):
+            and (canonical_on or callable(consent_reader))):
         from inspect import getattr_static
         try:
             candidate_session = self._session_for_account(account)
@@ -296,7 +304,7 @@ def _run_observed_canonical_convergence(
                 library_root=self.library_dir(), shared_lock=sync_lease,
             )
     if (admitted_snapshots and callable(delivery)
-            and callable(consent_reader)):
+            and (canonical_on or callable(consent_reader))):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
         from .source_auto_consent_bridge import (
@@ -321,7 +329,9 @@ def _run_observed_canonical_convergence(
         )
 
         try:
-            consent = consent_reader(account)
+            consent = (consent_reader(account)
+                       if callable(consent_reader) and not canonical_on
+                       else frozenset())
         except Exception:
             # A consent backend exception may serialize private credentials.
             # Deny delivery and publish a closed, scope-free diagnostic.
