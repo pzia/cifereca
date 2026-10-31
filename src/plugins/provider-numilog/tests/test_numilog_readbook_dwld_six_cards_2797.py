@@ -96,3 +96,38 @@ def test_scoped_offer_id_changes_with_edition_and_account():
         *kwargs, "right-a", rows[1],
         "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
     ) != offer
+
+
+@pytest.mark.parametrize("selected_lid", [str(i) for i in range(1, 7)])
+def test_each_of_six_purchases_independently_qualifies_one_opaque_offer(selected_lid):
+    """#2797: inventory != offer; each of six exact selected preflights is positive."""
+    from cifereca_numilog import _numilog_selected_offer_id
+
+    html = _page(*(_card(i) for i in range(1, 7)))
+    rows, _ = parse_library_page(html)
+    assert len(rows) == 6
+    assert all(not row.get("readbook_dwld_offer") for row in rows)
+    offers = []
+    for lid in map(str, range(1, 7)):
+        selected, _ = parse_library_page(
+            html, delivery_evidence=True,
+            delivery_selector=lambda row, chosen=lid: row["lid"] == chosen,
+        )
+        assert sum(row.get("readbook_dwld_offer") is True for row in selected) == 1
+        row, = [row for row in selected if row["lid"] == lid]
+        offer = _numilog_selected_offer_id(
+            "identity-a", "credential-a", "account-a",
+            "numilog:fixture:" + lid, row,
+            "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+        )
+        assert offer.startswith("numilog.readbook:")
+        offers.append(offer)
+        assert all(
+            not _numilog_selected_offer_id(
+                "identity-a", "credential-a", "account-a",
+                "numilog:fixture:" + other["lid"], other,
+                "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+            )
+            for other in selected if other["lid"] != lid
+        )
+    assert len(set(offers)) == 6
