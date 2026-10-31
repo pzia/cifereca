@@ -13,12 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-from .canonical_dedup_backup_relink import (
-    relink_canonical_duplicate_backup_paths,
-)
-from .canonical_dedup_catalog_relink import relink_canonical_duplicate_catalogue
+from .canonical_dedup_prepare import prepare_verified_canonical_duplicate
 from .canonical_dedup_preview import preview_canonical_duplicate
-from .canonical_dedup_receipt_relink import relink_completed_delivery_checkpoints
 from .canonical_dedup_retirement import (
     recover_canonical_duplicate_retirement,
     retire_verified_canonical_duplicate,
@@ -147,30 +143,22 @@ def execute_canonical_duplicate(
 
     catalogue = backups = receipts = 0
     try:
-        catalogue = relink_canonical_duplicate_catalogue(
+        # One canonical non-destructive preparation owns ALL reference
+        # migration. Do not duplicate its sequencing or proof policy here.
+        prepared = prepare_verified_canonical_duplicate(
             storage, library_root=library_root,
             candidate_placement_id=candidate_placement_id,
             keeper_placement_id=keeper_placement_id,
             shared_lock=shared_lock,
         )
-        backups = relink_canonical_duplicate_backup_paths(
-            storage, library_root=library_root,
-            candidate_placement_id=candidate_placement_id,
-            keeper_placement_id=keeper_placement_id,
-            shared_lock=shared_lock,
-        )
-        receipts = relink_completed_delivery_checkpoints(
-            storage, library_root=library_root,
-            candidate_placement_id=candidate_placement_id,
-            keeper_placement_id=keeper_placement_id,
-            shared_lock=shared_lock,
-        )
+        catalogue = prepared.catalogue_relinked
+        backups = prepared.backup_relinked
+        receipts = prepared.receipt_relinked
     except (ValueError, sqlite3.Error, OSError):
-        # No destructive operation has run. Previously committed SQL-only
-        # relinks remain valid as both physical copies are still present.
+        # A late refusal leaves both physical copies intact; successful
+        # earlier relinks are durable but must be counted via a new audit.
         return CanonicalDedupExecutionResult(
             "blocked", "reference_relink_failed",
-            catalogue, backups, receipts,
         )
 
     final = preview_canonical_duplicate(
