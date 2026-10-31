@@ -82,6 +82,13 @@ def audit_source_counts(storage, account) -> dict[str, object]:
             "WHERE identity_id=? AND provider_id=? AND credential_id=? "
             "AND account_id=? GROUP BY status", coords,
         ).fetchall()
+        from .acquisition_staging_evidence import receipt_staging_evidence
+        # Exact account only; no title/SHA-only provenance attribution.
+        staging = receipt_staging_evidence(
+            db, coords=coords, staging_root=(storage.path.parent / "acquisition-work")
+            if isinstance(getattr(storage, "path", None), Path) else None,
+            verify_files=True, reference=lambda _ref: "private",
+        )
     return {
         "schema_version": 1, "audit_scope": "exact_source",
         "physical_verification": "not_performed",
@@ -91,6 +98,10 @@ def audit_source_counts(storage, account) -> dict[str, object]:
         "origin_link_count": min(max(int(origins), 0), 1_000_000),
         "placement_reference_count": min(max(int(placements), 0), 1_000_000),
         "ledger_by_status": _count(receipts, _LEDGER),
+        "staging_evidence_coverage": staging["coverage"],
+        "staged_sha_verified_count": staging["staged_verified"],
+        "staged_visible_in_library_count": staging["staged_visible_in_library"],
+        # None of these counters assert exact OriginLink or publication.
     }
 
 
