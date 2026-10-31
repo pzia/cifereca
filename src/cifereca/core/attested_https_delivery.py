@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
-from typing import Mapping
+from typing import Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
 from ..http_trace import HTTPX_TRANSPORT
@@ -112,8 +112,20 @@ def _directory_fd(target: Path) -> int:
     return descriptor
 
 
+def _admitted(callback: Callable[[], bool]) -> None:
+    # Recheck the Core admission before first GET, each hop, each chunk
+    # and immediately before publishing the target name.
+    try:
+        if callback() is True:
+            return
+    except Exception:
+        pass
+    raise ValueError("delivery_admission_changed")
+
+
 def download_attested_https(
     *, producer: str, url: str, target: Path,
+    admission_current: Callable[[], bool],
     headers: Mapping[str, str] | None = None, timeout: float = 20,
     max_bytes: int = _MAX_BYTES, max_redirects: int = _MAX_REDIRECTS,
 ) -> PublicDelivery:
@@ -126,12 +138,13 @@ def download_attested_https(
     bytes, bind scope/offer and complete Core's canonical publication.
     """
     if (type(producer) is not str or not 0 < len(producer) <= 128
-            or not isinstance(target, Path)
+            or not isinstance(target, Path) or not callable(admission_current)
             or type(max_bytes) is not int or not 0 < max_bytes <= _MAX_BYTES
             or type(max_redirects) is not int
             or not 0 <= max_redirects <= _MAX_REDIRECTS):
         raise ValueError("delivery_parameters_invalid")
     origin = _destination(url)
+    _admitted(admission_current)
     initial = origin
     request_headers = _headers(headers)
     physical = Path(os.path.abspath(target.expanduser()))
@@ -142,6 +155,7 @@ def download_attested_https(
     current = url
     with HTTPX_TRANSPORT.public_client(producer=producer, timeout=timeout) as client:
         while True:
+            _admitted(admission_current)
             origin = _destination(current)
             if current in visited:
                 raise ValueError("delivery_redirect_loop")
@@ -161,7 +175,8 @@ def download_attested_https(
                     if redirects >= max_redirects:
                         raise ValueError("delivery_redirect_limit")
                     location = response.headers.get("location")
-                    if not location:
+                    if (not location or any(ord(ch) < 33 or ord(ch) == 127
+                                            or ch == "\\" for ch in location)):
                         raise ValueError("delivery_redirect_missing")
                     next_url = urljoin(current, location)
                     _destination(next_url)  # Validate BEFORE next GET.
@@ -185,6 +200,7 @@ def download_attested_https(
                 descriptor = _directory_fd(physical)
                 temporary = ".delivery-" + secrets.token_hex(16) + ".part"
                 temporary_made = False
+                linked = False
                 try:
                     file_flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
                                   | getattr(os, "O_NOFOLLOW", 0))
@@ -195,6 +211,7 @@ def download_attested_https(
                         total = 0
                         with os.fdopen(handle, "wb") as writer:
                             for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                                _admitted(admission_current)
                                 total += len(chunk)
                                 if total > max_bytes:
                                     raise ValueError("delivery_size_exceeded")
@@ -204,14 +221,37 @@ def download_attested_https(
                             os.fsync(writer.fileno())
                         if not total:
                             raise ValueError("delivery_empty")
+                        _admitted(admission_current)
                         # Atomic no-replace publication within one pinned
                         # directory: a concurrent target can never be clobbered.
                         os.link(temporary, physical.name, src_dir_fd=descriptor,
                                 dst_dir_fd=descriptor, follow_symlinks=False)
+                        linked = True
                         os.fsync(descriptor)
+                    except BaseException:
+                        # A failed fsync or concurrent cancellation must not
+                        # leave the failed attempt advertised as a completed
+                        # candidate. Unlink only our own inode, never a
+                        # substituted target.
+                        if linked:
+                            try:
+                                own = os.stat(temporary, dir_fd=descriptor,
+                                              follow_symlinks=False)
+                                final = os.stat(physical.name, dir_fd=descriptor,
+                                                follow_symlinks=False)
+                                if ((own.st_dev, own.st_ino)
+                                        == (final.st_dev, final.st_ino)):
+                                    os.unlink(physical.name, dir_fd=descriptor)
+                            except OSError:
+                                pass
+                        raise
                     finally:
                         if temporary_made:
-                            os.unlink(temporary, dir_fd=descriptor)
+                            try:
+                                os.unlink(temporary, dir_fd=descriptor)
+                                os.fsync(descriptor)
+                            except FileNotFoundError:
+                                pass
                     return PublicDelivery(
                         physical, digest.hexdigest(), total, content_type, redirects,
                     )
