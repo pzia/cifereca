@@ -587,7 +587,9 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
         for summary in result.get("identities", ()) if isinstance(result, dict) else ():
             if not isinstance(summary, dict):
                 continue
-            outcome = "failed" if str(summary.get("status") or "") == "failed" else "success"
+            # Action events are binary: partial progress is not a successful sync.
+            # Preserve the precise partial/failed state in the structured facts.
+            outcome = "success" if summary.get("status") == "success" else "failed"
             self._record_action(str(summary.get("identity_id") or "") or None, "synchronization", outcome, facts={"deep": bool(deep), "status": summary.get("status"), "errors": int(summary.get("errors") or 0)})
         return result
     except LockBusyError as exc:
