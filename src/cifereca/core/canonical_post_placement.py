@@ -6,6 +6,7 @@ Matching SHA alone neither authorizes adoption nor deletion of another path.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import hashlib
 import json
 
@@ -132,7 +133,131 @@ def checkpoint_post_placement_duplicates(
     return key
 
 
+def clear_checkpoint_if_no_duplicates(
+    storage, *, library_root: Path, placement_id: str,
+) -> bool:
+    """Expire ONLY a proven stale advisory entry; never change book ownership.
+
+    A missing/symlinked keeper, ambiguous profile directory, a still-present
+    (even corrupted) candidate, or an unknown checkpoint schema leaves the
+    diagnostic intact for review. Hashing happens only if a marker exists.
+    """
+    if (type(placement_id) is not str or not placement_id
+            or not isinstance(library_root, Path)):
+        return False
+    with storage._lock, storage._connect() as db:
+        row = db.execute(
+            "SELECT p.identity_id,p.path,p.artifact_id,p.state,a.sha256,a.size "
+            "FROM placements p JOIN artifacts a ON a.artifact_id=p.artifact_id "
+            "WHERE p.placement_id=?", (placement_id,),
+        ).fetchone()
+        if (row is None or row[3] != "present" or type(row[0]) is not str
+                or not row[0] or row[2] != "sha256:" + str(row[4])
+                or type(row[5]) is not int or row[5] <= 0):
+            return False
+        identity, path, artifact, _, digest, size = row
+        key = _PENDING_PREFIX + hashlib.sha256(json.dumps(
+            [identity, artifact], separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")).hexdigest()
+        marked = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,),
+        ).fetchone()
+        if marked is None or type(marked[0]) is not str:
+            return False
+        try:
+            record = json.loads(marked[0])
+        except (ValueError, TypeError, RecursionError):
+            return False
+        if (type(record) is not dict or set(record) != {
+                "schema", "identity_id", "artifact_id", "placement_ids",
+            } or record["schema"] != "canonical.post-placement-dedup-pending.v1"
+                or record["identity_id"] != identity
+                or record["artifact_id"] != artifact
+                or type(record["placement_ids"]) is not list
+                or not 2 <= len(record["placement_ids"]) <= _MAX_MATCHES + 1
+                or any(type(pid) is not str or not 0 < len(pid) <= 256
+                       for pid in record["placement_ids"])
+                or len(set(record["placement_ids"])) != len(record["placement_ids"])
+                or placement_id not in record["placement_ids"]):
+            return False
+        registered = db.execute(
+            "SELECT identity_id,directory_name FROM identities"
+        ).fetchall()
+        owners = [directory for owner, directory in registered if owner == identity]
+        if (len(owners) != 1 or type(owners[0]) is not str
+                or sum(directory == owners[0] for _, directory in registered) != 1):
+            return False
+        owner_dir = owners[0]
+        reserved = frozenset(directory for _, directory in registered
+                             if type(directory) is str and directory)
+        former_ids = tuple(
+            pid for pid in record["placement_ids"] if pid != placement_id
+        )
+        former = db.execute(
+            "SELECT placement_id,identity_id,artifact_id,state,path "
+            "FROM placements WHERE placement_id IN ("
+            + ",".join("?" for _ in former_ids) + ")",
+            former_ids,
+        ).fetchall()
+        if len(former) != len(former_ids):
+            # A deleted row contains no path: we cannot prove that its bytes
+            # were cleaned up merely because the registration disappeared.
+            return False
+        former_paths = []
+        for pid, candidate_owner, candidate_artifact, state, candidate_path in former:
+            if (pid not in former_ids or candidate_owner != identity
+                    or candidate_artifact != artifact or state == "present"
+                    or type(candidate_path) is not str):
+                return False
+            previous = Path(candidate_path)
+            # Missing registered placement is not missing physical bytes.
+            # Preserve the queue until EACH previous pathname is absent.
+            if (not previous.is_absolute() or ".." in previous.parts
+                    or os.path.lexists(previous)):
+                return False
+            former_paths.append((pid, candidate_path, state))
+        if len(former_paths) != len(former_ids):
+            return False
+    if not _verified_copy(
+        path, root=library_root, owner_directory=owner_dir,
+        registered_directories=reserved, size=size, sha256=digest,
+    ):
+        return False
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        # Never erase a pending marker when a second physical Placement
+        # remains, even if its bytes no longer match the stored artifact SHA.
+        present = db.execute(
+            "SELECT placement_id,path,state FROM placements "
+            "WHERE identity_id=? AND artifact_id=? AND state='present'",
+            (identity, artifact),
+        ).fetchall()
+        if present != [(placement_id, path, "present")]:
+            return False
+        for pid, candidate_path, state in former_paths:
+            if (db.execute(
+                "SELECT path,state FROM placements WHERE placement_id=? "
+                "AND identity_id=? AND artifact_id=?",
+                (pid, identity, artifact),
+            ).fetchone() != (candidate_path, state)
+                    or os.path.lexists(candidate_path)):
+                return False
+        if db.execute(
+            "SELECT 1 FROM placements WHERE placement_id=? "
+            "AND identity_id=? AND artifact_id=? AND state='present' "
+            "AND path=?",
+            (placement_id, identity, artifact, path),
+        ).fetchone() is None:
+            return False
+        result = db.execute(
+            "DELETE FROM metadata WHERE key=? AND value=?",
+            (key, marked[0]),
+        )
+        return result.rowcount == 1
+
+
 __all__ = [
     "verified_post_placement_duplicates",
     "checkpoint_post_placement_duplicates",
+    "clear_checkpoint_if_no_duplicates",
 ]

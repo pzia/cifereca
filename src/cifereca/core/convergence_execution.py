@@ -41,6 +41,7 @@ def _check_post_placement_duplicates(storage, *, library_root: Path,
     try:
         from .canonical_post_placement import (
             checkpoint_post_placement_duplicates,
+            clear_checkpoint_if_no_duplicates,
             verified_post_placement_duplicates,
         )
         matches = verified_post_placement_duplicates(
@@ -55,6 +56,13 @@ def _check_post_placement_duplicates(storage, *, library_root: Path,
                 duplicate_placement_ids=matches,
             )
             _LOG.info("TRACE convergence code=canonical_dedup_pending")
+        else:
+            # An advisory pending record must not survive indefinitely after
+            # the last registered same-profile duplicate has disappeared.
+            # Never clear it on an ambiguous or physically invalid keeper.
+            clear_checkpoint_if_no_duplicates(
+                storage, library_root=library_root, placement_id=placement_id,
+            )
     except Exception:
         # A separate maintenance failure cannot turn verified B into a failed
         # acquisition, revoke its OriginLink or authorize re-download.

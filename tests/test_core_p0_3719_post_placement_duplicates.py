@@ -247,3 +247,117 @@ def test_post_b_probe_persists_advisory_checkpoint(store, tmp_path):
         assert db.execute("SELECT count(*) FROM metadata").fetchone()[0] == after
     assert rows(store) == (1, 3, 3, 3)
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+
+def test_stale_checkpoint_is_cleared_only_after_last_present_duplicate_exits(
+    store, tmp_path,
+):
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, paths, (first, second, foreign) = _two_accounts(store, tmp_path)
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        key = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchone()[0]
+        # Deindex the second placement first, then simulate actual
+        # physical cleanup before the advisory marker is reconciled.
+        db.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
+                   (second.placement_id,))
+    assert store.metadata_get(key) is not None
+    # A deindexed row alone is not evidence of physical cleanup.
+    paths[1].unlink()
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    assert store.metadata_get(key) is None
+    assert rows(store) == (1, 3, 3, 3)
+    assert not paths[1].exists()
+    assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
+    assert store.placement_get(foreign.placement_id)["state"] == "present"
+
+
+def test_corrupt_present_duplicate_must_not_clear_pending_checkpoint(
+    store, tmp_path,
+):
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, (first_path, second_path, _foreign_path), (first, second, _) = (
+        _two_accounts(store, tmp_path)
+    )
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        key = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchone()[0]
+    second_path.write_bytes(b"tampered, unverified physical candidate")
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    assert store.metadata_get(key) is not None
+    assert first_path.read_bytes() == BYTES
+    assert store.placement_get(second.placement_id)["state"] == "present"
+
+
+@pytest.mark.parametrize("breakage", ["keeper_corrupt", "keeper_symlink", "marker"])
+def test_missing_keeper_proof_or_unknown_marker_does_not_clear_checkpoint(
+    store, tmp_path, breakage,
+):
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, (first_path, second_path, _), (first, second, _) = (
+        _two_accounts(store, tmp_path)
+    )
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        key = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchone()[0]
+        db.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
+                   (second.placement_id,))
+    if breakage == "keeper_corrupt":
+        first_path.write_bytes(b"replacement-content")
+    elif breakage == "keeper_symlink":
+        first_path.unlink()
+        first_path.symlink_to(second_path)
+    else:
+        store.metadata_set(key, '{"schema":"future-checkpoint"}')
+    original = store.metadata_get(key)
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    assert store.metadata_get(key) == original
+
+
+def test_deindexed_but_still_physical_duplicate_keeps_pending_marker(
+    store, tmp_path,
+):
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, paths, (first, second, _foreign) = _two_accounts(store, tmp_path)
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    with store._lock, store._connect() as db:
+        key = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchone()[0]
+        db.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
+                   (second.placement_id,))
+    original = store.metadata_get(key)
+    _check_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    assert store.metadata_get(key) == original
+    assert all(path.read_bytes() == BYTES for path in paths)
