@@ -563,9 +563,9 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
 
 
 def sync_source_presentation(source: object, *, canonical: bool = False) -> SyncSourcePresentation:
-    enabled = bool(getattr(source, "enabled", False))
-    connected = bool(getattr(source, "connected", False))
-    capable = bool(getattr(source, "sync_capable", False))
+    enabled = getattr(source, "enabled", None) is True
+    connected = getattr(source, "connected", None) is True
+    capable = getattr(source, "sync_capable", None) is True
     # Preserve stable action labels for non-Kobo sources; the GTK row and
     # task label provide the disambiguated provider presentation (#980).
     label = _safe_sync_source_label(source)
