@@ -283,7 +283,7 @@ def _refresh_sync_page(self) -> None:
         # A disconnected configured catalogue must remain discoverable without
         # pretending that a remote search or catalogue sync is available.
         disclosure.set_expanded(any(
-            item.provider_id == "paris"
+            item.identity_scope == "authenticated"
             and getattr(item, "catalog_search_available", None) is not True
             for item in catalogues
         ))
@@ -293,12 +293,19 @@ def _refresh_sync_page(self) -> None:
             row = Adw.ActionRow()
             # Only registered descriptor IDs, never credentials, can label
             # a catalogue in this read-only section.
-            row.set_title(
-                "Bibliothèques de Paris" if item.provider_id == "paris"
-                else "Kobo — Catalogue" if item.provider_id == "kobo"
-                else "Numilog — Catalogue public" if item.provider_id == "numilog-catalog"
-                else item.provider_id
-            )
+            # Names are descriptor metadata, not supplier-specific policies.
+            # A missing/invalid display name falls back to the bounded ID
+            # already validated above; never render provider diagnostics.
+            name_reader = getattr(self.service, "provider_display_name", None)
+            try:
+                display_name = name_reader(item.provider_id) if callable(name_reader) else None
+            except Exception:
+                display_name = None
+            if (type(display_name) is not str or not 1 <= len(display_name) <= 80
+                    or not display_name.isprintable()
+                    or any(char in display_name for char in "/\\?@")):
+                display_name = item.provider_id
+            row.set_title(display_name)
             availability = (
                 "Recherche disponible"
                 if getattr(item, "catalog_search_available", None) is True
@@ -461,7 +468,7 @@ def _refresh_sync_page(self) -> None:
         now.set_tooltip_text(
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
-        def one(_button, sid=source.source_id, label=display_label, provider=source.provider_id, canonical=source_consent_api):
+        def one(_button, sid=source.source_id, label=display_label):
             if not sync_action_scope_current(self, scope):
                 return
             def completed(_result):
@@ -474,7 +481,7 @@ def _refresh_sync_page(self) -> None:
                 if refreshed is not None and refreshed.identity_id == scope.identity_id:
                     self.refresh_library(False)
             self.runner.submit(
-                ("Actualiser mes achats Numilog…" if not canonical and provider == "numilog" else f"Synchronisation {label}…"),
+                f"Synchronisation {label}…",
                 lambda: broker.synchronize_source(sid)
                 if sync_action_scope_current(self, scope) else None,
                 completed, control=_button,
