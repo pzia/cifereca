@@ -1784,3 +1784,50 @@ SHA, le rapprochement aux origines et la publication sont réservés à Core.
 Le canal ancien `download_direct` sans sélection demeure compatible avec
 les clients historiques ; il ne vaut pas preuve de complétude ou de droit.
 Les tests sont synthétiques (HTTPX/MockTransport), sans compte fournisseur.
+
+
+## P0 #2797 / #3838 — Diagnostic reproductible des livraisons (31/10/2026)
+
+La commande générique déjà disponible permet de sélectionner **un seul**
+compte Numilog sans déclencher les autres fournisseurs :
+
+```bash
+cifereca sync list --provider numilog --json
+cifereca sync run --provider numilog --identity '<identity_id>' \
+  --credential '<credential_id>' --account-id '<account_id>' --confirm --json
+```
+
+`sync list` est une lecture locale ; `sync run` **accède au réseau**, exige
+les coordonnées exactes du compte et respecte le consentement persistant ainsi
+que l'interdiction de lancer deux synchronisations concurrentes. Ne jamais
+inventer de consentement, relancer des actions déjà réussies sans preuve ou
+publier un fichier sur la seule foi d'un reçu HTTP.
+
+Pour analyser hors ligne l'export ZIP **brut** du journal (Diagnostics), sans
+réenvoyer les liens signés ni les credentials au serveur :
+
+```bash
+python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py \
+  cifereca-journal-brut.zip --json
+# Facultatif, isoler un run par task_ref présent dans le journal :
+python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py \
+  cifereca-journal-brut.zip --task-ref '<task_ref>'
+```
+
+L'analyseur regroupe les événements `NUMILOG / acquisition_delivery` par
+`action`, restitue chaque hop observé (`http_status`, catégories origine /
+chemin / MIME, redirection, présence de cookie) puis le code terminal. Une
+réponse `http_error` n'est donc plus confondue avec un échec de sélection
+HTML, d'origine, d'intégrité, de fulfillment ADEPT ou de publication. Il ne
+récupère **aucun** URL signé, en-tête ou secret du journal ; le ZIP original
+reste privé et intact. La catégorie `other` n'identifie pas l'hôte exact :
+si nécessaire, utiliser un export HTTP Trace brut protégé en `0600`
+pour relever le `status` et le point de refus réseau, sans le publier.
+
+**Attention** : `acsm_candidate` signifie seulement que le fichier temporaire
+a été remis au Core. Même `acsm_complete` ou `epub_complete` côté fournisseur
+ne prouve pas le **Placement** / **OriginLink** / SHA-256 final. Le diagnostic
+doit être suivi de la vérification du fichier réel dans le profil et de son
+lien d'origine. La recette P0 reste **six achats, six EPUB vérifiés**, dont les
+deux précédemment reçus sont idempotents. Un refus HTTP est un fait, pas une
+preuve que le User-Agent en est la cause.
