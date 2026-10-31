@@ -12,7 +12,7 @@ from cifereca.core.canonical_dedup_prepare import (
 from cifereca.core.canonical_recovery import _scope, _stage_id
 from cifereca.locking import InterProcessLock
 from tests.test_core_p0_3171_atomic_publication_v14 import (
-    BYTES, SHA, new_source, rows,
+    BYTES, SHA, new_source, rows, store,
 )
 from tests.test_core_p0_3185_canonical_backup_relink import rig, backup
 
