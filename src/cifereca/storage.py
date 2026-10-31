@@ -4274,6 +4274,14 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("SAVEPOINT placement_delete")
             try:
+                # Only the explicit canonical recovery transaction may remove
+                # its pending tombstone after verifying the original inode.
+                if db.execute(
+                    "SELECT 1 FROM placements WHERE placement_id=? "
+                    "AND state='dedup_cleanup_pending'",
+                    (str(placement_id),),
+                ).fetchone():
+                    raise ValueError("dedup_cleanup_pending")
                 db.execute("DELETE FROM catalog_entries WHERE placement_id=?", (str(placement_id),))
                 db.execute("DELETE FROM placements WHERE placement_id=?", (str(placement_id),))
                 db.execute("RELEASE SAVEPOINT placement_delete")
