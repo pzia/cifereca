@@ -2166,6 +2166,47 @@ class Storage:
         root = Path(plan["root"])
         now = int(time.time())
         with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            # A pending canonical duplicate cleanup owns the ORIGINAL inode
+            # and both Placement paths until durable unlink + tombstone
+            # finalization. An explicit identity-directory migration must not
+            # silently move or delete this evidence, including by collapsing
+            # two equal-content paths into a single Placement.
+            pending = db.execute(
+                "SELECT path,identity_id,metadata_json FROM placements "
+                "WHERE state='dedup_cleanup_pending' LIMIT 1001"
+            ).fetchall()
+            if len(pending) > 1000:
+                raise ValueError("directory_migration_pending_dedup_budget")
+            changed_owners = {str(row["identity_id"]) for row in plan["changes"]}
+            def unique_keys(items):
+                value = {}
+                for key, item in items:
+                    if key in value:
+                        raise ValueError("directory_migration_pending_dedup_evidence")
+                    value[key] = item
+                return value
+            for path, identity_id, raw in pending:
+                if (type(path) is not str or type(identity_id) is not str
+                        or identity_id in changed_owners
+                        or rewrite_path(path, mappings, root) != path):
+                    raise ValueError("directory_migration_pending_dedup_scope")
+                try:
+                    evidence = json.loads(raw, object_pairs_hook=unique_keys)
+                    marker = evidence["core.canonical-dedup-retirement.v1"]
+                    keeper_id = marker["keeper_placement_id"]
+                except (ValueError, TypeError, KeyError, RecursionError):
+                    raise ValueError("directory_migration_pending_dedup_evidence") from None
+                if type(keeper_id) is not str or not keeper_id:
+                    raise ValueError("directory_migration_pending_dedup_evidence")
+                keeper = db.execute(
+                    "SELECT path,identity_id FROM placements WHERE placement_id=?",
+                    (keeper_id,),
+                ).fetchone()
+                if (keeper is None or keeper[1] != identity_id
+                        or type(keeper[0]) is not str
+                        or rewrite_path(keeper[0], mappings, root) != keeper[0]):
+                    raise ValueError("directory_migration_pending_dedup_keeper")
             # Repoint old references to an already indexed identical destination.
             for pid, path in db.execute("SELECT placement_id,path FROM placements").fetchall():
                 new = rewrite_path(path, mappings, root)
