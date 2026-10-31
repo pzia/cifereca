@@ -384,9 +384,16 @@ def _safe_sync_source_label(source: object) -> str:
     label = label.strip()
     if (not 1 <= len(label) <= 96 or not label.isprintable()
             or "://" in label or label.startswith(("/", "\\", "file:"))
+            # A provider-supplied account label may accidentally contain
+            # auth headers rather than a signed URL. Never display credentials
+            # in GTK rows, accessible names, task labels or exported task logs.
             or any(marker in label.casefold() for marker in (
                 "?token=", "&token=", "?key=", "&key=",
                 "?signature=", "&signature=", "access_token=",
+                "authorization:", "proxy-authorization:", "bearer ", "basic ",
+                "cookie:", "set-cookie:", "x-api-key:", "api_key=",
+                "api-key=", "password=", "password:", "client_secret=",
+                "secret=", "refresh_token=", "session_token=",
             ))):
         return provider
     return label
