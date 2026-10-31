@@ -9,6 +9,7 @@ from pathlib import Path
 import os
 import hashlib
 import json
+import sqlite3
 
 from .convergence_verified_presence import _verified_copy
 
@@ -84,11 +85,17 @@ def preview_post_placement_supervised_pairs(
     )
     results = []
     for candidate in candidates:
-        outcome = supervise_canonical_duplicate(
-            storage, library_root=library_root,
-            candidate_placement_id=candidate,
-            keeper_placement_id=placement_id, action="preview",
-        )
+        try:
+            outcome = supervise_canonical_duplicate(
+                storage, library_root=library_root,
+                candidate_placement_id=candidate,
+                keeper_placement_id=placement_id, action="preview",
+            )
+        except (ValueError, sqlite3.Error, OSError):
+            # A stale candidate or unreadable provenance is not permission
+            # to deduplicate. Keep other independent previews available.
+            results.append((candidate, "preview_blocked", "preview_unavailable"))
+            continue
         results.append((candidate, outcome.status, outcome.reason))
     return tuple(results)
 
