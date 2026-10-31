@@ -14,7 +14,7 @@ def select_sync_accounts(
     provider: str = "",
     identity: str = "",
     credential: str = "",
-    account_id: str = "",
+    account_id: str | None = None,
 ) -> list[Any]:
     """Filter exact account coordinates, rejecting ambiguous or malformed bindings.
 
@@ -22,6 +22,8 @@ def select_sync_accounts(
     must never infer a credential or profile from provider name alone.
     """
     for value in (provider, identity, credential, account_id):
+        if value is None and value is account_id:
+            continue
         if type(value) is not str or any(c in value for c in "\x00\r\n"):
             raise SyncSelectionError("invalid_source_selector")
     selected = []
@@ -40,7 +42,7 @@ def select_sync_accounts(
         if ((provider and coords[1] != provider)
                 or (identity and coords[0] != identity)
                 or (credential and coords[2] != credential)
-                or (account_id and coords[3] != account_id)):
+                or (account_id is not None and coords[3] != account_id)):
             continue
         if coords in seen:
             raise SyncSelectionError("ambiguous_source_binding")
@@ -51,7 +53,8 @@ def select_sync_accounts(
 
 def require_exact_sync_account(accounts: list[Any], **selectors: str) -> Any:
     """A destructive/network run must identify exactly one account."""
-    if not all(selectors.get(k) for k in ("provider", "identity", "credential")):
+    if (not all(selectors.get(k) for k in ("provider", "identity", "credential"))
+            or selectors.get("account_id") is None):
         raise SyncSelectionError("source_scope_required")
     selected = select_sync_accounts(accounts, **selectors)
     if not selected:
