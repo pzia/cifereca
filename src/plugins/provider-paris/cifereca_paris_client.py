@@ -16,7 +16,7 @@ from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
-from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH, USER_AGENT
+from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -159,7 +159,6 @@ class ParisClient:
         if self._client_factory is not None:
             return self._client_factory()
         headers = {
-            "User-Agent": USER_AGENT,
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
         }
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=20.0)
@@ -228,7 +227,6 @@ class ParisClient:
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
             "Referer": f"{self.base_url}/numerique/account.aspx",
             "X-Requested-With": "XMLHttpRequest",
-            "User-Agent": USER_AGENT,
         }
 
     def _params(self, provider: str, uid: str = "") -> dict[str, str]:
@@ -960,7 +958,6 @@ class ParisClient:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
             "Referer": f"{self.base_url}/numerique/",
-            "User-Agent": USER_AGENT,
         }
         for hop in range(max_redirects):
             self._validate_pnb_redirect_url(current)

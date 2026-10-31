@@ -98,7 +98,6 @@ class HttpTransport:
             producer="transport.http",
             follow_redirects=False,
             trust_env=False,
-            headers={"User-Agent": "cifereca-http-transport/1.0"},
         )
         self.logger = getattr(context, "logger", logging.getLogger("cifereca.transport.http"))
 

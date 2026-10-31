@@ -1,6 +1,7 @@
 """The installed feed path uses the Core public client and its Trace session."""
 import httpx
 import criticism_feeds as feeds
+from cifereca.http_trace import BROWSER_USER_AGENT
 from cifereca.http_trace import HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level,set_diagnostics_level
@@ -17,7 +18,7 @@ def test_default_fetch_uses_core_public_client_and_only_trace_captures(monkeypat
         requests.append(request)
         assert request.headers['accept-encoding']=='identity'
         assert request.headers['connection']=='close'
-        assert 'user-agent' not in request.headers
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200,stream=httpx.ByteStream(body))
 
     def construct(**options):

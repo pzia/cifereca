@@ -6,7 +6,7 @@ import pytest
 
 import cifereca_numilog as account
 import cifereca_numilog_public_client as public
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
@@ -24,6 +24,7 @@ def test_public_detail_service_preserves_anonymity_and_result(monkeypatch, level
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         assert 'cookie' not in request.headers and 'authorization' not in request.headers
         return httpx.Response(200,headers={'Content-Type':'text/html'},stream=httpx.ByteStream(content))
 
@@ -57,6 +58,7 @@ def test_account_client_follows_trace_switch_without_reconnect(monkeypatch):
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200,stream=httpx.ByteStream(b'private synthetic bytes'))
 
     def construct(**kwargs):

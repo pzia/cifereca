@@ -1,7 +1,7 @@
 """Default Paris construction and compatibility reset use the Core service."""
 import httpx
 import cifereca_paris_client as paris
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
@@ -15,6 +15,7 @@ def test_paris_core_client_and_compatibility_reset_preserve_policy(monkeypatch):
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200,headers={'Set-Cookie':'session=synthetic; Path=/'},
                               stream=httpx.ByteStream(b'synthetic HTML'))
 

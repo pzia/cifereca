@@ -99,7 +99,7 @@ class BnfCatalogueSession(ProviderSession):
             raise ProviderError("BnF : taille de page hors limites (1–100)")
         self.client = HTTPX_TRANSPORT.client(producer="provider.bnf-catalogue",
             timeout=float(self.options.get("timeout_seconds", 25)), follow_redirects=True,
-            headers={"User-Agent": "Cifereca-BnF-Catalogue/1.0", "Accept": "application/xml, text/xml"},
+            headers={"Accept": "application/xml, text/xml"},
         )
 
     def connect(self):

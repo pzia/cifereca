@@ -127,10 +127,6 @@ class GallicaSession(ProviderSession):
             follow_redirects=True,
             http2=False,
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/140.0 Safari/537.36"
-                ),
                 "Accept": "application/atom+xml, application/xml;q=0.9, application/epub+zip;q=0.8, audio/*;q=0.8, */*;q=0.5",
                 "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
                 "Referer": "https://gallica.bnf.fr/",
@@ -706,7 +702,6 @@ class GallicaSession(ProviderSession):
             "headers": {
                 "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
                 "Referer": "https://gallica.bnf.fr/",
-                "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.13"),
             },
             "max_bytes": self.max_download_bytes,
             "allowed_content_types": allowed,
@@ -785,7 +780,6 @@ class GallicaSession(ProviderSession):
                 "headers": {
                     "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
                     "Referer": "https://gallica.bnf.fr/",
-                    "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.13"),
                 },
                 "max_bytes": self.max_download_bytes,
                 "allowed_content_types": allowed,

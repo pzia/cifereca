@@ -41,8 +41,7 @@ def public_join(base_url, value):
 
 def _fetch_pinned(url, *, timeout):
     with HTTPX_TRANSPORT.public_client(producer="criticism.source.rss", timeout=timeout) as client:
-        # Preserve the legacy caller's explicit headers (no added User-Agent).
-        client.headers.clear()
+        # Keep the Core browser identity while retaining feed-specific headers.
         with client.stream("GET", url, headers={
             "Accept": "application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html",
             "Accept-Encoding": "identity", "Connection": "close",

@@ -1,7 +1,7 @@
 """Baen's production client uses Core; its download adapter remains separate."""
 import httpx
 import cifereca_baen as baen
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level,set_diagnostics_level
 
@@ -15,6 +15,7 @@ def test_baen_core_client_tracks_trace_without_extra_requests(monkeypatch):
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200,stream=httpx.ByteStream(b'synthetic HTML'))
 
     def construct(**options):

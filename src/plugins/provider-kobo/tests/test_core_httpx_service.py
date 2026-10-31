@@ -1,7 +1,7 @@
 """Actual Vault requests use Core capture without extra auth or requests."""
 import httpx
 import cifereca_kobo_vault as vault
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
@@ -16,6 +16,7 @@ def test_vault_service_preserves_anonymous_and_authenticated_requests(monkeypatc
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200,headers={'Content-Type':'application/json'},stream=httpx.ByteStream(content))
 
     def construct(**options):
