@@ -108,7 +108,12 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     for editor in values['accounts']:
         if type(editor) is not dict:
             raise SettingsValidationError('Compte fournisseur invalide : recharger les paramètres.')
-        if editor.get('deleted'):
+        deletion_flag = editor.get('deleted', False)
+        if type(deletion_flag) is not bool:
+            raise SettingsValidationError(
+                'Suppression de compte fournisseur invalide : recharger les paramètres.'
+            )
+        if deletion_flag:
             continue
         # A stale or malformed GTK snapshot must never stringify a numeric ID,
         # coerce a provider selector or raise on an unhashable provider value.
