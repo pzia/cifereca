@@ -22,7 +22,7 @@ def _standalone(name: str):
 
 def test_local_file_detail_shows_only_filename_but_keeps_full_path_for_tooltip():
     display = _standalone("detail_display_value")
-    path = "/home/hbernard/EBooks/alexandre/kobo/Un titre très long.epub"
+    path = "/home/testuser/EBooks/example/kobo/Un titre très long.epub"
 
     shown, tooltip = display("Fichier local", path)
 
