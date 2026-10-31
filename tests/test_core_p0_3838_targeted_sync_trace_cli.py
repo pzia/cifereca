@@ -116,3 +116,15 @@ def test_without_trace_flag_never_changes_observability_level(monkeypatch, capsy
         ]
     finally:
         set_diagnostics_level(previous)
+
+
+def test_preexisting_trace_path_refused_before_provider_connection(monkeypatch, tmp_path, capsys):
+    destination = tmp_path / "existing.zip"
+    destination.write_bytes(b"untouched")
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **kwargs: pytest.fail("preflight must reject before opening Core"),
+    )
+    assert cli.main(command(destination)) == 2
+    assert json.loads(capsys.readouterr().out)["code"] == "trace_export_destination_exists"
+    assert destination.read_bytes() == b"untouched"
