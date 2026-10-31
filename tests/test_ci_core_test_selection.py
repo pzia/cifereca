@@ -165,14 +165,16 @@ def test_2141_sync_page_changes_cannot_skip_cross_cutting_p0_regressions():
     assert selector.select(["src/cifereca/gui/query_controls.py"], ROOT)[0] == "ui-component"
 
 
-def test_installed_recorder_gtk_change_keeps_real_gate_and_headless_contract():
+def test_installed_recorder_shared_fixture_requires_full_core_and_real_gtk_gate():
     selector = _module()
     native = "tests/test_browser_recorder_installed_gtk_blackbox.py"
-    mode, targets = selector.select([native, "src/plugins/browser-recorder/browser_recorder_page.py"], ROOT)
-    assert mode == "changed"
-    assert targets == [native, "tests/test_core_p0_2663_recorder_package_contract.py"]
+    # Two other test modules import helpers from this native GTK module;
+    # selecting only its companion test would hide regressions in consumers.
+    assert selector.select(
+        [native, "src/plugins/browser-recorder/browser_recorder_page.py"], ROOT
+    ) == ("full", ["tests"])
     workflow = (ROOT / ".github/workflows/browser-recorder-chromium-e2e.yml").read_text()
-    assert native in workflow  # actual GTK execution is never replaced by skip
+    assert native in workflow  # dedicated native gate remains mandatory
 
 
 def test_installed_recorder_missing_headless_contract_fails_to_full_selection(tmp_path):
