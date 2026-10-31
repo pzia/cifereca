@@ -143,3 +143,35 @@ def test_regular_other_profile_queue_is_not_a_scoped_uncertainty(
     scoped = review_canonical_dedup_advisories(store, identity_id="B")
     assert scoped.status == "reviewed"
     assert scoped.entries == ()
+
+
+def test_syntactically_valid_forged_owner_cannot_hide_an_a_checkpoint(
+    store, tmp_path,
+):
+    key, _ = _checkpoint(store, tmp_path)
+    payload = json.loads(store.metadata_get(key))
+    payload["identity_id"] = "B"  # Valid identity string, wrong key scope.
+    store.metadata_set(key, json.dumps(payload, sort_keys=True))
+
+    owner_a = review_canonical_dedup_advisories(store, identity_id="A")
+    assert owner_a.status == "partial"
+    assert owner_a.entries == ()  # Do not disclose B's claimed payload to A.
+    owner_b = review_canonical_dedup_advisories(store, identity_id="B")
+    assert owner_b.status == "partial"
+    assert owner_b.blocked_count == 1
+    assert owner_b.entries[0].reason == "checkpoint_scope_mismatch"
+    assert json.loads(store.metadata_get(key))["identity_id"] == "B"
+
+
+def test_wrong_artifact_fingerprint_with_foreign_owner_is_unattributable(
+    store, tmp_path,
+):
+    key, _ = _checkpoint(store, tmp_path)
+    payload = json.loads(store.metadata_get(key))
+    payload["identity_id"] = "B"
+    payload["artifact_id"] = "sha256:" + "c" * 64
+    store.metadata_set(key, json.dumps(payload, sort_keys=True))
+    scoped = review_canonical_dedup_advisories(store, identity_id="A")
+    assert scoped.status == "partial"
+    assert scoped.entries == ()
+    assert store.metadata_get(key) is not None
