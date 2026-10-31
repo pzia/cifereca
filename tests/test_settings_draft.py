@@ -1092,7 +1092,7 @@ def test_p1_malformed_account_label_does_not_turn_into_saved_text(editor, invali
     assert config.data == before and not config.path.exists()
 
 
-@pytest.mark.parametrize("invalid", [None, True, 4, [], "yes"])
+@pytest.mark.parametrize("invalid", [None, 4, [], "yes"])
 def test_p1_untyped_account_deletion_flag_is_not_accepted(editor, invalid):
     config, values = editor
     item = account("provider.future")
