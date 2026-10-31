@@ -371,11 +371,31 @@ def _public_sync_provider_slug(source: object) -> str:
     return "fournisseur inconnu"
 
 
+def _safe_sync_source_label(source: object) -> str:
+    """Bound display-only broker labels; never echo URLs or opaque secrets.
+
+    Account routing and consent always use opaque Core source IDs separately.
+    A malformed label must not reach task names, GTK widgets or diagnostics.
+    """
+    provider = _public_sync_provider_slug(source)
+    label = getattr(source, "label", None)
+    if type(label) is not str:
+        return provider
+    label = label.strip()
+    if (not 1 <= len(label) <= 96 or not label.isprintable()
+            or "://" in label or label.startswith(("/", "\\", "file:"))
+            or any(marker in label.casefold() for marker in (
+                "?token=", "&token=", "?key=", "&key=",
+                "?signature=", "&signature=", "access_token=",
+            ))):
+        return provider
+    return label
+
+
 def sync_source_identity_label(source: object, *, disambiguate: bool = True) -> str:
     """Qualify homonymous row titles, preserving unique legacy row titles."""
     provider = _public_sync_provider_slug(source)
-    label = getattr(source, "label", "")
-    label = label.strip() if type(label) is str else ""
+    label = _safe_sync_source_label(source)
     if not label:
         return provider
     return (
@@ -393,7 +413,7 @@ def sync_source_row_labels(sources: object) -> tuple[str, ...]:
     """
     rows = tuple(sources)
     names = [
-        str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "").strip()
+        _safe_sync_source_label(source)
         for source in rows
     ]
     name_counts: dict[str, int] = {}
@@ -526,7 +546,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     capable = bool(getattr(source, "sync_capable", False))
     # Preserve stable action labels for non-Kobo sources; the GTK row and
     # task label provide the disambiguated provider presentation (#980).
-    label = str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "cette source")
+    label = _safe_sync_source_label(source)
 
     activation = "Activée" if enabled else "Désactivée"
     connection = "Connectée" if connected else "Déconnectée"
