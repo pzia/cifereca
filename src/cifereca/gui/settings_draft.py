@@ -109,7 +109,15 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                     'Schéma des identifiants modifié : recharger les paramètres.'
                 )
             credentials[field.key] = submitted_fields[field.key]
-        options: dict[str, Any] = dict(editor.get('original_options') or {})
+        # Snapshot values originate from a GTK editor, not the provider's
+        # parser. Refuse malformed legacy containers rather than coercing
+        # pair lists or strings into account configuration.
+        original_options = editor.get('original_options', {})
+        if type(original_options) is not dict:
+            raise SettingsValidationError(
+                'Options du fournisseur invalides : recharger les paramètres.'
+            )
+        options: dict[str, Any] = dict(original_options)
         for field in getattr(descriptor, 'account_options', ()):
             if field.key not in editor.get('option_fields', {}):
                 continue  # A legacy editor does not silently reset saved options.
