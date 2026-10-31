@@ -173,8 +173,35 @@ def _refresh_sync_page(self) -> None:
             xalign=0,
         ))
         return
-    rows = broker.sources(scope.identity_id)
+    # A failed or malformed broker enumeration must not crash the entire
+    # Synchronisation page or masquerade as an empty, healthy inventory.
+    def sources_unavailable():
+        if not sync_action_scope_current(self, scope):
+            return
+        if summary is not None:
+            summary.set_label("État des sources indisponible · lecture impossible")
+        if alert_row is not None:
+            self._sync_attention_icon.set_from_icon_name("dialog-error-symbolic")
+            self._sync_attention_text.set_label(
+                "Impossible de lire les sources. Actualisez l’affichage pour réessayer."
+            )
+            alert_row.set_visible(True)
+        box.append(Gtk.Label(
+            label="Sources indisponibles pour cette identité.",
+            xalign=0,
+        ))
+
+    try:
+        rows = broker.sources(scope.identity_id)
+    except Exception:
+        # Provider exceptions may contain signed URLs or authentication data;
+        # show only an actionable, fixed UI message.
+        sources_unavailable()
+        return
     if not sync_action_scope_current(self, scope):
+        return
+    if type(rows) not in (list, tuple) or len(rows) > 1024:
+        sources_unavailable()
         return
     # Never render or enable another identity's broker row.
     rows = [
