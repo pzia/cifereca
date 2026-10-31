@@ -106,6 +106,17 @@ _PENDING_PREFIX = "core.canonical-dedup-pending.v1."
 def checkpoint_post_placement_duplicates(
     storage, *, placement_id: str, duplicate_placement_ids: tuple[str, ...],
 ) -> str:
+    """Backward-compatible opaque checkpoint key for diagnostics and tools."""
+    key, _changed = checkpoint_post_placement_duplicates_change(
+        storage, placement_id=placement_id,
+        duplicate_placement_ids=duplicate_placement_ids,
+    )
+    return key
+
+
+def checkpoint_post_placement_duplicates_change(
+    storage, *, placement_id: str, duplicate_placement_ids: tuple[str, ...],
+) -> tuple[str, bool]:
     """Persist an advisory, profile-scoped maintenance queue entry.
 
     The caller must already have re-hashed the paths via
@@ -156,13 +167,14 @@ def checkpoint_post_placement_duplicates(
         existing = db.execute(
             "SELECT value FROM metadata WHERE key=?", (key,),
         ).fetchone()
-        if existing is None or existing[0] != payload:
+        changed = existing is None or existing[0] != payload
+        if changed:
             db.execute(
                 "INSERT INTO metadata(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, payload),
             )
-    return key
+    return key, changed
 
 
 
