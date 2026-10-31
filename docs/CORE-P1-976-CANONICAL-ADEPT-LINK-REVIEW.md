@@ -21,8 +21,12 @@ identité ne peuvent jamais compléter les preuves manquantes.
 - `paired_links_unverified` : deux OriginLink persistés (provider et adept)
   portent le même SourceReference/Artifact/identité. Cela **ne prouve pas**
   quel profil Adobe a effectivement activé la licence, ni son état serveur.
-- `unpaired_or_missing_links` : une des deux origines est absente ; ne pas
-  inférer sa présence depuis un autre prêt portant le même SHA.
+- `unpaired_or_missing_links` : une des deux origines est absente **ou**
+  le lien ADEPT/fournisseur existe sans véritable référence de reçu
+  (`evidence_ref` vide ou uniquement des espaces) ; ne jamais inférer sa
+  présence depuis un autre prêt portant le même SHA. Le diagnostic expose
+  `links_without_receipt` par Artifact et le motif de revue
+  `canonical_origin_receipt_missing`, sans recopier le reçu lui-même.
 - `conflicting_records` : liaisons inter-identités, plusieurs références
   ADEPT pour le même Artifact ou plusieurs Artifacts au sein d'une même
   source, nécessitant une revue de transaction.
