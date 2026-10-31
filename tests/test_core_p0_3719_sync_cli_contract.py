@@ -16,7 +16,7 @@ def _account(identity="p1", provider="future-provider", credential="c1", account
 def test_unknown_provider_is_not_special_cased():
     account = _account()
     assert require_exact_sync_account(
-        [account], provider="future-provider", identity="p1", credential="c1"
+        [account], provider="future-provider", identity="p1", credential="c1", account_id="a1"
     ) is account
 
 
@@ -24,7 +24,7 @@ def test_cross_profile_and_multi_account_are_not_implicitly_selected():
     accounts = [_account(), _account(identity="p2"), _account(account="a2")]
     with pytest.raises(SyncSelectionError, match="ambiguous_source_selection"):
         require_exact_sync_account(
-            accounts, provider="future-provider", identity="p1", credential="c1"
+            accounts, provider="future-provider", identity="p1", credential="c1", account_id="a1"
         )
     assert require_exact_sync_account(
         accounts, provider="future-provider", identity="p1",
@@ -41,7 +41,7 @@ def test_duplicate_binding_and_missing_scope_fail_closed():
         require_exact_sync_account([_account()], provider="future-provider")
     with pytest.raises(SyncSelectionError, match="source_not_found"):
         require_exact_sync_account([_account()], provider="other",
-                                   identity="p1", credential="c1")
+                                   identity="p1", credential="c1", account_id="a1")
 
 
 def test_invalid_selectors_refused():
@@ -58,3 +58,12 @@ def test_result_does_not_leak_provider_payload_or_fake_busy_success():
     assert safe_sync_result({"status": "impossible", "errors": -4}) == {
         "status": "failed"
     }
+
+
+def test_empty_primary_account_id_requires_explicit_selection():
+    accounts = [_account(account=""), _account(account="secondary")]
+    with pytest.raises(SyncSelectionError, match="source_scope_required"):
+        require_exact_sync_account(accounts, provider="future-provider",
+                                   identity="p1", credential="c1")
+    assert require_exact_sync_account(accounts, provider="future-provider",
+                                      identity="p1", credential="c1", account_id="") is accounts[0]
