@@ -6,6 +6,7 @@ supply two Core-produced scoped audits and opt-in closed correlated events.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -132,22 +133,37 @@ def _safe_audit(value: Any) -> dict[str, Any]:
     }
 
 
-def _closed_events(events: Any) -> list[dict[str, str]]:
+def _closed_events(
+    events: Any, *, scope_ref: str, run_ref: str,
+) -> list[dict[str, str]]:
+    """Only events explicitly tagged with this exact account's opaque scope."""
     if type(events) not in (tuple, list) or len(events) > _MAX_ROWS:
         raise ValueError("report_events_invalid")
     output = []
+    salt = os.urandom(16)
     for event in events:
         if type(event) is not dict:
             raise ValueError("report_events_invalid")
-        op = event.get("operation")
-        state = event.get("status")
-        code = event.get("code")
-        if op not in _EVENT_OPERATIONS or state not in _EVENT_STATES:
-            raise ValueError("report_events_invalid")
-        output.append({
-            "operation": op, "status": state,
-            "code": code if code in _EVENT_CODES else "unknown",
-        })
+        op, state, code = (event.get("operation"), event.get("status"),
+                           event.get("code"))
+        if (type(op) is not str or op not in _EVENT_OPERATIONS
+                or type(state) is not str or state not in _EVENT_STATES
+                or event.get("scope_ref") != scope_ref
+                or event.get("run_ref") != run_ref):
+            # Never include events from another account or unrelated run.
+            raise ValueError("report_events_scope_invalid")
+        row = {
+            "run_ref": run_ref, "operation": op, "status": state,
+            "code": code if type(code) is str and code in _EVENT_CODES else "unknown",
+        }
+        task = event.get("task_ref")
+        if task is not None:
+            if type(task) is not str or not 0 < len(task) <= 512:
+                raise ValueError("report_events_invalid")
+            row["task_ref"] = hashlib.sha256(
+                salt + task.encode("utf-8", "surrogatepass")
+            ).hexdigest()[:24]
+        output.append(row)
     return output
 
 
@@ -190,7 +206,7 @@ def write_sync_report(
     selected_after = _safe_audit(after)
     if selected_before["scope_ref"] != selected_after["scope_ref"]:
         raise ValueError("report_scope_changed")
-    safe_events = _closed_events(events)
+    safe_events = _closed_events(events, scope_ref=selected_before["scope_ref"], run_ref=run_ref)
     summary = safe_sync_result(sync_result)
     if type(summary) is not dict:
         raise ValueError("report_result_invalid")
