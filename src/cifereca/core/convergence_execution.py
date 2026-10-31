@@ -42,7 +42,7 @@ def _check_post_placement_duplicates(storage, *, library_root: Path,
     """Checkpoint verified maintenance candidates without touching B or GET."""
     try:
         from .canonical_post_placement import (
-            checkpoint_post_placement_duplicates,
+            checkpoint_post_placement_duplicates_change,
             clear_checkpoint_if_no_duplicates,
             verified_post_placement_duplicates,
         )
@@ -53,11 +53,17 @@ def _check_post_placement_duplicates(storage, *, library_root: Path,
             # Commit an advisory queue entry only after a successful B and a
             # fresh physical check. This is not a licence to retire either
             # copy: actual cleanup requires another scoped, checked transaction.
-            checkpoint_post_placement_duplicates(
+            _key, changed = checkpoint_post_placement_duplicates_change(
                 storage, placement_id=placement_id,
                 duplicate_placement_ids=matches,
             )
-            _LOG.info("TRACE convergence code=canonical_dedup_pending")
+            # Repeated opening syncs may re-verify the same candidate hundreds
+            # of times. A no-op advisory replay is not a NEW maintenance task.
+            # Keep the durable checkpoint but avoid inflating INFO logs/counts.
+            if changed:
+                _LOG.info("TRACE convergence code=canonical_dedup_pending")
+            else:
+                _LOG.debug("TRACE convergence code=canonical_dedup_unchanged")
         else:
             # An advisory pending record must not survive indefinitely after
             # the last registered same-profile duplicate has disappeared.

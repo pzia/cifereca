@@ -361,3 +361,69 @@ def test_deindexed_but_still_physical_duplicate_keeps_pending_marker(
     )
     assert store.metadata_get(key) == original
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+
+def test_checkpoint_reports_atomic_new_vs_noop_without_changing_legacy_key_api(
+    store, tmp_path,
+):
+    from cifereca.core.canonical_post_placement import (
+        checkpoint_post_placement_duplicates_change,
+    )
+
+    root, paths, (first, second, foreign) = _two_accounts(store, tmp_path)
+    matches = verified_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    )
+    assert matches == (second.placement_id,)
+    key, changed = checkpoint_post_placement_duplicates_change(
+        store, placement_id=first.placement_id,
+        duplicate_placement_ids=matches,
+    )
+    assert changed is True
+    snapshot = store.metadata_get(key)
+    again, changed_again = checkpoint_post_placement_duplicates_change(
+        store, placement_id=second.placement_id,
+        duplicate_placement_ids=(first.placement_id,),
+    )
+    assert again == key and changed_again is False
+    assert store.metadata_get(key) == snapshot
+    assert checkpoint_post_placement_duplicates(
+        store, placement_id=first.placement_id,
+        duplicate_placement_ids=(second.placement_id,),
+    ) == key
+    assert store.metadata_get(key) == snapshot
+    assert store.placement_get(foreign.placement_id)["identity_id"] == "B"
+    assert all(p.read_bytes() == BYTES for p in paths)
+
+
+def test_repeated_duplicate_check_logs_only_first_new_checkpoint(
+    store, tmp_path, caplog,
+):
+    import logging
+
+    from cifereca.core.convergence_execution import _check_post_placement_duplicates
+
+    root, paths, (first, second, foreign) = _two_accounts(store, tmp_path)
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        _check_post_placement_duplicates(
+            store, library_root=root, placement_id=first.placement_id,
+        )
+        _check_post_placement_duplicates(
+            store, library_root=root, placement_id=second.placement_id,
+        )
+        _check_post_placement_duplicates(
+            store, library_root=root, placement_id=first.placement_id,
+        )
+    pending = [
+        record for record in caplog.records
+        if record.getMessage() == "TRACE convergence code=canonical_dedup_pending"
+    ]
+    assert len(pending) == 1
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM metadata WHERE key LIKE "
+            "'core.canonical-dedup-pending.v1.%'",
+        ).fetchone()[0] == 1
+    assert store.placement_get(foreign.placement_id)["identity_id"] == "B"
+    assert all(path.read_bytes() == BYTES for path in paths)
