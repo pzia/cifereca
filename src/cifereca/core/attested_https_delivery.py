@@ -97,23 +97,29 @@ def _headers(headers: Mapping[str, str] | None) -> dict[str, str]:
 
 
 def _directory_fd(target: Path) -> int:
-    """Pin a pre-existing Core-owned directory, never follow a linked parent."""
+    """Open every parent component with O_NOFOLLOW, pinned by directory fd.
+
+    A check-then-open Path.is_symlink() walk has an ancestor replacement race:
+    openat from '/' closes it before any output file is created.
+    """
     physical = Path(os.path.abspath(target.expanduser()))
     if physical.name in ("", ".", ".."):
         raise ValueError("delivery_staging_unsafe")
-    current = physical.parent
-    while True:
-        if current.is_symlink():
-            raise ValueError("delivery_staging_unsafe")
-        if current == current.parent:
-            break
-        current = current.parent
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(physical.parent, flags)
-    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
-        os.close(descriptor)
-        raise ValueError("delivery_staging_unsafe")
-    return descriptor
+    descriptor = None
+    try:
+        descriptor = os.open("/", flags)
+        for name in physical.parent.parts[1:]:
+            next_descriptor = os.open(name, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise ValueError("delivery_staging_unsafe")
+        return descriptor
+    except (OSError, ValueError):
+        if descriptor is not None:
+            os.close(descriptor)
+        raise ValueError("delivery_staging_unsafe") from None
 
 
 def _admitted(callback: Callable[[], bool]) -> None:
