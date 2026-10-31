@@ -63,6 +63,16 @@ def test_changed_test_only_runs_that_test_without_full_suite(tmp_path):
     )
 
 
+
+def test_changed_test_module_reused_as_fixture_forces_full_suite(tmp_path):
+    root, _initial = fixture(tmp_path)
+    write(root, "tests/test_dependent.py", "from tests.test_storage import StorageTests\n")
+    before = commit(root, "consumer established")
+    write(root, "tests/test_storage.py", "def test_changed_fixture(): pass\n")
+    head = commit(root, "modify shared test fixture")
+    assert select(root, before, head) == ("full", "tests", "shared-test-fixture")
+
+
 def test_ui_component_uses_existing_core_selection_and_smoke_targets(tmp_path):
     root, before = fixture(tmp_path)
     write(root, "src/cifereca/gui/cover_preview.py", "VALUE = 2\n")
