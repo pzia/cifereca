@@ -199,15 +199,26 @@ def _canonical_source_delivery_active(session: Any) -> bool:
     historical worker remains for older provider sessions without this ABI.
     """
     from inspect import getattr_static
+    # The provider-neutral downloadable_resources v2 ABI supersedes the
+    # historical rights_observation v1 trio. A v2-only Numilog session must
+    # never fall through to the legacy purchase-by-purchase startup worker:
+    # that worker has its own preflight vetoes and receipt namespace.
+    # A partial/mixed ABI is NOT sufficient to claim a canonical executor.
+    contracts = (
+        (
+            "downloadable_resource_snapshot",
+            "downloadable_selected_offer_snapshot",
+            "downloadable_selected_delivery_candidate",
+        ),
+        (
+            "rights_observation_snapshot",
+            "rights_selected_delivery_offer_snapshot",
+            "rights_selected_delivery_candidate",
+        ),
+    )
     try:
-        return all(
-            callable(getattr_static(session, name, None))
-            for name in (
-                "rights_observation_snapshot",
-                "rights_selected_delivery_offer_snapshot",
-                "rights_selected_delivery_candidate",
-            )
-        )
+        return any(all(callable(getattr_static(session, method, None))
+                       for method in contract) for contract in contracts)
     except (TypeError, AttributeError):
         return False
 
