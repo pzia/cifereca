@@ -111,6 +111,7 @@ def execute_admitted_convergence(
     deliver: Callable[[SourceKey, ProviderRightObservation], CompletedDelivery],
     cancelled: Callable[[], bool] = lambda: False,
     publication_guard: Callable[[sqlite3.Connection, SourceKey], bool] | None = None,
+    expected_source_policy_revision: str | None = None,
 ) -> tuple[ConvergenceOutcome, ...]:
     """Execute the authorized part of the same Sync; no second remote read.
 
@@ -129,6 +130,11 @@ def execute_admitted_convergence(
         or not callable(deliver) or not callable(cancelled)
         or not callable(consent_still_current)
         or (publication_guard is not None and not callable(publication_guard))
+        or (expected_source_policy_revision is not None
+            and (type(expected_source_policy_revision) is not str
+                 or len(expected_source_policy_revision) != 32
+                 or any(ch not in "0123456789abcdef"
+                        for ch in expected_source_policy_revision)))
         or not isinstance(library_root, Path)
         or type(shared_lock) is not InterProcessLock
         or shared_lock._handle is None
@@ -360,6 +366,7 @@ def execute_admitted_convergence(
                 delivery_receipt_ref=completed.receipt_ref,
                 adept_receipt_ref=completed.adept_receipt_ref,
                 context_current=current_memory,
+                expected_source_policy_revision=expected_source_policy_revision,
                 transaction_guard=(
                     (lambda db: publication_guard(db, key))
                     if publication_guard is not None else None
