@@ -106,13 +106,33 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if iid:
             scoped_accounts.setdefault((provider_id, iid), []).append(str(row.get('id') or ''))
     for editor in values['accounts']:
-        if editor.get('deleted'):
+        if type(editor) is not dict:
+            raise SettingsValidationError(
+                'Compte fournisseur invalide : recharger les paramètres.'
+            )
+        if editor.get('deleted') is True:
             continue
-        account_id = str(editor.get('id') or '')
-        if not account_id or account_id in account_ids:
-            raise SettingsValidationError('Identifiant de compte fournisseur vide ou dupliqué.')
+        # Only exact editor strings are valid account and provider identities.
+        # In particular, bools, lists and numeric stale widget snapshots must
+        # never be coerced into plausible account IDs during unrelated saves.
+        account_id = editor.get('id')
+        if (type(account_id) is not str or not account_id.strip()
+                or account_id in account_ids):
+            raise SettingsValidationError(
+                'Identifiant de compte fournisseur vide, invalide ou dupliqué.'
+            )
+        provider_key = editor.get('provider')
+        if type(provider_key) is not str or not provider_key:
+            raise SettingsValidationError(
+                'Identifiant du fournisseur invalide : recharger les paramètres.'
+            )
+        label_value = editor.get('label')
+        if type(label_value) is not str:
+            raise SettingsValidationError(
+                'Libellé de compte fournisseur invalide : recharger les paramètres.'
+            )
         account_ids.add(account_id)
-        descriptor = descriptors.get(editor['provider'])
+        descriptor = descriptors.get(provider_key)
         if descriptor is None or descriptor.state != 'ready':
             raise SettingsValidationError('Fournisseur indisponible : recharger les paramètres avant de sauvegarder.')
         if editor.get('invalid_saved_snapshot') is True:
