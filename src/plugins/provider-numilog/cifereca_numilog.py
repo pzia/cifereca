@@ -1389,7 +1389,7 @@ class NumilogSession(ProviderSession):
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
                   authorized_link=None, authorized_kind=None, expected_owner_scope=None,
-                  stage_acsm_only=False, stage_dirfd=None):
+                  stage_acsm_only=False, stage_dirfd=None, attested_readbook_offer=False):
         # The exact Core-selected staging directory is held open across the
         # supplier GET. /proc/self/fd pins its inode if the path is replaced
         # with a symlink while HTTPX streams the response. Legacy/manual
@@ -1448,6 +1448,16 @@ class NumilogSession(ProviderSession):
             )
             selected_kind = authorized_kind if selected_link is not None else None
             signed_redirect_chain = False
+            # Only a freshly revalidated, Core-selected MesLivres dwld offer
+            # can attest the *first* external readBook redirect. A raw URL,
+            # legacy download or unselected HTML navigation cannot do so.
+            selected_readbook = (
+                attested_readbook_offer is True and stage_acsm_only is True
+                and source == 'readbook' and owner is not None
+                and owner_scope is not None and url == expected_readbook
+                and url_origin(url) == url_origin(self.library_url)
+                and urlsplit(url).path.casefold() == '/pages/compte/readbook.ashx'
+            )
             owned_confirmation = (
                 from_owned_confirmation is True and source == 'owned_card'
                 and url_origin(url) == url_origin(self.library_url)
@@ -1526,7 +1536,7 @@ class NumilogSession(ProviderSession):
                     redirect_to = redirect_error = None
                     if r.status_code in REDIRECTS:
                         try:
-                            if attested_hop:
+                            if attested_hop or (selected_readbook and hop == 0):
                                 raw_location = r.headers.get('location','')
                                 if not _raw_network_url(raw_location):
                                     raise ProviderError('Numilog : redirection réseau inattendue')
@@ -1573,7 +1583,16 @@ class NumilogSession(ProviderSession):
                         ):
                             attested_confirmation_redirect = redirect_to
                         url = redirect_to
-                        signed_redirect_chain = attested_hop
+                        # A same-origin confirmation page remains a normal
+                        # HTML navigation requiring the strict card/readBook
+                        # binding. Only an external HTTPS delivery hop starts
+                        # the attested publisher chain.
+                        signed_redirect_chain = (
+                            attested_hop or (
+                                selected_readbook and hop == 0
+                                and url_origin(redirect_to) != url_origin(self.library_url)
+                            )
+                        )
                         trace.fail('redirect_limit')
                         continue
                     self._status(r)
@@ -2003,7 +2022,12 @@ class NumilogSession(ProviderSession):
                     authorized_link=evidence.url if isinstance(evidence, OwnedDelivery) else None,
                     authorized_kind=evidence.delivery_kind
                         if isinstance(evidence, OwnedDelivery) else None,
-                    stage_acsm_only=stage_acsm_only, stage_dirfd=stage_dirfd)
+                    stage_acsm_only=stage_acsm_only, stage_dirfd=stage_dirfd,
+                    attested_readbook_offer=(
+                        stage_acsm_only is True
+                        and type(expected_offer_id) is str
+                        and expected_offer_id.startswith('numilog.readbook:')
+                    ))
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
             finally:
