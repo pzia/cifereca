@@ -343,16 +343,6 @@ def _run_observed_canonical_convergence(
             type(source) is not SourceKey for source in consent
         ):
             consent = frozenset()
-        if admitted_source_revision is not None:
-            # Compatibility projection for the old executor/preflight ABI.
-            # These keys are delivery candidates, never persistent per-right
-            # grants: the source revision is the sole acquisition policy.
-            candidate = admitted_snapshots[0]
-            consent = frozenset(
-                SourceKey(candidate.scope, row.edition_id, row.right_id,
-                          row.kind, candidate.branch)
-                for row in candidate.rights
-            )
 
         # An unchanged final boolean is insufficient: a new source-wide
         # consent generation must not revive an old signed/one-use delivery.
@@ -414,7 +404,7 @@ def _run_observed_canonical_convergence(
         qualified_snapshot = qualify_selected_offers(
             self, account, session, admitted_snapshots[0],
             admitted_epoch=admitted_epoch, shared_lock=sync_lease,
-            library_root=root, persisted_consent=consent,
+            library_root=root, persisted_consent=(None if admitted_source_revision is not None else consent),
             consent_still_current=current_consent,
             cancelled=cancelled_for_rights,
         )
@@ -422,7 +412,7 @@ def _run_observed_canonical_convergence(
             self, account, session, qualified_snapshot,
             admitted_epoch=admitted_epoch,
             shared_lock=sync_lease, library_root=root,
-            persisted_consent=consent,
+            persisted_consent=(None if admitted_source_revision is not None else consent),
             consent_still_current=current_consent,
             deliver=delivery, cancelled=cancelled_for_rights,
             publication_guard=publication_consent,
