@@ -8,6 +8,7 @@ import os
 import socket
 from pathlib import Path
 import tempfile
+import secrets
 import threading
 import unicodedata
 import zipfile
@@ -1484,7 +1485,18 @@ class NumilogSession(ProviderSession):
                     self._validate_download_owner(owner, owner_scope=owner_scope)
                 trace.fail('origin_rejected')
                 attested_hop = (url == selected_link or signed_redirect_chain)
-                if attested_hop:
+                external_selected_hop = (
+                    stage_acsm_only is True and stage_dirfd is not None
+                    and attested_hop and url_origin(url) != url_origin(self.library_url)
+                )
+                if external_selected_hop:
+                    # The Core transport validates and *pins the actual TCP
+                    # peer*. A preflight getaddrinfo() followed by httpx GET
+                    # is vulnerable to DNS rebinding and MUST NOT be used for
+                    # an attested selected external delivery.
+                    if not _attested_public_https(url):
+                        raise ProviderCapabilityError('numilog_candidate_url_refused')
+                elif attested_hop:
                     _checked_attested_network_url(url, self.allowed_origins)
                 else:
                     checked_url(url, self.allowed_origins)
@@ -1503,6 +1515,110 @@ class NumilogSession(ProviderSession):
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
                         )
+                if external_selected_hop:
+                    # No Numilog session cookies/Authorization/Referer can be
+                    # transferred to a public supplier. Only the core's
+                    # public-peer-pinned transport touches external HTTPS.
+                    # This branch is restricted to Core-selected staging:
+                    # it neither invokes ADEPT nor publishes a Placement.
+                    def admitted():
+                        try:
+                            if self.connected is not True or owner is None:
+                                return False
+                            self._validate_download_owner(
+                                owner, owner_scope=owner_scope,
+                            )
+                            pinned = os.fstat(stage_dirfd)
+                            current = os.stat(
+                                destination.parent, follow_symlinks=False,
+                            )
+                            return (
+                                pinned.st_dev == current.st_dev
+                                and pinned.st_ino == current.st_ino
+                                and (current.st_mode & 0o170000) == 0o040000
+                            )
+                        except (OSError, ValueError, ProviderCapabilityError):
+                            return False
+
+                    target = destination.parent / (
+                        '.numilog-pinned-' + secrets.token_hex(12) + '.part'
+                    )
+                    completed = False
+                    try:
+                        try:
+                            receipt = HTTPX_TRANSPORT.attested_https_download(
+                                producer='provider.numilog.delivery',
+                                url=url, target=target,
+                                admission_current=admitted,
+                                headers={
+                                    'Accept': (
+                                        'application/vnd.adobe.adept+xml,'
+                                        'application/epub+zip,application/octet-stream'
+                                    ),
+                                },
+                                timeout=25, max_bytes=self.maximum,
+                                max_redirects=8,
+                            )
+                        except ValueError:
+                            trace.fail('origin_rejected')
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_transport_refused'
+                            ) from None
+                        if not admitted():
+                            trace.fail('origin_rejected')
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_owner_changed'
+                            )
+                        trace.fail('artifact_invalid')
+                        if inspect_artifact(receipt.path, 'acsm').valid:
+                            if selected_link is not None and selected_kind != 'acsm':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
+                            extension = '.acsm'
+                        else:
+                            if receipt.content_type in {
+                                'application/vnd.adobe.adept+xml',
+                                'application/xml', 'text/xml',
+                            }:
+                                trace.fail('xml_not_acsm')
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_xml_not_acsm'
+                                )
+                            validate_epub(receipt.path)
+                            if selected_link is not None and selected_kind != 'epub_direct':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
+                            extension = '.epub'
+                        if not admitted():
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_owner_changed'
+                            )
+                        final = target.with_suffix(extension)
+                        os.replace(receipt.path, final)
+                        try:
+                            staged = selected_candidate_path(final)
+                            if not admitted():
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_owner_changed'
+                                )
+                            code = 'acsm_candidate' if extension == '.acsm' else 'epub_candidate'
+                            trace.success(code)
+                            trace.event(
+                                'artifact_validation', code,
+                                hops=min(12, hop + receipt.redirects + 1),
+                            )
+                            completed = True
+                            return staged, self.library_url
+                        finally:
+                            if not completed:
+                                final.unlink(missing_ok=True)
+                    finally:
+                        if not completed:
+                            target.unlink(missing_ok=True)
+                    # Redirects and byte streaming are handled exclusively
+                    # inside the public Core transport above.
                 trace.fail('redirect_loop')
                 if url in seen:
                     raise ProviderError('Numilog : boucle de téléchargement')
