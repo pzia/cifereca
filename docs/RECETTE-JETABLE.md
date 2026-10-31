@@ -68,7 +68,7 @@ ou en échec reste supprimable ; une recette lancée est arrêtée automatiqueme
 
 ### Exemple sur un volume monté (#3642)
 
-Pour `/media/hbernard/KDATAS/cifereca-tests/T1` lorsque `$USER=hbernard`, sans
+Pour `/media/testuser/TESTDATA/cifereca-tests/T1` lorsque `$USER=testuser`, sans
 coder un utilisateur particulier dans l'outil :
 
 ```sh
