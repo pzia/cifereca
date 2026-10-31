@@ -1311,3 +1311,38 @@ def test_invalid_identity_id_type_is_not_coerced_on_save(editor, invalid_id):
     with pytest.raises(SettingsValidationError, match="Identité invalide"):
         validate(editor)
     assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("field", ["directory", "label", "adept_profile", "languages"])
+@pytest.mark.parametrize("invalid", [None, False, 42, [], {"bad": "value"}])
+def test_malformed_identity_text_field_rejected_without_mutation(
+    editor, field, invalid,
+):
+    config, values = editor
+    values["identities"][0][field] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Champs d’identité invalides"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, 0, 1, "false", "true", [], {}])
+def test_malformed_identity_language_preference_cannot_coerce_to_true(
+    editor, invalid,
+):
+    config, values = editor
+    values["identities"][0]["prefer_vo"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Préférence de langue invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+def test_valid_identity_language_preference_false_remains_false(editor):
+    config, values = editor
+    values["identities"][0]["prefer_vo"] = False
+    before = deepcopy(config.data)
+    draft = validate(editor)
+    assert draft.data["identities"][0]["preferences"]["prefer_original_language"] is False
+    assert config.data == before and not config.path.exists()
