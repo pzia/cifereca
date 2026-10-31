@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import secrets
 import stat
+import tempfile
 
 _MAX_ROWS = 512
 _MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
@@ -182,3 +184,32 @@ def inspect_exact_source(
         "truncated": len(refs) > _MAX_ROWS or len(ledger) > _MAX_ROWS,
         "rights": rights_out, "receipts": receipt_out,
     }
+
+
+
+def write_acquisition_audit(destination: Path, data: dict[str, object]) -> None:
+    """Atomic O_EXCL 0600 JSON publication, never replace an existing file."""
+    if not isinstance(destination, Path):
+        raise ValueError("acquisition_audit_invalid_output")
+    target = Path(os.path.abspath(destination.expanduser()))
+    parent = target.parent
+    if (os.path.lexists(target) or not parent.is_dir()
+            or any(p.is_symlink() for p in (target, *target.parents))):
+        raise FileExistsError("acquisition_audit_destination_exists")
+    payload = (json.dumps(data, ensure_ascii=True, sort_keys=True,
+                          separators=(",", ":")) + "\n").encode("ascii")
+    if len(payload) > 512 * 1024:
+        raise ValueError("acquisition_audit_size_limit")
+    temp = None
+    try:
+        fd, path = tempfile.mkstemp(prefix=".cifereca-audit-", suffix=".tmp", dir=parent)
+        temp = Path(path)
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temp, target, follow_symlinks=False)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
