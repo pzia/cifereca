@@ -13,7 +13,7 @@ def test_candidate_get_inherits_browser_ua_without_changing_payload_headers(monk
     def respond(request):
         observed.append(request)
         return httpx.Response(
-            200, json={"api_major": 1, "sources": []},
+            200, stream=httpx.ByteStream(b'{"api_major": 1, "sources": []}'),
             headers={"content-type": "application/json"},
         )
 
