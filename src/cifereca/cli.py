@@ -390,6 +390,19 @@ def main(argv: list[str] | None = None) -> int:
                         credential=resolved.credential_id,
                         account_id=resolved.unique_id,
                     )
+                    if a.report is not None:
+                        from datetime import datetime, timezone
+                        import secrets
+                        from .core.sync_report import audit_source_counts
+                        # Source selection is complete; record the run BEFORE
+                        # provider connection so connection failures are audited.
+                        report_account = resolved
+                        report_ref = secrets.token_hex(16)
+                        report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                        try:
+                            report_before = audit_source_counts(core.storage, resolved)
+                        except Exception:
+                            report_before = {"status": "unavailable", "reason": "audit_unavailable"}
                     service.connect_selected_source(
                         identity=resolved.identity_id,
                         provider=resolved.provider_id,
@@ -433,17 +446,6 @@ def main(argv: list[str] | None = None) -> int:
                         trace_previous_level = diagnostics_level()
                         set_diagnostics_level("trace")
                         trace_started = True
-                    if a.report is not None:
-                        from datetime import datetime, timezone
-                        import secrets
-                        from .core.sync_report import audit_source_counts
-                        report_account = account
-                        report_ref = secrets.token_hex(16)
-                        report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                        try:
-                            report_before = audit_source_counts(core.storage, account)
-                        except Exception:
-                            report_before = {"status": "unavailable", "reason": "audit_unavailable"}
                     raw = service.synchronize_account_source(account)
                     result = {"provider": account.provider_id,
                               "identity": account.identity_id,
