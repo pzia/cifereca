@@ -1346,3 +1346,49 @@ def test_valid_identity_language_preference_false_remains_false(editor):
     draft = validate(editor)
     assert draft.data["identities"][0]["preferences"]["prefer_original_language"] is False
     assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("invalid", [
+    None, False, 0, "", "alice", {}, {"0": {"id": "alice"}}, set(),
+])
+def test_invalid_identity_collection_refuses_draft_before_any_account_change(
+    editor, invalid,
+):
+    config, values = editor
+    values["identities"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Liste d’identités invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [
+    None, False, 0, "", {}, {"account-id": {"id": "account-id"}}, set(),
+])
+def test_invalid_accounts_collection_never_drops_saved_provider_accounts(
+    editor, invalid,
+):
+    config, values = editor
+    old = dict(
+        id="existing", provider="provider.future", identity_id="alice",
+        label="Compte", enabled=False,
+        credentials={"username": "historic"}, options={"opaque": 1},
+    )
+    config.set("providers.accounts", [deepcopy(old)])
+    values["accounts"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Liste de comptes fournisseurs invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+    assert config.provider_accounts() == [old]
+
+
+def test_tuple_editor_collections_remain_compatible_with_valid_snapshots(editor):
+    config, values = editor
+    values["identities"] = tuple(values["identities"])
+    values["accounts"] = (account("provider.future"),)
+    draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert draft.data["identities"][0]["id"] == "alice"
+    assert draft.data["providers"]["accounts"][0]["id"] == "source"
+    assert config.provider_accounts() == [] and not config.path.exists()
