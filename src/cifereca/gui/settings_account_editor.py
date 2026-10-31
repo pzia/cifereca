@@ -17,7 +17,7 @@ def build_provider_account_editor(
     """Create descriptor-driven provider rows and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
     enabled_row = Adw.ActionRow(); enabled_row.set_title("Source activée" if not descriptor.credential_fields else "Compte activé")
-    enabled = Gtk.Switch(); enabled.set_active(bool(data.get("enabled", True))); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
+    enabled = Gtk.Switch(); enabled.set_active(bool(data.get("enabled", bool(data)))); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
     label_row = Adw.EntryRow(); label_row.set_title("Libellé local"); label_row.set_text(str(data.get("label") or descriptor.display_name)); group.add(label_row)
     identity_row = Adw.EntryRow(); identity_row.set_title("Identité (ID)")
     default_identity_id = str((configured_identities[0].get("id") if configured_identities else "default") or "default")
