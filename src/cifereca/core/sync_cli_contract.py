@@ -74,11 +74,16 @@ def require_unique_sync_account(accounts: list[Any], **selectors: str) -> Any:
     """
     if not selectors.get("identity"):
         raise SyncSelectionError("source_scope_required")
-    selected = select_sync_accounts(accounts, **selectors)
+    try:
+        selected = select_sync_accounts(accounts, **selectors)
+    except SyncSelectionError as exc:
+        if str(exc) == "ambiguous_source_binding":
+            raise SyncSelectionError("account_ambiguous") from None
+        raise
     if not selected:
-        raise SyncSelectionError("source_not_found")
+        raise SyncSelectionError("source_not_configured")
     if len(selected) != 1:
-        raise SyncSelectionError("ambiguous_source_selection")
+        raise SyncSelectionError("account_ambiguous")
     return selected[0]
 
 def safe_sync_result(result: object) -> dict[str, object]:
