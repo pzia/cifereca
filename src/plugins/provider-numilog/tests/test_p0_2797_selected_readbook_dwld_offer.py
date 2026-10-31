@@ -102,10 +102,11 @@ def test_refresh_with_new_readbook_href_never_reuses_old_selected_offer(tmp_path
         item = session.library()[0]
         calls = []
         session._download = lambda *args, **kwargs: calls.append((args, kwargs))
-        session._page = lambda url, **kwargs: (url, page(card(extra=(
-            '<a class="LnkDownloadBook" href="/Pages/Compte/'
-            'readBook.ashx?lid=999&amp;m=dwld">Other</a>'
-        ))))
+        # Same edition identity in the legacy listing, but a new exact
+        # owned readBook query: the opaque offer MUST be refreshed.
+        session._page = lambda url, **kwargs: (
+            url, page(card(mode="dwld&amp;extra=1")),
+        )
         with pytest.raises(ProviderCapabilityError, match="numilog_offer_changed"):
             session.download_direct(
                 item, tmp_path, expected_offer_id=offered.delivery_offer_id,
@@ -165,3 +166,20 @@ def test_six_readbook_cards_emit_six_distinct_selected_only_offers():
         assert all(offer.startswith("numilog.readbook:") for offer in offers)
     finally:
         s.close()
+
+
+def test_readbook_structural_diagnostic_counts_only_selected_actions():
+    html = page(card("12"), card("34", mode="stream"))
+    diag = {}
+    observed, _ = parse_library_page(
+        html, delivery_evidence=True, delivery_diagnostics=diag,
+        delivery_selector=lambda row: row["lid"] == "12",
+    )
+    assert len(observed) == 2
+    assert observed[0].get("readbook_dwld_offer") is True
+    assert "readbook_dwld_offer" not in observed[1]
+    assert diag["cards"] == 2
+    assert diag["js_shapes_in_cards"] == 0
+    assert diag["bound_links"] == 0
+    assert diag["readbook_dwld_offers"] == 1
+    assert "12" not in repr(diag) and "34" not in repr(diag)
