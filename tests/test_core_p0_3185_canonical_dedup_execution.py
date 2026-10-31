@@ -177,8 +177,8 @@ def test_staged_checkpoint_fails_closed_and_does_not_unlink(rig):
     assert (result.status, result.reason) == (
         "blocked", "reference_relink_failed",
     )
-    assert result.catalogue_relinked == result.backup_relinked == 1
-    assert result.receipt_relinked == 0
+    # Preparation reports no partial counters on a late failure; the
+    # independently committed safe relinks are checked in SQLite below.
     assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
     assert all(path.read_bytes() == BYTES for path in paths)
     # Relinks already committed are safe, and may be retried idempotently.
@@ -198,7 +198,9 @@ def test_sql_abort_between_relinks_keeps_both_files_for_retry(rig):
     assert (first.status, first.reason) == (
         "blocked", "reference_relink_failed",
     )
-    assert first.catalogue_relinked == 1 and first.backup_relinked == 0
+    assert first.catalogue_relinked == first.backup_relinked == 0
+    assert current_refs(rig)[0][0] == pubs[0].placement_id
+    assert current_refs(rig)[1] == (str(paths[1]),)
     assert all(path.read_bytes() == BYTES for path in paths)
     assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
     with storage._lock, storage._connect() as db:
