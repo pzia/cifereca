@@ -65,6 +65,28 @@ def test_no_terminal_and_acsm_candidate_never_claim_physical_epub():
     }
 
 
+def test_epub_candidate_is_staged_not_adept_failure_or_published_placement():
+    """#3848: distinguish successful direct EPUB bytes from Core finalization."""
+    report = diagnose.analyze(journal([
+        event("000000000001", "start", "started"),
+        event("000000000001", "delivery_http", "http_ok",
+              http_status=200, mime="epub", hops=2),
+        event("000000000001", "artifact_validation", "epub_candidate"),
+        event("000000000001", "completed", "epub_candidate"),
+        event("000000000002", "completed", "acsm_candidate"),
+    ]))
+    assert report["counts"] == {
+        "epub_candidate_requires_core_publication": 1,
+        "acsm_candidate_requires_core_adept": 1,
+    }
+    attempt = next(x for x in report["attempts"]
+                   if x["terminal_code"] == "epub_candidate")
+    assert attempt["classification"] == "epub_candidate_requires_core_publication"
+    assert any(x["code"] == "epub_candidate" for x in attempt["other_phases"])
+    assert "delivery_complete_unverified_placement" not in report["counts"]
+    assert "adept_fulfillment" not in report["counts"]
+
+
 def test_untrusted_fields_cannot_enter_diagnostic_report():
     report = diagnose.analyze(journal([
         event("000000000001", "delivery_http", "http_unknown-secret",

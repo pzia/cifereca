@@ -26,7 +26,7 @@ _CODE = frozenset({
     "http_error", "origin_rejected", "redirect_loop", "redirect_limit",
     "mime_unexpected", "download_oversize", "artifact_invalid", "xml_not_acsm",
     "adept_attention_required", "adept_unconfirmed", "epub_complete",
-    "acsm_complete", "acsm_candidate", "html_oversize", "unclassified_error",
+    "epub_candidate", "acsm_complete", "acsm_candidate", "html_oversize", "unclassified_error",
 })
 _PHASE = frozenset({
     "start", "delivery_http", "html_selection", "artifact_validation",
@@ -129,6 +129,8 @@ def _classification(terminal, last_http):
         return "delivery_complete_unverified_placement"
     if code == "acsm_candidate":
         return "acsm_candidate_requires_core_adept"
+    if code == "epub_candidate":
+        return "epub_candidate_requires_core_publication"
     if code in {"http_error", "http_forbidden", "http_unauthorized", "http_rate_limited", "link_expired"}:
         return "http_refusal" if last_http else "http_refusal_without_hop"
     if code in {"origin_rejected", "redirect_limit", "redirect_loop"}:

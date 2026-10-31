@@ -27,7 +27,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 # A descendant of the Core logger shares its canonical journal handler.
 _LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.89'
+VERSION = '0.1.90'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
