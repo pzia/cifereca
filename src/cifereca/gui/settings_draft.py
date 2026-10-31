@@ -171,7 +171,16 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 )
             if editor['id'] not in linked:
                 linked.append(editor['id'])
-        saved_accounts.append({
+        original_account = editor.get('original_account', {})
+        if type(original_account) is not dict:
+            raise SettingsValidationError(
+                'Compte fournisseur historique invalide : recharger les paramètres.'
+            )
+        # Retain opaque provider-specific extensions. CoreUI only owns the
+        # generic fields below; rebuilding a fixed dict discards future
+        # adapter metadata during unrelated Settings saves.
+        saved_account = dict(original_account)
+        saved_account.update({
             'id': editor['id'], 'provider': editor['provider'],
             'identity_id': account_identity_id,
             'label': editor['label'].strip() or descriptor.display_name,
@@ -179,6 +188,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             'anonymous': not bool(descriptor.credential_fields),
             'credentials': credentials, 'options': options,
         })
+        saved_accounts.append(saved_account)
     draft.set('providers.accounts', saved_accounts)
     try:
         global_command = shlex.split(values['download_command']) if values['download_command'].strip() else []
