@@ -130,7 +130,7 @@ def test_mainwindow_kobo_action_is_navigation_only_saved_and_lifetime_gated():
     manual = next(f for f in builder.body if isinstance(f, ast.FunctionDef) and f.name == "open_kobo_sync_page")
     rendered = ast.unparse(manual)
     assert 'page_lifetime.alive' in rendered
-    assert "kobo_backup.enabled" in rendered
+    assert "kobo_backup.enabled" not in rendered
     assert "settings_state.dirty('sync')" in rendered
     assert 'if ready and page_lifetime.alive' in rendered
     assert "self.navigate('sync')" in rendered
@@ -155,22 +155,25 @@ def test_malformed_backup_opt_in_does_not_activate_automatic_acquisition():
     assert enabled.run_backup_now.sensitive is True
 
 
-def test_kobo_navigation_callback_reads_saved_boolean_without_implicit_opt_in():
+def test_navigation_callback_is_provider_neutral_and_cannot_authorize_download():
     import ast
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] /
               "src/cifereca/gui/settings_sync_actions.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
-    builder = next(f for f in tree.body if isinstance(f, ast.FunctionDef) and f.name == "bind_settings_sync_actions")
+    builder = next(f for f in tree.body
+                   if isinstance(f, ast.FunctionDef) and f.name == "bind_settings_sync_actions")
     manual = next(f for f in builder.body
                   if isinstance(f, ast.FunctionDef) and f.name == "open_kobo_sync_page")
     refresh = next(f for f in builder.body
                    if isinstance(f, ast.FunctionDef) and f.name == "refresh_kobo_backup_status")
-    for fn in (manual, refresh):
-        source = ast.unparse(fn)
-        assert "self.config.get('kobo_backup.enabled', False) is True" in source
-        assert "bool(self.config.get(" not in source
+    nav_source = ast.unparse(manual)
+    assert "kobo_backup.enabled" not in nav_source
+    assert "settings_state.dirty('sync')" in nav_source
+    assert "self.navigate('sync')" in nav_source
+    assert "run_kobo_backup" not in nav_source
+    assert "self.config.get('kobo_backup.enabled', False) is True" in ast.unparse(refresh)
 
 
 def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refresh():
