@@ -242,6 +242,7 @@ def download_attested_https(
                 temporary = ".delivery-" + secrets.token_hex(16) + ".part"
                 temporary_made = False
                 linked = False
+                written_inode = None
                 try:
                     file_flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
                                   | getattr(os, "O_NOFOLLOW", 0))
@@ -251,6 +252,7 @@ def download_attested_https(
                         digest = hashlib.sha256()
                         total = 0
                         with os.fdopen(handle, "wb") as writer:
+                            written_inode = os.fstat(writer.fileno())
                             for chunk in response.iter_bytes(chunk_size=1024 * 1024):
                                 check_current()
                                 total += len(chunk)
@@ -285,8 +287,13 @@ def download_attested_https(
                             if ((old_dir.st_dev, old_dir.st_ino)
                                     != (new_dir.st_dev, new_dir.st_ino)
                                     or not stat.S_ISREG(published.st_mode)
+                                    or written_inode is None
+                                    or (written_inode.st_dev, written_inode.st_ino)
+                                    != (published.st_dev, published.st_ino)
                                     or (original.st_dev, original.st_ino)
                                     != (published.st_dev, published.st_ino)):
+                                # A name swapped between streaming and link
+                                # must never be accepted as the hashed bytes.
                                 raise ValueError("delivery_staging_changed")
                         finally:
                             os.close(recheck_fd)
