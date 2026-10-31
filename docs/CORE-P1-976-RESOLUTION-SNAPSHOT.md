@@ -18,8 +18,10 @@ et l'item désignés.
 L'entrée privée de hachage contient notamment les reçus historiques du même
 item (incluant les éventuels liens de prêt ancien par entitlement) et les
 lignes exactes des `SourceReference` et `OriginLink` v14, **y compris les
-références de reçus**, pour détecter toute modification même lorsque les
-liens restent présents. Les lignes historiques sont triées : une variation
+références de reçus et les métadonnées de l'Artifact rattaché**, pour détecter
+toute modification même lorsque les liens restent présents. La lecture ne
+rehache **pas les octets du fichier** ; une éventuelle opération métier devra
+contrôler son SHA-256 physique indépendamment. Les lignes historiques sont triées : une variation
 d'ordre SQL ou de liste ne fait pas varier le résultat.
 
 Seul **le hash** et des compteurs sont retournés ; aucune référence de licence,
