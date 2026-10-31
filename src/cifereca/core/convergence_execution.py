@@ -25,6 +25,7 @@ from ..plugin_api.provider_rights_observation import (
 )
 from .canonical_publication import publish_completed_acquisition
 from .canonical_promotion import promote_completed_delivery, cleanup_published_staging
+from .canonical_staging_stock import repair_exact_published_staging
 from .canonical_recovery import (
     mark_completed_delivery_published,
     record_completed_delivery_for_recovery,
@@ -293,17 +294,45 @@ def execute_admitted_convergence(
             results.append(ConvergenceOutcome(key, "blocked", "scope_rebound"))
             break
         if decision.provider_satisfied:
+            # A historical Core receipt may have been committed with its
+            # staging path as the final Placement (#3909). Preserve current
+            # positive presence, but relocate ONLY when the exact durable
+            # source receipt and current physical SHA can both be verified.
+            # Final placements do not require new authorization or any write.
+            repaired = False
+            try:
+                for placement_id in decision.placement_ids:
+                    if repair_exact_published_staging(
+                        initial_storage, source=key, placement_id=placement_id,
+                        library_root=library_root, shared_lock=shared_lock,
+                        context_current=current_memory,
+                        consent_current=lambda: current() and live_consent(key),
+                        expected_source_policy_revision=expected_source_policy_revision,
+                        transaction_guard=(
+                            (lambda db: publication_guard(db, key))
+                            if publication_guard is not None else None
+                        ),
+                    ):
+                        repaired = True
+            except Exception:
+                # No raw persisted journal/OS exception: path, title,
+                # credentials and signed tokens must remain private.
+                _LOG.warning("TRACE convergence code=canonical_stock_repair_deferred")
+                results.append(ConvergenceOutcome(
+                    key, "failed", "canonical_stock_repair_deferred",
+                ))
+                continue
             # A fully verified provider presence prevents a second GET, but
             # must not skip a previously deferred, post-B duplicate probe.
-            # Rechecking is read-only, profile-scoped and never changes B.
             if decision.placement_ids:
                 _check_post_placement_duplicates(
                     initial_storage, library_root=library_root,
                     placement_id=decision.placement_ids[0],
                 )
-            results.append(
-                ConvergenceOutcome(key, "present_attested", "exact_verified_origin")
-            )
+            results.append(ConvergenceOutcome(
+                key, "recovered" if repaired else "present_attested",
+                "canonical_stock_relocated" if repaired else "exact_verified_origin",
+            ))
             continue
 
         # A stale/unknown right, unsigned delivery, missing configured
