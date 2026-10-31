@@ -306,6 +306,16 @@ def _run_observed_canonical_convergence(
         # The legacy unversioned Kobo switch remains admissible; any later
         # ON→OFF→ON advances its revision and invalidates this older attempt.
         frozen_epoch = consent_generation(self.storage, admitted_snapshots[0].scope)
+        # An explicitly configured source-wide policy adds a second,
+        # independently revocable generation fence. Legacy unset sources
+        # retain their existing exact-right permission checks.
+        from .source_sync_consent import read_policy
+        source_policy = read_policy(self.storage, admitted_snapshots[0].scope)
+        if source_policy.configured and source_policy.mode != "on":
+            return {"blocked": 1}
+        admitted_source_revision = (
+            source_policy.revision if source_policy.mode == "on" else None
+        )
 
         try:
             consent = consent_reader(account)
@@ -334,6 +344,11 @@ def _run_observed_canonical_convergence(
             # Re-admission on every offer, GET and post-GET boundary.
             if not epoch_current(key):
                 return False
+            if admitted_source_revision is not None:
+                fresh_policy = read_policy(self.storage, key.scope)
+                if (fresh_policy.mode != "on"
+                        or fresh_policy.revision != admitted_source_revision):
+                    return False
             latest = consent_reader(account)
             return (type(latest) is frozenset
                     and key in latest
@@ -352,6 +367,12 @@ def _run_observed_canonical_convergence(
                 or consent_generation_in_transaction(db, key) != frozen_epoch
             ):
                 return False
+            if admitted_source_revision is not None:
+                from .source_sync_consent import policy_in_transaction
+                current_policy = policy_in_transaction(db, key.scope)
+                if (current_policy.mode != "on"
+                        or current_policy.revision != admitted_source_revision):
+                    return False
             return (existing_publication_guard(db, key)
                     if callable(existing_publication_guard) else True)
 
@@ -378,6 +399,7 @@ def _run_observed_canonical_convergence(
             consent_still_current=current_consent,
             deliver=delivery, cancelled=cancelled_for_rights,
             publication_guard=publication_consent,
+            expected_source_policy_revision=admitted_source_revision,
         )
         counts = {
             status: sum(row.status == status for row in outcomes)
