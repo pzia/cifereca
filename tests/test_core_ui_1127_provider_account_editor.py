@@ -236,3 +236,28 @@ def test_account_editor_has_no_implicit_paris_fallback_for_unknown_plugin():
     assert "provider_id: str='paris'" not in source
     assert "descriptor = descriptors.get(provider_id)" in source
     assert "descriptor is None or descriptor.state != 'ready'" in source
+
+
+
+def test_optional_unknown_provider_option_without_default_is_empty_not_none():
+    """#3731: absent optional text may not become literal 'None'."""
+    option = SimpleNamespace(
+        key='endpoint', label='Optional endpoint', default=None,
+        secret=False, legacy_config_key=None,
+    )
+    editor, _, _, _ = _render('future-provider', descriptor_options=[option])
+    assert editor['option_fields']['endpoint'].text == ''
+    invalid, _, _, _ = _render(
+        'future-provider', data={'options': {'endpoint': None}},
+        descriptor_options=[option],
+    )
+    assert invalid['option_fields']['endpoint'].text == ''
+
+
+def test_unknown_provider_option_declared_empty_default_stays_empty():
+    option = SimpleNamespace(
+        key='endpoint', label='Optional endpoint', default='',
+        secret=False, legacy_config_key=None,
+    )
+    editor, _, _, _ = _render('future-provider', descriptor_options=[option])
+    assert editor['option_fields']['endpoint'].text == ''
