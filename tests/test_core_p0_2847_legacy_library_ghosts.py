@@ -103,5 +103,14 @@ def test_promoted_legacy_exact_present_placement_can_be_projected(tmp_path):
             book.get("local") is True and book.get("item_id") == "book-1"
             for book in books
         )
+        # The physical file can disappear after a previously valid scan.
+        # An old backup catalogue cannot re-advertise it as local.
+        path.unlink()
+        missing = service.library_entries(identity_id="alice", scan=False)
+        assert not any(
+            book.get("local") is True and book.get("item_id") == "book-1"
+            for book in missing
+        )
+        assert service.storage.placements()[0]["state"] == "present"
     finally:
         service.close()
