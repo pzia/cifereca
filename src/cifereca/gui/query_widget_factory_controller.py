@@ -17,6 +17,15 @@ def _provider_choices(window, *, library=False):
         for row in window.service.catalog_entries():
             provider = str(row.get("provider_id") or "local")
             providers.setdefault(provider, window.service.provider_display_name(provider))
+        # Core's *already loaded*, identity-scoped Library projection can
+        # contain several origins even when the catalogue has only the
+        # primary/local provider ID. These are filter choices, never proof
+        # of entitlement or permission to acquire a file.
+        identity = getattr(getattr(window.service, "current_identity", None), "identity_id", None)
+        if (type(identity) is str
+                and getattr(window, "_library_origin_identity_id", None) == identity):
+            for provider in getattr(window, "_library_origin_provider_ids", ()):
+                providers.setdefault(provider, window.service.provider_display_name(provider))
     # The source filter is a *route selector* (stable provider ID), not a
     # purchase/loan filter. Relabel known stores after discovery: do not
     # manufacture a second Kobo provider or display a disabled Numilog
@@ -26,6 +35,63 @@ def _provider_choices(window, *, library=False):
         for provider_id, label in providers.items()
     ]
     return sorted(choices, key=lambda pair: pair[1].casefold())
+
+
+
+def _origin_ids_for_library_snapshot(entries, identity_id):
+    """Bounded, exact-identity source IDs from a validated local Core snapshot.
+
+    Ignore metadata hints, titles, SHA, foreign identities, and arbitrary
+    provider values. This does not establish that the Core filter can match
+    an OriginLink: that requires the separate Core #2797 increment.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or type(entries) not in (list, tuple) or len(entries) > 20000):
+        return ()
+    ids = set()
+    for row in entries:
+        if type(row) is not dict or row.get("identity_id") != identity_id:
+            continue
+        origins = row.get("providers")
+        if type(origins) not in (list, tuple) or len(origins) > 32:
+            continue
+        for provider in origins:
+            if (type(provider) is str and 1 <= len(provider) <= 64
+                    and all(char.isascii() and (char.isalnum() or char in "._-")
+                            for char in provider)):
+                ids.add(provider)
+    return tuple(sorted(ids))
+
+
+def refresh_library_origin_choices(window, entries, *, identity_id):
+    """One GTK-side update after the scoped async Library snapshot completed.
+
+    Uses only provided in-memory rows. On profile switch old choices are
+    ineligible because the frozen identity is checked before caching/display.
+    """
+    current = getattr(getattr(window.service, "current_identity", None), "identity_id", None)
+    if (getattr(window, "_closed", False) or type(identity_id) is not str
+            or not identity_id or identity_id != current):
+        return
+    choices = _origin_ids_for_library_snapshot(entries, identity_id)
+    window._library_origin_identity_id = identity_id
+    window._library_origin_provider_ids = choices
+    controls = getattr(window, "library_controls", None)
+    setter = getattr(controls, "set_provider_choices", None)
+    if not callable(setter):
+        return
+    try:
+        setter(_provider_choices(window, library=True))
+    except Exception:
+        # Provider labels and plugin diagnostics can contain private data.
+        diagnostics = getattr(window, "diagnostics", None)
+        add = getattr(diagnostics, "add", None)
+        if callable(add):
+            try:
+                add("PLUGIN", "library origin source choices", "error",
+                    detail={"code": "library_origin_choices_unavailable"})
+            except Exception:
+                pass
 
 
 def _paris_search_notice(window):
