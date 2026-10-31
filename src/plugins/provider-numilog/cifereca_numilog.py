@@ -805,18 +805,35 @@ class NumilogSession(ProviderSession):
         from cifereca.plugin_api import (
             SourceReference, ProviderRightsScope, DeliveryCandidate,
         )
+        # An Account is mutable: freeze the exact upstream source before
+        # provider I/O. A reconnect/rebind must not relabel bytes staged for
+        # an earlier identity, credential, or supplier account.
+        scope = ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
         path, hint = self.rights_selected_delivery_candidate(
             account, edition_id=edition_id, right_id=resource_id,
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
         )
+        if (account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id) != (
+                scope.identity_id, scope.provider_id,
+                scope.credential_id, scope.account_id):
+            # Only delete a newly staged candidate within Core's own attempt
+            # directory; never touch a historical placement or other file.
+            try:
+                staged = Path(path)
+                if (staged.parent == Path(target_dir)
+                        and staged.is_file() and not staged.is_symlink()):
+                    staged.unlink(missing_ok=True)
+            except (OSError, TypeError, ValueError):
+                pass
+            raise ProviderCapabilityError("selected_delivery_scope_changed")
         return DeliveryCandidate(
             source=SourceReference(
-                ProviderRightsScope(
-                    account.identity_id, account.provider_id,
-                    account.credential_id, account.unique_id,
-                ),
-                branch, edition_id, resource_id, kind,
+                scope, branch, edition_id, resource_id, kind,
             ),
             selected_offer_id=selected_offer_id,
             path=Path(path), provider_hint=hint,

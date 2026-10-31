@@ -102,3 +102,33 @@ def test_v2_candidate_exact_source_no_core_receipt(monkeypatch, tmp_path):
     assert result.source.resource_id == "purchase-17"
     assert result.path.parent == tmp_path
     assert not result.authorizes_publication
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("identity_id", "owner-b"),
+    ("provider_id", "other-provider"),
+    ("credential_id", "cred-b"),
+    ("unique_id", "upstream-b"),
+])
+def test_v2_candidate_rebind_rejected_without_core_provenance(monkeypatch, tmp_path, field, value):
+    """No v2 source claim for an Account modified during the selected GET."""
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    session, account, row = fake(monkeypatch)
+
+    def staged(self, caller, *, target_dir, **kwargs):
+        path = target_dir / "candidate.epub"
+        path.write_bytes(b"STAGING ONLY; NOT A CANONICAL EPUB")
+        setattr(caller, field, value)
+        return path, ""
+
+    monkeypatch.setattr(type(session), "rights_selected_delivery_candidate", staged)
+    with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+        session.downloadable_selected_delivery_candidate(
+            account, edition_id="purchase-17", resource_id="purchase-17",
+            kind="purchase", branch=BRANCH,
+            selected_offer_id=row.delivery_offer_id,
+            target_dir=tmp_path, explicit_user_action=True,
+        )
+    # Only this attempt's newly created candidate is removed, not durable files.
+    assert not list(tmp_path.iterdir())
