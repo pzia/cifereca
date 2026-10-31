@@ -320,3 +320,76 @@ def test_settings_save_does_not_create_missing_obsolete_kobo_format(editor):
     assert "format" not in draft.data["kobo_backup"]
     assert draft.data["kobo_backup"]["interval_minutes"] == 90
     assert config.data == before
+
+
+@pytest.mark.parametrize("untyped", [
+    None, False, 42, ["PRIVATE-VALUE"], {"endpoint": "PRIVATE-VALUE"},
+])
+def test_generic_provider_option_rejects_untyped_editor_snapshot_without_mutation(
+    editor, untyped,
+):
+    config, values = editor
+    values["accounts"] = [account("synthetic")]
+    values["accounts"][0]["option_fields"] = {"endpoint": untyped}
+    provider = descriptor("synthetic")
+    provider.account_options = (
+        AccountOptionField("endpoint", "Endpoint", required=True),
+    )
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Valeur d’option invalide : Endpoint"):
+        validate(editor, descriptors={"synthetic": provider})
+    assert config.data == before
+    assert not config.path.exists()
+
+
+def test_generic_provider_required_option_none_default_is_not_the_string_none(editor):
+    config, values = editor
+    values["accounts"] = [account("synthetic")]
+    values["accounts"][0]["option_fields"] = {"endpoint": "  "}
+    provider = descriptor("synthetic")
+    provider.account_options = (
+        AccountOptionField("endpoint", "Endpoint", default=None, required=True),
+    )
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Option obligatoire : Endpoint"):
+        validate(editor, descriptors={"synthetic": provider})
+    assert config.data == before
+    values["accounts"][0]["option_fields"]["endpoint"] = " https://source.example "
+    result = validate(editor, descriptors={"synthetic": provider})
+    assert result.data["providers"]["accounts"][0]["options"]["endpoint"] == (
+        "https://source.example"
+    )
+
+
+@pytest.mark.parametrize("bad_default", [123, False, {"endpoint": "PRIVATE"}])
+def test_generic_provider_descriptor_cannot_install_nonstr_option_default(
+    editor, bad_default,
+):
+    config, values = editor
+    values["accounts"] = [account("synthetic")]
+    values["accounts"][0]["option_fields"] = {"endpoint": ""}
+    provider = descriptor("synthetic")
+    provider.account_options = (
+        AccountOptionField("endpoint", "Endpoint", default=bad_default),
+    )
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Défaut d’option invalide : Endpoint"):
+        validate(editor, descriptors={"synthetic": provider})
+    assert config.data == before
+
+
+def test_generic_provider_optional_empty_uses_declared_text_default(editor):
+    config, values = editor
+    values["accounts"] = [account("synthetic")]
+    values["accounts"][0]["option_fields"] = {"endpoint": "   "}
+    provider = descriptor("synthetic")
+    provider.account_options = (
+        AccountOptionField(
+            "endpoint", "Endpoint", default=" https://default.example/api ",
+        ),
+    )
+    result = validate(editor, descriptors={"synthetic": provider})
+    assert result.data["providers"]["accounts"][0]["options"]["endpoint"] == (
+        "https://default.example/api"
+    )
+    assert config.provider_accounts() == []
