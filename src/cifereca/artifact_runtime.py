@@ -981,7 +981,11 @@ class LibraryMaintenanceBrokerImpl:
                     )
                 try:
                     if control is not None: control.check_cancelled()
-                    with InterProcessLock(acquisition_lock_file()) as lease:
+                    # Confirmed GTK maintenance already holds this exact
+                    # acquisition lock across its plan revalidation. Borrow
+                    # the genuine same-thread OS lease; never drop the host
+                    # lock or accept an untrusted already_locked flag.
+                    with InterProcessLock(acquisition_lock_file(), reentrant=True) as lease:
                         if control is not None: control.check_cancelled()
                         status = supervise_canonical_duplicate(
                             self.service.storage, library_root=root,

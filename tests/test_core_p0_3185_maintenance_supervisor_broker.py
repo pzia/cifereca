@@ -185,3 +185,74 @@ def test_foreign_keeper_never_mints_right_or_deletes_file(rig, monkeypatch):
         ))
     assert rows(storage) == (1, 3, 3, 3)
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_confirmed_gtk_host_execution_does_not_double_lock_canonical_broker(
+    rig, monkeypatch,
+):
+    """Real host replan lock + real Core broker + same-thread shared FD."""
+    from cifereca.gui import maintenance_tools as host
+    from cifereca.plugin_api import MaintenancePlan
+
+    storage, root, paths, pubs, lock_path = rig
+    monkeypatch.setattr(host, "acquisition_lock_file", lambda: lock_path)
+    broker = broker_for(rig, monkeypatch)
+
+    class ConfirmedDuplicateTool:
+        def plan(self, _context):
+            return MaintenancePlan(
+                tool_id="library.duplicates.cleanup",
+                summary="One confirmed physical duplicate",
+                facts={"pairs": ((pubs[1].placement_id, pubs[0].placement_id),)},
+                changes=("Remove one confirmed duplicate",),
+                warnings=(),
+            )
+
+        def run(self, plan, control):
+            control.check_cancelled()
+            task = request(rig, action="commit", confirmed=True)
+            return broker.run(broker.plan(task), control)
+
+    tool = ConfirmedDuplicateTool()
+    control = host.MaintenanceCancelControl()
+    reviewed = host.preview_maintenance_tool(
+        tool, object(), destructive=True, control=control,
+    )
+    # The host holds a real OS flock through replan and the plugin mutation.
+    completed = host.execute_maintenance_tool(
+        tool, object(), reviewed, control, destructive=True,
+    )
+    assert completed.ok and completed.changed == 1
+    assert completed.facts["status"] == "retired"
+    assert storage.placement_get(pubs[1].placement_id) is None
+    assert not paths[1].exists()
+    assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
+    from cifereca.locking import InterProcessLock
+    with InterProcessLock(lock_path):
+        pass
+
+
+def test_unrelated_sync_lock_still_blocks_canonical_broker_without_mutation(
+    rig, monkeypatch,
+):
+    from cifereca.locking import InterProcessLock
+
+    storage, root, paths, pubs, lock_path = rig
+    broker = broker_for(rig, monkeypatch)
+
+    # Different-thread lease cannot be borrowed even with reentrant=True.
+    from concurrent.futures import ThreadPoolExecutor
+    from cifereca.plugin_api import Conflict
+
+    def attempt():
+        planned = broker.plan(request(rig, action="commit", confirmed=True))
+        try:
+            return broker.run(planned)
+        except Conflict as exc:
+            return getattr(exc, "code", "")
+
+    with InterProcessLock(lock_path):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            assert executor.submit(attempt).result(timeout=10) == "canonical_dedup_lock_busy"
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+    assert all(path.read_bytes() == BYTES for path in paths)
