@@ -67,6 +67,14 @@ class ReplayAllE2EContract(unittest.TestCase):
                 self.assertEqual(result.stdout.count("::group::GTK/XTEST"), len(scenarios.split()))
                 self.assertEqual(result.stdout.count("::endgroup::"), len(scenarios.split()))
 
+    def test_real_gtk_gate_keeps_a_bounded_non_optional_budget(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        header = source.split("\\njobs:\\n", 1)[1].split("\\n    steps:\\n", 1)[0]
+        self.assertIn("name: E2E GTK · core", header)
+        self.assertIn("    timeout-minutes: 15", header)
+        self.assertIn("  cancel-in-progress: true", source)
+        self.assertNotIn("continue-on-error: true", source)
+
     def test_workflow_still_exports_verdicts_when_any_scenario_fails(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         assert "exit \"$failed\"" in source
