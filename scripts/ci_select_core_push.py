@@ -14,11 +14,6 @@ import subprocess
 import sys
 import tempfile
 
-try:  # support both pytest package import and direct script execution
-    from scripts.ci_test_dependency_guard import has_test_consumers
-except ModuleNotFoundError:
-    from ci_test_dependency_guard import has_test_consumers
-
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 
@@ -80,10 +75,9 @@ def select_push(
             if any(ch in path for ch in "\n\r\t") or not _safe_path(path):
                 return *full, "shared-or-ambiguous-path"
             paths.append(path)
-        if has_test_consumers(
-            root, [path for path in paths if path.startswith("tests/test_")]
-        ):
-            return *full, "shared-test-fixture"
+        # ci-select-core-tests.py checks consumers of changed test modules
+        # (including dynamic imports / pytest_plugins) and returns "full" if
+        # any are found. Do not scan the same repository a second time here.
 
         script = selector or root / "scripts/ci-select-core-tests.py"
         with tempfile.TemporaryDirectory() as temp:
