@@ -347,9 +347,7 @@ def sync_source_phase_summary(source: object) -> str:
         if (phase == "materialize" and raw_status == "not_supported"
                 and isinstance(sync_caps, (tuple, list, frozenset))
                 and len(sync_caps) <= 32
-                and any(cap in sync_caps for cap in (
-                    "loan_auto_materialization", "local_materialization",
-                ))):
+                and "loan_auto_materialization" in sync_caps):
             status = "Téléchargement distinct de cette synchronisation"
         attempt = _timestamp_label(getattr(row, "last_attempt", ""))
         success = _timestamp_label(getattr(row, "last_success", ""))
