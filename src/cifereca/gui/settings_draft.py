@@ -178,7 +178,16 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             )
         for field in getattr(descriptor, 'account_options', ()):
             if field.key not in option_fields:
-                continue  # A legacy editor does not silently reset saved options.
+                # Legacy editors predate newer descriptor options. Preserve
+                # existing values, but do not activate an account whose new
+                # required option has never been configured.
+                prior = original_options.get(field.key)
+                if (field.required is True and editor['enabled'] is True
+                        and (type(prior) is not str or not prior.strip())):
+                    raise SettingsValidationError(
+                        f'Schéma des options modifié : renseignez {field.label}.'
+                    )
+                continue
             # AccountOptionField is a declarative TEXT schema. Never turn
             # None/bool/dicts from a stale widget snapshot into a plausible
             # provider option by applying str() (e.g. endpoint='None').
@@ -192,8 +201,21 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             else:
                 raise SettingsValidationError(f'Défaut d’option invalide : {field.label}')
             value = raw_value.strip() or fallback
-            if field.required and not value:
-                raise SettingsValidationError(f'Option obligatoire : {field.label}')
+            if field.required is True and editor['enabled'] is True and not value:
+                original_account = editor.get('original_account', {})
+                old_value = original_options.get(field.key)
+                # An unrelated Settings save must not silently erase an old
+                # incomplete configuration or force an authentication reset.
+                # A newly enabled account or an explicit clearing is rejected.
+                legacy_unchanged = (
+                    type(original_account) is dict
+                    and original_account.get('id') == editor['id']
+                    and original_account.get('enabled', True) is True
+                    and type(old_value) is str
+                    and old_value == raw_value
+                )
+                if not legacy_unchanged:
+                    raise SettingsValidationError(f'Option obligatoire : {field.label}')
             options[field.key] = value
         identity_text = editor.get('identity')
         if type(identity_text) is not str:

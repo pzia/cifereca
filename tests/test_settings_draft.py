@@ -1054,3 +1054,127 @@ def test_p1_legacy_ownerless_account_cannot_rebind_on_unrelated_setting_save(edi
     with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
         validate(editor, descriptors={"provider.future": descriptor("provider.future")})
     assert config.data == before
+
+
+
+@pytest.mark.parametrize("empty", ["", " ", "  \t "])
+def test_disabled_future_provider_accepts_unconfigured_required_option(editor, empty):
+    """#3731: staging OFF may be incomplete, without enabling the source."""
+    config, values = editor
+    values["accounts"] = [account("provider.future")]
+    values["accounts"][0]["enabled"] = False
+    values["accounts"][0]["option_fields"] = {"endpoint": empty}
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    draft = validate(editor, descriptors={"provider.future": desc})
+    row, = draft.data["providers"]["accounts"]
+    assert row["enabled"] is False
+    assert row["options"]["endpoint"] == ""
+    assert config.provider_accounts() == [] and not config.path.exists()
+
+
+def test_enabling_off_account_without_required_option_fails_without_writing(editor):
+    config, values = editor
+    original = dict(id="saved", provider="provider.future", identity_id="alice",
+                    enabled=False, credentials={"username": "existing"}, options={"endpoint": ""})
+    config.set("providers.accounts", [deepcopy(original)])
+    row = account("provider.future", account_id="saved")
+    row.update(
+        enabled=True, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        original_options=deepcopy(original["options"]),
+        option_fields={"endpoint": ""},
+    )
+    values["accounts"] = [row]
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Option obligatoire : Portail"):
+        validate(editor, descriptors={"provider.future": desc})
+    assert config.data == before and not config.path.exists()
+
+
+def test_existing_incomplete_required_option_survives_unrelated_settings_save(editor):
+    config, values = editor
+    original = dict(id="saved", provider="provider.future", identity_id="alice",
+                    enabled=True, credentials={"username": "existing"}, options={"endpoint": ""})
+    config.set("providers.accounts", [deepcopy(original)])
+    row = account("provider.future", account_id="saved")
+    row.update(
+        enabled=True, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        original_options=deepcopy(original["options"]),
+        option_fields={"endpoint": ""},
+    )
+    values["accounts"] = [row]
+    values["identities"][0]["label"] = "Autre libellé"
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    draft = validate(editor, descriptors={"provider.future": desc})
+    saved, = draft.data["providers"]["accounts"]
+    assert saved["enabled"] is True and saved["options"]["endpoint"] == ""
+    assert config.provider_accounts() == [original]
+    assert not config.path.exists()
+
+
+@pytest.mark.parametrize("prior", [None, False, "", 0, ["PRIVATE"]])
+def test_stale_editor_cannot_activate_missing_required_future_option(editor, prior):
+    """Required schema appearing after GTK render must not be bypassed."""
+    config, values = editor
+    item = account("provider.future")
+    item["option_fields"] = {}
+    item["original_options"] = {} if prior is None else {"endpoint": prior}
+    values["accounts"] = [item]
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Schéma des options modifié"):
+        validate(editor, descriptors={"provider.future": desc})
+    assert config.data == before and not config.path.exists()
+
+
+def test_legacy_editor_preserves_proven_existing_required_option(editor):
+    config, values = editor
+    item = account("provider.future")
+    item["option_fields"] = {}
+    item["original_options"] = {"endpoint": "https://provider.example"}
+    values["accounts"] = [item]
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    saved, = validate(editor, descriptors={"provider.future": desc}).data["providers"]["accounts"]
+    assert saved["options"] == {"endpoint": "https://provider.example"}
+    assert config.provider_accounts() == []
+
+
+def test_stale_editor_can_keep_missing_required_option_when_source_is_disabled(editor):
+    values = editor[1]
+    item = account("provider.future")
+    item["enabled"] = False
+    item["option_fields"] = {}
+    values["accounts"] = [item]
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    saved, = validate(editor, descriptors={"provider.future": desc}).data["providers"]["accounts"]
+    assert saved["enabled"] is False and "endpoint" not in saved["options"]
+
+
+def test_clearing_required_option_of_active_account_is_rejected(editor):
+    config, values = editor
+    original = dict(id="saved", provider="provider.future", identity_id="alice",
+                    enabled=True, credentials={"username": "existing"},
+                    options={"endpoint": "https://provider.example"})
+    config.set("providers.accounts", [deepcopy(original)])
+    row = account("provider.future", account_id="saved")
+    row.update(
+        enabled=True, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        original_options=deepcopy(original["options"]),
+        option_fields={"endpoint": ""},
+    )
+    values["accounts"] = [row]
+    desc = descriptor("provider.future")
+    desc.account_options = (AccountOptionField("endpoint", "Portail", required=True),)
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Option obligatoire : Portail"):
+        validate(editor, descriptors={"provider.future": desc})
+    assert config.data == before and not config.path.exists()
