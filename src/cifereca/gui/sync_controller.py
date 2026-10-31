@@ -501,8 +501,15 @@ def _refresh_sync_page(self) -> None:
                 )
                 group.add(sync_action_row(row))
                 append_source_sync_consent_controls(self, broker, source, scope, group)
-                # The current broker owns policy and execution. Legacy tools
-                # must not expose a second acquisition/consent path here,
+                from cifereca.gui.source_inventory_schedule_controls import (
+                    append_source_inventory_schedule_controls,
+                )
+                append_source_inventory_schedule_controls(
+                    self, broker, source, scope, group,
+                )
+                # The Core broker owns both independent decisions: remote
+                # notices/rights scheduling and automatic file acquisition.
+                # Legacy per-vendor widgets must not re-enter this pathway.
                 # even if the generic read fails or the adapter is unsupported.
                 continue
         if source.provider_id == "kobo":
