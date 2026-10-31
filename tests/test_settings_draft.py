@@ -69,7 +69,7 @@ def test_draft_neither_mutates_config_nor_writes_and_preserves_missing_adept_pro
     ('outside_dir', 'sous-répertoire direct'), ('unknown_account', 'Identité inconnue'),
     ('bad_command', 'Commande de téléchargement invalide'),
     ('bad_provider_command', 'Commande de téléchargement invalide'),
-    ('bad_interval', 'Configuration Kobo invalide'),
+    ('bad_interval', 'Intervalle de sauvegarde historique invalide'),
 ])
 def test_invalid_values_raise_without_changing_config(editor, change, message):
     config, values = editor
@@ -442,3 +442,19 @@ def test_legacy_backup_profile_index_out_of_range_preserves_default(editor):
     values = editor[1]
     values["vault_profile_index"] = 99
     assert validate(editor).data["kobo_backup"]["display_profile"] == "Android"
+
+
+@pytest.mark.parametrize("invalid", [None, 60, True, [], {}, "1.5", "-1", "+60", "3e2", "NaN"])
+def test_historical_backup_interval_rejects_malformed_snapshot(editor, invalid):
+    config, values = editor
+    before = deepcopy(config.data)
+    values["backup_interval"] = invalid
+    with pytest.raises(SettingsValidationError, match="Intervalle de sauvegarde historique invalide"):
+        validate(editor)
+    assert config.data == before
+
+
+@pytest.mark.parametrize("entered,expected", [("", 60), (" 20 ", 20), ("1", 15)])
+def test_historical_backup_interval_preserves_documented_fallback(editor, entered, expected):
+    editor[1]["backup_interval"] = entered
+    assert validate(editor).data["kobo_backup"]["interval_minutes"] == expected
