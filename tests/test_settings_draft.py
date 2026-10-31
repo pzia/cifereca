@@ -630,3 +630,49 @@ def test_provider_account_without_original_credential_snapshot_remains_compatibl
     assert result.data['providers']['accounts'][0]['credentials'] == {
         'username': 'synthetic-user',
     }
+
+
+def test_unknown_provider_account_extension_fields_survive_settings_save(editor):
+    """#3731: descriptor evolution must not erase opaque account-level fields."""
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    original = {
+        'id': 'source', 'provider': 'future-provider', 'identity_id': 'alice',
+        'enabled': False, 'label': 'Old',
+        'credentials': {'username': 'old'},
+        'options': {'old_setting': 'keep'},
+        'source_receipt': {'token_ref': 'opaque'},
+        'provider_future': [1, 'unparsed', {'code': 5}],
+    }
+    values['accounts'][0]['original_account'] = deepcopy(original)
+    values['accounts'][0]['original_credentials'] = deepcopy(original['credentials'])
+    values['accounts'][0]['original_options'] = deepcopy(original['options'])
+    before = deepcopy(config.data)
+    result = validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    saved = result.data['providers']['accounts'][0]
+    assert saved['source_receipt'] == original['source_receipt']
+    assert saved['provider_future'] == original['provider_future']
+    assert saved['enabled'] is True
+    assert saved['credentials']['username'] == 'synthetic-user'
+    assert saved['options'] == original['options']
+    assert config.data == before
+
+
+@pytest.mark.parametrize('invalid', [None, False, 4, 'bad', ['bad']])
+def test_provider_rejects_untyped_original_account_snapshot(editor, invalid):
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    values['accounts'][0]['original_account'] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='Compte fournisseur historique invalide'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert config.data == before
+
+
+def test_new_provider_account_without_original_snapshot_still_works(editor):
+    values = editor[1]
+    values['accounts'] = [account('future-provider')]
+    result = validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    account_saved = result.data['providers']['accounts'][0]
+    assert set(account_saved) == {'id', 'provider', 'identity_id', 'label',
+                                  'enabled', 'anonymous', 'credentials', 'options'}
