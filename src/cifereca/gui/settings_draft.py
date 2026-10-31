@@ -141,7 +141,27 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 raise SettingsValidationError(
                     'Schéma des identifiants modifié : recharger les paramètres.'
                 )
-            credentials[field.key] = submitted_fields[field.key]
+            raw_credential = submitted_fields[field.key]
+            # Only active accounts require credentials; a disabled account can
+            # be staged for later configuration without enabling any source.
+            # Preserve an unchanged malformed legacy value on unrelated saves
+            # instead of silently wiping it or forcing credential re-entry.
+            if (getattr(field, 'required', False) is True
+                    and editor['enabled'] is True and not raw_credential.strip()):
+                original_account = editor.get('original_account', {})
+                old_value = original_credentials.get(field.key)
+                legacy_unchanged = (
+                    type(original_account) is dict
+                    and original_account.get('id') == editor['id']
+                    and original_account.get('enabled', True) is True
+                    and type(old_value) is str
+                    and old_value == raw_credential
+                )
+                if not legacy_unchanged:
+                    raise SettingsValidationError(
+                        f'Identifiant obligatoire : {field.label}'
+                    )
+            credentials[field.key] = raw_credential
         # Snapshot values originate from a GTK editor, not the provider's
         # parser. Refuse malformed legacy containers rather than coercing
         # pair lists or strings into account configuration.
