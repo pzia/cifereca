@@ -232,3 +232,71 @@ def test_malformed_exact_scope_is_refused_before_any_storage_access(
     assert result["review_reasons"] == ["invalid_exact_scope"]
     assert result["sources"] == []
     assert "PRIVATE" not in repr(result)
+
+
+@pytest.mark.parametrize(("invalid_kind", "invalid_receipt"), [
+    ("adept", ""), ("adept", "  \t  "), ("provider", "  "),
+])
+def test_origin_link_without_actual_receipt_is_not_a_paired_adept_proof(
+    tmp_path, invalid_kind, invalid_receipt,
+):
+    storage = Storage(tmp_path / "empty-origin-evidence.db")
+    try:
+        _artifact(storage)
+        with storage._lock, storage._connect() as db:
+            _source(db, "right-alice")
+            _link(db, "provider-alice", "provider", "right-alice", "alice",
+                  proof=invalid_receipt if invalid_kind == "provider" else "provider-receipt")
+            _link(db, "adept-alice", "adept", "right-alice", "alice",
+                  proof=invalid_receipt if invalid_kind == "adept" else "adept-receipt")
+            before = db.execute(
+                "SELECT count(*) FROM origin_links WHERE source_reference_id='right-alice'"
+            ).fetchone()[0]
+        report = _review(storage)
+        assert report["link_resolution"] == "unpaired_or_missing_links"
+        assert report["review_reasons"] == [
+            "canonical_origin_links_incomplete", "canonical_origin_receipt_missing",
+        ]
+        assert report["source_count"] == 1
+        artifact, = report["sources"][0]["artifacts"]
+        assert artifact["provider_links"] == 1
+        assert artifact["adept_links"] == 1
+        assert artifact["links_without_receipt"] == 1
+        assert artifact["paired_source_artifact_links"] is False
+        assert report["adobe_profile_resolution"] == "unknown"
+        assert report["return_authorized"] is False
+        with storage._lock, storage._connect() as db:
+            assert db.execute(
+                "SELECT count(*) FROM origin_links WHERE source_reference_id='right-alice'"
+            ).fetchone()[0] == before
+    finally:
+        storage.close()
+
+
+def test_valid_second_borrower_does_not_fill_missing_adobe_receipt_for_first(
+    tmp_path,
+):
+    storage = Storage(tmp_path / "partial-evidence.db")
+    try:
+        _artifact(storage)
+        with storage._lock, storage._connect() as db:
+            _source(db, "right-alice", identity="alice", credential="paris-a")
+            _source(db, "right-bob", identity="bob", credential="paris-b")
+            _link(db, "provider-alice", "provider", "right-alice", "alice")
+            _link(db, "adept-alice", "adept", "right-alice", "alice", proof="")
+            _link(db, "provider-bob", "provider", "right-bob", "bob",
+                  proof="provider-bob")
+            _link(db, "adept-bob", "adept", "right-bob", "bob",
+                  proof="adept-bob")
+        report = _review(storage)
+        assert report["source_count"] == 2
+        assert report["link_resolution"] == "unpaired_or_missing_links"
+        by_id = {row["source_reference_id"]: row["artifacts"][0]
+                 for row in report["sources"]}
+        assert by_id["right-alice"]["paired_source_artifact_links"] is False
+        assert by_id["right-bob"]["paired_source_artifact_links"] is True
+        assert by_id["right-alice"]["artifact_id"] == by_id["right-bob"]["artifact_id"]
+        assert "canonical_origin_receipt_missing" in report["review_reasons"]
+        assert not report["return_authorized"]
+    finally:
+        storage.close()
