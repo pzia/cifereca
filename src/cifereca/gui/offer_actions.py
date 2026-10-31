@@ -37,7 +37,8 @@ def requires_selected_offer_check(service: Any, item: Any) -> bool:
             callable(getattr_static(session, name, None))
             for name in _V2_SELECTED_OFFER_METHODS
         )
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:
+        # A source may disconnect between eligibility and this read-only hint.
         return False
 
 
