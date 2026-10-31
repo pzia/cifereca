@@ -85,6 +85,10 @@ def test_promoted_legacy_exact_present_placement_can_be_projected(tmp_path):
         path = tmp_path / "EBooks" / "alice" / "kobo" / "known.epub"
         _write_epub(path)
         legacy = _legacy(path)
+        # A promoted Placement must refer to these verified bytes, not the
+        # arbitrary historical digest in the original 0.7 claim.
+        legacy["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        legacy["size"] = path.stat().st_size
         service.storage.backup_put(legacy)
         placement = service.storage.placements()[0]
         service.storage.placement_put({
