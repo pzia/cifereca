@@ -882,3 +882,100 @@ def test_enabling_previously_disabled_account_requires_credential(editor):
     with pytest.raises(SettingsValidationError, match="Identifiant obligatoire : Jeton"):
         validate(editor, descriptors={"provider.future": provider})
     assert config.provider_accounts() == [original]
+
+
+
+def test_existing_provider_account_with_blank_identity_cannot_silently_rebind(editor):
+    """#3731: blank account identity must never move existing credentials."""
+    config, values = editor
+    values["identities"].append(dict(
+        id="bob", label="Bob", directory="bob", adept_profile="",
+        languages="fr", prefer_vo=False,
+    ))
+    original = dict(
+        id="account-bob", provider="provider.future", identity_id="bob",
+        enabled=False, credentials={"username": "private-bob"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(original)])
+    account_editor = account("provider.future", identity="", account_id="account-bob")
+    account_editor.update(
+        enabled=False, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+    )
+    values["accounts"] = [account_editor]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+def test_existing_provider_account_can_keep_explicit_identity_without_activation(editor):
+    config, values = editor
+    values["identities"].append(dict(
+        id="bob", label="Bob", directory="bob", adept_profile="",
+        languages="fr", prefer_vo=False,
+    ))
+    original = dict(
+        id="account-bob", provider="provider.future", identity_id="bob",
+        enabled=False, credentials={"username": "private-bob"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(original)])
+    item = account("provider.future", identity="bob", account_id="account-bob")
+    item.update(
+        enabled=False, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        fields={"username": "private-bob"},
+    )
+    values["accounts"] = [item]
+    draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    row, = draft.data["providers"]["accounts"]
+    assert row["identity_id"] == "bob" and row["enabled"] is False
+    assert row["credentials"]["username"] == "private-bob"
+    assert config.provider_accounts() == [original]
+
+
+def test_new_provider_account_blank_identity_retains_first_identity_default(editor):
+    config, values = editor
+    values["accounts"] = [account("provider.future", identity="", account_id="new")]
+    row, = validate(
+        editor, descriptors={"provider.future": descriptor("provider.future")},
+    ).data["providers"]["accounts"]
+    assert row["identity_id"] == "alice"
+    assert config.provider_accounts() == []
+
+
+@pytest.mark.parametrize("invalid", [None, False, 17, {}, ["alice"]])
+def test_invalid_provider_identity_widget_snapshot_fails_closed(editor, invalid):
+    config, values = editor
+    values["accounts"] = [account("provider.future")]
+    values["accounts"][0]["identity"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("legacy_owner", [None, 123, True, [], {"bad": "owner"}])
+def test_existing_account_malformed_owner_cannot_rebind_to_first_profile(
+    editor, legacy_owner,
+):
+    """Even corrupt persisted owner metadata must not grant a new destination."""
+    config, values = editor
+    original = dict(
+        id="legacy", provider="provider.future",
+        identity_id=legacy_owner, enabled=False,
+        credentials={"username": "private-saved"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(original)])
+    item = account("provider.future", identity="", account_id="legacy")
+    item.update(
+        enabled=False, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        fields={"username": "private-saved"},
+    )
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()

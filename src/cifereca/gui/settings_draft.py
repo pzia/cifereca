@@ -195,7 +195,21 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             if field.required and not value:
                 raise SettingsValidationError(f'Option obligatoire : {field.label}')
             options[field.key] = value
-        account_identity_id = editor['identity'].strip() or saved_identities[0]['id']
+        identity_text = editor.get('identity')
+        if type(identity_text) is not str:
+            raise SettingsValidationError('Identité de compte fournisseur invalide : recharger les paramètres.')
+        selected_identity = identity_text.strip()
+        # A blank identity on an existing account must never silently move
+        # its credentials to the first identity when Settings is saved.
+        # New accounts retain the historical first-identity default.
+        original_for_identity = editor.get('original_account', {})
+        if (not selected_identity and type(original_for_identity) is dict
+                and original_for_identity.get('id') == editor['id']
+                and 'identity_id' in original_for_identity):
+            raise SettingsValidationError(
+                'Identité du compte fournisseur vide : sélectionnez explicitement une identité.'
+            )
+        account_identity_id = selected_identity or saved_identities[0]['id']
         if account_identity_id not in identity_ids:
             raise SettingsValidationError(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
         provider_id = str(editor['provider']).lower()
