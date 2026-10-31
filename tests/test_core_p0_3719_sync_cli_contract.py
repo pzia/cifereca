@@ -93,12 +93,12 @@ def test_identity_only_refuses_ambiguous_sources_without_guessing_ids():
 def test_no_identity_and_missing_source_fail_closed():
     with pytest.raises(SyncSelectionError, match="source_scope_required"):
         require_unique_sync_account([_account()], provider="future-provider")
-    with pytest.raises(SyncSelectionError, match="source_not_found"):
+    with pytest.raises(SyncSelectionError, match="source_not_configured"):
         require_unique_sync_account([_account()], identity="missing")
 
 
 def test_duplicate_identity_account_binding_is_not_auto_selected():
-    with pytest.raises(SyncSelectionError, match="ambiguous_source_binding"):
+    with pytest.raises(SyncSelectionError, match="account_ambiguous"):
         require_unique_sync_account([_account(), _account()], identity="p1")
 
 
