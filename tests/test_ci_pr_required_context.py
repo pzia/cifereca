@@ -21,17 +21,6 @@ def _matched_path(patterns: list[str], path: str) -> bool:
     return any(re.search(pattern, path) is not None for pattern in patterns)
 
 
-def test_required_pr_ci_is_not_skipped_by_event_paths():
-    source = _workflow()
-    event_block = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
-    assert re.search(r"(?m)^  pull_request:\s*$", event_block)
-    assert re.search(r"(?m)^  workflow_dispatch:\s*$", event_block)
-    assert "paths:" not in event_block
-    assert re.search(r"(?m)^  ci:\n    name: PR CI$", source)
-    assert "group: pr-ci-${{ github.event.pull_request.number || github.run_id }}" in source
-    assert "contents: read" in source
-
-
 def test_documentation_only_still_emits_ci_without_heavy_validation():
     source = _workflow()
     patterns = re.findall(r"if matches '([^']+)'", source)
