@@ -83,6 +83,7 @@ def test_unknown_dynamic_namespace_still_forces_full(tmp_path, consumer):
     '__import__("tests" + "." + module_name)\n',
     'spec_from_file_location("fixture", "tests/" + filename)\n',
     'SourceFileLoader("fixture", "tests/" + filename)\n',
+    'spec_from_file_location("fixture", ROOT / "tests/test_fixture.py")\n',
 ])
 def test_concatenated_dynamic_imports_fail_closed(tmp_path, consumer):
     root = _sample(tmp_path, consumer)
@@ -105,6 +106,9 @@ def test_pytest_plugins_can_import_changed_test_module(tmp_path, consumer):
     'pytest_plugins = ["pytest_cov"]\n',
     'REFERENCE = "pytest_plugins = [tests.test_fixture]"\n',
     'importlib.import_module("json")\n',
+    'spec_from_file_location("other", ROOT / "tests/test_other.py")\n',
+    'spec_from_file_location("other", ROOT / "src/plugins/sample/tests/test_contract.py")\n',
+    'importlib.import_module("tests.unrelated" + suffix)\n',
 ])
 def test_unrelated_plugins_and_dynamic_imports_stay_targeted(tmp_path, consumer):
     root = _sample(tmp_path, consumer)
