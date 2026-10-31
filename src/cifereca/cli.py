@@ -174,6 +174,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     adept_canonical.add_argument("--loan-id", required=True, help="ID exact du prêt Paris")
     adept_canonical.add_argument("--item-id", required=True, help="ID exact de l'item")
+    adept_bridge = adept_sub.add_parser(
+        "audit-transaction",
+        help="Compare hors réseau les preuves Paris/ADEPT historiques et canoniques",
+    )
+    adept_bridge.add_argument("--loan-id", required=True, help="ID exact du prêt Paris")
+    adept_bridge.add_argument("--item-id", required=True, help="ID exact de l'item")
     adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
     adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
     adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
@@ -214,11 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "paris-adept":
         if a.username or a.account:
             p.error("paris-adept exige --credential, pas --username ou --account")
-        if a.paris_adept_cmd in {"audit-origin", "audit-canonical"}:
+        if a.paris_adept_cmd in {"audit-origin", "audit-canonical", "audit-transaction"}:
             # Reject unusable transaction keys before Core can be opened.
             if (not a.loan_id.strip() or not a.item_id.strip()
                     or "\x00" in a.loan_id or "\x00" in a.item_id):
-                p.error("audit-origin/audit-canonical exigent --loan-id et --item-id non vides et sans NUL")
+                p.error("audit de transaction exige --loan-id et --item-id non vides et sans NUL")
         if a.paris_adept_cmd == "bind" and not a.confirm_ownership:
             p.error(
                 "paris-adept bind exige --confirm-ownership : "
@@ -309,6 +315,18 @@ def main(argv: list[str] | None = None) -> int:
                     result = review_paris_canonical_adept_links(
                         core.storage, loan_id=a.loan_id.strip(),
                         item_id=a.item_id.strip(),
+                    )
+                elif a.paris_adept_cmd == "audit-transaction":
+                    from .artifact_inspection import inspect_artifact
+                    from .core.adept_transaction_reconciliation import (
+                        review_paris_adept_transaction,
+                    )
+                    # Local reports only: an overlap is never an Adobe return
+                    # permission or a proof of the activating Adobe profile.
+                    result = review_paris_adept_transaction(
+                        core.storage, loan_id=a.loan_id.strip(),
+                        item_id=a.item_id.strip(),
+                        artifact_inspector=inspect_artifact,
                     )
                 elif a.paris_adept_cmd == "list":
                     bindings = core.storage.paris_borrower_adept_bindings(
