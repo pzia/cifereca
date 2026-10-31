@@ -442,7 +442,10 @@ def test_malformed_historical_account_never_looks_like_same_paris_borrower(
             acquisitions=[origin],
         ))
         assert report["historical_other_library_acquisition_count"] == 0
-        assert report["historical_unmatched_acquisition_count"] == 1
+        # No historical origin was accepted: a malformed account is neither
+        # a second borrower nor a legitimate acquisition-only record.
+        assert report["historical_unmatched_acquisition_count"] == 0
+        assert "historical_adept_acquisition_missing" in report["review_reasons"]
         assert "historical_acquisition_other_library_identity" not in report["review_reasons"]
     finally:
         db.close()

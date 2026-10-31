@@ -33,6 +33,25 @@ def _paris_borrower_ref(credential_id: Any, account_id: Any) -> str | None:
     return _opaque_ref("paris-borrower", credential_id, account_id)
 
 
+def _typed_paris_source_scope(row: Mapping[str, Any]) -> tuple[str, str, str] | None:
+    """Read a recorded library/credential/account scope without JSON coercion.
+
+    Absent legacy fields retain their historical empty-string semantics.
+    A present number, boolean, list, object or embedded NUL is not an
+    identifier and must never become a matching Paris borrower/source.
+    """
+    coordinates: list[str] = []
+    for key in ("identity_id", "credential_id", "account_id"):
+        value = row.get(key)
+        if value is None:
+            coordinates.append("")
+        elif type(value) is str and "\x00" not in value:
+            coordinates.append(value)
+        else:
+            return None
+    return (coordinates[0], coordinates[1], coordinates[2])
+
+
 def _artifact_state(metadata: Mapping[str, Any], artifact_inspector: Callable[[Path], Any]) -> str:
     text = str(metadata.get("path") or "").strip()
     if not text:
@@ -97,32 +116,21 @@ def inspect_paris_adept_origins(
         and row["loan_id"] == provider_loan_id
         and type(row.get("item_id")) is str
         and row["item_id"] == provider_item_id
+        and _typed_paris_source_scope(row) is not None
     ]
     # Historical entitlement identifiers may collide across two Paris
     # connections or library identities. A global id -> row dict silently
     # overwrote one right and suppressed an otherwise exact legacy match.
     # Scope the old entitlement evidence to its recorded provenance.
     rights_by_source = {
-        (
-            str(row.get("entitlement_id")),
-            str(row.get("identity_id") or ""),
-            str(row.get("credential_id") or ""),
-            str(row.get("account_id") or ""),
-        )
+        (row["entitlement_id"], *_typed_paris_source_scope(row))
         for row in rights if type(row.get("entitlement_id")) is str
         and row["entitlement_id"]
     }
     # Source visibility is supported only by persisted provider rights.
     # An ADEPT acquisition manually imported into another library identity
     # does NOT mean that its destination saw this loan at Paris.
-    source_rows = [
-        (
-            str(row.get("identity_id") or ""),
-            str(row.get("credential_id") or ""),
-            str(row.get("account_id") or ""),
-        )
-        for row in rights
-    ]
+    source_rows = [_typed_paris_source_scope(row) for row in rights]
     recorded_source_keys = set(source_rows)
 
     origins = []
@@ -133,6 +141,9 @@ def inspect_paris_adept_origins(
                 or row.get("status") != "complete"
                 or row.get("executor") != "kobo-adept"
                 or row.get("strategy") != "loan_auto"):
+            continue
+        recorded_scope = _typed_paris_source_scope(row)
+        if recorded_scope is None:
             continue
         metadata = row.get("metadata")
         if not isinstance(metadata, dict):
@@ -151,19 +162,12 @@ def inspect_paris_adept_origins(
         else:
             # Legacy rows: only their exact entitlement can attest the
             # transaction, never title/ISBN/filename or the selected UI tab.
-            source_key = (
-                str(row.get("entitlement_id") or ""),
-                str(row.get("identity_id") or ""),
-                str(row.get("credential_id") or ""),
-                str(row.get("account_id") or ""),
-            )
+            source_key = (row.get("entitlement_id"), *recorded_scope)
             if (type(row.get("entitlement_id")) is not str
                     or source_key not in rights_by_source):
                 continue
 
-        identity = str(row.get("identity_id") or "")
-        credential = str(row.get("credential_id") or "")
-        account = str(row.get("account_id") or "")
+        identity, credential, account = recorded_scope
         # This triple describes where acquisition was *recorded*, which
         # may be different from the original Paris borrower/source.
         # Never promote it to provider visibility without an entitlement.
