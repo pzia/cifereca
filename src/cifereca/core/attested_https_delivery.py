@@ -138,6 +138,12 @@ def _redact_transport_error(fn):
     def invoked(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
+        except httpx.InvalidURL:
+            # HTTPX prebuilds response.next_request even when automatic
+            # redirects are disabled. Malformed provider Location values
+            # (for example javascript:opaque) may fail before our validation.
+            # This is a refused redirect, never an authorized second GET.
+            raise ValueError("delivery_redirect_invalid") from None
         except httpx.RequestError:
             # HTTPX's exception messages may embed signed URLs and headers.
             raise ValueError("delivery_transport_unavailable") from None
