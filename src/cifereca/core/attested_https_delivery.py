@@ -7,6 +7,7 @@ Only the Core public-peer-pinned HTTPX client may perform the requests.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import wraps
 import hashlib
 import ipaddress
 import os
@@ -15,6 +16,8 @@ import secrets
 import stat
 from typing import Callable, Mapping
 from urllib.parse import urljoin, urlsplit
+
+import httpx
 
 from ..http_trace import HTTPX_TRANSPORT
 
@@ -39,7 +42,7 @@ class PublicDelivery:
 def _destination(url: str) -> tuple[str, str, int]:
     """Validate the raw HTTPS authority before HTTPX parses or rewrites it."""
     if (type(url) is not str or not 0 < len(url) <= _MAX_URL
-            or any(ord(ch) < 33 or ord(ch) == 127 or ch == "\\" for ch in url)
+            or any(ord(ch) < 33 or ord(ch) == 127 or ch == "\\" or ch.isspace() for ch in url)
             or "#" in url):
         raise ValueError("delivery_url_invalid")
     try:
@@ -123,6 +126,19 @@ def _admitted(callback: Callable[[], bool]) -> None:
     raise ValueError("delivery_admission_changed")
 
 
+def _redact_transport_error(fn):
+    @wraps(fn)
+    def invoked(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except httpx.RequestError:
+            # HTTPX's exception messages may embed signed URLs and headers.
+            # Callers can safely include the closed code in normal logs.
+            raise ValueError("delivery_transport_unavailable") from None
+    return invoked
+
+
+@_redact_transport_error
 def download_attested_https(
     *, producer: str, url: str, target: Path,
     admission_current: Callable[[], bool],
@@ -176,7 +192,7 @@ def download_attested_https(
                         raise ValueError("delivery_redirect_limit")
                     location = response.headers.get("location")
                     if (not location or any(ord(ch) < 33 or ord(ch) == 127
-                                            or ch == "\\" for ch in location)):
+                                            or ch == "\\" or ch.isspace() for ch in location)):
                         raise ValueError("delivery_redirect_missing")
                     next_url = urljoin(current, location)
                     _destination(next_url)  # Validate BEFORE next GET.
