@@ -425,3 +425,20 @@ def test_provider_declared_account_limit_is_not_hardcoded_to_known_supplier(edit
     plugin.max_accounts_per_identity = 2
     saved = validate(editor, descriptors={"provider.future": plugin})
     assert len(saved.data["providers"]["accounts"]) == 2
+
+
+@pytest.mark.parametrize("invalid", ["1", 1.0, True, None, {}, -0.5])
+def test_legacy_backup_profile_index_rejects_untyped_widget_values(editor, invalid):
+    """#3731: a stale widget must not silently change legacy provider settings."""
+    config, values = editor
+    before = deepcopy(config.data)
+    values["vault_profile_index"] = invalid
+    with pytest.raises(SettingsValidationError, match="Profil de sauvegarde historique invalide"):
+        validate(editor)
+    assert config.data == before
+
+
+def test_legacy_backup_profile_index_out_of_range_preserves_default(editor):
+    values = editor[1]
+    values["vault_profile_index"] = 99
+    assert validate(editor).data["kobo_backup"]["display_profile"] == "Android"
