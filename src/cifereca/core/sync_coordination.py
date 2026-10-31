@@ -312,7 +312,10 @@ def _run_observed_canonical_convergence(
         from .source_sync_consent import read_policy
         source_policy = read_policy(self.storage, admitted_snapshots[0].scope)
         if source_policy.configured and source_policy.mode != "on":
-            return {"blocked": 1}
+            return {status: (1 if status == "blocked" else 0)
+                    for status in ("downloaded", "recovered", "present_attested",
+                                   "pending", "blocked", "failed", "cancelled",
+                                   "skipped_archived", "inactive")}
         admitted_source_revision = (
             source_policy.revision if source_policy.mode == "on" else None
         )
