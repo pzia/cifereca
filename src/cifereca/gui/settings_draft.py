@@ -26,6 +26,26 @@ class SettingsDraft:
     ai_restart_required: bool
 
 
+def _merge_download_config(previous, *, directory, ebook, audiobook, command, post):
+    """Update only the fields owned by Settings; retain provider extensions.
+
+    Download settings may contain keys declared by a future adapter, including
+    extra content-type directories. A save in another section must not erase
+    opaque provider configuration or silently reset a future capability.
+    """
+    merged = dict(previous) if type(previous) is dict else {}
+    previous_types = merged.get('content_type_directories')
+    type_dirs = dict(previous_types) if type(previous_types) is dict else {}
+    type_dirs.update({'ebook': ebook, 'audiobook': audiobook})
+    merged.update({
+        'directory': directory,
+        'content_type_directories': type_dirs,
+        'command': command,
+        'post_download_command': post,
+    })
+    return merged
+
+
 def build_settings_draft(config, values, *, descriptors, public_ids,
                          current_dirs, has_active_tasks=False, ai_dirty=False):
     """Validate a GTK-thread snapshot without changing the current config.
@@ -201,25 +221,23 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             )
     except ValueError as exc:
         raise SettingsValidationError(f'Commande de téléchargement invalide : {exc}')
-    draft.set('downloads', {
-        'directory': values['download_directory'].strip(),
-        'content_type_directories': {
-            'ebook': values['ebook_directory'].strip(),
-            'audiobook': values['audiobook_directory'].strip(),
-        },
-        'command': global_command, 'post_download_command': global_post_command,
-    })
+    draft.set('downloads', _merge_download_config(
+        draft.get('downloads', {}),
+        directory=values['download_directory'].strip(),
+        ebook=values['ebook_directory'].strip(),
+        audiobook=values['audiobook_directory'].strip(),
+        command=global_command, post=global_post_command,
+    ))
     for provider_id, editor in values['provider_downloads'].items():
         settings = draft.provider_settings(provider_id)
         command, post_command = provider_commands[provider_id]
-        settings['downloads'] = {
-            'directory': editor['directory'].strip(),
-            'content_type_directories': {
-                'ebook': editor['ebook'].strip(),
-                'audiobook': editor['audiobook'].strip(),
-            },
-            'command': command, 'post_download_command': post_command,
-        }
+        settings['downloads'] = _merge_download_config(
+            settings.get('downloads'),
+            directory=editor['directory'].strip(),
+            ebook=editor['ebook'].strip(),
+            audiobook=editor['audiobook'].strip(),
+            command=command, post=post_command,
+        )
         draft.set_provider_settings(provider_id, settings)
     draft.set('diagnostics.enabled', True)
     draft.set('diagnostics.level', values['levels'][values['diagnostics_level_index']])
