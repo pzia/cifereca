@@ -168,7 +168,7 @@ def test_authentication_has_no_new_http_observations(caplog):
     (RuntimeError("SYNTHETIC_PRIVATE_UNEXPECTED_CAUSE"),
      "unexpected_failure"),
 ])
-def test_canonical_failed_http_event_keeps_raw_exception_and_closed_code(
+def test_canonical_failed_http_event_redacts_private_exception_and_keeps_closed_code(
     failure, reason, caplog,
 ):
     calls = []
@@ -194,8 +194,9 @@ def test_canonical_failed_http_event_keeps_raw_exception_and_closed_code(
         assert detail["logical_endpoint"] == "activity"
         assert detail["code"] == reason  # existing consumer vocabulary
         assert detail["error_type"] == type(failure).__name__
-        assert detail["error_message"] == str(failure)
-        assert str(failure) in detail["error_traceback"]
+        assert detail["error_message"] == reason
+        assert detail["error_traceback"] == "redacted"
+        assert str(failure) not in json.dumps(events)
         assert "http_status" not in detail  # never invent headers/status
         assert "content_type" not in detail
         assert events[0]["detail"]["request_ref"] == detail["request_ref"]
