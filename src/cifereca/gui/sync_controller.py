@@ -551,7 +551,7 @@ def _refresh_sync_page(self) -> None:
             )
             capability = "local_materialization" in source.sync_capabilities
             supported = callable(getattr(broker, "preview_local_materialization", None))
-            preflight.set_sensitive(bool(source.enabled and capability and supported))
+            preflight.set_sensitive(bool(source.enabled is True and capability and supported))
             preflight.set_tooltip_text(
                 "Prévisualiser ce seul compte, hors réseau, sans téléchargement"
                 if capability and supported else
@@ -676,7 +676,7 @@ def _refresh_sync_page(self) -> None:
                 "Télécharger les livres manquants…", "folder-download-symbolic",
             )
             can_download = (
-                source.enabled and source.connected and capability
+                source.enabled is True and source.connected is True and capability
                 and callable(getattr(broker, "prepare_local_materialization", None))
                 and callable(getattr(broker, "materialize_source", None))
             )
@@ -985,8 +985,8 @@ def _refresh_sync_page(self) -> None:
                 and (
                     schedule_mode == "on_start"  # disabling is always possible
                     or (
-                        schedule_mode == "manual" and source.enabled
-                        and source.connected and capability
+                        schedule_mode == "manual" and source.enabled is True
+                        and source.connected is True and capability
                     )
                 )
             ))
@@ -1068,7 +1068,7 @@ def _refresh_sync_page(self) -> None:
         else:
             group.add(sync_action_row(row))
 
-        if source.provider_id == 'bnf-pret' and source.sync_capable:
+        if source.provider_id == 'bnf-pret' and source.sync_capable is True:
             auto_row = Adw.ActionRow()
             auto_row.set_title('Télécharger automatiquement les prêts BnF')
             auto_row.set_subtitle(
@@ -1078,7 +1078,7 @@ def _refresh_sync_page(self) -> None:
             auto_toggle = Gtk.Switch()
             auto_toggle.set_valign(Gtk.Align.CENTER)
             auto_toggle.set_active(broker.bnf_auto_download_enabled(source.source_id))
-            auto_toggle.set_sensitive(bool(source.enabled and source.connected))
+            auto_toggle.set_sensitive((source.enabled is True and source.connected is True))
             def changed_bnf(widget, _param, sid=source.source_id):
                 if not sync_action_scope_current(self, scope):
                     return
@@ -1099,7 +1099,7 @@ def _refresh_sync_page(self) -> None:
             local_row.set_subtitle("Non consulté · aucun téléchargement ni actualisation distante")
             local_row.set_subtitle_lines(0)
             supported = callable(getattr(broker, "preview_local_materialization", None))
-            allowed = bool(source.enabled and supported)
+            allowed = (source.enabled is True and supported)
             local_state = {"serial": 0}
             for verify, label in ((False, "Aperçu local…"), (True, "Vérifier les fichiers…")):
                 button = self.action_button(label, "document-properties-symbolic")
@@ -1202,7 +1202,8 @@ def _refresh_sync_page(self) -> None:
                 consent_supported
                 and consent_mode in {"manual", "on_start"}
                 and (consent_mode == "on_start"
-                     or (source.enabled and source.connected and source.sync_capable))
+                     or (source.enabled is True and source.connected is True
+                         and source.sync_capable is True))
             )
             consent_button.set_valign(Gtk.Align.CENTER)
             consent_button.set_tooltip_text(
@@ -1446,8 +1447,8 @@ def _refresh_sync_page(self) -> None:
             inventory_button.set_sensitive(bool(
                 inventory_supported and (
                     inventory_mode in {"on_start", "periodic"}
-                    or (inventory_mode == "manual" and source.enabled
-                        and source.connected and source.sync_capable
+                    or (inventory_mode == "manual" and source.enabled is True
+                        and source.connected is True and source.sync_capable is True
                         and "remote_inventory" in source.sync_capabilities)
                 )
             ))
