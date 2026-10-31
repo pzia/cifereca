@@ -410,7 +410,7 @@ def _refresh_sync_page(self) -> None:
     # reachable and activatable, but must not push Kobo/Numilog below the fold.
     ordered_sources = sorted(
         zip(rows, presentations, row_titles),
-        key=lambda item: (not bool(item[0].sync_capable), not item[1].action_enabled),
+        key=lambda item: (item[0].sync_capable is not True, not item[1].action_enabled),
     )
     for source, presentation, display_label in ordered_sources:
         if not sync_action_scope_current(self, scope):
@@ -436,7 +436,7 @@ def _refresh_sync_page(self) -> None:
         group._cifereca_sync_source_id = source.source_id
         row = Adw.ActionRow(); row.set_title(display_label)
         add_css(row, "sync-source-heading")
-        if source.sync_capable:
+        if source.sync_capable is True:
             # Errors cannot disappear in low-contrast multi-line subtitles or
             # behind the per-account tools expander. An icon and a short fixed
             # first line stay at the source header without provider secrets.
@@ -469,13 +469,13 @@ def _refresh_sync_page(self) -> None:
                 + "\nInventaire synchronisé non pris en charge"
             )
             row.set_subtitle_lines(2)
-        toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
+        toggle = Gtk.Switch(); toggle.set_active(source.enabled is True); toggle.set_valign(Gtk.Align.CENTER)
         # Account availability and automatic file consent are independent.
         # Never imply that enabling a source authorizes a new acquisition.
         toggle.set_tooltip_text(
             "Activer cette source pour la recherche éventuelle ; "
             "n’autorise aucun téléchargement automatique."
-            if not source.sync_capable else
+            if source.sync_capable is not True else
             "Activer la source et ses synchronisations ; "
             "les téléchargements automatiques exigent une autorisation distincte."
         )
@@ -520,7 +520,7 @@ def _refresh_sync_page(self) -> None:
             )
         now.connect("clicked", one)
         now.set_valign(Gtk.Align.CENTER)
-        if source.sync_capable:
+        if source.sync_capable is True:
             add_sync_action(row, now)
             if source_consent_api:
                 from cifereca.gui.source_sync_consent_controls import (
