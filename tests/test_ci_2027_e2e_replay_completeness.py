@@ -69,7 +69,7 @@ class ReplayAllE2EContract(unittest.TestCase):
 
     def test_real_gtk_gate_keeps_a_bounded_non_optional_budget(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        header = source.split("\\njobs:\\n", 1)[1].split("\\n    steps:\\n", 1)[0]
+        header = source.split("\njobs:\n", 1)[1].split("\n    steps:\n", 1)[0]
         self.assertIn("name: E2E GTK · core", header)
         self.assertIn("    timeout-minutes: 15", header)
         self.assertIn("  cancel-in-progress: true", source)
