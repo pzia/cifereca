@@ -143,6 +143,7 @@ def _updated_metadata(raw: str, *, old: Path, final: Path, root: Path,
 def repair_exact_published_staging(
     storage, *, source: SourceKey, placement_id: str, library_root: Path,
     shared_lock: InterProcessLock, context_current: Callable[[], bool],
+    consent_current: Callable[[], bool],
     expected_source_policy_revision: str | None = None,
     transaction_guard: Callable[[sqlite3.Connection], bool] | None = None,
 ) -> bool:
@@ -157,7 +158,7 @@ def repair_exact_published_staging(
             or type(shared_lock) is not InterProcessLock
             or shared_lock._handle is None
             or shared_lock.path.resolve() != acquisition_lock_file().resolve()
-            or not callable(context_current)
+            or not callable(context_current) or not callable(consent_current)
             or (transaction_guard is not None and not callable(transaction_guard))):
         raise ValueError("canonical_stock_admission_required")
     root, profile = _profile(storage, library_root, source)
@@ -186,8 +187,8 @@ def repair_exact_published_staging(
         source, proof["offer_id"], old, proof["sha256"],
         proof["receipt"], proof["adept_receipt"],
     )
-    if context_current() is not True:
-        raise ValueError("canonical_stock_context_changed")
+    if context_current() is not True or consent_current() is not True:
+        raise ValueError("canonical_stock_context_or_consent_changed")
     final = promote_completed_delivery(
         storage, source=source, completed=completed, library_root=root,
     )
@@ -200,6 +201,8 @@ def repair_exact_published_staging(
     after = os.stat(final, follow_symlinks=False)
     if not stat.S_ISREG(after.st_mode):
         raise ValueError("canonical_stock_final_changed")
+    if consent_current() is not True:
+        raise ValueError("canonical_stock_consent_changed")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         current, confirmed = _record(db, source, placement_id)
