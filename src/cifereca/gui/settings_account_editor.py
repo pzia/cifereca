@@ -25,10 +25,15 @@ def build_provider_account_editor(
     credentials = dict(data.get("credentials") or {})
     fields: dict[str, Gtk.Widget] = {}
     for field in descriptor.credential_fields:
+        # A malformed persisted value is not a valid credential. In
+        # particular, bools, numbers and containers must not be converted to
+        # plausible strings and silently re-saved with an unrelated edit.
+        saved_credential = credentials.get(field.key)
+        credential_text = saved_credential if type(saved_credential) is str else ""
         if field.secret:
-            entry = Adw.PasswordEntryRow(); entry.set_title(field.label); entry.set_text(str(credentials.get(field.key) or ""))
+            entry = Adw.PasswordEntryRow(); entry.set_title(field.label); entry.set_text(credential_text)
         else:
-            entry = Adw.EntryRow(); entry.set_title(field.label); entry.set_text(str(credentials.get(field.key) or ""))
+            entry = Adw.EntryRow(); entry.set_title(field.label); entry.set_text(credential_text)
         group.add(entry); fields[field.key] = entry
     options = dict(data.get("options") or {})
     option_fields: dict[str, Any] = {}
