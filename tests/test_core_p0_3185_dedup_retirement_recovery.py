@@ -15,7 +15,7 @@ from cifereca.core.canonical_dedup_retirement import (
 )
 from cifereca.locking import InterProcessLock
 from tests.test_core_p0_3719_canonical_duplicate_retirement import rig
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows
+from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
 
 
 def _run_recovery(rig):
