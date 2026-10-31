@@ -95,6 +95,27 @@ class SaveSettings(unittest.TestCase):
         self.window.reconnect_sources.assert_not_called()
         self.window._populate_accounts.assert_not_called()
 
+    def test_settings_save_preserves_unknown_disabled_provider_without_activation(self):
+        """#3731: unrelated Settings edits cannot erase or activate unknown plugins."""
+        account = {
+            'id': 'unrecognized-a', 'provider': 'future-provider',
+            'identity_id': 'stable-id', 'label': 'Future source',
+            'enabled': False, 'anonymous': False,
+            'credentials': {'opaque': 'preserve-me'},
+            'options': {'new_option': 'untouched'},
+        }
+        self.config.set('providers.accounts', [account])
+        self.config.set('providers.future-provider', {'disabled': True, 'extension': {'x': 1}})
+        self.assertTrue(self.ns['save_settings']())
+        payload = self.runner.submit.call_args.args[1]()
+        saved = self.service.save_configuration.call_args.args[0]
+        self.assertEqual(saved['providers']['accounts'], [account])
+        self.assertEqual(saved['providers']['future-provider'], {
+            'disabled': True, 'extension': {'x': 1},
+        })
+        self.assertFalse(saved['providers']['accounts'][0]['enabled'])
+        self.assertEqual(self.config.provider_accounts(), [account])
+
     def test_invalid_edit_does_not_queue_or_modify_configuration(self):
         before=deepcopy(self.config.data)
         self.ns['identity_editors'][0]['id'].text='invalid / id'
