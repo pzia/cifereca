@@ -39,26 +39,35 @@ def _safe_path(path: str) -> bool:
 
 
 
-def _has_test_consumers(root: Path, changed: str) -> bool:
-    """Refuse single-test selection when another test imports this module.
+def _has_test_consumers(root: Path, changed: list[str]) -> bool:
+    """Fail closed when changed test modules feed other test modules.
 
-    Test modules are also used as fixtures in the repository. The read-only
-    textual prefilter deliberately errs toward full coverage, including dynamic
-    imports written as filename strings.
+    Scan files once per push; only changed test paths are searched. The textual
+    prefilter intentionally also catches dynamic filename-based imports.
     """
-    module_name = changed.removesuffix(".py").replace("/", ".")
-    filename = Path(changed).name
-    stem = Path(changed).stem
+    if not changed:
+        return False
+    names = {
+        path: (
+            path.removesuffix(".py").replace("/", "."),
+            Path(path).name,
+            Path(path).stem,
+        )
+        for path in changed
+    }
     for pattern in ("tests/**/*.py", "src/plugins/*/tests/**/*.py", "scripts/test*.py"):
         for candidate in root.glob(pattern):
-            if not candidate.is_file() or candidate == root / changed:
+            if not candidate.is_file():
                 continue
             source = candidate.read_text(encoding="utf-8", errors="replace")
-            if (module_name in source or filename in source
-                    or f"from tests import {stem}" in source
-                    or f"from . import {stem}" in source
-                    or f"from .{stem} import" in source):
-                return True
+            for path, (module_name, filename, stem) in names.items():
+                if candidate == root / path:
+                    continue
+                if (module_name in source or filename in source
+                        or f"from tests import {stem}" in source
+                        or f"from . import {stem}" in source
+                        or f"from .{stem} import" in source):
+                    return True
     return False
 
 
@@ -96,9 +105,11 @@ def select_push(
                 return *full, "renamed-deleted-or-unsupported-status"
             if any(ch in path for ch in "\n\r\t") or not _safe_path(path):
                 return *full, "shared-or-ambiguous-path"
-            if path.startswith("tests/test_") and _has_test_consumers(root, path):
-                return *full, "shared-test-fixture"
             paths.append(path)
+        if _has_test_consumers(
+            root, [path for path in paths if path.startswith("tests/test_")]
+        ):
+            return *full, "shared-test-fixture"
 
         script = selector or root / "scripts/ci-select-core-tests.py"
         with tempfile.TemporaryDirectory() as temp:
