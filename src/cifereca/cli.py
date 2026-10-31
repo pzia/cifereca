@@ -293,6 +293,23 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
+    if a.cmd == "sync" and a.sync_cmd == "run":
+        from .core.sync_cli_contract import SyncSelectionError
+        # Reject unsafe/incomplete requests before opening Core, loading
+        # plugins or creating a provider session.
+        preflight_code = None
+        if a.username or a.account:
+            preflight_code = "legacy_account_selector_unsupported"
+        elif not a.confirm:
+            preflight_code = "explicit_run_confirmation_required"
+        elif not (a.provider and a.identity and a.credential
+                  and a.account_id is not None):
+            preflight_code = "source_scope_required"
+        if preflight_code is not None:
+            print(json.dumps({"status": "failed", "code": preflight_code},
+                             ensure_ascii=False))
+            return 2
+
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library
     try:
