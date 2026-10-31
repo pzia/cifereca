@@ -56,8 +56,8 @@ reste `partial` même lorsqu'une page indique la fin de pagination :
 **par compte et par curseur** avant de livrer la même page positive.
 La relance du même curseur ne saute aucun livre ; les échecs ne constituent
 jamais une preuve d’absence. `connect()` remet les compteurs à zéro.
-La coupure d’un streaming EPUB dans les tests vérifie séparément le nettoyage
-du staging, sans publication Core ni réseau.
+L’interruption de production d’un EPUB après ouverture du fichier vérifie
+séparément le nettoyage du staging, sans publication Core ni réseau.
 
 Pour les comptes `reader-a` et `reader-b` (option `accounts=one|two`), les
 données et EPUB sont synthétiques. Les archives ne deviennent jamais
