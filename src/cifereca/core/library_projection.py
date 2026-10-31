@@ -545,6 +545,19 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 continue
         provider_id = str(row.get("provider_id") or "local")
         artifact_id = str(row.get("artifact_id") or "")
+        # The v0.7 backup mirror can create local_state='local' for an
+        # unverified placeholder, even when its recorded path was deleted or
+        # moved. It is history, not physical presence. Only an exact current
+        # present Placement in this identity can make that row local in UI.
+        # Keep the SQLite catalogue/backup unchanged for later reconciliation.
+        metadata = dict(row.get("metadata") or {})
+        if metadata.get("imported_from") == "backup_items":
+            placement_id = str(row.get("placement_id") or "")
+            if not placement_id or not any(
+                str(p.get("placement_id") or "") == placement_id
+                for p in placements_by_artifact.get(artifact_id, ())
+            ):
+                continue
         item_id = str(row.get("item_id") or artifact_id or row.get("catalog_entry_id"))
         artifact = artifacts.get(artifact_id, {})
         sha256 = str(artifact.get("sha256") or "")
