@@ -302,3 +302,38 @@ def test_httpx_error_cannot_leak_signed_url_or_transport_diagnostic(
         )
     assert "DO-NOT-LOG" not in str(err.value)
     assert not list(tmp_path.iterdir())
+
+
+def test_global_deadline_applies_even_to_moving_slow_transfer(
+    tmp_path, monkeypatch,
+):
+    # A peer that sends bytes within each individual socket timeout can
+    # nevertheless exceed the whole authorized acquisition budget.
+    ticks = iter([0.0, 0.0, 0.0, 0.0, 2.0])
+    monkeypatch.setattr(delivery, "_monotonic", lambda: next(ticks))
+    _client(monkeypatch, lambda request: httpx.Response(200, content=b"candidate"))
+    with pytest.raises(ValueError, match="delivery_deadline"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "expired.epub",
+            admission_current=lambda: True, timeout=5,
+            max_duration=1,
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("max_duration", [None, 0, -1, True, float("nan"),
+                                          float("inf"), 3601])
+def test_invalid_global_timeout_never_opens_network(
+    tmp_path, monkeypatch, max_duration,
+):
+    seen = []
+    _client(monkeypatch, lambda request: seen.append(1) or httpx.Response(200, content=b"x"))
+    with pytest.raises(ValueError, match="delivery_parameters_invalid"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "invalid.epub",
+            admission_current=lambda: True, timeout=5,
+            max_duration=max_duration,
+        )
+    assert not seen
