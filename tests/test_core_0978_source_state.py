@@ -307,9 +307,9 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
             provider_id="kobo", account_id="legacy", label="Kobo",
         ).sync_capabilities == ()
         summary = sync_source_presentation(by_provider["kobo"]).summary
-        assert "ne télécharge aucun ebook" in summary
-        assert "Acquisition locale Kobo disponible sur commande dédiée" in summary
-        assert "Acquisition locale Kobo : non prise en charge" in (
+        assert "acquisition locale selon autorisation" in summary
+        assert "Acquisition locale Kobo disponible sur commande dédiée" not in summary
+        assert "acquisition locale selon autorisation" not in (
             sync_source_presentation(bob[0]).summary
         )
         assert calls == []  # Read-only projection never syncs or downloads.
@@ -346,7 +346,7 @@ def test_sync_source_capabilities_are_not_exposed_without_session_proof(tmp_path
         source = SynchronizationBrokerImpl(service).sources()[0]
         assert source.sync_capabilities == ()
         assert source.connected is False
-        assert "Acquisition locale Kobo : non prise en charge" in (
+        assert "acquisition locale selon autorisation" not in (
             sync_source_presentation(source).summary
         )
     finally:
