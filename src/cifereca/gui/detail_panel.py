@@ -41,7 +41,7 @@ def _commercial_search_usage(item: SearchResult, service=None) -> str:
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_provider == "numilog":
         if result_row(item)["state"] == "remote_owned":
-            return "Mes achats Numilog · fichier local non présumé · offre à vérifier"
+            return "Mes achats Numilog · fichier local non présumé"
         return "Notice Numilog · aucun droit d'achat attesté"
     if item.source_provider != "kobo":
         return ""
