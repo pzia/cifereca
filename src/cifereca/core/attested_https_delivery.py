@@ -327,6 +327,10 @@ def download_attested_https(
                                     raise ValueError("delivery_staging_changed")
                             if checked.digest() != digest.digest():
                                 raise ValueError("delivery_staging_changed")
+                            # Hashing a large EPUB/PDF may take time. Refuse
+                            # to return a completed candidate if the exact
+                            # account/consent changed while verifying bytes.
+                            check_current()
                         finally:
                             os.close(recheck_fd)
                     except BaseException:
