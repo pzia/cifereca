@@ -90,7 +90,10 @@ def test_core_selected_acsm_follows_attested_publisher_redirects(
         assert all(not req.headers.get("authorization") for req in requested)
         assert all("MesLivres" not in req.headers.get("referer", "")
                    for req in requested)
-        assert (publisher.split("/")[2], 443) in public_dns
+        if provider.url_origin(publisher) not in session.allowed_origins:
+            assert (publisher.split("/")[2], 443) in public_dns
+        if with_second_redirect:
+            assert ("publisher-delivery.example.org", 443) in public_dns
     finally:
         session.close()
 
