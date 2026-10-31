@@ -458,3 +458,29 @@ def test_untouched_candidate_receipt_matches_independent_file_sha(
     assert result.sha256 == delivery.hashlib.sha256(
         result.path.read_bytes(),
     ).hexdigest()
+
+
+
+def test_revoked_during_final_sha_probe_unlinks_candidate(
+    tmp_path, monkeypatch,
+):
+    """A late revocation after hard-linking cannot return a successful GET."""
+    original_link = os.link
+    consent = {"valid": True}
+
+    def revoke_after_link(source, destination, **options):
+        result = original_link(source, destination, **options)
+        consent["valid"] = False
+        return result
+
+    monkeypatch.setattr(delivery.os, "link", revoke_after_link)
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=b"epub contents",
+    ))
+    with pytest.raises(ValueError, match="delivery_admission_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "revoked.epub",
+            admission_current=lambda: consent["valid"], timeout=5,
+        )
+    assert list(tmp_path.iterdir()) == []
