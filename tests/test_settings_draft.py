@@ -979,3 +979,78 @@ def test_existing_account_malformed_owner_cannot_rebind_to_first_profile(
     with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
         validate(editor, descriptors={"provider.future": descriptor("provider.future")})
     assert config.data == before and not config.path.exists()
+
+
+
+def test_p1_existing_account_with_missing_owner_refuses_default_rebind(editor):
+    """#3731: missing legacy owner is not consent to move account to Alice."""
+    config, values = editor
+    values["identities"].append(dict(
+        id="bob", label="Bob", directory="bob", adept_profile="",
+        languages="fr", prefer_vo=False,
+    ))
+    saved = {
+        "id": "legacy-ownerless", "provider": "provider.future",
+        "enabled": False, "credentials": {"username": "secret"},
+        "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(saved)])
+    item = account("provider.future", identity="", account_id="legacy-ownerless")
+    item.update(
+        enabled=False, original_account=deepcopy(saved),
+        original_credentials=deepcopy(saved["credentials"]),
+        fields={"username": "secret"},
+    )
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+def test_p1_ownerless_legacy_account_requires_explicit_identity_for_repair(editor):
+    """Explicitly selecting Bob is not the same as implicit first-profile fallback."""
+    config, values = editor
+    values["identities"].append(dict(
+        id="bob", label="Bob", directory="bob", adept_profile="",
+        languages="fr", prefer_vo=False,
+    ))
+    old = {
+        "id": "legacy-ownerless", "provider": "provider.future",
+        "enabled": False, "credentials": {"username": "secret"},
+        "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(old)])
+    item = account("provider.future", identity="bob", account_id="legacy-ownerless")
+    item.update(
+        enabled=False, original_account=deepcopy(old),
+        original_credentials=deepcopy(old["credentials"]),
+        fields={"username": "secret"},
+    )
+    values["accounts"] = [item]
+    planned = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    row, = planned.data["providers"]["accounts"]
+    assert row["identity_id"] == "bob" and row["enabled"] is False
+    assert row["credentials"] == {"username": "secret"}
+    assert config.provider_accounts() == [old]
+
+
+def test_p1_legacy_ownerless_account_cannot_rebind_on_unrelated_setting_save(editor):
+    config, values = editor
+    old = {
+        "id": "legacy", "provider": "provider.future",
+        "enabled": False, "credentials": {"username": "secret"},
+    }
+    config.set("providers.accounts", [deepcopy(old)])
+    values["identities"][0]["label"] = "Alice updated"
+    item = account("provider.future", identity="", account_id="legacy")
+    item.update(
+        enabled=False, original_account=deepcopy(old),
+        original_credentials=deepcopy(old["credentials"]),
+        fields={"username": "secret"},
+    )
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before
