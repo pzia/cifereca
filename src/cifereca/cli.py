@@ -355,10 +355,14 @@ def main(argv: list[str] | None = None) -> int:
                         in connections
                     ]
                     selected = select_sync_accounts(persisted, **selectors)
+                    from .core.source_sync_consent import read_policy, scope_for_account
                     result = {"status": "success", "sources": [
                         {"provider": x.provider_id, "identity": x.identity_id,
                          "credential": x.credential_id, "account_id": x.unique_id,
-                         "connection_enabled": bool(connections[(x.identity_id, x.provider_id, x.credential_id)]["enabled"])}
+                         "connection_enabled": bool(connections[(x.identity_id, x.provider_id, x.credential_id)]["enabled"]),
+                         "acquisition_consent": read_policy(
+                             core.storage, scope_for_account(x)
+                         ).mode}
                         for x in selected
                     ]}
                     code = 0
