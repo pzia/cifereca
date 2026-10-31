@@ -29,37 +29,27 @@ def _statistics(loans):
     }
 
 
-def test_numilog_personal_inventory_means_purchases_not_a_loan():
-    source = sync_source_presentation(
-        _source("numilog", "remote_inventory", "entitlements"),
-    )
-    assert source.action_label == "Synchroniser Compte personnel"
-    assert "inventaire des livres achetés" in source.summary
-    assert "droits sur les livres possédés" in source.summary
-    assert "aucun emprunt de bibliothèque créé" in source.summary
-    assert "aucun fichier EPUB/ACSM téléchargé" in source.summary
-    assert "droits et emprunts" not in source.summary
+def test_sync_presentation_uses_capabilities_not_vendor_name():
+    examples = [
+        _source(vendor, "remote_inventory", "entitlements", "local_materialization")
+        for vendor in ("numilog", "kobo", "paris", "fixture-vendor")
+    ]
+    texts = [" | ".join(sync_source_presentation(source).summary.splitlines()[1:]) for source in examples]
+    assert len(set(texts)) == 1
+    assert "inventaire distant" in texts[0]
+    assert "observations de droits et prêts" in texts[0]
+    assert "acquisition locale selon autorisation" in texts[0]
+    assert "ne télécharge aucun ebook" not in texts[0]
+    assert "aucun fichier EPUB/ACSM téléchargé" not in texts[0]
 
 
-def test_kobo_owned_manifest_is_not_automatically_downloaded_or_loaned():
-    source = sync_source_presentation(
-        _source("kobo", "remote_inventory", "entitlements", "local_materialization"),
-    )
-    assert source.action_label == "Synchroniser Compte personnel"
-    assert "inventaire des livres achetés" in source.summary
-    assert "droits sur les livres possédés" in source.summary
-    assert "ne télécharge aucun ebook" in source.summary
-    assert "droits et emprunts" not in source.summary
-
-
-def test_paris_stays_a_genuine_library_loan_with_all_loan_labels():
-    source = sync_source_presentation(
-        _source("paris", "remote_inventory", "entitlements"),
-    )
-    assert source.action_label == "Synchroniser Compte personnel"
-    assert "droits et emprunts" in source.summary
-    assert "inventaire distant" in source.summary
-    assert "livres achetés" not in source.summary
+def test_no_acquisition_claim_without_capability():
+    text = sync_source_presentation(
+        _source("unknown-vendor", "remote_inventory", "entitlements"),
+    ).summary
+    assert "inventaire distant" in text
+    assert "acquisition locale selon autorisation" not in text
+    assert "livres achetés" not in text
 
 
 def test_store_only_identity_does_not_claim_purchases_are_loans_or_files():

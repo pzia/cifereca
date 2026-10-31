@@ -546,19 +546,12 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         if not isinstance(capabilities, (tuple, list, frozenset)):
             capabilities = ()
         phases = []
-        # Stores expose a customer's purchased/owned collection. This is
-        # neither a public-library loan nor a physically downloaded EPUB.
-        store_owned = not canonical and getattr(source, "provider_id", "") in {"kobo", "numilog"}
         if "remote_inventory" in capabilities:
-            phases.append(
-                "inventaire des livres achetés"
-                if store_owned else "inventaire distant"
-            )
+            phases.append("inventaire distant")
         if "entitlements" in capabilities:
-            phases.append(
-                "droits sur les livres possédés"
-                if store_owned else "droits et emprunts"
-            )
+            phases.append("observations de droits et prêts")
+        if "local_materialization" in capabilities:
+            phases.append("acquisition locale selon autorisation")
         if phases:
             summary += "\nPortée de cette source : " + ", ".join(phases) + "."
         else:
@@ -571,23 +564,6 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         summary += (
             "\nCette source ne fournit pas d’inventaire synchronisable. "
             "Une recherche de catalogue, si disponible, est une opération distincte."
-        )
-    # A Kobo source refresh only updates online metadata. It is deliberately
-    # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
-    kobo_notices_only = not canonical and getattr(source, "provider_id", "") == "kobo"
-    if kobo_notices_only:
-        summary += "\nActualise uniquement les notices Kobo en ligne ; ne télécharge aucun ebook."
-        if "local_materialization" in getattr(source, "sync_capabilities", ()):
-            summary += (
-                "\nAcquisition locale Kobo disponible sur commande dédiée ; "
-                "cette synchronisation ne la lance jamais."
-            )
-        else:
-            summary += "\nAcquisition locale Kobo : non prise en charge par ce compte."
-    if not canonical and getattr(source, "provider_id", "") == "numilog":
-        summary += (
-            "\nActualise les livres achetés chez Numilog : aucun emprunt "
-            "de bibliothèque créé et aucun fichier EPUB/ACSM téléchargé."
         )
     if canonical and capable:
         summary += "\nLes fichiers disponibles sont reçus selon l’autorisation de ce compte et les capacités de la source."

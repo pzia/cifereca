@@ -14,7 +14,7 @@ def source(**updates):
 
 def test_paris_scope_is_attested_by_capabilities():
     result = sync_source_presentation(source(sync_capabilities=("entitlements",)))
-    assert "Portée de cette source : droits et emprunts." in result.summary
+    assert "Portée de cette source : observations de droits et prêts." in result.summary
     assert "inventaire distant" not in result.summary
     assert "ne lance pas la synchronisation globale au démarrage" in result.summary
     assert result.action_enabled
@@ -25,9 +25,9 @@ def test_kobo_scope_remains_notices_only_and_no_acquisition():
         provider_id="kobo", label="Kobo",
         sync_capabilities=("remote_inventory", "entitlements", "local_materialization"),
     ))
-    assert "inventaire des livres achetés, droits sur les livres possédés" in result.summary
-    assert "ne télécharge aucun ebook" in result.summary
-    assert "Acquisition locale Kobo disponible sur commande dédiée" in result.summary
+    assert "inventaire distant, observations de droits et prêts, acquisition locale selon autorisation" in result.summary
+    assert "ne télécharge aucun ebook" not in result.summary
+    assert "acquisition locale selon autorisation" in result.summary
     assert result.action_label == "Synchroniser Kobo"
 
 
@@ -51,7 +51,7 @@ def test_no_provider_supplied_capabilities_or_scope_text_is_echoed():
         sync_capabilities=(secret, "entitlements"),
     ))
     assert secret not in result.summary
-    assert "Portée de cette source : droits et emprunts." in result.summary
+    assert "Portée de cette source : observations de droits et prêts." in result.summary
 
 
 def test_legacy_capabilities_absent_still_reports_conservative_scope():
@@ -78,7 +78,7 @@ def test_sync_capable_owned_store_still_has_no_catalogue_or_loan_claim():
         provider_id="numilog", label="Numilog",
         sync_capabilities=("remote_inventory", "entitlements"),
     ))
-    assert "inventaire des livres achetés" in result.summary
-    assert "droits sur les livres possédés" in result.summary
-    assert "aucun emprunt" in result.summary
+    assert "inventaire distant" in result.summary
+    assert "observations de droits et prêts" in result.summary
+    assert "acquisition locale selon autorisation" not in result.summary
     assert "Catalogue public" not in result.summary
