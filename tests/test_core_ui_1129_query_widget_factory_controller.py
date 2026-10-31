@@ -8,7 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from cifereca.gui.query_widget_factory_controller import build_query_controls, refresh_query_providers
+from cifereca.gui.query_widget_factory_controller import (
+    build_query_controls, refresh_query_providers, refresh_library_origin_choices,\n)
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
@@ -413,3 +414,89 @@ def test_search_paris_plugin_absent_or_disabled_is_scoped(
     window.service.current_identity = NS(identity_id="bob")
     refresh_query_providers(window)
     controls.set_provider_status_notice.assert_called_with("")
+
+
+def test_library_selector_includes_scoped_local_and_numilog_origins():
+    window, events, _calls, _changed, _activate, _caps, create = _setup(
+        manager=False, extra_catalog=[{"provider_id": "local"}],
+    )
+    window.service.current_identity = NS(identity_id="alice")
+    window.library_controls = NS(set_provider_choices=Mock())
+    # The Core has already consolidated this single book and both origins.
+    snapshot = [{
+        "key": "book-a", "identity_id": "alice", "provider_id": "local",
+        "providers": ["local", "numilog"],
+    }]
+    refresh_library_origin_choices(window, snapshot, identity_id="alice")
+    options = dict(window.library_controls.set_provider_choices.call_args.args[0])
+    assert options["numilog"] == "Numilog — Mes achats (compte)"
+    assert options["local"] == "Local"
+    assert len(options) == len(set(options))
+    # An offline Library filter must not authorize or announce an online
+    # Numilog source that searchable_providers has not declared.
+    assert "numilog" not in dict(create(library=False).providers)
+    assert not any(e[0] == "diagnostic" for e in events)
+
+
+def test_library_selector_rejects_foreign_or_malformed_origin_evidence():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup(
+        extra_catalog=[{"provider_id": "local"}], manager=False,
+    )
+    window.service.current_identity = NS(identity_id="alice")
+    window.library_controls = NS(set_provider_choices=Mock())
+    snapshot = [
+        {"identity_id": "alice", "provider_id": "local",
+         "providers": ["local", "numilog"]},
+        {"identity_id": "bob", "provider_id": "foreign",
+         "providers": ["private-provider"]},
+        {"identity_id": "alice", "providers": "password=PRIVATE_SOURCE"},
+        {"identity_id": "alice", "providers": [None, 41, "account@secret",
+                                               "a\\nb", ""]},
+        {"identity_id": "alice", "providers": ["unsafe"] * 33},
+    ]
+    refresh_library_origin_choices(window, snapshot, identity_id="alice")
+    selections = dict(window.library_controls.set_provider_choices.call_args.args[0])
+    assert "numilog" in selections
+    for forbidden in ("private-provider", "account@secret", "password=PRIVATE_SOURCE",
+                      "unsafe", "a\\nb"):
+        assert forbidden not in repr(selections)
+    assert window._library_origin_provider_ids == ("local", "numilog")
+
+
+def test_library_snapshot_choices_are_revoked_on_profile_switch():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup(
+        extra_catalog=[{"provider_id": "local"}], manager=False,
+    )
+    window.service.current_identity = NS(identity_id="alice")
+    window.library_controls = NS(set_provider_choices=Mock())
+    refresh_library_origin_choices(window, [
+        {"identity_id": "alice", "providers": ["local", "numilog"]},
+    ], identity_id="alice")
+    assert "numilog" in dict(window.library_controls.set_provider_choices.call_args.args[0])
+    window.service.current_identity = NS(identity_id="bob")
+    window.search_controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+    )
+    refresh_query_providers(window)
+    assert "numilog" not in dict(window.library_controls.set_provider_choices.call_args.args[0])
+    # Delayed callback from the previous identity cannot repopulate choices.
+    last = window.library_controls.set_provider_choices.call_count
+    refresh_library_origin_choices(window, [
+        {"identity_id": "alice", "providers": ["numilog"]},
+    ], identity_id="alice")
+    assert window.library_controls.set_provider_choices.call_count == last
+    refresh_library_origin_choices(window, [
+        {"identity_id": "bob", "providers": ["local", "bnf-pret"]},
+    ], identity_id="bob")
+    assert "bnf-pret" in dict(window.library_controls.set_provider_choices.call_args.args[0])
+    assert "numilog" not in dict(window.library_controls.set_provider_choices.call_args.args[0])
+
+
+def test_library_origin_choices_hook_is_after_successful_identity_fence():
+    owner = ROOT / "library_refresh.py"
+    text = ast.unparse(ast.parse(owner.read_text(encoding="utf-8")))
+    assert "not self._identity_request_current(identity_id, generation)" in text
+    assert "refresh_library_origin_choices(self, entries, identity_id=identity_id)" in text
+    assert text.index("self._show_library_entries(entries)") < text.index(
+        "refresh_library_origin_choices(self, entries, identity_id=identity_id)"
+    )
