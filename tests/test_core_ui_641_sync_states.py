@@ -126,3 +126,30 @@ def test_all_three_explicit_true_flags_still_enable_source_sync():
     assert shown.action_enabled is True
     assert shown.activation_label == "Activée"
     assert shown.connection_label == "Connectée"
+
+
+@pytest.mark.parametrize("field", ["enabled", "connected", "sync_capable"])
+@pytest.mark.parametrize("invalid", ["false", 1, {"malformed": True}])
+def test_gtk_source_row_never_coerces_malformed_flags_into_actions(
+    field, invalid,
+):
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+
+    source = _source(
+        provider_id="provider.future", source_id="future-account",
+        enabled=True, connected=True, sync_capable=True, **{field: invalid},
+    )
+    window, broker, calls, _build, _page = _fixture(sources=[source])
+    group = window._sync_sources_box.children[0]
+    row = group.children[0]
+    toggle = row.suffixes[0]
+    assert toggle.active is (source.enabled is True)
+    assert window._sync_all_button.sensitive is False
+    assert not window.runner.tasks
+    assert ("set-enabled", "future-account", True) not in calls
+    if field == "sync_capable":
+        assert "Inventaire synchronisé non pris en charge" in row.subtitle
+        assert len(row.suffixes) == 1
+    else:
+        # The manual action may be visible but must not be clickable.
+        assert row.suffixes[1].sensitive is False
