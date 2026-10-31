@@ -372,3 +372,37 @@ def test_staging_directory_replaced_during_publish_rejects_old_path(
     assert switched == [True]
     assert list(moved.iterdir()) == []
     assert list(outside.iterdir()) == []
+
+
+
+def test_temporary_name_replacement_cannot_change_published_sha(
+    tmp_path, monkeypatch,
+):
+    """The completed file must be the inode hashed by the streaming writer."""
+    original_link = os.link
+    swapped = []
+
+    def replace_source_before_link(source, destination, **options):
+        fd = options["src_dir_fd"]
+        os.unlink(source, dir_fd=fd)
+        other_fd = os.open(
+            source, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
+            dir_fd=fd,
+        )
+        with os.fdopen(other_fd, "wb") as altered:
+            altered.write(b"forged unverified content")
+        swapped.append(True)
+        return original_link(source, destination, **options)
+
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=b"legitimate verified candidate",
+    ))
+    monkeypatch.setattr(delivery.os, "link", replace_source_before_link)
+    with pytest.raises(ValueError, match="delivery_staging_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "replaced.epub",
+            admission_current=lambda: True, timeout=5,
+        )
+    assert swapped == [True]
+    assert list(tmp_path.iterdir()) == []
