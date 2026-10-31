@@ -294,7 +294,12 @@ def test_legacy_replay_never_replaces_attested_canonical_entitlement(
             })
             assert storage.entitlements() == before_rights
         assert storage.backup_list("kobo")[0]["revision_id"] == "stale-legacy"
-        assert len(storage.acquisitions(provider_id="kobo")) == 1
+        assert len(storage.acquisitions(provider_id="kobo")) == (
+            1 if canonical_state == "active" else 0
+        )
+        if canonical_state == "inactive":
+            assert storage.artifacts() == []
+            assert storage.placements() == []
     finally:
         storage.close()
 
