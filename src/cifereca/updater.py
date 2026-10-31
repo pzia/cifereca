@@ -1205,6 +1205,11 @@ def install_github(
         sha = _github_checkout(repository, ref, source)
         provenance = {"type": "github", "repository": repository, "ref": ref, "commit": sha}
         if not dry_run:
+            # The checked-out SHA is already resolved by GitHub and validated
+            # before staging. Persist it in the source package *before* the
+            # attested wheelhouse is built, since installation drops .git.
+            from .startup_revision import stamp_source_git_commit
+            stamp_source_git_commit(source, sha)
             # Keep --github installable despite the fail-closed source fallback.
             # Admission precedes managed venv creation or release switching.
             step("manifest_validation", _prepare_github_wheelhouse, source, select_python(python))
