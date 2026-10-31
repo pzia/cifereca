@@ -599,3 +599,52 @@ def test_borrower_only_reference_rejects_malformed_historical_account_coordinate
     assert historical["paris_borrower_ref"] is None
     assert source["source_ref"] != historical["source_ref"]
     assert historical["source_visibility_evidence"] == "acquisition_only"
+
+
+@pytest.mark.parametrize("field", ["identity_id", "credential_id", "account_id"])
+@pytest.mark.parametrize("invalid", [123, True, ["PRIVATE-TOKEN"], {"token": "PRIVATE-TOKEN"}, "bad\x00id"])
+def test_malformed_paris_source_coordinate_is_not_entitlement_or_adobe_proof(
+    field, invalid,
+):
+    right = _right("alice", "paris-a")
+    acquisition = _acq("alice", "paris-a", "adept-historical", state="attested")
+    right[field] = invalid
+    acquisition[field] = invalid
+    before = deepcopy((right, acquisition))
+    report = _audit([right], [acquisition])
+    assert report["status"] == "unknown"
+    assert report["sources"] == report["origins"] == []
+    assert "PRIVATE-TOKEN" not in repr(report)
+    assert (right, acquisition) == before
+
+
+@pytest.mark.parametrize("field", ["identity_id", "credential_id", "account_id"])
+def test_malformed_recorded_acquisition_scope_cannot_borrow_textual_paris_right(
+    field,
+):
+    right = _right("alice", "paris-a")
+    right[field] = "42"
+    acquisition = _acq("alice", "paris-a", "adept-historical", state="attested")
+    acquisition[field] = 42
+    report = _audit([right], [acquisition])
+    assert len(report["sources"]) == 1
+    assert report["origins"] == []
+    assert report["status"] == "unknown"
+
+
+def test_missing_legacy_source_coordinates_keep_compatible_blank_scope():
+    # A genuinely absent legacy coordinate is not the same as a malformed
+    # present JSON value. Older receipts may have used empty library fields.
+    right = _right("alice", "paris-a", entitlement="legacy-entitlement")
+    acquisition = _acq(
+        "alice", "paris-a", "adept-historical", state="attested",
+        entitlement="legacy-entitlement",
+    )
+    acquisition["metadata"].pop("provider_loan_id")
+    right.pop("account_id")
+    acquisition.pop("account_id")
+    result = _audit([right], [acquisition])
+    assert len(result["sources"]) == 1
+    assert result["origins"][0]["source_visibility_evidence"] == "persisted_entitlement"
+    assert result["origin_resolution"] == "single_inventory_attested"
+    assert result["origins"][0]["paris_borrower_ref"] is None
