@@ -35,6 +35,26 @@ _JOURNAL_READER_CODES = frozenset({
 })
 
 
+
+def _logged_content_type(value: str) -> str:
+    """Keep only a bounded MIME and known charset, never opaque parameters.
+
+    Content-Type is remote-controlled. RFC parameters can carry filenames,
+    signed links or tokens; the journal does not need their values.
+    """
+    if type(value) is not str or len(value) > 256:
+        return "redacted"
+    main, separator, params = value.partition(";")
+    media = main.strip().lower()
+    if re.fullmatch(r"[a-z0-9][a-z0-9.+_-]{0,63}/[a-z0-9][a-z0-9.+_-]{0,63}", media) is None:
+        return "redacted"
+    if separator:
+        charset = re.fullmatch(r"\\s*charset=(UTF-8|US-ASCII|ISO-8859-1|WINDOWS-1252)\\s*", params, re.IGNORECASE)
+        if charset:
+            return media + "; charset=" + charset.group(1).upper()
+    return media
+
+
 def allowed_url(url: str, *, authenticating: bool = False) -> str:
     try:
         u = urlsplit(url)
@@ -136,7 +156,7 @@ class ReaderHTTPClient:
         try:
             with self.http.stream(method, url, **kwargs) as response:
                 detail.update(http_status=response.status_code,
-                              content_type=response.headers.get('content-type', ''))
+                              content_type=_logged_content_type(response.headers.get('content-type', '')))
                 self._observe(dict(detail, event='response'), 'running', started)
                 yield response
         except Exception as exc:
