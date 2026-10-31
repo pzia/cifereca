@@ -12,7 +12,7 @@
 
 ## Pipeline Core unique
 
-`canonical_dedup_preview.preview_canonical_duplicate` : inspection **lecture seule** du candidat et du keeper, SHA/taille/inode réguliers, racine/profil, références actives. Les états `unreferenced` et `active_references` sont des **diagnostics**, pas une autorisation.
+`canonical_dedup_preview.preview_canonical_duplicate` : inspection **lecture seule** du candidat et du keeper, SHA/taille/inode réguliers, racine/profil, références actives. Les états `unreferenced` et `active_references` sont des **diagnostics**, pas une autorisation. L'aperçu fournit aussi `artifact_origin_links`, `linked_source_references` et `provenance_counted` après rehash réussi des **deux copies du même profil**. Ces compteurs concernent l'Artifact + l'identité, **jamais la provenance d'un chemin précis, ni un transfert de droits par SHA**. En cas d'écart de profil, de fichier altéré ou de contrôle impossible, `provenance_counted=False` interdit d'interpréter les zéros comme absence d'origine.
 
 `canonical_dedup_prepare.prepare_verified_canonical_duplicate` : relie les entrées catalogue, `backup_items`, puis les reçus terminés attestés. Les transactions SQLite sont indépendantes, idempotentes et réexécutables ; un refus intermédiaire laisse les deux fichiers présents. Aucun unlink dans cette étape.
 
