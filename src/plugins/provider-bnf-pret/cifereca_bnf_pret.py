@@ -536,10 +536,17 @@ class BnfProviderSession(ProviderSession):
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
         )
-        if self._downloadable_scope(account) != scope:
+        # Compare the mutable caller against the frozen, previously valid
+        # scope. Reconstructing ProviderRightsScope *after* GET could itself
+        # raise on an empty/invalid account field, bypassing candidate cleanup.
+        if (account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id) != (
+                scope.identity_id, scope.provider_id,
+                scope.credential_id, scope.account_id):
             try:
                 staged = Path(path)
-                if staged.parent == Path(target_dir) and staged.is_file():
+                if (staged.parent == Path(target_dir) and staged.is_file()
+                        and not staged.is_symlink()):
                     staged.unlink(missing_ok=True)
             except (OSError, TypeError, ValueError):
                 pass

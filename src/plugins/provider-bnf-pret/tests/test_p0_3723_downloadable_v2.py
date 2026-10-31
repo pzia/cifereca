@@ -94,13 +94,26 @@ def test_v2_candidate_never_publishes_core_placement(monkeypatch, tmp_path):
     assert not result.authorizes_publication
 
 
-def test_v2_rebind_during_candidate_does_not_return_or_keep_staging(monkeypatch, tmp_path):
+@pytest.mark.parametrize(("field", "value"), [
+    ("identity_id", "profile-b"),
+    ("provider_id", "provider-b"),
+    ("credential_id", "credential-b"),
+    ("unique_id", "reader-b"),
+    ("identity_id", ""),
+    ("provider_id", None),
+    ("credential_id", ""),
+    ("unique_id", None),
+])
+def test_v2_rebind_during_candidate_does_not_return_or_keep_staging(
+    monkeypatch, tmp_path, field, value,
+):
+    """Invalid scope fields must not skip the narrow staging cleanup."""
     from cifereca.plugin_api import ProviderCapabilityError
     session, account, row = build(monkeypatch)
     def staged(self, selected, *, target_dir, **kwargs):
         path = target_dir / "candidate.acsm"
         path.write_bytes(b"fictional")
-        selected.identity_id = "profile-b"
+        setattr(selected, field, value)
         return path, "acsm"
     monkeypatch.setattr(type(session), "rights_selected_delivery_candidate", staged)
     with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
