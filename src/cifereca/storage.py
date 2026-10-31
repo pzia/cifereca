@@ -1370,7 +1370,14 @@ class Storage:
         #
         # The active canonical case is left on the compatibility path until
         # the Kobo writer moves to the v2 convergence executor (#3196).
-        if existing_right is not None and not projection_owned and existing_right[8] != "active":
+        if (existing_right is not None and not projection_owned
+                and (existing_right[8] != "active"
+                     or cls._generic_status(row.get("status")) in {"pending", "discovered"})):
+            # An independent ACTIVE entitlement already exists: passive
+            # 0.7 discovery (pending/queued/unknown) is not an acquisition
+            # attempt and cannot synthesize a canonical receipt or local
+            # content claim. Active attempts/completions remain compatible
+            # until the legacy delivery writer is migrated to Core v2.
             return
         artifact_id = None
         sha = str(row.get("sha256") or "").strip().lower()
