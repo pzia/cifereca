@@ -55,7 +55,7 @@ def test_duplicate_inventory_phase_does_not_hide_independent_local_result():
     assert "Téléchargement local : Réussie" in summary
     assert "dernier succès confirmé" in summary
     assert sync_source_attention(item) == (
-        "warning", "Notices et droits : résultat partiel",
+        "warning", "Notices et droits : états incohérents — actualisation nécessaire",
     )
 
 
@@ -77,3 +77,31 @@ def test_untrusted_unknown_phase_cannot_poison_known_phase_summary():
     summary = sync_source_phase_summary(item)
     assert summary == "Notices et droits : Réussie"
     assert "SECRET" not in summary
+
+
+
+@pytest.mark.parametrize("source_status", ["success", "idle"])
+def test_duplicate_positive_phase_alone_triggers_actionable_attention(source_status):
+    item = source(
+        phase("materialize", "success", success="2026-10-30T14:00:00Z"),
+        phase("materialize", "success", success="2026-10-30T14:00:00Z"),
+    )
+    item.status = source_status
+    item.error = ""
+    summary = sync_source_phase_summary(item)
+    assert "État incohérent" in summary
+    assert "Réussie" not in summary
+    assert "dernier succès" not in summary
+    assert sync_source_attention(item) == (
+        "warning", "Téléchargement local : états incohérents — actualisation nécessaire",
+    )
+
+
+def test_duplicate_phase_failed_state_still_beats_incoherence_warning():
+    item = source(
+        phase("discover_rights", "success"),
+        phase("discover_rights", "failed"),
+    )
+    assert sync_source_attention(item) == (
+        "error", "Notices et droits : échec — action nécessaire",
+    )
