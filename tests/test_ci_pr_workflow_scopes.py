@@ -135,3 +135,13 @@ def test_required_ci_context_and_manual_dispatch_are_unchanged():
     assert 'echo "core_mode=full"' in manual
     assert 'echo "plugins=true"' in manual
     assert 'echo "dataset=true"' in manual
+
+
+def test_workflow_only_e2e_edit_cannot_disable_its_real_pr_gate():
+    source = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(encoding="utf-8")
+    event = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+    assert "  pull_request:\n    paths:\n" in event
+    assert "      - '.github/workflows/e2e-smoke.yml'\n" in event
+    assert "    name: E2E GTK · core\n" in source
+    assert "    timeout-minutes: 15\n" in source
+    assert "continue-on-error: true" not in source
