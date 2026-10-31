@@ -76,3 +76,40 @@ def test_untyped_profile_index_is_never_coerced(invalid):
             "backup_directory": "", "backup_interval": "60",
             "vault_profile_index": invalid, "vault_profiles": ["Android", "Desktop"],
         })
+
+
+@pytest.mark.parametrize("invalid", [
+    "-1", "+60", "1_000", "3e2", "1.5", "NaN", "１２", "²",
+    "6 0", "1\\n2", "0x30", "60minutes",
+])
+def test_legacy_interval_rejects_non_ascii_and_non_decimal_literals(invalid):
+    config = {"kobo_backup": {"interval_minutes": 30, "enabled": True}}
+    values = {
+        "backup_directory": "", "backup_interval": invalid,
+        "vault_profile_index": 0, "vault_profiles": ["Android"],
+    }
+    with pytest.raises(SettingsValidationError, match="Configuration Kobo invalide"):
+        apply(config, values)
+    assert config["kobo_backup"] == {"interval_minutes": 30, "enabled": True}
+
+
+@pytest.mark.parametrize("invalid", [None, 60, True, [], {}])
+def test_legacy_interval_rejects_non_text_widget_value(invalid):
+    with pytest.raises(SettingsValidationError, match="Configuration Kobo invalide"):
+        apply({}, {
+            "backup_directory": "", "backup_interval": invalid,
+            "vault_profile_index": 0, "vault_profiles": ["Android"],
+        })
+
+
+@pytest.mark.parametrize("submitted,expected", [
+    ("", 60), (" 20 ", 20), ("1", 15), ("15", 15), ("00075", 75),
+])
+def test_legacy_interval_keeps_ascii_decimal_fallback_and_lower_bound(
+    submitted, expected,
+):
+    result = apply({}, {
+        "backup_directory": "", "backup_interval": submitted,
+        "vault_profile_index": 0, "vault_profiles": ["Android"],
+    })
+    assert result["kobo_backup"]["interval_minutes"] == expected
