@@ -117,7 +117,7 @@ def execute_admitted_convergence(
     admitted_epoch: int,
     shared_lock: InterProcessLock,
     library_root: Path,
-    persisted_consent: frozenset[SourceKey],
+    persisted_consent: frozenset[SourceKey] | None,
     consent_still_current: Callable[[SourceKey], bool],
     deliver: Callable[[SourceKey, ProviderRightObservation], CompletedDelivery],
     cancelled: Callable[[], bool] = lambda: False,
@@ -136,8 +136,8 @@ def execute_admitted_convergence(
         type(account) is not Account
         or type(snapshot) is not ProviderRightsSnapshot
         or type(admitted_epoch) is not int
-        or type(persisted_consent) is not frozenset
-        or any(type(key) is not SourceKey for key in persisted_consent)
+        or (persisted_consent is not None and type(persisted_consent) is not frozenset)
+        or any(type(key) is not SourceKey for key in (persisted_consent or ()))
         or not callable(deliver) or not callable(cancelled)
         or not callable(consent_still_current)
         or (publication_guard is not None and not callable(publication_guard))
@@ -321,7 +321,7 @@ def execute_admitted_convergence(
         if row.delivery != "available" or not row.delivery_offer_id:
             results.append(ConvergenceOutcome(key, "pending", "delivery_unconfirmed"))
             continue
-        if key not in persisted_consent or not live_consent(key):
+        if (persisted_consent is not None and key not in persisted_consent) or not live_consent(key):
             results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
             continue
 
@@ -357,7 +357,7 @@ def execute_admitted_convergence(
             # Revocation during a remote GET cannot be circumvented by the
             # earlier in-memory frozen consent snapshot. The Core caller owns
             # this lookup into its persisted, exact right-level preference.
-            if (key not in persisted_consent or
+            if ((persisted_consent is not None and key not in persisted_consent) or
                     not live_consent(key)):
                 results.append(ConvergenceOutcome(key, "blocked", "consent_revoked_after_get"))
                 break
