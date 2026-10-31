@@ -546,8 +546,8 @@ class DetailPanel(Gtk.Box):
             return
         content_type = self.window.service.content_type_for(item)
         action_label = "le livre audio" if content_type == "audiobook" else (file_format(item.format).upper() or "le fichier")
-        label = ("Sauvegarder via kobo-adept" if item.source_provider == "kobo"\
-                 else "Vérifier et télécharger" if item.source_provider == "numilog"\
+        label = ("Sauvegarder via kobo-adept" if item.source_provider == "kobo"
+                 else "Vérifier et télécharger" if item.source_provider == "numilog"
                  else f"Télécharger {action_label}")
         direct = self.window.action_button(label, "document-save-symbolic", suggested=True)
         direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
