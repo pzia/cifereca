@@ -1424,6 +1424,9 @@ class NumilogSession(ProviderSession):
             # broker instance plus exact candidate multiset from the initial
             # fresh owned card, not just its identity label.
             owner_scope = expected_owner_scope
+            delivery_client = self.client
+            delivery_accounts = self._accounts
+            delivery_session_scope = (self.provider_id, self.credential_id)
             if owner is not None:
                 if owner_scope is None and self.identity_broker is not None:
                     owner_scope = self._inventory_owner_or_none()
@@ -1523,7 +1526,11 @@ class NumilogSession(ProviderSession):
                     # it neither invokes ADEPT nor publishes a Placement.
                     def admitted():
                         try:
-                            if self.connected is not True or owner is None:
+                            if (self.connected is not True or owner is None
+                                    or self.client is not delivery_client
+                                    or self._accounts is not delivery_accounts
+                                    or (self.provider_id, self.credential_id)
+                                        != delivery_session_scope):
                                 return False
                             self._validate_download_owner(
                                 owner, owner_scope=owner_scope,
