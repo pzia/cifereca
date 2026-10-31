@@ -13,7 +13,10 @@ import sqlite3
 from typing import Literal
 
 from .canonical_dedup_preview import preview_canonical_duplicate
-from .duplicate_maintenance_guard import _mentions_exact_path
+from .duplicate_maintenance_guard import (
+    _mentions_exact_path, canonical_metadata_mentions_path,
+)
+from .library_declared_links import _records
 
 _MAX_CATALOGUE = 128
 _MAX_BACKUP = 128
@@ -224,6 +227,43 @@ def plan_verified_canonical_reference_migration(
                     # in the destructive supervisor; counting isn't proof.
                     receipts += 1
                 else:
+                    unverified += 1
+
+            # A validated typed relink does not prove every other subsystem
+            # is unreferenced. The same generic namespaces as the destructive
+            # guard are scanned here without any SQL or filesystem mutation.
+            # Unknown JSON and declarations fail closed, not as zero blockers.
+            if canonical_metadata_mentions_path(db, path) is not False:
+                unverified += 1
+            variants = db.execute(
+                "SELECT metadata_json FROM artifact_variants LIMIT 100001",
+            ).fetchall()
+            if len(variants) > 100000:
+                return plan("blocked", "dependency_budget")
+            for (raw,) in variants:
+                if _mentions_exact_path(_read(raw), path):
+                    unverified += 1
+            opaque = db.execute(
+                "SELECT value FROM metadata LIMIT 100001",
+            ).fetchall()
+            if len(opaque) > 100000:
+                return plan("blocked", "dependency_budget")
+            for (raw,) in opaque:
+                if type(raw) is not str or len(raw) > 1024 * 1024:
+                    return plan("blocked", "dependency_unreadable")
+                if path in raw:
+                    unverified += 1
+                elif "\\u" in raw or "\\/" in raw:
+                    try:
+                        decoded = json.loads(raw)
+                    except (ValueError, TypeError, RecursionError):
+                        return plan("blocked", "dependency_unreadable")
+                    if (_mentions_exact_path(decoded, path)
+                            or path in json.dumps(decoded, ensure_ascii=False)):
+                        unverified += 1
+            for declaration in _records(db):
+                if (declaration["state"] == "active"
+                        and declaration["file"]["path"] == path):
                     unverified += 1
 
             if unverified:
