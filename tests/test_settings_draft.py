@@ -753,3 +753,132 @@ def test_new_provider_account_without_original_snapshot_still_works(editor):
     account_saved = result.data['providers']['accounts'][0]
     assert set(account_saved) == {'id', 'provider', 'identity_id', 'label',
                                   'enabled', 'anonymous', 'credentials', 'options'}
+
+
+
+@pytest.mark.parametrize("empty", ["", " ", "  \t  "])
+def test_required_credential_blocks_new_active_unknown_provider_without_mutation(
+    editor, empty,
+):
+    """#3731: credential required=True is a plugin schema, not a supplier ID."""
+    from cifereca.plugin_api import CredentialField
+
+    config, values = editor
+    values["accounts"] = [account("provider.future")]
+    values["accounts"][0]["fields"] = {"token": empty}
+    provider = descriptor("provider.future")
+    provider.credential_fields = (
+        CredentialField("token", "Jeton du fournisseur", secret=True, required=True),
+    )
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identifiant obligatoire : Jeton du fournisseur"):
+        validate(editor, descriptors={"provider.future": provider})
+    assert config.data == before
+    assert not config.path.exists()
+
+
+def test_disabled_unknown_provider_can_be_saved_without_required_credentials(editor):
+    """A staged disabled source is not silently enabled by validation."""
+    from cifereca.plugin_api import CredentialField
+
+    config, values = editor
+    values["accounts"] = [account("provider.future")]
+    values["accounts"][0]["enabled"] = False
+    values["accounts"][0]["fields"] = {"token": ""}
+    provider = descriptor("provider.future")
+    provider.credential_fields = (
+        CredentialField("token", "Jeton", required=True), 
+    )
+    result = validate(editor, descriptors={"provider.future": provider})
+    row = result.data["providers"]["accounts"][0]
+    assert row["enabled"] is False
+    assert row["credentials"]["token"] == ""
+    assert config.provider_accounts() == []
+
+
+def test_optional_credential_does_not_become_required_for_unknown_provider(editor):
+    from cifereca.plugin_api import CredentialField
+
+    values = editor[1]
+    values["accounts"] = [account("provider.future")]
+    values["accounts"][0]["fields"] = {"optional": ""}
+    provider = descriptor("provider.future")
+    provider.credential_fields = (
+        CredentialField("optional", "Indication", required=False),
+    )
+    row = validate(editor, descriptors={"provider.future": provider}).data[
+        "providers"
+    ]["accounts"][0]
+    assert row["enabled"] is True
+    assert row["credentials"] == {"optional": ""}
+
+
+def test_unchanged_legacy_empty_credential_survives_unrelated_settings_save(editor):
+    """Preserve old incomplete config without silently granting new consent."""
+    from cifereca.plugin_api import CredentialField
+
+    config, values = editor
+    original = {
+        "id": "old", "provider": "provider.future", "identity_id": "alice",
+        "enabled": True, "credentials": {"token": ""}, "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(original)])
+    values["accounts"] = [account("provider.future", account_id="old")]
+    values["accounts"][0]["fields"] = {"token": ""}
+    values["accounts"][0]["original_credentials"] = {"token": ""}
+    values["accounts"][0]["original_account"] = deepcopy(original)
+    values["identities"][0]["label"] = "Nouvelle étiquette"
+    provider = descriptor("provider.future")
+    provider.credential_fields = (
+        CredentialField("token", "Jeton", required=True),
+    )
+    draft = validate(editor, descriptors={"provider.future": provider})
+    assert draft.data["providers"]["accounts"][0]["credentials"]["token"] == ""
+    assert draft.data["providers"]["accounts"][0]["enabled"] is True
+    assert config.provider_accounts() == [original]
+
+
+def test_clearing_required_existing_credential_is_rejected(editor):
+    from cifereca.plugin_api import CredentialField
+
+    config, values = editor
+    original = {
+        "id": "old", "provider": "provider.future",
+        "identity_id": "alice", "enabled": True,
+        "credentials": {"token": "old-secret"}, "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(original)])
+    values["accounts"] = [account("provider.future", account_id="old")]
+    values["accounts"][0]["fields"] = {"token": ""}
+    values["accounts"][0]["original_credentials"] = {"token": "old-secret"}
+    values["accounts"][0]["original_account"] = deepcopy(original)
+    provider = descriptor("provider.future")
+    provider.credential_fields = (
+        CredentialField("token", "Jeton", required=True),
+    )
+    with pytest.raises(SettingsValidationError, match="Identifiant obligatoire : Jeton"):
+        validate(editor, descriptors={"provider.future": provider})
+    assert config.provider_accounts() == [original]
+
+
+def test_enabling_previously_disabled_account_requires_credential(editor):
+    from cifereca.plugin_api import CredentialField
+
+    config, values = editor
+    original = {
+        "id": "old", "provider": "provider.future",
+        "identity_id": "alice", "enabled": False,
+        "credentials": {"token": ""}, "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(original)])
+    values["accounts"] = [account("provider.future", account_id="old")]
+    values["accounts"][0]["fields"] = {"token": ""}
+    values["accounts"][0]["original_credentials"] = {"token": ""}
+    values["accounts"][0]["original_account"] = deepcopy(original)
+    provider = descriptor("provider.future")
+    provider.credential_fields = (
+        CredentialField("token", "Jeton", required=True),
+    )
+    with pytest.raises(SettingsValidationError, match="Identifiant obligatoire : Jeton"):
+        validate(editor, descriptors={"provider.future": provider})
+    assert config.provider_accounts() == [original]
