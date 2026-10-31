@@ -281,6 +281,7 @@ def audit_account(
     } for r in receipts]
     return {
         "schema_version": 1, "scope": "exact_account",
+        "snapshot_availability": "available",
         "scope_ref": _opaque(salt, (identity_id, provider_id, credential_id, account_id)),
         "provider": provider_id, "read_only": True, "network": False,
         "verify_files": verify_files, "source_count": len(items),
