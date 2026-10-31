@@ -132,7 +132,7 @@ def test_sql_failure_after_unlink_retains_recovery_tombstone(rig):
     resolved = _run_recovery(rig)
     assert resolved.retired_placement and not resolved.removed_file
     assert not resolved.cleanup_pending
-    assert storage.placement_get(pubs[1].placement_id)["state"] == "dedup_retired"
+    assert storage.placement_get(pubs[1].placement_id) is None
 
 
 def test_new_active_dependency_during_recovery_blocks_unlink(rig, monkeypatch):
