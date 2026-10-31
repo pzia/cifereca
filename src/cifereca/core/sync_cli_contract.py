@@ -65,6 +65,22 @@ def require_exact_sync_account(accounts: list[Any], **selectors: str) -> Any:
     return selected[0]
 
 
+
+def require_unique_sync_account(accounts: list[Any], **selectors: str) -> Any:
+    """Resolve exactly one persisted source with identity as minimum selector.
+
+    No missing credential, provider or upstream account ID is guessed if
+    multiple bindings match. This operation must run BEFORE connection/network.
+    """
+    if not selectors.get("identity"):
+        raise SyncSelectionError("source_scope_required")
+    selected = select_sync_accounts(accounts, **selectors)
+    if not selected:
+        raise SyncSelectionError("source_not_found")
+    if len(selected) != 1:
+        raise SyncSelectionError("ambiguous_source_selection")
+    return selected[0]
+
 def safe_sync_result(result: object) -> dict[str, object]:
     """Bound machine-readable status, not untrusted provider payload."""
     if not isinstance(result, dict):
