@@ -132,6 +132,7 @@ def test_partial_or_unknown_queue_is_not_an_authorization(status, unverified):
 @pytest.mark.parametrize("bad", [
     (("same", "same", "A"),),
     (("candidate-a", "keeper-a", "B"),),
+    (("candidate-a", "keeper-a", "A"), ("candidate-b", "candidate-a", "A")),
     (("candidate-a", "keeper-a", "A"), ("candidate-a", "keeper-b", "A")),
     (("candidate-a\n", "keeper-a", "A"),),
 ])
