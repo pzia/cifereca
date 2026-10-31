@@ -18,11 +18,10 @@ import stat
 from ..catalog import LocalCatalog
 from .canonical_publication import _physical_target, _same_file
 from .canonical_recovery import _path_verified
-from .convergence_execution import CompletedDelivery
 from .source_convergence import SourceKey
 
 
-_ATTEMPT = re.compile(r"run-[0-9a-f]{32}\\Z")
+_ATTEMPT = re.compile(r"run-[0-9a-f]{32}")
 
 
 def _stage_parts(physical: Path, profile: Path) -> tuple[str, ...] | None:
@@ -45,7 +44,7 @@ def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
     ]
     if (len(matches) != 1 or type(matches[0]) is not str
             or not matches[0] or matches[0] in (".", "..")
-            or "/" in matches[0] or "\\\\" in matches[0]):
+            or "/" in matches[0] or "\\" in matches[0]):
         raise ValueError("canonical_promotion_profile_unknown")
     canonical_root = Path(os.path.abspath(root.expanduser()))
     profile = canonical_root.resolve() / matches[0]
@@ -65,6 +64,8 @@ def promote_completed_delivery(
     outside the private Core staging namespace is left intact for legacy
     compatibility. A file within Core staging MUST be promoted before B.
     """
+    from .convergence_execution import CompletedDelivery
+
     if (type(source) is not SourceKey or type(completed) is not CompletedDelivery
             or completed.source != source
             or not isinstance(library_root, Path)):
