@@ -23,7 +23,7 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
         state = read(source_id)
     except Exception:
         import logging
-        logging.getLogger('cifereca').warning('Source consent UI read failed', exc_info=True)
+        logging.getLogger('cifereca').warning('Source consent UI read failed (details withheld)')
         row.set_subtitle('Réglage indisponible. Actualisez avant de modifier les téléchargements.')
         return
     if not sync_action_scope_current(window, scope):
@@ -48,7 +48,7 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
             write(source_id, enabled=wanted, expected_revision=revision)
         except Exception:
             import logging
-            logging.getLogger('cifereca').warning('Source consent UI update failed', exc_info=True)
+            logging.getLogger('cifereca').warning('Source consent UI update failed (details withheld)')
             if sync_action_scope_current(window, scope):
                 window.show_error('Le réglage a changé ou n’a pas pu être enregistré. Actualisez puis réessayez.',
                                   'Synchronisation')
