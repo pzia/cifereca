@@ -56,3 +56,26 @@ def test_readme_metadata_changes_validate_installed_wheel():
     assert re.search(conditions[0], "VERSION")
     assert "if: steps.scope.outputs.install == 'true'" in source
     assert "bash scripts/ci-smoke-installed-wheel.sh" in source
+
+
+def test_httpx_ast_gate_is_scoped_to_plugin_and_guard_changes():
+    source = _workflow()
+    assert "if: steps.scope.outputs.httpx_boundary == 'true'" in source
+    assert 'echo "httpx_boundary=true"' in source  # manual dispatch
+    assert 'echo "httpx_boundary=$httpx_boundary"' in source
+    scope = re.search(
+        r"(?m)^          if matches '([^']+)'; then\n            httpx_boundary=true$",
+        source,
+    )
+    assert scope, "missing dedicated HTTPX selection"
+    pattern = scope.group(1)
+    for path in (
+        "src/plugins/provider-numilog/cifereca_numilog.py",
+        "scripts/ci_plugin_httpx_boundary.py",
+        "tests/test_ci_plugin_httpx_boundary.py",
+        ".github/workflows/pr-ci.yml",
+    ):
+        assert re.search(pattern, path), path
+    for path in ("docs/notes.md", "README.md", "tests/test_storage.py",
+                 "src/cifereca/gui/main_window.py", ".agents/roles/cicd.md"):
+        assert not re.search(pattern, path), path

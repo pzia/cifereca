@@ -44,6 +44,7 @@ jobs:
               echo "install=true"
               echo "dataset=true"
               echo "python=true"
+              echo "httpx_boundary=true"
               echo "bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select --full)"
               echo "lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select --full)"
               echo "branch_cleanup=$(test -f scripts/nettoyer_branches_git_stream.py && echo true || echo false)"
@@ -157,6 +158,13 @@ jobs:
             python=true
           fi
 
+          # The AST boundary scans production plugin files; skip it on docs-only
+          # and unrelated Core/test changes, while keeping direct guard edits covered.
+          httpx_boundary=false
+          if matches '^(src/plugins/|scripts/ci_plugin_httpx_boundary\.py$|tests/test_ci_plugin_httpx_boundary\.py$|\.github/workflows/pr-ci\.yml$)'; then
+            httpx_boundary=true
+          fi
+
           {
             echo "core=$core"
             echo "core_mode=$core_mode"
@@ -167,6 +175,7 @@ jobs:
             echo "install=$install"
             echo "dataset=$dataset"
             echo "python=$python"
+            echo "httpx_boundary=$httpx_boundary"
             echo "bnf_reader=$bnf_reader"
             echo "lending_conformance=$lending_conformance"
             echo "branch_cleanup=$branch_cleanup"
@@ -174,6 +183,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Check production plugins use Core HTTPX service
+        if: steps.scope.outputs.httpx_boundary == 'true'
         run: python3 scripts/ci_plugin_httpx_boundary.py
 
       - name: Stream branch cleanup safety tests (local bare Git)
