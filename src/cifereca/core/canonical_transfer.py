@@ -238,6 +238,11 @@ def publish_completed_local_transfer(
             )
             changed = True
         else:
+            # The original pathname and inode belong to a pending dedup
+            # recovery, not to an incoming transfer. A matching SHA and
+            # destination identity cannot revoke that recovery evidence.
+            if existing_placement[3] == "dedup_cleanup_pending":
+                raise ValueError("canonical_transfer_pending_duplicate_cleanup")
             placement_id = existing_placement[0]
             if (existing_placement[1] not in (None, to_identity_id)
                     or existing_placement[2] not in (None, artifact_id)):
