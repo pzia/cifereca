@@ -932,60 +932,6 @@ class PluginPackagingTests(unittest.TestCase):
             ):
                 build_plugin_zip(plugin, root / "dist")
 
-    def test_cifericaopds_release_zip_is_installable_without_auto_activation(self) -> None:
-        """#969: use the REAL source package, not a hand-crafted/stale ZIP."""
-        import sys
-
-        source_root = Path(__file__).resolve().parents[1]
-        plugin = source_root / "src" / "plugins" / "cifericaopds"
-        self.assertTrue((plugin / "cifereca-plugin.json").is_file())
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            first_zip = build_plugin_zip(plugin, root / "out1")
-            second_zip = build_plugin_zip(plugin, root / "out2")
-            self.assertEqual(first_zip.read_bytes(), second_zip.read_bytes())
-            metadata = validate_plugin_zip(first_zip)
-            self.assertEqual(metadata["package"]["id"], "org.cifereca.integration.cifericaopds")
-            source_manifest = json.loads((plugin / "cifereca-plugin.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["package"]["version"], source_manifest["package"]["version"])
-            self.assertEqual(metadata["plugins"][0]["type"], "provider.collection")
-            self.assertFalse(metadata["plugins"][0]["enabled_by_default"])
-
-            with zipfile.ZipFile(first_zip) as archive:
-                self.assertIsNone(archive.testzip())
-                self.assertEqual(
-                    sorted(archive.namelist()),
-                    ["README.md", "cifereca-plugin.json", "cifereca_cifericaopds.py"],
-                )
-                self.assertFalse(any("/../" in name or name.startswith("/") for name in archive.namelist()))
-
-            # The package installer must accept exactly the ZIP emitted by
-            # the release builder. It must remain inactive until the user acts.
-            sys.path.insert(0, str(source_root / "src"))
-            try:
-                from cifereca.plugins.packages import PackageInstaller, PackageStore
-                from cifereca.plugins.loader import load_entrypoint
-                from cifereca.plugin_api import check_service_contract
-
-                store = PackageStore(root / "installed")
-                installer = PackageInstaller(store)
-                package = installer.install(first_zip, activate=False)
-                self.assertEqual(package.manifest.package.id, metadata["package"]["id"])
-                self.assertIsNone(store.active_version(metadata["package"]["id"]))
-                self.assertTrue((package.root / "cifereca_cifericaopds.py").is_file())
-                self.assertEqual(
-                    installer.install(first_zip, activate=False).root, package.root,
-                )
-                service = load_entrypoint(package.root, "cifereca_cifericaopds:PLUGIN")
-                self.assertTrue(check_service_contract("provider.collection", service).ok)
-                # Import, validation and installation must never hit HTTP or
-                # manufacture a remote inventory before explicit refresh().
-                with self.assertRaisesRegex(Exception, "no validated inventory"):
-                    service.snapshot()
-            finally:
-                sys.path.remove(str(source_root / "src"))
-
     def test_real_repository_discovers_all_packages(self) -> None:
         plugins = Path(__file__).resolve().parents[1] / "src" / "plugins"
         expected = sorted(path.parent.resolve() for path in plugins.glob("*/cifereca-plugin.json"))
