@@ -8,12 +8,25 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from cifereca.core import convergence_execution
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3171_selected_candidate_finalization import (
     rig, _isolate_delivery_lock, _prepare, _native,
 )
 from tests.test_core_p0_3171_atomic_publication_v14 import SHA, BYTES
+
+
+@pytest.fixture(autouse=True)
+def _stock_shared_acquisition_lock(monkeypatch, tmp_path):
+    # The executor's lock has already been redirected by the canonical
+    # candidate fixture; the independent stock guard must refer to the same
+    # synthetic lock, not the host machine's real acquisition lock.
+    monkeypatch.setattr(
+        "cifereca.core.canonical_staging_stock.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
 
 
 def _legacy_placement(rig, monkeypatch):
