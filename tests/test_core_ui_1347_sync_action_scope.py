@@ -433,3 +433,31 @@ def test_queued_global_sync_rejects_aba_before_broker_execution():
     window._identity_context_generation = 13
     assert task.work() is None
     assert not any(name == "sync-all" for name, *rest in calls)
+
+
+def test_source_sync_task_uses_neutral_provider_label_for_unknown_provider():
+    window, broker, calls, _build, _page = _fixture(
+        sources=[_source(
+            provider_id="plugin.future", source_id="future-source",
+            label="Bibliothèque future",
+        )],
+    )
+    _source_row(window).suffixes[1].click()
+    assert len(window.runner.tasks) == 1
+    task = window.runner.tasks[0]
+    assert task.label == "Synchronisation Bibliothèque future…"
+    assert task.work() == "ok"
+    assert ("sync-source", "future-source") in calls
+
+
+def test_numilog_legacy_sync_uses_same_neutral_task_label():
+    window, broker, calls, _build, _page = _fixture(
+        sources=[_source(
+            provider_id="numilog", source_id="numilog-source",
+            label="Mes achats",
+        )],
+    )
+    _source_row(window).suffixes[1].click()
+    assert window.runner.tasks[0].label == "Synchronisation Mes achats…"
+    assert window.runner.tasks[0].work() == "ok"
+    assert ("sync-source", "numilog-source") in calls
