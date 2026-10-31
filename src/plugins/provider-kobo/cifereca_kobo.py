@@ -1501,8 +1501,11 @@ class KoboSession(ProviderSession):
                 label = "Dans votre bibliothèque Kobo · état d’archive non vérifiable"
                 status = "attention_required"
             elif raw_archived is True:
-                label = "Dans votre bibliothèque Kobo · archivé · restaurer sur Kobo"
-                status = "attention_required"
+                # #514: attested archive is a normal, non-deliverable
+                # ownership state, never an actionable download failure.
+                # Remote restoration is not part of Cifereca's workflow.
+                label = "Dans votre bibliothèque Kobo · archivé · téléchargement ignoré"
+                status = "owned"
             elif item.downloadable is False:
                 label = "Dans votre bibliothèque Kobo · non téléchargeable"
                 status = "owned"
