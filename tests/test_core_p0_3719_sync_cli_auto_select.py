@@ -62,7 +62,7 @@ def test_ambiguous_identity_refuses_network(monkeypatch, capsys):
     ])
     assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 2
     assert observed["connects"] == 0 and not observed["runs"]
-    assert json.loads(capsys.readouterr().out)["code"] == "ambiguous_source_selection"
+    assert json.loads(capsys.readouterr().out)["code"] == "account_ambiguous"
 
 
 def test_disabled_source_cannot_be_auto_selected(monkeypatch, capsys):
@@ -71,7 +71,7 @@ def test_disabled_source_cannot_be_auto_selected(monkeypatch, capsys):
     ])
     assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 2
     assert observed["connects"] == 0 and not observed["runs"]
-    assert json.loads(capsys.readouterr().out)["code"] == "source_not_found"
+    assert json.loads(capsys.readouterr().out)["code"] == "source_not_configured"
 
 
 def test_identity_run_still_needs_explicit_confirmation(monkeypatch, capsys):
