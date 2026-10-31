@@ -17,6 +17,14 @@ Un autre compte possédant le même produit conserve sa propre observation.
 Cette garde ne révoque aucun achat, ne supprime aucun Placement et n'appelle
 aucune restauration distante. Les snapshots restent partiels, positifs seuls.
 
+La fiche fournisseur Kobo ne traduit pas `archived=True` en erreur
+`attention_required` ni en action « restaurer » : elle conserve
+`availability_status=owned` et affiche « archivé · téléchargement ignoré ».
+Pour une valeur d'archive mal typée, le statut demeure non vérifiable.
+Même lorsque l'archive n'est attestée qu'à la réponse HTTP `409 archived_book`,
+le client Vault conserve le code/status pour le Core mais ne demande plus
+de restauration ni de nouvelle tentative.
+
 ## Réception et dépendance Core
 
 Les tests `tests/test_archived_delivery.py` couvrent deux lectures successives,
