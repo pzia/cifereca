@@ -10,8 +10,8 @@ from tests.test_kobo_manifest_policy_p1 import FakeVault, session_with_vault
 
 
 @pytest.mark.parametrize("archived,downloadable,status,label", (
-    (True, True, "attention_required", "Dans votre bibliothèque Kobo · archivé · restaurer sur Kobo"),
-    (True, False, "attention_required", "Dans votre bibliothèque Kobo · archivé · restaurer sur Kobo"),
+    (True, True, "owned", "Dans votre bibliothèque Kobo · archivé · téléchargement ignoré"),
+    (True, False, "owned", "Dans votre bibliothèque Kobo · archivé · téléchargement ignoré"),
     (False, True, "owned", "Dans votre bibliothèque Kobo · synchronisation locale disponible"),
     (False, False, "owned", "Dans votre bibliothèque Kobo · non téléchargeable"),
     (False, None, "owned", "Dans votre bibliothèque Kobo · téléchargement non vérifié"),
@@ -76,5 +76,28 @@ def test_public_catalogue_hit_never_inherits_personal_holdings():
         detail = session.holdings(book)
         assert detail.availability_status == "catalog"
         assert detail.availability_label == "Disponible sur Kobo · 12.00 EUR"
+    finally:
+        session.close()
+
+
+
+@pytest.mark.parametrize("archived", [True, False, None])
+def test_kobo_archive_status_is_only_an_observed_delivery_fact(archived):
+    """#514: archive is not a failure and unarchiving is not a permission grant."""
+    session = session_with_vault(FakeVault([]))
+    try:
+        row = {"product_id": "same-book", "owned": True, "downloadable": True}
+        if archived is not None:
+            row["archived"] = archived
+        detail = session.holdings(
+            session.normalize_item(row, default_collection="library")
+        )
+        assert detail.availability_status == "owned"
+        if archived is True:
+            assert "archivé · téléchargement ignoré" in detail.availability_label
+            assert "restaurer" not in detail.availability_label
+        else:
+            assert "synchronisation locale disponible" in detail.availability_label
+        assert detail.holdings == []
     finally:
         session.close()
