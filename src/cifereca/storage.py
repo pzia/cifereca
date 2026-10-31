@@ -1306,7 +1306,7 @@ class Storage:
         # the entitlement between the scope check and the receipt handoff.
         existing_right = db.execute(
             "SELECT provider_id,credential_id,account_id,item_id,"
-            "entitlement_type,loan_id,identity_id,metadata_json "
+            "entitlement_type,loan_id,identity_id,metadata_json,state "
             "FROM entitlements WHERE entitlement_id=?",
             (entitlement_id,),
         ).fetchone()
@@ -1361,6 +1361,17 @@ class Storage:
             )
             if entitlement_cursor.rowcount != 1:
                 raise ValueError("backup_entitlement_owner_conflict")
+        # Historical backup_items must not publish an acquisition, invent an
+        # Artifact or create a local Placement/notice for a source whose right
+        # has been independently revoked or expired. The legacy receipt itself
+        # stays persisted in backup_items for migration and inspection. This
+        # guard is inside backup_put's transaction, after the exact owner
+        # check, so an incompatible scope still fails atomically.
+        #
+        # The active canonical case is left on the compatibility path until
+        # the Kobo writer moves to the v2 convergence executor (#3196).
+        if existing_right is not None and not projection_owned and existing_right[8] != "active":
+            return
         artifact_id = None
         sha = str(row.get("sha256") or "").strip().lower()
         if sha:
