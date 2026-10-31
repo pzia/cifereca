@@ -188,6 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     adept_preview.add_argument("--item-id", required=True)
     adept_preview.add_argument("--source-reference-id", required=True)
     adept_preview.add_argument("--acquisition-ref", required=True)
+    adept_validate = adept_sub.add_parser(
+        "validate-resolution-snapshot",
+        help="Revérifie une empreinte de preuves locales Paris/ADEPT sans mutation",
+    )
+    adept_validate.add_argument("--loan-id", required=True)
+    adept_validate.add_argument("--item-id", required=True)
+    adept_validate.add_argument("--fingerprint", required=True)
     adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
     adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
     adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
@@ -229,12 +236,20 @@ def main(argv: list[str] | None = None) -> int:
         if a.username or a.account:
             p.error("paris-adept exige --credential, pas --username ou --account")
         if a.paris_adept_cmd in {
-            "audit-origin", "audit-canonical", "audit-transaction", "preview-resolution",
+            "audit-origin", "audit-canonical", "audit-transaction",
+            "preview-resolution", "validate-resolution-snapshot",
         }:
             # Reject unusable transaction keys before Core can be opened.
             if (not a.loan_id.strip() or not a.item_id.strip()
                     or "\x00" in a.loan_id or "\x00" in a.item_id):
                 p.error("audit de transaction exige --loan-id et --item-id non vides et sans NUL")
+        if a.paris_adept_cmd == "validate-resolution-snapshot":
+            if (a.loan_id != a.loan_id.strip() or a.item_id != a.item_id.strip()
+                    or "\r" in a.loan_id or "\n" in a.loan_id
+                    or "\r" in a.item_id or "\n" in a.item_id
+                    or len(a.fingerprint) != 64
+                    or any(ch not in "0123456789abcdef" for ch in a.fingerprint)):
+                p.error("validate-resolution-snapshot exige une empreinte SHA-256 exacte")
         if a.paris_adept_cmd == "preview-resolution":
             if (a.loan_id != a.loan_id.strip() or a.item_id != a.item_id.strip()
                     or "\r" in a.loan_id or "\n" in a.loan_id
@@ -352,17 +367,27 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 elif a.paris_adept_cmd == "preview-resolution":
                     from .artifact_inspection import inspect_artifact
-                    from .core.adept_resolution_preview import (
-                        preview_paris_adept_resolution_candidate,
+                    from .core.adept_resolution_checkpoint import (
+                        preview_paris_adept_with_local_checkpoint,
                     )
                     # Preview only: user-selected refs are not authorization
                     # tokens. No ADEPT return or re-fulfillment is invoked.
-                    result = preview_paris_adept_resolution_candidate(
+                    result = preview_paris_adept_with_local_checkpoint(
                         core.storage, loan_id=a.loan_id.strip(),
                         item_id=a.item_id.strip(),
                         source_reference_id=a.source_reference_id,
                         acquisition_ref=a.acquisition_ref,
                         artifact_inspector=inspect_artifact,
+                    )
+                elif a.paris_adept_cmd == "validate-resolution-snapshot":
+                    from .core.adept_resolution_snapshot import (
+                        validate_paris_adept_local_snapshot,
+                    )
+                    # Local equality only, NEVER Adobe inventory attestation.
+                    result = validate_paris_adept_local_snapshot(
+                        core.storage, loan_id=a.loan_id,
+                        item_id=a.item_id,
+                        expected_fingerprint=a.fingerprint,
                     )
                 elif a.paris_adept_cmd == "list":
                     bindings = core.storage.paris_borrower_adept_bindings(
