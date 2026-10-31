@@ -122,6 +122,29 @@ def test_six_numilog_books_staging_vs_final_without_provenance_guess(setup_db):
         assert secret not in serialized
 
 
+def test_staged_receipt_without_origin_is_visible_but_not_published(setup_db):
+    storage, root, staging = setup_db
+    path = insert_book(storage, root, staging, i=17, zone="staging", origin=False)
+    artifact = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    with storage._connect() as db:
+        db.execute("INSERT INTO placements VALUES(?,?,?,?,?)",
+                   ("orphan-17", "alice", artifact, str(path), "present"))
+        db.execute("INSERT INTO catalog_entries VALUES(?,?,?,?,?,?)",
+                   ("local-orphan-17", "alice", "local", None, "orphan-17", "local"))
+    result = audit(storage, root, staging, verify_files=True)
+    source, = result["sources"]
+    receipt, = result["receipts"]
+    assert source["code"] == "source_unlinked"
+    assert source["origin_link_present"] is False
+    assert receipt["staging_only"] is True
+    assert receipt["physical_artifact_found"] is True
+    assert receipt["staged_visible_in_library"] is True
+    assert receipt["published_final_placement"] is False
+    assert receipt["origin_link_present"] is False
+    assert result["counts"]["unlinked_receipts_staged"] == 1
+    assert result["counts"]["staged_visible_in_library"] == 1
+
+
 def test_without_sha_verification_no_complete_local_claim(setup_db):
     storage, root, staging = setup_db
     insert_book(storage, root, staging, i=1, zone="final")
