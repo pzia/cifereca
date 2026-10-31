@@ -826,6 +826,19 @@ class LibraryService:
         """Public facade with its stable, no-argument compatibility contract."""
         return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
 
+    def connect_selected_source(
+        self, *, identity: str, provider: str, credential: str,
+    ) -> dict[str, Any]:
+        """CLI-only connection of one persisted provider credential scope.
+
+        Unlike GUI startup, this cannot authenticate unrelated configured
+        providers. The exact account ID is separately checked by the caller.
+        """
+        return provider_sessions.connect_configured(
+            self, logger=_TRACE_LOG,
+            source_scope=(identity, provider, credential),
+        )
+
     def connect_configured_with_caller(self, *, caller_category: str) -> dict[str, Any]:
         """Core-owned GUI entrypoint carrying an attested, closed caller kind.
 
