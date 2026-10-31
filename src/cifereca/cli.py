@@ -411,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
             report_account = None
             report_before = None
             report_ref = None
+            report_secret = None
             report_started_at = None
             try:
                 if a.username or a.account:
@@ -462,9 +463,12 @@ def main(argv: list[str] | None = None) -> int:
                         # provider connection so connection failures are audited.
                         report_account = resolved
                         report_ref = secrets.token_hex(16)
+                        report_secret = secrets.token_bytes(32)
                         report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                         try:
-                            report_before = audit_source_counts(core.storage, resolved)
+                            report_before = audit_source_counts(
+                                core.storage, resolved, pseudonym_key=report_secret,
+                            )
                         except Exception:
                             report_before = {"status": "unavailable", "reason": "audit_unavailable"}
                     service.connect_selected_source(
@@ -537,7 +541,9 @@ def main(argv: list[str] | None = None) -> int:
                 from .core.sync_report import audit_source_counts, write_sync_report
                 try:
                     try:
-                        report_after = audit_source_counts(core.storage, report_account)
+                        report_after = audit_source_counts(
+                            core.storage, report_account, pseudonym_key=report_secret,
+                        )
                     except Exception:
                         report_after = {"status": "unavailable", "reason": "audit_unavailable"}
                     write_sync_report(
