@@ -105,10 +105,37 @@ def preview_paris_adept_resolution_candidate(
         return result("conflicting_records", ["independent_origin_evidence_conflicts"],
                       selected=selected, canonical_source=source, strength=strength)
 
-    expected_ref = _opaque_ref(
-        "paris", source["library_identity_id"], source["credential_id"],
+    # Historical entitlements do not carry a canonical branch ID. The same
+    # local borrower may have two v14 branches for this exact loan and item;
+    # choosing a SourceReference does not prove which branch was fulfilled.
+    exact_borrower_scope = (
+        source["library_identity_id"], source["credential_id"],
         source["account_id"],
     )
+    if sum(
+        (
+            row["library_identity_id"], row["credential_id"],
+            row["account_id"],
+        ) == exact_borrower_scope
+        for row in canonical["sources"]
+    ) != 1:
+        return result("ambiguous_canonical_branch",
+                      ["historical_loan_does_not_attest_canonical_branch"],
+                      selected=selected, canonical_source=source, strength=strength)
+
+    expected_ref = _opaque_ref("paris", *exact_borrower_scope)
+    borrower_ref = selected.get("paris_borrower_ref")
+    if borrower_ref and any(
+        row is not selected and row.get("paris_borrower_ref") == borrower_ref
+        and row.get("library_identity_id") != source["library_identity_id"]
+        for row in historical["origins"]
+    ):
+        # A second historical destination can record the same Paris borrower
+        # without attesting where the Adobe transaction was truly activated.
+        return result("ambiguous_library_destination",
+                      ["historical_adept_acquisition_in_other_library"],
+                      selected=selected, canonical_source=source, strength=strength)
+
     if selected["source_ref"] != expected_ref:
         # Same title, SHA, or borrower seen in another local library does not
         # prove which Adobe account activated the exact Paris transaction.
