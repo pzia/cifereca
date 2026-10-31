@@ -123,7 +123,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if (type(account_id) is not str or not account_id.strip()
                 or account_id in account_ids):
             raise SettingsValidationError(
-                'Identifiant de compte fournisseur vide, invalide ou dupliqué.'
+                'Identifiant de compte fournisseur vide ou dupliqué.'
             )
         provider_key = editor.get('provider')
         if type(provider_key) is not str or not provider_key:
