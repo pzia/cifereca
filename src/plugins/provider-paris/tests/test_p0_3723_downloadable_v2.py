@@ -92,3 +92,21 @@ def test_v2_candidate_never_publishes_core_placement(monkeypatch, tmp_path):
     assert result.source.resource_id == "loan-456"
     assert result.path.parent == tmp_path
     assert not result.authorizes_publication
+
+
+def test_v2_rebind_during_candidate_does_not_return_or_keep_staging(monkeypatch, tmp_path):
+    from cifereca.plugin_api import ProviderCapabilityError
+    session, account, row = build(monkeypatch)
+    def staged(self, selected, *, target_dir, **kwargs):
+        path = target_dir / "candidate.acsm"
+        path.write_bytes(b"fictional")
+        selected.identity_id = "profile-b"
+        return path, "acsm"
+    monkeypatch.setattr(type(session), "rights_selected_delivery_candidate", staged)
+    with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+        session.downloadable_selected_delivery_candidate(
+            account, edition_id="edition-123", resource_id="loan-456",
+            kind="loan", branch=BRANCH, selected_offer_id=row.delivery_offer_id,
+            target_dir=tmp_path, explicit_user_action=True,
+        )
+    assert not list(tmp_path.iterdir())
