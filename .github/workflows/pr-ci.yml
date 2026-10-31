@@ -291,7 +291,7 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check "setuptools>=69" wheel
           python -m pip wheel --no-deps --no-build-isolation . -w dist
-          bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
+          CIFERECA_EXPECTED_BUILD_SHA="$GITHUB_SHA" bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
 
       - name: Validate simulation dataset harness
         if: steps.scope.outputs.dataset == 'true'

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .startup_revision import build_identity
 from .paths import config_file, database_file
 from .storage import CURRENT_SCHEMA_VERSION
 
@@ -148,6 +149,7 @@ def build_support_report(
     if type(include_checks) is not bool:
         raise ValueError("invalid_support_checks_scope")
     install = _release_metadata()
+    identity = build_identity()
     manager = getattr(service, "plugin_manager", None) or getattr(service, "_plugin_manager", None)
     runtime = _runtime_state()
     db = _database_state()
@@ -194,7 +196,8 @@ def build_support_report(
             "source": provenance.get("type") or "unknown",
             "repository": provenance.get("repository") or "",
             "ref": provenance.get("ref") or "",
-            "commit": provenance.get("commit") or "",
+            "commit": identity["commit_sha"] or "",
+            "build_identity": identity,
             "installed_at": install.get("installed_at") or "",
         },
         "runtime": runtime,
@@ -226,6 +229,10 @@ def support_report_text(service: Any, *, verbose: bool = False) -> str:
         f"repository: {core.get('repository') or '-'}",
         f"ref: {core.get('ref') or '-'}",
         f"commit: {core.get('commit') or '-'}",
+        f"build_status: {core['build_identity']['status']}",
+        f"build_origin: {core['build_identity']['origin']}",
+        f"build_mode: {core['build_identity']['distribution_mode']}",
+        f"build_timestamp: {core['build_identity']['build_timestamp'] or '-'}",
         f"installed_at: {core.get('installed_at') or '-'}",
         "",
         "[RUNTIME]",

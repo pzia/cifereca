@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import sys
 import time
 
 from . import __version__
 from .logging_utils import configure_logging, set_diagnostics_level
-from .startup_revision import startup_git_commit
+from .startup_revision import build_identity
 from .core import CiferecaCore
 
 
@@ -66,7 +67,17 @@ def main() -> int:
     sys.argv = cleaned
     logger = configure_logging(verbose=verbose)
     t0 = time.monotonic()
-    logger.info("TRACE startup begin version=%s git_commit=%s verbose=%s no_plugins=%s forced_plugin_count=%s", __version__, startup_git_commit() or "unavailable", verbose, no_plugins, len(force_plugins))
+    identity = build_identity()
+    # One structured startup event, before GTK import or any provider connection.
+    # Its SHA comes from deployed artifact metadata, never mutable HEAD.
+    logger.info("DIAG_JSON %s", json.dumps({
+        "schema_version": 1, "category": "CORE", "operation": "build_identity",
+        "status": "ok" if identity["status"] == "known" else "warning",
+        "message": "build_identity", "detail": identity,
+    }, ensure_ascii=False, sort_keys=True))
+    logger.info("TRACE startup begin version=%s git_commit=%s verbose=%s no_plugins=%s forced_plugin_count=%s",
+                __version__, identity["commit_sha"] or "unavailable",
+                verbose, no_plugins, len(force_plugins))
     try:
         import gi
         gi.require_version("Gtk", "4.0")
