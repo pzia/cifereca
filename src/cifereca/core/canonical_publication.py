@@ -313,6 +313,11 @@ def publish_completed_acquisition(
             )
             changed = True
         else:
+            # An unfinished physical dedup owns this exact pathname until
+            # its verified recovery completes. Even the same account/SHA
+            # cannot silently convert a tombstone back into a live Placement.
+            if existing_placement[3] == "dedup_cleanup_pending":
+                raise ValueError("canonical_pending_duplicate_cleanup")
             placement_id = existing_placement[0]
             if existing_placement[1] not in (None, scope.identity_id) or (
                 existing_placement[2] not in (None, artifact_id)
