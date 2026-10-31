@@ -173,7 +173,7 @@ jobs:
                 # E2E Smoke runs the full real GTK gate on its own PR trigger.
                 core=true
                 core_mode=ci-contract
-                core_targets="tests/test_ci_2027_e2e_replay_completeness.py tests/test_ci_select_e2e.py tests/test_e2e_ci_paths.py tests/test_ci_gtk_smoke_privacy.py tests/test_ci_required_check_contract.py"
+                core_targets="tests/test_ci_2027_e2e_replay_completeness.py tests/test_ci_select_e2e.py tests/test_e2e_ci_paths.py tests/test_ci_gtk_smoke_privacy.py tests/test_ci_required_check_contract.py tests/test_ci_pr_workflow_scopes.py"
                 ;;
               .github/workflows/core-install.yml)
                 core=true
@@ -182,6 +182,9 @@ jobs:
                 install=true
                 ;;
               .github/workflows/dataset-harness.yml)
+                core=true
+                core_mode=ci-contract
+                core_targets="tests/test_ci_pr_workflow_scopes.py"
                 dataset=true
                 ;;
               *)
