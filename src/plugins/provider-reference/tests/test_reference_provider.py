@@ -537,7 +537,7 @@ def test_v2_inventory_failure_preserves_positive_only_pagination():
 
 
 def test_reconnect_restarts_synthetic_inventory_failure_budget():
-    session, (a, _) = fixture(
+    session, (a,) = fixture(
         scenario="empty", mode="one", inventory_failures_per_page=1,
     )
     try:
