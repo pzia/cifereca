@@ -69,3 +69,30 @@ def test_card_with_multiple_titles_never_attests_selected_delivery():
     )
     with pytest.raises(ParseError, match="Titres ambigus"):
         parse_library_page(html, delivery_evidence=True)
+
+
+def test_scoped_offer_id_changes_with_edition_and_account():
+    from cifereca_numilog import _numilog_selected_offer_id
+    html = _page(*(_card(i) for i in range(1, 7)))
+    rows, _ = parse_library_page(html, delivery_evidence=True)
+    selected = rows[0]
+    kwargs = ("identity-a", "credential-a", "account-a")
+    offer = _numilog_selected_offer_id(*kwargs, "right-a", selected, "https://www.numilog.com/Pages/Compte/MesLivres.aspx")
+    assert offer.startswith("numilog.readbook:")
+    assert len(offer) == len("numilog.readbook:") + 64
+    assert offer != _numilog_selected_offer_id(
+        "identity-b", "credential-a", "account-a", "right-a", selected,
+        "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+    )
+    assert offer != _numilog_selected_offer_id(
+        "identity-a", "credential-a", "account-b", "right-a", selected,
+        "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+    )
+    assert offer != _numilog_selected_offer_id(
+        *kwargs, "right-b", selected,
+        "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+    )
+    assert _numilog_selected_offer_id(
+        *kwargs, "right-a", rows[1],
+        "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+    ) != offer
