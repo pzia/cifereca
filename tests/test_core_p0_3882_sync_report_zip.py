@@ -34,6 +34,9 @@ def _audit(ref="a" * 24):
             "receipt_ref": "c" * 24, "state": "complete",
             "artifact_recorded": True, "attempt_count": 1,
             "error_code": "http_error", "raw": "Bearer BAD",
+            "physical_artifact_found": True,
+            "staging_only": True, "published_final_placement": False,
+            "staged_visible_in_library": True, "origin_link_present": True,
         }],
         "raw_log": "Cookie: BIG_SECRET",
     }
