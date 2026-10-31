@@ -243,6 +243,7 @@ def test_modern_sync_page_shows_separate_inventory_and_file_consent(monkeypatch)
     w, b, calls, _build, _page = _fixture(sources=[])
     source = _source(
         provider_id="provider.future", source_id="opaque-source",
+        label="Bibliothèque future",
         sync_capabilities=("remote_inventory", "scheduled_refresh"),
     )
     b.sources = lambda iid: [source]
@@ -263,7 +264,7 @@ def test_modern_sync_page_shows_separate_inventory_and_file_consent(monkeypatch)
     w._refresh_sync_page()
     group, = w._sync_sources_box.children
     assert [child.title for child in group.children] == [
-        "provider.future", "Téléchargement automatique de ce compte",
+        "Bibliothèque future", "Téléchargement automatique de ce compte",
         "Actualisation automatique des notices et droits",
     ]
     assert "Désactivé" in group.children[1].subtitle
