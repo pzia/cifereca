@@ -653,7 +653,7 @@ def test_missing_legacy_source_coordinates_keep_compatible_blank_scope():
 
 @pytest.mark.parametrize("invalid_id", [
     None, 42, True, ["PRIVATE"], {"ref": "PRIVATE"},
-    "", " ", " id", "id ", "id\\x00private", "id\\nprivate",
+    "", " ", " id", "id ", "id\x00private", "id\nprivate",
 ])
 def test_malformed_completed_acquisition_id_remains_observable_but_unselectable(
     invalid_id,
