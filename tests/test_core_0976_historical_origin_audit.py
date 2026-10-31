@@ -595,12 +595,11 @@ def test_borrower_only_reference_rejects_malformed_historical_account_coordinate
     origin = _acq("bob", "paris-a", "adept-historical", state="attested")
     origin["account_id"] = ["primary"]
     report = _audit([right], [origin])
-    source, = report["sources"]
-    historical, = report["origins"]
-    assert source["paris_borrower_ref"] is None
-    assert historical["paris_borrower_ref"] is None
-    assert source["source_ref"] != historical["source_ref"]
-    assert historical["source_visibility_evidence"] == "acquisition_only"
+    # A malformed coordinate cannot create *any* historical Paris scope,
+    # not even an acquisition-only candidate that a preview might select.
+    assert report["sources"] == report["origins"] == []
+    assert report["origin_resolution"] == "unknown"
+    assert report["status"] == "unknown"
 
 
 @pytest.mark.parametrize("field", ["identity_id", "credential_id", "account_id"])
