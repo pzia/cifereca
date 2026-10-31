@@ -338,3 +338,37 @@ def test_invalid_global_timeout_never_opens_network(
             max_duration=max_duration,
         )
     assert not seen
+
+
+
+def test_staging_directory_replaced_during_publish_rejects_old_path(
+    tmp_path, monkeypatch,
+):
+    """Pinned dirfds prevent writes through a late ancestor symlink swap."""
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    moved = tmp_path / "staging-moved"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original_link = delivery.os.link
+    switched = []
+
+    def swap_before_link(source, destination, **options):
+        stage.rename(moved)
+        stage.symlink_to(outside, target_is_directory=True)
+        switched.append(True)
+        return original_link(source, destination, **options)
+
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=b"synthetic candidate",
+    ))
+    monkeypatch.setattr(delivery.os, "link", swap_before_link)
+    with pytest.raises(ValueError, match="delivery_staging_unsafe"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=stage / "received.epub",
+            admission_current=lambda: True, timeout=5,
+        )
+    assert switched == [True]
+    assert list(moved.iterdir()) == []
+    assert list(outside.iterdir()) == []
