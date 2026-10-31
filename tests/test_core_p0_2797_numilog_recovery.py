@@ -17,9 +17,27 @@ from tests.test_core_p0_1862_numilog_store_mirror import _row
 def epub(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("mimetype", "application/epub+zip")
-        archive.writestr("META-INF/container.xml", "<container/>")
-        archive.writestr("content.xhtml", "<html><body>same SHA, distinct purchases</body></html>")
+        # writestr(name, payload) embeds the wall clock in ZIP headers.
+        # ZIP has 2-second timestamp precision, so six otherwise identical
+        # fixtures can cross a boundary and produce TWO different SHA-256s.
+        # Stable headers test content-addressed dedup, not runner timing.
+        for name, payload in (
+            ("mimetype", "application/epub+zip"),
+            ("META-INF/container.xml", "<container/>"),
+            ("content.xhtml", "<html><body>same SHA, distinct purchases</body></html>"),
+        ):
+            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            archive.writestr(info, payload)
+
+
+def test_legacy_recovery_epub_fixture_has_deterministic_zip_headers(tmp_path):
+    left, right = tmp_path / "a.epub", tmp_path / "nested" / "b.epub"
+    epub(left)
+    epub(right)
+    assert left.read_bytes() == right.read_bytes()
+    with zipfile.ZipFile(left) as archive:
+        assert all(info.date_time == (2020, 1, 1, 0, 0, 0)
+                   for info in archive.infolist())
 
 
 def setup_six(tmp_path, monkeypatch):
