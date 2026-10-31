@@ -223,3 +223,16 @@ def test_new_unknown_provider_account_defaults_disabled_without_changing_existin
         'synthetic-provider', data={'id': 'existing', 'enabled': False},
     )
     assert disabled['enabled'].active is False
+
+
+
+def test_account_editor_has_no_implicit_paris_fallback_for_unknown_plugin():
+    """#3731: missing/retired provider IDs must never become a Paris account."""
+    source = ast.unparse(ast.parse(settings_source_text()))
+    assert "def add_account_editor" in source
+    assert "provider_id: str=''" in source
+    assert "configured.get('provider') or ''" in source
+    assert "configured.get('provider') or 'paris'" not in source
+    assert "provider_id: str='paris'" not in source
+    assert "descriptor = descriptors.get(provider_id)" in source
+    assert "descriptor is None or descriptor.state != 'ready'" in source
