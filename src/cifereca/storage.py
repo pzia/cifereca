@@ -4274,6 +4274,14 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("SAVEPOINT placement_delete")
             try:
+                # Only the explicit canonical recovery transaction may remove
+                # its pending tombstone after verifying the original inode.
+                if db.execute(
+                    "SELECT 1 FROM placements WHERE placement_id=? "
+                    "AND state='dedup_cleanup_pending'",
+                    (str(placement_id),),
+                ).fetchone():
+                    raise ValueError("dedup_cleanup_pending")
                 db.execute("DELETE FROM catalog_entries WHERE placement_id=?", (str(placement_id),))
                 db.execute("DELETE FROM placements WHERE placement_id=?", (str(placement_id),))
                 db.execute("RELEASE SAVEPOINT placement_delete")
@@ -4304,12 +4312,17 @@ class Storage:
             # Lock the read + upsert against concurrent SQLite writers.
             db.execute("BEGIN IMMEDIATE")
             current = db.execute(
-                "SELECT placement_id,identity_id,provider_id,source_item_id "
+                "SELECT placement_id,identity_id,provider_id,source_item_id,state "
                 "FROM placements WHERE path=?", (path,),
             ).fetchone()
             if current is not None:
+                # A post-placement dedup tombstone is not a materialization.
+                # Do not resurrect or overwrite its original inode evidence
+                # while an explicit recovery is still pending.
+                if current[4] == "dedup_cleanup_pending":
+                    raise ValueError("dedup_cleanup_pending")
                 for stored, proposed in zip(
-                    current[1:],
+                    current[1:4],
                     (row.get("identity_id"), row.get("provider_id"),
                      row.get("source_item_id")),
                 ):
@@ -4384,7 +4397,11 @@ class Storage:
                     path.relative_to(root_resolved)
                 except (OSError, ValueError):
                     continue
-                if str(path) not in seen_paths and state != "missing":
+                # A pending dedup tombstone is intentionally absent from the
+                # indexed library. A scan must never turn its recovery
+                # checkpoint into a generic missing placement.
+                if (str(path) not in seen_paths
+                        and state not in ("missing", "dedup_cleanup_pending")):
                     db.execute(
                         "UPDATE placements SET state='missing',updated_at=? WHERE placement_id=?", (now, placement_id)
                     )
