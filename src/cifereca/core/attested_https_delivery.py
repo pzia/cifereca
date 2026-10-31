@@ -299,6 +299,42 @@ def download_attested_https(
                                 # A name swapped between streaming and link
                                 # must never be accepted as the hashed bytes.
                                 raise ValueError("delivery_staging_changed")
+                            # The same inode can be modified in-place
+                            # after we hash downloaded chunks. Inode identity
+                            # alone does not prove that the published bytes
+                            # still have the receipt digest. Independently
+                            # hash the candidate reached by the FINAL path.
+                            read_flags = (os.O_RDONLY
+                                          | getattr(os, "O_NOFOLLOW", 0))
+                            with os.fdopen(
+                                os.open(physical.name, read_flags,
+                                        dir_fd=recheck_fd), "rb",
+                            ) as verifier:
+                                opened = os.fstat(verifier.fileno())
+                                checked = hashlib.sha256()
+                                while True:
+                                    block = verifier.read(1024 * 1024)
+                                    if not block:
+                                        break
+                                    checked.update(block)
+                                closed = os.fstat(verifier.fileno())
+                            for observed in (opened, closed):
+                                if (not stat.S_ISREG(observed.st_mode)
+                                        or any(
+                                            getattr(observed, attr)
+                                            != getattr(published, attr)
+                                            for attr in (
+                                                "st_dev", "st_ino", "st_size",
+                                                "st_mtime_ns", "st_ctime_ns",
+                                            )
+                                        )):
+                                    raise ValueError("delivery_staging_changed")
+                            if checked.digest() != digest.digest():
+                                raise ValueError("delivery_staging_changed")
+                            # Hashing a large EPUB/PDF may take time. Refuse
+                            # to return a completed candidate if the exact
+                            # account/consent changed while verifying bytes.
+                            check_current()
                         finally:
                             os.close(recheck_fd)
                     except BaseException:
