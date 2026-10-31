@@ -281,8 +281,11 @@ def _run_observed_canonical_convergence(
     # Canonical source-level ON does not depend on the retired per-right
     # consent reader. Keep that reader only for legacy/unset sources.
     from .source_sync_consent import read_policy
-    admitted_policy = read_policy(self.storage, admitted_snapshots[0].scope)
-    canonical_on = admitted_policy.mode == "on"
+    canonical_on = False
+    if type(admitted_snapshots) is list and len(admitted_snapshots) == 1:
+        canonical_on = (
+            read_policy(self.storage, admitted_snapshots[0].scope).mode == "on"
+        )
     if (delivery is None and admitted_snapshots
             and (canonical_on or callable(consent_reader))):
         from inspect import getattr_static
