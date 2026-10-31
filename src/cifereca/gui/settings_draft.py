@@ -178,9 +178,15 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         ai_restart_required = new_ai_settings != config.get('llm', {})
         draft.set('llm', new_ai_settings)
     try:
-        backup_interval = max(15, int(values['backup_interval'].strip() or '60'))
-    except ValueError as exc:
-        raise SettingsValidationError(f'Configuration Kobo invalide : {exc}')
+        raw_interval = values['backup_interval']
+        if type(raw_interval) is not str:
+            raise ValueError('backup interval must be text')
+        interval_text = raw_interval.strip() or '60'
+        if not interval_text.isascii() or not interval_text.isdecimal():
+            raise ValueError('backup interval must be a positive decimal integer')
+        backup_interval = max(15, int(interval_text))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SettingsValidationError('Intervalle de sauvegarde historique invalide') from exc
     draft.set('library.directory', values['library_directory'].strip() or '~/EBooks')
     # This historical global switch is rendered read-only. A Settings save
     # must not turn its (possibly stale) widget snapshot into acquisition
