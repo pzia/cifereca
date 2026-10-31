@@ -581,3 +581,52 @@ def test_valid_provider_snapshot_without_guard_remains_compatible(editor):
     values["accounts"] = [account("future-provider")]
     result = validate(editor, descriptors={"future-provider": descriptor("future-provider")})
     assert result.data["providers"]["accounts"][0]["enabled"] is True
+
+
+def test_provider_descriptor_removed_credential_field_is_preserved_on_save(editor):
+    """#3731: schema evolution must not delete hidden historic credentials."""
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    values['accounts'][0]['original_credentials'] = {
+        'username': 'old-user', 'retired_token': 'secret-to-keep',
+    }
+    values['accounts'][0]['fields']['username'] = 'new-user'
+    previous = deepcopy(config.data)
+    draft = validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert draft.data['providers']['accounts'][0]['credentials'] == {
+        'username': 'new-user', 'retired_token': 'secret-to-keep',
+    }
+    assert config.data == previous
+
+
+def test_provider_descriptor_with_no_credentials_retains_retired_values(editor):
+    values = editor[1]
+    values['accounts'] = [account('future-provider')]
+    values['accounts'][0]['fields'] = {}
+    values['accounts'][0]['original_credentials'] = {'retired_token': 'untouched'}
+    provider = descriptor('future-provider')
+    provider.credential_fields = []
+    result = validate(editor, descriptors={'future-provider': provider})
+    assert result.data['providers']['accounts'][0]['credentials'] == {
+        'retired_token': 'untouched',
+    }
+
+
+@pytest.mark.parametrize('invalid', [None, False, 1, 'secret', ['secret']])
+def test_provider_rejects_malformed_historical_credential_snapshot(editor, invalid):
+    config, values = editor
+    values['accounts'] = [account('future-provider')]
+    values['accounts'][0]['original_credentials'] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='Identifiants historiques invalides'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert config.data == before
+
+
+def test_provider_account_without_original_credential_snapshot_remains_compatible(editor):
+    values = editor[1]
+    values['accounts'] = [account('future-provider')]
+    result = validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert result.data['providers']['accounts'][0]['credentials'] == {
+        'username': 'synthetic-user',
+    }

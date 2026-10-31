@@ -317,3 +317,16 @@ def test_corrupt_provider_account_containers_render_safely_but_block_save():
         "future-provider", data={"id": "existing", "credentials": {}, "options": {}},
     )
     assert valid["invalid_saved_snapshot"] is False
+
+
+def test_unknown_provider_editor_preserves_undeclared_retired_credentials():
+    """#3731: an unknown provider version must not discard stored secrets."""
+    data = {
+        'id': 'future-account',
+        'credentials': {'card': 'active', 'retired_token': 'opaque-old-secret'},
+    }
+    editor, _, _, _ = _render('future-provider', data=data)
+    assert editor['fields']['card'].text == 'active'
+    assert 'retired_token' not in editor['fields']
+    assert editor['original_credentials']['retired_token'] == 'opaque-old-secret'
+    assert data['credentials']['retired_token'] == 'opaque-old-secret'
