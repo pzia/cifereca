@@ -621,18 +621,19 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     from .diagnostic_provider_connection_attempt import new_attempt
     started_all = time.monotonic()
     logger.info("TRACE connect-configured begin")
-    self.disconnect_configured()
-    all_accounts: list[Account] = []
-    connected: list[str] = []
-    errors: dict[str, str] = {}
-    failures: list[dict[str, str]] = []
-
+    # Validate a targeted request BEFORE disconnecting any live sessions.
+    # An absent/ambiguous source must have no connection-side effects.
     rows = _configured_rows_for_source(
         self.config.provider_accounts(enabled_only=True),
         source_scope=source_scope,
         default_identity=(self.current_identity.identity_id
                           if self.current_identity else "default"),
     )
+    self.disconnect_configured()
+    all_accounts: list[Account] = []
+    connected: list[str] = []
+    errors: dict[str, str] = {}
+    failures: list[dict[str, str]] = []
     configured_provider_ids = {str(row.get("provider") or "").strip().lower() for row in rows if isinstance(row, dict)}
     # Plugin API v1: a ready provider with no credential fields is a public
     # anonymous source.  Do not require a provider-specific config migration
