@@ -45,3 +45,29 @@ def test_empty_post_placement_never_enters_supervisor(monkeypatch, tmp_path):
     assert post.preview_post_placement_supervised_pairs(
         object(), library_root=Path(tmp_path), placement_id="keeper",
     ) == ()
+
+
+def test_stale_candidate_blocks_only_its_own_preview(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from cifereca.core import canonical_dedup_supervisor as supervisor
+
+    monkeypatch.setattr(
+        post, "verified_post_placement_duplicates",
+        lambda *_args, **_kwargs: ("stale", "healthy"),
+    )
+    calls = []
+    def fake_supervise(_storage, **kwargs):
+        assert kwargs["action"] == "preview"
+        calls.append(kwargs["candidate_placement_id"])
+        if kwargs["candidate_placement_id"] == "stale":
+            raise ValueError("canonical_supervisor_invalid_request")
+        return SimpleNamespace(status="preview_ready", reason="verified_no_active_references")
+
+    monkeypatch.setattr(supervisor, "supervise_canonical_duplicate", fake_supervise)
+    assert post.preview_post_placement_supervised_pairs(
+        object(), library_root=Path(tmp_path), placement_id="keeper",
+    ) == (
+        ("stale", "preview_blocked", "preview_unavailable"),
+        ("healthy", "preview_ready", "verified_no_active_references"),
+    )
+    assert calls == ["stale", "healthy"]
