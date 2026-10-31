@@ -1571,7 +1571,7 @@ class NumilogSession(ProviderSession):
                             raise ProviderCapabilityError(
                                 'numilog_candidate_transport_refused'
                             ) from None
-                        if not admitted():
+                        if receipt.path != target or not admitted():
                             trace.fail('origin_rejected')
                             raise ProviderCapabilityError(
                                 'numilog_candidate_owner_changed'
@@ -1603,7 +1603,13 @@ class NumilogSession(ProviderSession):
                                 'numilog_candidate_owner_changed'
                             )
                         final = target.with_suffix(extension)
-                        os.replace(receipt.path, final)
+                        # Move by the directory FD already pinned before
+                        # any selected supplier request: an ancestor rename or
+                        # symlink swap cannot redirect this final step.
+                        os.replace(
+                            target.name, final.name,
+                            src_dir_fd=stage_dirfd, dst_dir_fd=stage_dirfd,
+                        )
                         try:
                             staged = selected_candidate_path(final)
                             if not admitted():
@@ -1620,10 +1626,16 @@ class NumilogSession(ProviderSession):
                             return staged, self.library_url
                         finally:
                             if not completed:
-                                final.unlink(missing_ok=True)
+                                try:
+                                    os.unlink(final.name, dir_fd=stage_dirfd)
+                                except FileNotFoundError:
+                                    pass
                     finally:
                         if not completed:
-                            target.unlink(missing_ok=True)
+                            try:
+                                os.unlink(target.name, dir_fd=stage_dirfd)
+                            except FileNotFoundError:
+                                pass
                     # Redirects and byte streaming are handled exclusively
                     # inside the public Core transport above.
                 trace.fail('redirect_loop')
