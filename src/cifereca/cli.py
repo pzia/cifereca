@@ -500,6 +500,9 @@ def main(argv: list[str] | None = None) -> int:
             except SyncSelectionError as exc:
                 result = {"status": "failed", "code": str(exc)}
                 code = 2
+            except KeyboardInterrupt:
+                result = {"status": "cancelled", "code": "cancelled"}
+                code = 130
             except Exception:
                 result = {"status": "failed", "code": "sync_unavailable"}
                 code = 2
@@ -550,10 +553,11 @@ def main(argv: list[str] | None = None) -> int:
                         {**run_event, "operation": "admission", "status": "success",
                          "code": "unknown"},
                         {**run_event, "operation": "sync_result",
-                         "status": outcome if outcome in (
-                             "success", "partial", "failed", "busy",
-                             "skipped", "cancelled",
-                         ) else "unknown",
+                         "status": "success" if outcome == "complete" else (
+                             outcome if outcome in (
+                                 "success", "partial", "failed", "busy",
+                                 "skipped", "cancelled",
+                             ) else "unknown"),
                          "code": result.get("code") or "unknown"},
                     )
                     write_sync_report(
