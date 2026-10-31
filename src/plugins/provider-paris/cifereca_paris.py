@@ -224,7 +224,8 @@ class ParisProviderSession(ProviderSession):
                  identity_broker=None, **kwargs: Any) -> None:
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         self.identity_broker = identity_broker
-        base_url = str(self.options.get("base_url") or (config.paris_base_url(self.credential_id) if hasattr(config, "paris_base_url") else config.get("base_url", "https://bibliotheques.paris.fr")))
+        from cifereca_paris_constants import BASE_URL
+        base_url = str(self.options.get("base_url") or (config.paris_base_url(self.credential_id) if hasattr(config, "paris_base_url") else config.get("base_url", "")) or BASE_URL)
         timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.diagnostics = diagnostics
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)

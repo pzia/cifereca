@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from .paths import config_file
-from .config_defaults import DEFAULT_CONFIG, PARIS_DEFAULT_BASE_URL, DEFAULT_REQUEST_TIMEOUT_SECONDS
+from .config_defaults import DEFAULT_CONFIG, DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 
 
@@ -54,7 +54,7 @@ class Config:
                                 "username": str(self.get("username", "")).strip(),
                                 "password": "",
                             },
-                            "options": {"base_url": str(self.get("base_url", "https://bibliotheques.paris.fr"))},
+                            "options": ({"base_url": str(self.get("base_url"))} if self.get("base_url") else {}),
                         }])
             except Exception:
                 self.data = deepcopy(DEFAULT_CONFIG)
@@ -79,7 +79,7 @@ class Config:
                     "enabled": True,
                     "anonymous": True,
                     "credentials": {},
-                    "options": {"opds_url": "https://gallica.bnf.fr/opds"},
+                    "options": {},  # Gallica plugin owns its OPDS endpoint default.
                 })
                 self.set("providers.accounts", rows)
             self.set("providers.gallica_migration_031", True)
@@ -329,8 +329,8 @@ class Config:
     def paris_base_url(self, credential_id: str | None = None) -> str:
         value = self.provider_option("paris", "base_url", None, credential_id=credential_id)
         if value is None:
-            value = self.get("base_url", PARIS_DEFAULT_BASE_URL)
-        return str(value or PARIS_DEFAULT_BASE_URL).strip() or PARIS_DEFAULT_BASE_URL
+            value = self.get("base_url", "")
+        return str(value or "").strip()
 
     def request_timeout_seconds(self, provider_id: str | None = None, credential_id: str | None = None) -> float:
         value: Any = None
