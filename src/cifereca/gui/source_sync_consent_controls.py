@@ -44,7 +44,9 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
     def change(wanted):
         if not sync_action_scope_current(window, scope):
             return
-        if wanted and not (supported and source.enabled):
+        # An invalid stored policy may be repaired by explicit OFF, never
+        # upgraded to ON from an untrusted/contradictory Core snapshot.
+        if wanted and not (state['valid'] and supported and source.enabled):
             return
         try:
             write(source_id, enabled=wanted, expected_revision=revision)
@@ -73,7 +75,8 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
         return
 
     row.set_subtitle(
-        ('Réglage à vérifier. Choisissez explicitement une autorisation pour ce compte. '
+        ('Réglage à vérifier. Désactivez pour réinitialiser cette autorisation '
+         'avant toute nouvelle activation. '
          if not state['valid'] else
          'Choisissez le téléchargement automatique pour tous les achats et prêts de ce compte. '
          'Les autorisations déjà enregistrées sont conservées jusqu’à votre choix. ')
@@ -82,7 +85,7 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
     )
     for wanted, label in ((True, 'Activer'), (False, 'Désactiver')):
         button = window.action_button(label, 'emblem-synchronizing-symbolic' if wanted else 'media-playback-stop-symbolic')
-        button.set_sensitive(bool(not wanted or (supported and source.enabled)))
+        button.set_sensitive(bool(not wanted or (state['valid'] and supported and source.enabled)))
         button.set_valign(Gtk.Align.CENTER)
         button.connect('clicked', lambda _button, value=wanted: change(value))
         add_sync_action(row, button)
