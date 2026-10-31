@@ -133,7 +133,8 @@ def test_sql_failure_never_precedes_physical_file_loss(rig):
     storage, _root, paths, publications, _snapshot, _lock = rig
     with storage._lock, storage._connect() as db:
         db.execute(
-            "CREATE TRIGGER refuse_retirement BEFORE DELETE ON placements "
+            "CREATE TRIGGER refuse_retirement BEFORE UPDATE OF state ON placements "
+            "WHEN NEW.state='dedup_cleanup_pending' "
             "BEGIN SELECT RAISE(ABORT,'synthetic_retire_failure'); END"
         )
     with pytest.raises(sqlite3.IntegrityError, match="synthetic_retire_failure"):
@@ -156,7 +157,7 @@ def test_post_commit_unlink_denial_keeps_extra_recoverable_copy(rig, monkeypatch
     assert result.retired_placement
     assert not result.removed_file and result.cleanup_pending
     assert all(path.read_bytes() == BYTES for path in paths)
-    assert storage.placement_get(publications[1].placement_id) is None
+    assert storage.placement_get(publications[1].placement_id)["state"] == "dedup_cleanup_pending"
     assert storage.placement_get(publications[0].placement_id)["state"] == "present"
 
 
