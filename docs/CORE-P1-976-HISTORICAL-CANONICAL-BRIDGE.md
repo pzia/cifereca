@@ -50,6 +50,29 @@ historiques au même scope et le nombre de paires OriginLink *non attestées*.
 Les acquittements de licence/secrets ne sont pas publiés, sans altération du
 journal brut.
 
+### Acquisitions enregistrées dans une autre bibliothèque
+
+Un prêt Paris peut être visible dans l'identité bibliothèque A, alors que
+l'acquisition ADEPT historique a été enregistrée dans l'identité B. Les audits
+conservent **deux références distinctes** :
+
+- `source_ref` : identité bibliothèque + connexion + compte Paris ;
+- `paris_borrower_ref` : connexion + compte Paris, **sans** l'identité de
+  bibliothèque (référence opaque uniquement, jamais droit ou grant).
+
+Si les références `paris_borrower_ref` coïncident mais que les identités
+bibliothèque divergent, le rapport `audit-transaction` signale
+`historical_acquisition_other_library_identity` et compte ces observations
+dans `historical_other_library_acquisition_count`. L'origine demeure
+**non rapprochée** au niveau de la transaction exacte ; son absence de
+`SourceReference` propre reste visible, même si un inventaire Adobe ancien
+était localement attesté. Une acquisition liée à un autre compte ou une
+valeur de compte malformée n'est jamais assimilée à cette situation.
+
+Cet indice aide à retrouver le profil ADEPT d'activation réellement utilisé
+sans prouver ni le titulaire Paris, ni la branche canonique, ni une
+restitution autorisée.
+
 ## Autorité et suite
 
 `adobe_profile_resolution="unknown"`,
