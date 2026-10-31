@@ -58,7 +58,7 @@ def select_push(
             root, "diff", "--name-status", "-z", "--find-renames",
             "--no-ext-diff", before, head, "--",
         )
-        fields = diff.split(b"\\0")
+        fields = diff.split(b"\0")
         if fields[-1] != b"":
             return *full, "malformed-diff"
         fields.pop()
@@ -70,19 +70,19 @@ def select_push(
             path = path_raw.decode("utf-8")
             if status not in {"A", "M"}:
                 return *full, "renamed-deleted-or-unsupported-status"
-            if any(ch in path for ch in "\\n\\r\\t") or not _safe_path(path):
+            if any(ch in path for ch in "\n\r\t") or not _safe_path(path):
                 return *full, "shared-or-ambiguous-path"
             paths.append(path)
 
         script = selector or root / "scripts/ci-select-core-tests.py"
         with tempfile.TemporaryDirectory() as temp:
             changed = Path(temp) / "changed-files.txt"
-            changed.write_text("\\n".join(paths) + "\\n", encoding="utf-8")
+            changed.write_text("\n".join(paths) + "\n", encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(script), str(changed)],
                 cwd=root, capture_output=True, text=True, check=True, timeout=20,
             )
-        output = result.stdout.strip().split("\\t")
+        output = result.stdout.strip().split("\t")
         if len(output) != 3:
             return *full, "invalid-selector-output"
         mode, targets, _e2e = output
@@ -122,7 +122,7 @@ def main() -> int:
         "selection_reason": reason,
     }, sort_keys=True))
     with args.github_output.open("a", encoding="utf-8") as handle:
-        handle.write(f"core_mode={mode}\\ncore_targets={targets}\\n")
+        handle.write(f"core_mode={mode}\ncore_targets={targets}\n")
     return 0
 
 
