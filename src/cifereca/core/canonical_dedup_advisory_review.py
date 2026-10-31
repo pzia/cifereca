@@ -75,6 +75,7 @@ def review_canonical_dedup_advisories(
             if len(records) > _MAX_ROWS:
                 return CanonicalDedupAdvisoryReview("over_budget")
             entries = []
+            unattributed = 0
             for key, raw in records:
                 if type(key) is not str or not key.startswith(_PENDING_PREFIX):
                     continue
@@ -94,7 +95,11 @@ def review_canonical_dedup_advisories(
                     data = None
                 owner = data.get("identity_id") if type(data) is dict else None
                 if identity_id is not None and owner != identity_id:
-                    # Unknown payload cannot be safely attributed to an owner.
+                    # Malformed records have no trustworthy owner. Hiding them
+                    # as an empty, fully reviewed profile would claim a clean
+                    # queue that this snapshot cannot actually attest.
+                    if not _valid_id(owner):
+                        unattributed += 1
                     continue
                 if (type(data) is not dict or set(data) != {
                         "schema", "identity_id", "artifact_id", "placement_ids",
@@ -134,7 +139,8 @@ def review_canonical_dedup_advisories(
                     ))
                     continue
                 sql = (
-                    "SELECT placement_id,identity_id,artifact_id,state "
+                    "SELECT placement_id,identity_id,artifact_id,state,"
+                    "provider_id,source_item_id "
                     "FROM placements WHERE placement_id IN ("
                     + ",".join("?" for _ in ids) + ")"
                 )
@@ -151,6 +157,11 @@ def review_canonical_dedup_advisories(
                     reason = "recovery_review_required"
                 elif any(placements[pid][2] != "present" for pid in ids):
                     reason = "placement_record_changed"
+                elif any(placements[pid][3:] != (None, None) for pid in ids):
+                    # Canonical retire accepts only unbound physical B
+                    # Placements. Legacy provider/item rows need independent
+                    # reconciliation, never a green supervised preview.
+                    reason = "legacy_placement_requires_review"
                 else:
                     entries.append(CanonicalDedupAdvisory(
                         key, owner, artifact, ids,
@@ -161,8 +172,9 @@ def review_canonical_dedup_advisories(
                     reason, owner=owner, artifact=artifact, ids=ids,
                 ))
             return CanonicalDedupAdvisoryReview(
-                "partial" if any(e.status == "blocked" for e in entries)
-                else "reviewed",
+                "partial" if unattributed or any(
+                    e.status == "blocked" for e in entries
+                ) else "reviewed",
                 tuple(entries),
             )
     except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError):

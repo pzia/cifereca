@@ -74,9 +74,9 @@ def test_corrupt_advisory_never_counts_as_actionable(store, tmp_path):
     assert all_rows.entries[0].reason == "checkpoint_invalid"
     assert all_rows.entries[0].placement_ids == ()
     # An opaque malformed record cannot be attributed to a specific profile.
-    assert review_canonical_dedup_advisories(
-        store, identity_id="A",
-    ).entries == ()
+    scoped = review_canonical_dedup_advisories(store, identity_id="A")
+    assert scoped.entries == ()
+    assert scoped.status == "partial"  # Unknown owner is not a clean queue.
     assert store.metadata_get(key).count('"schema"') == 2
 
 
@@ -101,3 +101,45 @@ def test_cross_identity_candidate_is_not_misclassified_as_usable(store, tmp_path
     assert view.status == "partial" and view.blocked_count == 1
     assert view.entries[0].reason == "placement_record_changed"
     assert store.placement_get(two.placement_id)["state"] == "present"
+
+
+def test_scoped_invalid_owner_cannot_report_verified_empty_queue(store, tmp_path):
+    key, _ = _checkpoint(store, tmp_path)
+    store.metadata_set(key, '{"schema":"unknown","identity_id":null}')
+    scoped = review_canonical_dedup_advisories(store, identity_id="A")
+    assert scoped.entries == ()
+    assert scoped.status == "partial"
+    assert scoped.pending_count == 0
+    assert store.metadata_get(key) is not None
+
+
+def test_legacy_provider_bound_placement_never_becomes_canonical_preview(
+    store, tmp_path,
+):
+    key, (_one, candidate, _foreign) = _checkpoint(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET provider_id=?,source_item_id=? "
+            "WHERE placement_id=?",
+            ("seller-legacy", "book-legacy", candidate.placement_id),
+        )
+    scoped = review_canonical_dedup_advisories(store, identity_id="A")
+    assert scoped.status == "partial"
+    assert scoped.pending_count == 0 and scoped.blocked_count == 1
+    assert scoped.entries[0].status == "blocked"
+    assert scoped.entries[0].reason == "legacy_placement_requires_review"
+    assert store.metadata_get(key) is not None
+    # An advisory read must never mutate a legacy ownership record.
+    row = store.placement_get(candidate.placement_id)
+    assert row["provider_id"] == "seller-legacy"
+    assert row["source_item_id"] == "book-legacy"
+
+
+def test_regular_other_profile_queue_is_not_a_scoped_uncertainty(
+    store, tmp_path,
+):
+    key, (_one, _two, _foreign) = _checkpoint(store, tmp_path)
+    assert store.metadata_get(key)
+    scoped = review_canonical_dedup_advisories(store, identity_id="B")
+    assert scoped.status == "reviewed"
+    assert scoped.entries == ()
