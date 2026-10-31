@@ -49,7 +49,11 @@ class NumilogOfferFixture:
             [NS(identity_id="alice", provider_id="numilog", credential_id=CREDENTIAL)]
             if accounts is None else accounts
         )
-        self.session = NS(capabilities=NS(direct_download=True))
+        self.session = NS(
+            capabilities=NS(direct_download=True),
+            downloadable_resource_snapshot=lambda *_: pytest.fail("no v2 snapshot during render"),
+            downloadable_selected_offer_snapshot=lambda *_: pytest.fail("no v2 offer during render"),
+        )
         self.source_calls = []
         self.acquisition = NS(
             override_command=lambda *_: pytest.fail("no acquisition fallback"),
@@ -134,11 +138,13 @@ def test_real_private_inventory_keeps_opt_in_search_button_but_not_local_file():
     book = private_purchase()
     host._remote_search_results = [book]
     host.service.can_direct_download = Mock(return_value=True)
+    host.service._session_for_source = Mock(return_value=NumilogOfferFixture().session)
     host._populate_search([book], announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
-    assert row.options["action_label"] == "Télécharger"
+    assert row.options["action_label"] == "Vérifier et télécharger"
     assert callable(row.options["action_callback"])
     assert "Mes achats Numilog" in row.meta
+    assert "Offre à vérifier" in row.meta
     assert "Fichier local disponible" not in row.meta
     host.service.can_direct_download.assert_called_once_with(book)
     host.download_direct_item.assert_not_called()
@@ -175,13 +181,18 @@ def test_detail_never_offers_download_for_catalogue_even_if_legacy_broker_says_y
 def test_detail_retains_private_purchase_action_when_broker_positive():
     purchase = private_purchase()
     button = NS(connect=Mock())
-    service = NS(can_direct_download=Mock(return_value=True), content_type_for=lambda _: "ebook")
+    service = NS(
+        can_direct_download=Mock(return_value=True),
+        content_type_for=lambda _: "ebook",
+        _session_for_source=Mock(return_value=NumilogOfferFixture().session),
+    )
     window = NS(service=service, action_button=Mock(return_value=button),
                 download_direct_item=Mock())
     panel = NS(window=window, _actions=Mock())
     _direct_download_method()(panel, purchase)
     service.can_direct_download.assert_called_once_with(purchase)
     window.action_button.assert_called_once()
+    assert window.action_button.call_args.args[0] == "Vérifier et télécharger"
     button.connect.assert_called_once()
     panel._actions.assert_called_once_with([button])
     window.download_direct_item.assert_not_called()

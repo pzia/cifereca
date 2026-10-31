@@ -176,6 +176,8 @@ def _render_search_results(self) -> int:
         shown = len(local_rows)
         self._update_search_count(shown)
         return shown
+    from cifereca.gui.offer_actions import requires_selected_offer_check, download_action_label
+
     identity = self.service.current_identity
     linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
     # A public Kobo catalog 'owned' flag is not an authenticated entitlement.
@@ -287,6 +289,12 @@ def _render_search_results(self) -> int:
                                and result_row(item)["state"] != "remote_owned"))
             else self.service.can_direct_download(item)
         )
+        # An installed v2 interface is a preflight hint, not an attested offer.
+        check_required = bool(direct and not placement and
+                              requires_selected_offer_check(self.service, item))
+        if check_required:
+            extras.append("Offre à vérifier avant acquisition")
+            meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
         callback = None
         if placement:
             extras.append('Fichier local disponible')
@@ -296,7 +304,7 @@ def _render_search_results(self) -> int:
             callback = lambda button, selected=item: self.download_direct_item(selected, button)
         ui_rows.append(BookListItem(
             key, item.title, item.author or "", meta, source, item.thumbnail_url,
-            action_label="Ouvrir" if placement else (("Sauvegarder" if item.source_provider == "kobo" else "Télécharger") if direct else None),
+            action_label="Ouvrir" if placement else (download_action_label(item, check_required=check_required) if direct else None),
             action_callback=callback,
             action_icon_name="document-open-symbolic" if placement else ("document-save-symbolic" if direct else None),
         ))
