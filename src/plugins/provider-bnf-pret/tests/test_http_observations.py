@@ -202,3 +202,33 @@ def test_canonical_failed_http_event_redacts_private_exception_and_keeps_closed_
         assert events[0]["detail"]["request_ref"] == detail["request_ref"]
     finally:
         client.close()
+
+
+@pytest.mark.parametrize(("failure", "expected"), [
+    (httpx.ConnectTimeout(
+        "https://pret.bnf.fr/loans/synthetic-loan?token=PRIVATE_ACSM_SIGNATURE"
+    ), "transport_unavailable"),
+    (ReaderHTTPError("PRIVATE_ACSM_SIGNATURE cookie=PRIVATE_LOGIN"),
+     "unexpected_failure"),
+])
+def test_private_signed_token_is_absent_from_http_diagnostic_sinks(
+    failure, expected, caplog,
+):
+    def handler(request):
+        raise failure
+
+    client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises((httpx.HTTPError, ReaderHTTPError)):
+                client.activity()
+        rows = observations(caplog)
+        assert len(rows) == 2
+        detail = rows[-1]["detail"]
+        assert detail["code"] == expected
+        assert detail["error_message"] == expected
+        assert detail["error_traceback"] == "redacted"
+        assert "PRIVATE_ACSM_SIGNATURE" not in caplog.text
+        assert "PRIVATE_LOGIN" not in caplog.text
+    finally:
+        client.close()
