@@ -240,7 +240,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                                 location = response.headers.get("location")
                                 if (type(location) is not str or not location
                                         or any(ord(ch) < 33 or ord(ch) == 127
-                                               or ch.isspace() or ch == "\\\\" for ch in location)):
+                                               or ch.isspace() or ch == "\\" for ch in location)):
                                     raise ProviderCapabilityError("kobo_candidate_redirect_refused")
                                 try:
                                     next_url = urljoin(current, location)
