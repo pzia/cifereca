@@ -24,7 +24,8 @@ def append_source_inventory_schedule_controls(
         return
     caps = getattr(source, "sync_capabilities", ())
     if (type(caps) not in (tuple, list)
-            or len(caps) > 32 or "remote_inventory" not in caps):
+            or len(caps) > 32 or "remote_inventory" not in caps
+            or "scheduled_refresh" not in caps):
         return
     read = getattr(broker, "inventory_refresh_schedule", None)
     write = getattr(broker, "set_inventory_refresh_schedule", None)
