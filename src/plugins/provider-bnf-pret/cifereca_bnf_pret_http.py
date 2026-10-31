@@ -116,8 +116,9 @@ class ReaderHTTPClient:
             return
         started = time.monotonic()
         detail = dict(provider_id='bnf-pret', logical_endpoint=logical_endpoint,
-                      phase=('activity_recheck' if logical_endpoint == 'activity'
-                             else 'loan_token_get'), method=method,
+                      phase=({'activity': 'activity_recheck', 'search': 'catalog_search',
+                              'loan_token': 'loan_token_get'}[logical_endpoint]),
+                      method=method,
                       request_ref=uuid4().hex)
         self._observe(dict(detail, event='begin'), 'running', started)
         try:
@@ -163,7 +164,12 @@ class ReaderHTTPClient:
                 raise ReaderHTTPError('mutation_refused')
             try:
                 with self._stream(method, url, data=data,
-                                      logical_endpoint=('activity' if url == ACTIVITY and not authenticating else None),
+                                      logical_endpoint=(
+                                          'activity' if url == ACTIVITY and not authenticating
+                                          else 'search' if method == 'GET' and not authenticating
+                                          and urlsplit(url).hostname == 'pret.bnf.fr'
+                                          and urlsplit(url).path == '/results'
+                                          else None),
                                       headers={'Accept': 'text/html'},
                                       timeout=min(15, max(0.1, deadline-time.monotonic()))) as r:
                     if r.status_code in {301, 302, 303, 307, 308}:
