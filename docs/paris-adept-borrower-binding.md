@@ -115,7 +115,7 @@ Pour examiner les références canoniques v14 correspondant au **même prêt et 
 sans confondre SourceReference Paris et OriginLink ADEPT :
 
 ```bash
-cifereca-cli paris-adept audit-canonical \\
+cifereca-cli paris-adept audit-canonical \
   --loan-id "<id-pret-paris>" --item-id "<id-item>"
 ```
 
@@ -127,6 +127,20 @@ rattachement de licence par identité de rangement ou SHA, aucun droit à un
 retour : `return_authorized=false`. Les références de reçus ne sont pas
 affichées. La sonde est décrite dans
 [la revue canonique](CORE-P1-976-CANONICAL-ADEPT-LINK-REVIEW.md).
+
+Pour comparer **les preuves historiques et canoniques** sur le même prêt,
+sans aucune inférence de licence à partir du seul SHA :
+
+```bash
+cifereca-cli paris-adept audit-transaction \
+  --loan-id "<id-pret-paris>" --item-id "<id-item>"
+```
+
+`scope_overlap_only` signifie exclusivement un recouvrement de compte et
+d'identité Paris en base, pas une preuve d'activation Adobe ; un ancien prêt
+sans branche canonique ne peut pas résoudre deux branches du même compte.
+`return_authorized=false` reste invariable. Voir
+[la revue historique/canonique](CORE-P1-976-HISTORICAL-CANONICAL-BRIDGE.md).
 
 La commande globale `audit` effectue un rapprochement **en lecture seule** des prêts actifs
 et acquisitions déjà enregistrés en base, des connexions Paris et des profils
