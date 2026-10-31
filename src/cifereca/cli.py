@@ -380,7 +380,11 @@ def main(argv: list[str] | None = None) -> int:
                         credential=resolved.credential_id,
                         account_id=resolved.unique_id,
                     )
-                    service.connect_configured()
+                    service.connect_selected_source(
+                        identity=resolved.identity_id,
+                        provider=resolved.provider_id,
+                        credential=resolved.credential_id,
+                    )
                 if a.sync_cmd == "list":
                     from types import SimpleNamespace
                     connections = {
