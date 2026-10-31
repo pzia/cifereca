@@ -543,6 +543,37 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         raise
 
 
+def _opening_failed_configured_connections(self, identity_id: str) -> int:
+    """An unconnected configured source has no Account, but is not success.
+
+    Scope by persisted identity and connection key. Do not fabricate a
+    borrower, source entitlement or acquisition authorization on failure.
+    """
+    errors = getattr(self, "_session_errors", None)
+    if type(errors) is not dict or not errors:
+        return 0
+    try:
+        rows = self.config.provider_accounts(enabled_only=True)
+        default_identity = self.identities[0].identity_id
+    except (AttributeError, IndexError, TypeError, KeyError):
+        return 0
+    count = 0
+    for row in rows:
+        if type(row) is not dict:
+            continue
+        owner = str(row.get("identity_id") or default_identity)
+        if owner != identity_id:
+            continue
+        provider = str(row.get("provider") or "").strip().lower()
+        credential = str(row.get("id") or "").strip()
+        if not provider or not credential:
+            continue
+        key = self._session_key(provider, credential)
+        if key in errors and getattr(self._sessions.get(key), "connected", False) is not True:
+            count += 1
+    return count
+
+
 def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, lock_factory, lock_path) -> dict[str, Any]:
     """Synchronize remote state; filesystem reconciliation is opt-in/deep."""
     lock = lock_factory(lock_path())
@@ -1205,6 +1236,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             source_outcomes = {
                 self.sync_source_id(account): "failed" for account in accounts
             }
+        # Failed configured connects never reach self.accounts, so an opening
+        # cycle with no surviving provider sessions must not report success.
+        connection_failures = _opening_failed_configured_connections(self, identity.identity_id)
+        if connection_failures:
+            detail["connection_failures"] = connection_failures
+            errors += connection_failures
+            if status == "success":
+                status = "partial" if accounts else "failed"
         finished = int(time.time())
         self.storage.sync_run_put({
             "sync_run_id": run_id, "identity_id": identity.identity_id, "scope": "opening", "status": status,

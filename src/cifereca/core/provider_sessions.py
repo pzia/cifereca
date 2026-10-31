@@ -553,6 +553,24 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     return session
 
 
+# Closed reason vocabulary: provider exception text, types, URLs and tokens
+# are NEVER forwarded into the raw journal. A recognized provider error.code
+# can explain a failed authentication without exposing its response body.
+_PUBLIC_CONNECTION_CAUSES = frozenset({
+    "missing_token", "invalid_token", "insufficient_scope", "forbidden",
+    "network_error", "server_error", "rate_limited", "redirect_denied",
+    "invalid_response", "http_error", "conflict",
+})
+
+
+def _public_connection_cause(error: Exception) -> str:
+    try:
+        code = getattr(error, "code", None)
+    except Exception:
+        return "unclassified"
+    return code if type(code) is str and code in _PUBLIC_CONNECTION_CAUSES else "unclassified"
+
+
 def _publish_connection_failure(diagnostics: Any, failure: dict[str, str], *,
                                 singleton: bool = False, duration_ms: int | None = None) -> None:
     """Prefer the Core-attested producer; legacy diagnostics mocks stay usable."""
@@ -824,7 +842,7 @@ def connect_configured(self, *, logger, caller_category: str = "other",
                 )
             except Exception:
                 pass
-        except Exception:
+        except Exception as exc:
             attempt.emit(
                 self.diagnostics, "terminal", "failed",
                 "connect_failed" if invoked else "session_invalid",
@@ -835,6 +853,10 @@ def connect_configured(self, *, logger, caller_category: str = "other",
             logger.warning(
                 "TRACE provider connect error code=provider_connect_failed provider_id=%s dt=%.3fs",
                 public_failure["provider_id"], time.monotonic()-item_started,
+            )
+            logger.warning(
+                "TRACE provider connect cause provider_id=%s reason_code=%s",
+                public_failure["provider_id"], _public_connection_cause(exc),
             )
             if session is not None:
                 try:
