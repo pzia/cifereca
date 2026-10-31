@@ -1374,6 +1374,12 @@ class Storage:
             return
         artifact_id = None
         sha = str(row.get("sha256") or "").strip().lower()
+        # This is an unverified v0.7 declaration. Do not manufacture an
+        # Artifact with a malformed, truncated, prefixed or nonhex digest.
+        # Retain the raw value in backup_items for audit/migration; no
+        # independent provenance or local-file validation is inferred.
+        if len(sha) != 64 or any(char not in "0123456789abcdef" for char in sha):
+            sha = ""
         if sha:
             artifact_id = f"sha256:{sha}"
             try:
