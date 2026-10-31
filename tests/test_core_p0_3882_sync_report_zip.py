@@ -52,7 +52,7 @@ def _write(path, **overrides):
         events=({
             "operation": "delivery", "status": "failed", "code": "http_error",
             "raw_http": "Authorization: Bearer SECRET",
-            "task_ref": "private-task",
+            "task_ref": "private-task", "scope_ref": "a" * 24, "run_ref": "d" * 24,
         },),
     )
     params.update(overrides)
@@ -79,9 +79,13 @@ def test_full_zip_contents_closed_fields_exact_build_identity(tmp_path, monkeypa
         assert manifest["status"] == "partial"
         assert manifest["exit_code"] == 2
         assert manifest["http_trace_included"] is False
-        assert json.loads(z.read("events.jsonl")) == {
-            "operation": "delivery", "status": "failed", "code": "http_error",
+        event = json.loads(z.read("events.jsonl"))
+        assert {k: event[k] for k in ("operation", "status", "code", "run_ref")} == {
+            "operation": "delivery", "status": "failed",
+            "code": "http_error", "run_ref": "d" * 24,
         }
+        assert len(event["task_ref"]) == 24
+        assert event["task_ref"] != "private-task"
     with open(target, "rb") as f:
         data = f.read()
     for secret in (b"BAD", b"BIG_SECRET", b"Authorization", b"Bearer",
@@ -115,11 +119,22 @@ def test_foreign_scope_and_opaque_id_refused_without_zip(tmp_path):
 
 def test_closed_event_types_and_limits(tmp_path):
     target = tmp_path / "report.zip"
-    with pytest.raises(ValueError, match="report_events_invalid"):
+    with pytest.raises(ValueError, match="report_events_scope_invalid"):
         _write(target, events=({"operation": "download", "status": "failed"},))
-    with pytest.raises(ValueError, match="report_events_invalid"):
+    with pytest.raises(ValueError, match="report_events_scope_invalid"):
         _write(target, events=({"operation": "delivery", "status": "bad status"},))
     assert not target.exists()
+
+
+def test_cross_account_or_unrelated_run_events_are_refused(tmp_path):
+    target = tmp_path / "report.zip"
+    for fake_scope, fake_run in (("f"*24, "d"*24), ("a"*24, "e"*24)):
+        with pytest.raises(ValueError, match="report_events_scope_invalid"):
+            _write(target, events=({
+                "operation": "delivery", "status": "failed",
+                "scope_ref": fake_scope, "run_ref": fake_run,
+            },))
+        assert not target.exists()
 
 
 def test_missing_event_capture_explicitly_unavailable(tmp_path, monkeypatch):
