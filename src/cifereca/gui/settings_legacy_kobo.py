@@ -33,7 +33,13 @@ def apply_legacy_kobo_settings(draft, values, *, validation_error):
     if type(raw_interval) is not str or type(raw_directory) is not str:
         raise validation_error('Configuration Kobo invalide : champs non textuels.')
     try:
-        interval = max(15, int(raw_interval.strip() or '60'))
+        # Legacy GTK text is a *decimal minute count*, not a Python integer
+        # literal. int() alone accepts +60, -1, 1_000 and non-ASCII digits;
+        # malformed old widget snapshots must never silently alter settings.
+        decimal = raw_interval.strip() or '60'
+        if not decimal.isascii() or not decimal.isdecimal():
+            raise ValueError('decimal minutes expected')
+        interval = max(15, int(decimal))
     except ValueError as exc:
         raise validation_error(f'Configuration Kobo invalide : {exc}') from exc
 
