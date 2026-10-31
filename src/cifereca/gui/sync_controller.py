@@ -218,13 +218,22 @@ def _refresh_sync_page(self) -> None:
         alerts = [sync_source_attention(source) for source in rows]
         errors = sum(alert is not None and alert[0] == "error" for alert in alerts)
         warnings = sum(alert is not None and alert[0] == "warning" for alert in alerts)
+        infos = sum(alert is not None and alert[0] == "info" for alert in alerts)
         if errors or warnings:
             self._sync_attention_icon.set_from_icon_name(
                 "dialog-error-symbolic" if errors else "dialog-warning-symbolic"
             )
+            extra = f" · {infos} couverture(s) partielle(s) informative(s)" if infos else ""
             self._sync_attention_text.set_label(
-                f"À vérifier : {errors} échec(s) · {warnings} avertissement(s). "
-                "Consultez les comptes signalés ci-dessous."
+                f"À vérifier : {errors} échec(s) · {warnings} avertissement(s)"
+                + extra + ". Consultez les comptes signalés ci-dessous."
+            )
+            alert_row.set_visible(True)
+        elif infos:
+            self._sync_attention_icon.set_from_icon_name("dialog-information-symbolic")
+            self._sync_attention_text.set_label(
+                f"Information : {infos} source(s) à couverture partielle ; "
+                "aucun échec local déclaré."
             )
             alert_row.set_visible(True)
     if all_now is not None:
@@ -402,6 +411,7 @@ def _refresh_sync_page(self) -> None:
                 severity, message = alert
                 icon = Gtk.Image.new_from_icon_name(
                     "dialog-error-symbolic" if severity == "error"
+                    else "dialog-information-symbolic" if severity == "info"
                     else "dialog-warning-symbolic"
                 )
                 icon.set_valign(Gtk.Align.CENTER)

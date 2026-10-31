@@ -423,6 +423,32 @@ def sync_source_row_labels(sources: object) -> tuple[str, ...]:
     return tuple(display)
 
 
+def sync_source_informational_partial(source: object) -> bool:
+    """Exact Core partial-coverage marker + positive, separately known local phase.
+
+    An incomplete remote inventory is not evidence of a failed GET. Do not
+    downgrade an unknown/failed local phase, an opaque error, or a partial
+    result with insufficient phase evidence. No provider ID is consulted.
+    """
+    if (getattr(source, "sync_capable", None) is not True
+            or getattr(source, "status", None) != "partial"
+            or getattr(source, "error", None) != "Synchronisation partielle"):
+        return False
+    entries = getattr(source, "phase_states", ())
+    if not isinstance(entries, (tuple, list)) or len(entries) != 2:
+        return False
+    phases: dict[str, str] = {}
+    for row in entries:
+        phase = getattr(row, "phase", None)
+        status = getattr(row, "status", None)
+        if (type(phase) is not str or phase not in {"discover_rights", "materialize"}
+                or type(status) is not str or phase in phases):
+            return False
+        phases[phase] = status
+    return (phases.get("discover_rights") == "partial"
+            and phases.get("materialize") in {"success", "not_supported"})
+
+
 def sync_source_attention(source: object) -> tuple[str, str] | None:
     """Expose the most severe closed-state alert, never a provider payload.
 
@@ -436,6 +462,7 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     # Each candidate is a fixed UI label. Phase and status values are used
     # solely as dictionary keys; arbitrary upstream data never becomes text.
     candidates: list[tuple[str, str]] = []
+    information_only = sync_source_informational_partial(source)
     entries = getattr(source, "phase_states", ())
     if isinstance(entries, (tuple, list)) and len(entries) <= 8:
         phase_labels = (
@@ -457,7 +484,10 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
                 raw = getattr(row, "status", None)
                 issue = words.get(raw) if type(raw) is str else None
                 if issue:
-                    candidates.append((issue[0], f"{label} : {issue[1]}"))
+                    if information_only and phase == "discover_rights" and raw == "partial":
+                        candidates.append(("info", "Notices et droits : couverture partielle (information)"))
+                    else:
+                        candidates.append((issue[0], f"{label} : {issue[1]}"))
     raw_status = getattr(source, "status", None)
     status = raw_status.strip().casefold() if type(raw_status) is str and len(raw_status) <= 64 else ""
     raw_error = getattr(source, "error", None)
@@ -474,12 +504,16 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     elif status in {"blocked", "attention_required"}:
         candidates.append(("warning", "Synchronisation : action nécessaire"))
     elif status == "partial":
-        candidates.append(("warning", "Synchronisation : résultat partiel"))
+        candidates.append((
+            ("info", "Synchronisation : couverture partielle (information)")
+            if information_only
+            else ("warning", "Synchronisation : résultat partiel")
+        ))
     if getattr(source, "enabled", None) is True and getattr(source, "connected", None) is False:
         candidates.append(("warning", "Compte déconnecté — reconnexion nécessaire"))
     # Stable precedence independent of upstream phase ordering. A severe
     # source-wide failure must win over an earlier local partial warning.
-    for severity in ("error", "warning"):
+    for severity in ("error", "warning", "info"):
         for candidate in candidates:
             if candidate[0] == severity:
                 return candidate
@@ -539,6 +573,12 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     phase_summary = sync_source_phase_summary(source)
     if phase_summary:
         summary += "\n" + phase_summary
+    if sync_source_informational_partial(source):
+        summary += (
+            "\nCouverture incomplète des notices et droits ; "
+            "aucun échec de téléchargement local déclaré. "
+            "La présence et la publication des fichiers restent distinctes."
+        )
     # Explicit scope, independent of provider-supplied free-form metadata.
     # A manual source sync is not the global opening/acquisition workflow.
     if capable:
