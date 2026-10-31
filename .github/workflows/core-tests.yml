@@ -12,6 +12,7 @@ on:
       - 'pyproject.toml'
       - 'VERSION'
       - 'scripts/ci-select-core-tests.py'
+      - 'scripts/ci_select_core_push.py'
       - 'scripts/ci_select_plugin_tests.py'
       - '.github/plugin-test-dependencies.json'
       - 'scripts/check_release_inventory.py'
@@ -38,6 +39,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Select Core targets (fail closed to full suite)
+        id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/ci_select_core_push.py \
+            --event "$GITHUB_EVENT_NAME" --before "$BEFORE_SHA" \
+            --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v6
         with:
@@ -49,4 +62,14 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
 
       - name: Run Core tests
-        run: python -m pytest -q --durations=10 tests
+        env:
+          CORE_TEST_MODE: ${{ steps.scope.outputs.core_mode }}
+          CORE_TEST_TARGETS: ${{ steps.scope.outputs.core_targets }}
+        run: |
+          echo "Core test scope: $CORE_TEST_MODE"
+          read -r -a selected <<< "$CORE_TEST_TARGETS"
+          if (( ${#selected[@]} == 0 )); then
+            echo "Empty test selection: refusing to skip the Core suite" >&2
+            exit 1
+          fi
+          python -m pytest -q --durations=10 "${selected[@]}"
