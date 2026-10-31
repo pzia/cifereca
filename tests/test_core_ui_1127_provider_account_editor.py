@@ -223,3 +223,28 @@ def test_new_unknown_provider_account_defaults_disabled_without_changing_existin
         'synthetic-provider', data={'id': 'existing', 'enabled': False},
     )
     assert disabled['enabled'].active is False
+
+
+
+def test_optional_unknown_provider_option_without_default_is_empty_not_none():
+    """#3731: an unspecified option must never be serialized as literal 'None'."""
+    option = SimpleNamespace(
+        key='endpoint', label='Optional endpoint', default=None,
+        secret=False, legacy_config_key=None,
+    )
+    editor, _, _, _ = _render('future-provider', descriptor_options=[option])
+    assert editor['option_fields']['endpoint'].text == ''
+    invalid, _, _, _ = _render(
+        'future-provider', data={'options': {'endpoint': None}},
+        descriptor_options=[option],
+    )
+    assert invalid['option_fields']['endpoint'].text == ''
+
+
+def test_unknown_provider_optional_option_respects_declared_empty_default():
+    field = SimpleNamespace(
+        key='endpoint', label='Optional endpoint', default='',
+        secret=False, legacy_config_key=None,
+    )
+    editor, _, _, _ = _render('future-provider', descriptor_options=[field])
+    assert editor['option_fields']['endpoint'].text == ''
