@@ -18,6 +18,64 @@ def setup_action(provider="kobo", operation=None):
     return window, actions, calls, submissions, target
 
 
+def test_unlinked_remote_purchase_shows_explicit_manual_download_refusal():
+    """#3848: a Numilog remote card must not silently hide absent Core linkage."""
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={'provider_id': 'numilog', 'item_id': 'synthetic-owned',
+              'source_credential': 'card', 'state': 'remote_owned',
+              'possessions': []},
+        local=False,
+    )
+    groups = []
+    detail.add_group = lambda title, rows: groups.append((title, rows))
+    window.service.owned_library_download_target = lambda item: None
+    add_local_book_actions(window, detail, entry, **deps)
+    assert groups == [
+        ('Acquisition', [
+            ('Téléchargement manuel',
+             'Indisponible : aucune cible exacte vérifiée pour ce compte et cette identité.'),
+        ]),
+    ]
+    assert actions == [] and submissions == []
+
+
+def test_untrusted_target_failure_is_closed_and_never_leaks_into_detail():
+    """A provider/SQLite target error must not abort rendering or leak secrets."""
+    private = 'PRIVATE_https://example.invalid/download?token=PRIVATE'
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={'provider_id': 'numilog', 'item_id': 'synthetic-owned',
+              'source_credential': 'card', 'state': 'remote_owned'},
+        local=False,
+    )
+    groups, diagnostics = [], []
+    detail.add_group = lambda title, rows: groups.append((title, rows))
+    window.diagnostics = NS(add=lambda *args, **kwargs:
+                            diagnostics.append((args, kwargs)))
+    def unavailable(_item):
+        raise RuntimeError(private)
+    window.service.owned_library_download_target = unavailable
+    add_local_book_actions(window, detail, entry, **deps)
+    assert groups and diagnostics == [
+        (('UI', 'owned download target', 'error'),
+         {'detail': {'code': 'owned_download_target_unavailable'}}),
+    ]
+    assert private not in repr(groups) + repr(diagnostics)
+    assert not actions and not submissions
+
+
+@pytest.mark.parametrize('state', ['remote_catalog', 'local', None])
+def test_public_and_local_notices_do_not_claim_missing_acquisition(state):
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={'provider_id': 'numilog-catalog', 'item_id': 'public',
+              'state': state}, local=False,
+    )
+    groups = []
+    detail.add_group = lambda *args: groups.append(args)
+    window.service.owned_library_download_target = lambda _item: None
+    add_local_book_actions(window, detail, entry, **deps)
+    assert groups == [] and actions == [] and submissions == []
+
+
 def test_render_is_passive_and_only_explicit_click_submits_one_book():
     window, actions, calls, submissions, target = setup_action()
     assert len(actions) == 1 and actions[0]._cifereca_action_id == "download-owned-kobo"
