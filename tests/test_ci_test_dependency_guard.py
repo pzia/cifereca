@@ -57,3 +57,22 @@ def test_missing_test_module_selection_is_inert(tmp_path):
     root = _sample(tmp_path, "from tests.test_fixture import VALUE\n")
     assert not has_test_consumers(root, [])
     assert not has_test_consumers(root, ["src/cifereca/core.py"])
+
+
+def test_unrelated_namespace_reference_does_not_parse_ast(tmp_path, monkeypatch):
+    root = _sample(tmp_path, 'DATA = "tests.unrelated"\n')
+    def unexpected_parse(*args, **kwargs):
+        raise AssertionError("inert test namespace must not trigger AST parsing")
+    monkeypatch.setattr("scripts.ci_test_dependency_guard.ast.parse", unexpected_parse)
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'importlib.import_module(f"tests.{name}")\n',
+    '__import__(f"tests.{name}")\n',
+    'spec_from_file_location("name", f"tests.{name}")\n',
+    'SourceFileLoader("name", f"tests.{name}")\n',
+])
+def test_unknown_dynamic_namespace_still_forces_full(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
