@@ -264,3 +264,22 @@ def test_rejected_final_publish_after_stream_preserves_no_target(
         )
     assert len(checks) == 4
     assert list(tmp_path.iterdir()) == []
+
+
+def test_transport_service_exposes_same_bounded_core_download(
+    tmp_path, monkeypatch,
+):
+    from cifereca.plugin_api import HTTPX_TRANSPORT
+
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=b"verified candidate",
+        headers={"Content-Type": "application/epub+zip"},
+    ))
+    result = HTTPX_TRANSPORT.attested_https_download(
+        producer="core.selected.delivery", url=FIRST,
+        target=tmp_path / "from-service.epub",
+        admission_current=lambda: True, timeout=5,
+        max_bytes=100, max_redirects=2,
+    )
+    assert result.sha256 == delivery.hashlib.sha256(b"verified candidate").hexdigest()
+    assert result.path.read_bytes() == b"verified candidate"
