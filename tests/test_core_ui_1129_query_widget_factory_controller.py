@@ -9,7 +9,8 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.gui.query_widget_factory_controller import (
-    build_query_controls, refresh_query_providers, refresh_library_origin_choices,\n)
+    build_query_controls, refresh_query_providers, refresh_library_origin_choices,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
