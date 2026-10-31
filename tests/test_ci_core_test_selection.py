@@ -53,6 +53,7 @@ def test_pyproject_or_selector_change_keeps_full_suite():
     selector = _module()
     assert selector.select(["pyproject.toml"], ROOT) == ("full", ["tests"])
     assert selector.select(["scripts/ci-select-core-tests.py"], ROOT) == ("full", ["tests"])
+    assert selector.select(["scripts/ci_test_dependency_guard.py"], ROOT) == ("full", ["tests"])
 
 
 def test_e2e_change_uses_ui_suite():
@@ -165,14 +166,16 @@ def test_2141_sync_page_changes_cannot_skip_cross_cutting_p0_regressions():
     assert selector.select(["src/cifereca/gui/query_controls.py"], ROOT)[0] == "ui-component"
 
 
-def test_installed_recorder_gtk_change_keeps_real_gate_and_headless_contract():
+def test_installed_recorder_shared_fixture_requires_full_core_and_real_gtk_gate():
     selector = _module()
     native = "tests/test_browser_recorder_installed_gtk_blackbox.py"
-    mode, targets = selector.select([native, "src/plugins/browser-recorder/browser_recorder_page.py"], ROOT)
-    assert mode == "changed"
-    assert targets == [native, "tests/test_core_p0_2663_recorder_package_contract.py"]
+    # Two other test modules import helpers from this native GTK module;
+    # selecting only its companion test would hide regressions in consumers.
+    assert selector.select(
+        [native, "src/plugins/browser-recorder/browser_recorder_page.py"], ROOT
+    ) == ("full", ["tests"])
     workflow = (ROOT / ".github/workflows/browser-recorder-chromium-e2e.yml").read_text()
-    assert native in workflow  # actual GTK execution is never replaced by skip
+    assert native in workflow  # dedicated native gate remains mandatory
 
 
 def test_installed_recorder_missing_headless_contract_fails_to_full_selection(tmp_path):
@@ -181,3 +184,31 @@ def test_installed_recorder_missing_headless_contract_fails_to_full_selection(tm
     (tmp_path / "tests").mkdir()
     (tmp_path / native).write_text("# synthetic native test")
     assert selector.select([native], tmp_path) == ("full", ["tests"])
+
+
+def test_imported_test_fixture_forces_full_core_selection(tmp_path):
+    selector = _module()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_fixture.py").write_text("VALUE = 1\n")
+    (tests / "test_consumer.py").write_text("from tests.test_fixture import VALUE\n")
+    assert selector.select(["tests/test_fixture.py"], tmp_path) == ("full", ["tests"])
+
+
+def test_test_filename_used_only_as_data_remains_targeted(tmp_path):
+    selector = _module()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_fixture.py").write_text("VALUE = 1\n")
+    (tests / "test_consumer.py").write_text('PATH = "tests/test_fixture.py"\n')
+    assert selector.select(["tests/test_fixture.py"], tmp_path) == (
+        "changed", ["tests/test_fixture.py"]
+    )
+
+
+def test_pr_ci_forces_full_for_removed_or_renamed_test_modules():
+    workflow = (ROOT / ".github/workflows/pr-ci.yml").read_text(encoding="utf-8")
+    assert 'git diff --name-status "$BASE_SHA...$HEAD_SHA" -- tests/' in workflow
+    assert "grep -Eq '^(D|R[0-9]*|C[0-9]*|T|U)[[:space:]]'" in workflow
+    assert "core_mode=full" in workflow
+    assert "core_targets=tests" in workflow

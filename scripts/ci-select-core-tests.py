@@ -4,6 +4,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+try:  # support both pytest module loading and direct script execution
+    from scripts.ci_test_dependency_guard import has_test_consumers
+except ModuleNotFoundError:
+    from ci_test_dependency_guard import has_test_consumers
+
 ROOT = Path(__file__).resolve().parents[1]
 
 UI_SOURCE_PREFIXES = (
@@ -22,6 +27,7 @@ UI_AUX_FILES = {
 FULL_CORE_FILES = {
     "pyproject.toml",
     "scripts/ci-select-core-tests.py",
+    "scripts/ci_test_dependency_guard.py",
     # #2141: the page's actual GTK composition, action grouping and
     # presentation are covered by legacy test_core_p0_* suites, not only
     # the narrow test_core_ui_* subset. Run ALL Core tests before merging
@@ -245,6 +251,15 @@ def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
     core_sources = [path for path in changed if path.startswith("src/cifereca/")]
     if any(not _is_ui_source(path) for path in core_sources):
         return "full", ["tests"]
+
+    # Tests are sometimes imported by other suites as fixtures. Running only
+    # the changed test misses its consumers; full coverage is the safe default.
+    if changed_tests:
+        try:
+            if has_test_consumers(root, changed_tests):
+                return "full", ["tests"]
+        except (OSError, SyntaxError, ValueError):
+            return "full", ["tests"]
 
     has_ui_change = bool(core_sources) or any(_is_ui_aux(path) for path in changed)
     if has_ui_change:

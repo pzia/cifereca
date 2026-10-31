@@ -12,6 +12,7 @@ on:
       - 'pyproject.toml'
       - 'VERSION'
       - 'scripts/ci-select-core-tests.py'
+      - 'scripts/ci_test_dependency_guard.py'
       - 'scripts/ci_select_core_push.py'
       - 'scripts/ci_select_plugin_tests.py'
       - '.github/plugin-test-dependencies.json'

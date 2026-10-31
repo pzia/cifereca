@@ -81,7 +81,7 @@ jobs:
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
           lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
-          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
+          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
             core=true
           fi
 
@@ -140,6 +140,13 @@ jobs:
             IFS=$'\t' read -r core_mode core_targets e2e_scenario < <(
               python3 scripts/ci-select-core-tests.py "$changed_file"
             )
+            # Deleted or renamed tests can invalidate other suites even when
+            # another changed test remains. Never skip their consumers.
+            if git diff --name-status "$BASE_SHA...$HEAD_SHA" -- tests/ | \
+               grep -Eq '^(D|R[0-9]*|C[0-9]*|T|U)[[:space:]]'; then
+              core_mode=full
+              core_targets=tests
+            fi
           fi
 
           if matches '^\.github/workflows/'; then

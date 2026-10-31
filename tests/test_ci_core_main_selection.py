@@ -35,6 +35,10 @@ def fixture(tmp_path: Path) -> tuple[Path, str]:
     script = tmp_path / "scripts/ci-select-core-tests.py"
     script.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / "scripts/ci-select-core-tests.py", script)
+    shutil.copyfile(
+        ROOT / "scripts/ci_test_dependency_guard.py",
+        script.parent / "ci_test_dependency_guard.py",
+    )
     write(tmp_path, "src/cifereca/core/storage.py", "VALUE = 1\n")
     write(tmp_path, "src/cifereca/gui/cover_preview.py", "VALUE = 1\n")
     for path in (

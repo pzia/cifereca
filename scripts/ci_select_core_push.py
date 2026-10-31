@@ -14,6 +14,11 @@ import subprocess
 import sys
 import tempfile
 
+try:  # support both pytest package import and direct script execution
+    from scripts.ci_test_dependency_guard import has_test_consumers
+except ModuleNotFoundError:
+    from ci_test_dependency_guard import has_test_consumers
+
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 
@@ -38,37 +43,6 @@ def _safe_path(path: str) -> bool:
     return path == "AGENTS.md" or path.startswith(("docs/", ".agents/"))
 
 
-
-def _has_test_consumers(root: Path, changed: list[str]) -> bool:
-    """Fail closed when changed test modules feed other test modules.
-
-    Scan files once per push; only changed test paths are searched. The textual
-    prefilter intentionally also catches dynamic filename-based imports.
-    """
-    if not changed:
-        return False
-    names = {
-        path: (
-            path.removesuffix(".py").replace("/", "."),
-            Path(path).name,
-            Path(path).stem,
-        )
-        for path in changed
-    }
-    for pattern in ("tests/**/*.py", "src/plugins/*/tests/**/*.py", "scripts/test*.py"):
-        for candidate in root.glob(pattern):
-            if not candidate.is_file():
-                continue
-            source = candidate.read_text(encoding="utf-8", errors="replace")
-            for path, (module_name, filename, stem) in names.items():
-                if candidate == root / path:
-                    continue
-                if (module_name in source or filename in source
-                        or f"from tests import {stem}" in source
-                        or f"from . import {stem}" in source
-                        or f"from .{stem} import" in source):
-                    return True
-    return False
 
 
 def select_push(
@@ -106,7 +80,7 @@ def select_push(
             if any(ch in path for ch in "\n\r\t") or not _safe_path(path):
                 return *full, "shared-or-ambiguous-path"
             paths.append(path)
-        if _has_test_consumers(
+        if has_test_consumers(
             root, [path for path in paths if path.startswith("tests/test_")]
         ):
             return *full, "shared-test-fixture"
@@ -137,7 +111,7 @@ def select_push(
                 return *full, "unknown-target"
         return mode, " ".join(selected), "verified-linear-push"
     except (
-        OSError, subprocess.SubprocessError, UnicodeError, ValueError,
+        OSError, subprocess.SubprocessError, UnicodeError, ValueError, SyntaxError,
     ) as error:
         return *full, f"git-or-selector-unavailable:{type(error).__name__}"
 
