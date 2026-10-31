@@ -33,7 +33,7 @@ def test_numilog_personal_inventory_means_purchases_not_a_loan():
     source = sync_source_presentation(
         _source("numilog", "remote_inventory", "entitlements"),
     )
-    assert source.action_label == "Actualiser les livres achetés Numilog"
+    assert source.action_label == "Synchroniser Compte personnel"
     assert "inventaire des livres achetés" in source.summary
     assert "droits sur les livres possédés" in source.summary
     assert "aucun emprunt de bibliothèque créé" in source.summary
@@ -45,7 +45,7 @@ def test_kobo_owned_manifest_is_not_automatically_downloaded_or_loaned():
     source = sync_source_presentation(
         _source("kobo", "remote_inventory", "entitlements", "local_materialization"),
     )
-    assert source.action_label == "Mettre à jour les notices Kobo en ligne"
+    assert source.action_label == "Synchroniser Compte personnel"
     assert "inventaire des livres achetés" in source.summary
     assert "droits sur les livres possédés" in source.summary
     assert "ne télécharge aucun ebook" in source.summary
