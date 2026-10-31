@@ -1712,7 +1712,8 @@ def main() -> int:
         assert "Dernier succès 10/10/2026 12:00" in paris[0].get_subtitle()
         assert "Synchronisation : Échec" in paris[1].get_subtitle()
         for row in paris:
-            assert "Portée de cette source : droits et emprunts." in row.get_subtitle()
+            assert "Portée de cette source : " in row.get_subtitle()
+            assert "observations de droits et prêts" in row.get_subtitle()
             assert "ne lance pas la synchronisation globale au démarrage" in row.get_subtitle()
         assert not f["source_sync_calls"] and not f["library_refresh_calls"]
         visible_text = "\n".join(row.get_title() + row.get_subtitle() for row in rows)
