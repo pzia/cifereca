@@ -148,3 +148,48 @@ def test_selected_redirect_owner_change_blocks_next_supplier_get(tmp_path, monke
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
+
+
+def test_selected_stream_revocation_removes_unpublished_candidate(
+    tmp_path, monkeypatch,
+):
+    """A changed owner between chunks cannot leave an acquired receipt."""
+    session, account, broker, reads, right = setup()
+    requested = []
+
+    class RevokeDuringBody(httpx.SyncByteStream):
+        def __iter__(self):
+            yield ACSM[:12]
+            broker.owner = "identity-B"
+            yield ACSM[12:]
+
+    def handler(request):
+        requested.append(str(request.url))
+        assert str(request.url) == SIGNED
+        return httpx.Response(
+            200, stream=RevokeDuringBody(),
+            headers={"content-type": "application/vnd.adobe.adept+xml"},
+        )
+
+    # A signed card starts immediately on an external URL; self.client is not
+    # allowed to perform this GET or see the stream.
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: pytest.fail("selected supplier GET used legacy client")
+        ), trust_env=False, follow_redirects=False,
+    )
+    public_clients = mock_selected_public_client(monkeypatch, provider, handler)
+    try:
+        with pytest.raises(
+            ProviderCapabilityError, match="numilog_candidate_transport_refused"
+        ):
+            session.rights_selected_delivery_candidate(
+                account, **selected(right, tmp_path),
+            )
+        assert requested == [SIGNED]
+        assert len(public_clients) == 1
+        assert public_clients[0][2] == [SIGNED]
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()
