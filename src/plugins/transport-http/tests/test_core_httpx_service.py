@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 import cifereca_http_transport as plugin
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
@@ -20,6 +20,7 @@ def test_shared_acquisition_uses_core_service(tmp_path, monkeypatch, level):
 
     def serve(request):
         calls.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200, headers={'Content-Type':'application/octet-stream'},
                               stream=httpx.ByteStream(b'synthetic binary'))
 
@@ -57,6 +58,7 @@ def test_existing_client_follows_trace_switch_without_reconstruction(tmp_path, m
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200, stream=httpx.ByteStream(b'bytes'))
 
     def construct(**kwargs):

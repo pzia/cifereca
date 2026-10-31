@@ -12,7 +12,8 @@ import httpx
 import pytest
 import zipfile
 
-from cifereca.plugin_api import Account, AccountRef, ProviderCapabilityError, ProviderError
+from cifereca.plugin_api import Account, AccountRef, ProviderCapabilityError, ProviderError, HTTPX_TRANSPORT
+from cifereca.http_trace import BROWSER_USER_AGENT
 from cifereca_numilog import NumilogSession
 
 
@@ -90,8 +91,9 @@ def setup(tmp_path, handler, *, identities=("fictional-reader",), status="comple
     session._accounts = [Account(provider_id="numilog", credential_id=session.credential_id,
                                  unique_id=identity_broker.account_id, identity_id="fictional-reader")]
     session.client.close()
-    session.client = httpx.Client(
-        transport=httpx.MockTransport(handler), follow_redirects=False, trust_env=False,
+    session.client = HTTPX_TRANSPORT.client(
+        producer='provider.numilog.test', transport=httpx.MockTransport(handler),
+        follow_redirects=False, trust_env=False,
     )
     return session, diag, acquisition
 
@@ -109,12 +111,18 @@ def test_signed_302_reaches_real_acsm_inspection_and_single_account_broker(tmp_p
         url = str(request.url)
         requested.append(url)
         assert request.method == "GET"
+        assert request.headers['User-Agent'] == BROWSER_USER_AGENT
+        if url == SIGNED:
+            # Cross-origin ACSM delivery must never transmit the login cookie.
+            assert not request.headers.get('Cookie')
         assert request.headers.get("referer") == (
             "https://www.numilog.com/Pages/Compte/MesLivres.aspx"
             if url == READ_BOOK else "https://www.numilog.com/"
         )
         if url == READ_BOOK:
-            return httpx.Response(302, headers={"location": SIGNED})
+            return httpx.Response(302, headers={
+                "location": SIGNED, "set-cookie": "session=synthetic; Secure; Path=/",
+            })
         if url == SIGNED:
             return httpx.Response(
                 200, content=ACSM,

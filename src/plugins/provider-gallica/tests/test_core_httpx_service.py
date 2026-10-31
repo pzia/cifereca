@@ -1,7 +1,7 @@
 """The provider constructs HTTP through Core, including live Trace switches."""
 import httpx
 import cifereca_gallica as provider
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
@@ -15,6 +15,7 @@ def test_core_service_tracks_trace_on_existing_client(monkeypatch):
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         return httpx.Response(200,stream=httpx.ByteStream(b'synthetic bytes'))
 
     def construct(**options):

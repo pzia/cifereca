@@ -111,8 +111,7 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0):
         with HTTPX_TRANSPORT.client(
             producer="provider.numilog.public",
             timeout=timeout, follow_redirects=False, trust_env=False,
-            headers={"User-Agent": "Cifereca-Numilog-Public/1.0",
-                     "Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
+            headers={"Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
         ) as client:
             with client.stream("GET", url) as response:
                 status = response.status_code
@@ -163,8 +162,7 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
         with HTTPX_TRANSPORT.client(
             producer="provider.numilog.public",
             timeout=timeout, follow_redirects=False, trust_env=False,
-            headers={"User-Agent": "Cifereca-Numilog-Public/1.0",
-                     "Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
+            headers={"Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
         ) as client:
             with client.stream("GET", product_url) as response:
                 status = response.status_code
@@ -216,8 +214,7 @@ def resolve_readzis_recommendation(recommendation_url: str, *, lid: str,
         with HTTPX_TRANSPORT.client(
             producer="provider.numilog.public",
             timeout=timeout, follow_redirects=False, trust_env=False,
-            headers={"User-Agent": "Cifereca-Numilog-Public/1.0",
-                     "Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
+            headers={"Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
         ) as client:
             with client.stream("GET", recommendation_url) as response:
                 status = response.status_code

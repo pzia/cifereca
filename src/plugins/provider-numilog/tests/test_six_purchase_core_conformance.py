@@ -18,7 +18,8 @@ from cifereca.core.canonical_publication import publish_completed_acquisition
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
 from cifereca.core.source_convergence import SourceKey
 from cifereca.diagnostics import Diagnostics
-from cifereca.plugin_api import Account
+from cifereca.plugin_api import Account, HTTPX_TRANSPORT
+from cifereca.http_trace import BROWSER_USER_AGENT
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 from cifereca_numilog import NumilogSession
@@ -104,6 +105,7 @@ def purchases(tmp_path, monkeypatch, request):
     def handler(request):
         url = str(request.url)
         gets.append(url)
+        assert request.headers['User-Agent'] == BROWSER_USER_AGENT
         # Change only the UI at each private response. Neither the session
         # owner nor Core's source generation may follow that selector.
         service.select_identity("alex" if service.current_identity.identity_id == "default"
@@ -123,7 +125,11 @@ def purchases(tmp_path, monkeypatch, request):
                               headers={"content-type": "application/epub+zip"})
 
     session.client.close()
-    session.client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    session.client = HTTPX_TRANSPORT.client(
+        producer='provider.numilog.six-purchase-test',
+        transport=httpx.MockTransport(handler), trust_env=False,
+        follow_redirects=False,
+    )
     runtime_calls = []
 
     def resolve_profile(identity):

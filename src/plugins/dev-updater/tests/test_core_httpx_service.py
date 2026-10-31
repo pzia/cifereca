@@ -3,7 +3,7 @@ import json
 
 import httpx
 import github_releases as releases
-from cifereca.http_trace import HTTPTraceCapture
+from cifereca.http_trace import BROWSER_USER_AGENT, HTTPTraceCapture
 import cifereca.http_trace as trace_module
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
@@ -19,6 +19,7 @@ def test_release_reads_use_core_capture_and_fresh_cookie_jars(monkeypatch):
 
     def serve(request):
         requests.append(request)
+        assert request.headers['user-agent'] == BROWSER_USER_AGENT
         assert request.headers.get('cookie') is None
         assert request.headers.get('authorization') is None
         assert request.headers['accept-encoding']=='identity'

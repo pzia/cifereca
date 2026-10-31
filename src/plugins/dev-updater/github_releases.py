@@ -132,7 +132,6 @@ def fetch_releases(repository=DEFAULT_REPOSITORY, *, channel="stable", transport
     headers = {
         "Accept": "application/vnd.github+json",
         "Accept-Encoding": "identity",
-        "User-Agent": "cifereca-dev-updater-readonly/0.1",
         "X-GitHub-Api-Version": "2022-11-28",
     }
     try:

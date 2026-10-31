@@ -56,7 +56,6 @@ class KoboVaultClient:
         self.client = HTTPX_TRANSPORT.client(producer="provider.kobo",
             headers={
                 "Accept": "application/json",
-                "User-Agent": "cifereca-kobo/1.2.1",
             },
             timeout=httpx.Timeout(timeout, connect=min(timeout, 15.0)),
             # Provider API requests must never follow redirect targets,

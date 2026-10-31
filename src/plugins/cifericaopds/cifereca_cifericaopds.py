@@ -115,7 +115,6 @@ class JsonClient:
         url = self.base_url + endpoint + query_string
         headers = {
             "Accept": "application/json", "Accept-Encoding": "identity",
-            "User-Agent": "cifereca-cifericaopds/0.1",
         }
         try:
             with HTTPX_TRANSPORT.client(producer="cifericaopds", timeout=self.timeout,

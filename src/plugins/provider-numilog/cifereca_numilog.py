@@ -228,7 +228,7 @@ class NumilogSession(ProviderSession):
         if not 1 <= timeout <= 120 or not 1024 <= self.maximum <= 512*1024*1024:
             raise ProviderConfigurationError('Numilog : limites réseau invalides')
         self.client = HTTPX_TRANSPORT.client(producer="provider.numilog", timeout=timeout,follow_redirects=False,trust_env=False,
-            headers={'User-Agent':'Cifereca-Numilog/'+VERSION,'Accept-Language':'fr-FR,fr;q=0.9'})
+            headers={'Accept-Language':'fr-FR,fr;q=0.9'})
         self.lock = threading.RLock()
         # Only public anonymous responses are cached; owned rights are always
         # reloaded from the authenticated inventory on each explicit request.
