@@ -142,6 +142,83 @@ def test_commands_remain_argument_lists_and_kobo_defaults_are_unchanged(editor):
     assert draft.data['providers']['settings']['paris']['downloads']['command'] == ['tool', 'two words']
 
 
+def test_unrelated_settings_save_preserves_provider_download_extensions(editor):
+    """#3731: CoreUI must not discard future provider-owned download options."""
+    config, values = editor
+    config.set('downloads', {
+        'directory': 'old-global',
+        'content_type_directories': {
+            'ebook': 'old-books', 'audiobook': 'old-audio',
+            'comic': 'preserve-global-comics',
+        },
+        'command': ['legacy-global'],
+        'provider_contract_extension': {'mode': 'keep', 'enabled': False},
+    })
+    config.set('providers.settings.future-provider', {
+        'other_provider_key': {'opaque': 12},
+        'downloads': {
+            'directory': 'old-provider',
+            'content_type_directories': {
+                'ebook': 'old-epub', 'comic': 'preserve-provider-comics',
+            },
+            'command': ['old-tool'],
+            'custom_delivery_policy': {'future_version': 2, 'enabled': False},
+        },
+    })
+    # A provider not exposed in Settings must keep ALL its configuration.
+    config.set('providers.settings.offline-provider', {
+        'downloads': {'custom_delivery_policy': {'preserved': True}},
+    })
+    before = deepcopy(config.data)
+    values['identities'][0]['label'] = 'New label'
+    values['download_directory'] = 'new-global'
+    values['ebook_directory'] = 'new-books'
+    values['provider_downloads']['future-provider'] = {
+        'directory': 'new-provider', 'ebook': 'new-epub', 'audiobook': '',
+        'command': 'tool --safe', 'post': '',
+    }
+    draft = validate(editor)
+    global_downloads = draft.data['downloads']
+    assert global_downloads['directory'] == 'new-global'
+    assert global_downloads['content_type_directories'] == {
+        'ebook': 'new-books', 'audiobook': '', 'comic': 'preserve-global-comics',
+    }
+    assert global_downloads['provider_contract_extension'] == {
+        'mode': 'keep', 'enabled': False,
+    }
+    provider_settings = draft.data['providers']['settings']['future-provider']
+    assert provider_settings['other_provider_key'] == {'opaque': 12}
+    downloads = provider_settings['downloads']
+    assert downloads['directory'] == 'new-provider'
+    assert downloads['content_type_directories'] == {
+        'ebook': 'new-epub', 'audiobook': '', 'comic': 'preserve-provider-comics',
+    }
+    assert downloads['command'] == ['tool', '--safe']
+    assert downloads['custom_delivery_policy'] == {
+        'future_version': 2, 'enabled': False,
+    }
+    assert draft.data['providers']['settings']['offline-provider'] == (
+        before['providers']['settings']['offline-provider']
+    )
+    assert config.data == before
+
+
+@pytest.mark.parametrize('legacy', [None, False, [], 'broken'])
+def test_untyped_historical_download_settings_are_safely_rebuilt(editor, legacy):
+    config, values = editor
+    config.set('downloads', legacy)
+    config.set('providers.settings.synthetic', {'downloads': legacy})
+    values['provider_downloads'] = {
+        'synthetic': dict(directory='safe', ebook='', audiobook='',
+                          command='', post=''),
+    }
+    before = deepcopy(config.data)
+    draft = validate(editor)
+    assert draft.data['downloads']['command'] == []
+    assert draft.data['providers']['settings']['synthetic']['downloads']['directory'] == 'safe'
+    assert config.data == before
+
+
 def test_active_tasks_only_block_actual_directory_changes(editor):
     assert not validate(editor, has_active_tasks=True).directory_change
     editor[1]['identities'][0]['directory'] = 'renamed'
