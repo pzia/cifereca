@@ -21,11 +21,12 @@ def select_sync_accounts(
     An account ID may be the empty upstream primary identifier. The caller
     must never infer a credential or profile from provider name alone.
     """
-    for value in (provider, identity, credential, account_id):
-        if value is None and value is account_id:
-            continue
+    for value in (provider, identity, credential):
         if type(value) is not str or any(c in value for c in "\x00\r\n"):
             raise SyncSelectionError("invalid_source_selector")
+    if account_id is not None and (type(account_id) is not str
+                                   or any(c in account_id for c in "\x00\r\n")):
+        raise SyncSelectionError("invalid_source_selector")
     selected = []
     seen = set()
     for item in accounts:
