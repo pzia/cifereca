@@ -143,7 +143,7 @@ def preview_canonical_duplicate(
             if active:
                 return report(
                     "blocked", "active_references", catalogue=catalogue,
-                    backup=backup, other=not bool(catalogue or backup),
+                    backup=backup, other=True,  # Other references cannot be excluded here.
                 )
             return report("unreferenced", "verified_no_active_references")
     except (OSError, ValueError, TypeError, RuntimeError, RecursionError):
