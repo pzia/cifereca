@@ -81,7 +81,7 @@ def review_paris_adept_transaction(
             matched_refs.add(historical_ref)
         # Multiple v14 branches under one legacy scope cannot be resolved
         # because the historical entitlement has no branch coordinate.
-        if canonical_scopes[scope] > 1:
+        if canonical_scopes[scope] > 1 and (exact_right or history_count):
             overlap = "ambiguous_canonical_branch"
         elif exact_right:
             overlap = "persisted_entitlement_scope_only"
@@ -116,11 +116,14 @@ def review_paris_adept_transaction(
         reasons.append("canonical_exact_source_missing")
     if not historical["sources"]:
         reasons.append("historical_entitlement_missing")
+    if not historical["origins"]:
+        reasons.append("historical_adept_acquisition_missing")
     if historical["origin_resolution"] == "conflicting_records":
         reasons.append("historical_adobe_claims_conflict")
     if canonical["link_resolution"] == "conflicting_records":
         reasons.append("canonical_origin_links_conflict")
-    if any(canonical_scopes[scope] > 1 for scope in canonical_scopes):
+    if any(row["legacy_scope_overlap"] == "ambiguous_canonical_branch"
+           for row in sources):
         reasons.append("historical_branch_unresolvable")
     if unmatched_sources:
         reasons.append("historical_entitlement_without_canonical_source")
