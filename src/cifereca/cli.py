@@ -236,7 +236,10 @@ def main(argv: list[str] | None = None) -> int:
                     or "\x00" in a.loan_id or "\x00" in a.item_id):
                 p.error("audit de transaction exige --loan-id et --item-id non vides et sans NUL")
         if a.paris_adept_cmd == "preview-resolution":
-            if (not a.source_reference_id.strip()
+            if (a.loan_id != a.loan_id.strip() or a.item_id != a.item_id.strip()
+                    or "\r" in a.loan_id or "\n" in a.loan_id
+                    or "\r" in a.item_id or "\n" in a.item_id
+                    or not a.source_reference_id.strip()
                     or a.source_reference_id != a.source_reference_id.strip()
                     or "\x00" in a.source_reference_id
                     or "\r" in a.source_reference_id or "\n" in a.source_reference_id
