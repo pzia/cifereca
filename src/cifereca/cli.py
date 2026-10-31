@@ -78,6 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--scope", choices=["all", "physical", "digital", "unknown"], default="all")
     s.add_argument("--provider", default="all", help="Provider id (paris, gallica, kobo, ...)")
     s.add_argument("--field", choices=["all", "title", "author", "isbn", "subject"], default="all")
+    generic_sync = sub.add_parser("sync", help="Synchronisation ciblée par source, indépendante du fournisseur")
+    generic_sub = generic_sync.add_subparsers(dest="sync_cmd", required=True)
+    for command in ("list", "run"):
+        command_parser = generic_sub.add_parser(command)
+        command_parser.add_argument("--provider", default="")
+        command_parser.add_argument("--identity", default="")
+        command_parser.add_argument("--credential", default="")
+        command_parser.add_argument("--account-id", default="")
+        command_parser.add_argument("--json", action="store_true")
+    generic_sub.choices["run"].add_argument(
+        "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
+    )
     ks_sync = sub.add_parser("kobo-sync", help="Synchronise localement les ebooks Kobo possédés")
     ks_sync.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
     kb = sub.add_parser("kobo-backup", help="Alias historique de kobo-sync")
@@ -284,6 +296,47 @@ def main(argv: list[str] | None = None) -> int:
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library
     try:
+        if a.cmd == "sync":
+            from .core.sync_cli_contract import (
+                SyncSelectionError, select_sync_accounts, require_exact_sync_account,
+                safe_sync_result,
+            )
+            try:
+                if a.username or a.account:
+                    raise SyncSelectionError("legacy_account_selector_unsupported")
+                # Existing Core account discovery: never select a provider
+                # implicitly for a network run. No provider-specific dispatch.
+                service.connect_configured()
+                selectors = dict(
+                    provider=a.provider, identity=a.identity,
+                    credential=a.credential, account_id=a.account_id,
+                )
+                if a.sync_cmd == "list":
+                    selected = select_sync_accounts(list(service.accounts), **selectors)
+                    result = {"status": "success", "sources": [
+                        {"provider": x.provider_id, "identity": x.identity_id,
+                         "credential": x.credential_id, "account_id": x.unique_id,
+                         "enabled": bool(service.sync_source_enabled(x))}
+                        for x in selected
+                    ]}
+                    code = 0
+                else:
+                    if not a.confirm:
+                        raise SyncSelectionError("explicit_run_confirmation_required")
+                    account = require_exact_sync_account(list(service.accounts), **selectors)
+                    raw = service.synchronize_account_source(account)
+                    result = {"provider": account.provider_id,
+                              "identity": account.identity_id,
+                              **safe_sync_result(raw)}
+                    code = 0 if result["status"] in ("success", "complete") else 2
+            except SyncSelectionError as exc:
+                result = {"status": "failed", "code": str(exc)}
+                code = 2
+            except Exception:
+                result = {"status": "failed", "code": "sync_unavailable"}
+                code = 2
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return code
         if a.cmd == "doctor":
             from .support_diagnostic import build_support_report, support_report_text
             if a.json:
