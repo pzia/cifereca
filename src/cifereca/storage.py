@@ -4397,7 +4397,11 @@ class Storage:
                     path.relative_to(root_resolved)
                 except (OSError, ValueError):
                     continue
-                if str(path) not in seen_paths and state != "missing":
+                # A pending dedup tombstone is intentionally absent from the
+                # indexed library. A scan must never turn its recovery
+                # checkpoint into a generic missing placement.
+                if (str(path) not in seen_paths
+                        and state not in ("missing", "dedup_cleanup_pending")):
                     db.execute(
                         "UPDATE placements SET state='missing',updated_at=? WHERE placement_id=?", (now, placement_id)
                     )
