@@ -152,6 +152,29 @@
         "library.maintenance"
       ],
       "requires_contracts": []
+    },
+    {
+      "id": "maintenance.cleanup.duplicates.recover",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_dedup_recovery:RECOVERY_TOOL",
+      "display_name": "Reprendre les nettoyages de doublons interrompus",
+      "description": "Inventorie les tombstones canoniques et reprend le retrait sous confirmation explicite, revalidation Core et verrou partagé.",
+      "version": "0.2.10",
+      "priority": 45,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "La revue est strictement read-only. Une reprise demande le dialogue destructif de Maintenance, un nouveau plan sous verrou et l'action Core canonical_dedup/recover confirmée. Les preuves incohérentes bloquent toute suppression.",
+      "capabilities": [
+        "maintenance.cleanup",
+        "maintenance.cleanup.duplicates.recover"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "library.maintenance"
+      ],
+      "requires_contracts": []
     }
   ]
 }
