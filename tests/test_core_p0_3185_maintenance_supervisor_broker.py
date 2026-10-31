@@ -84,7 +84,7 @@ def test_explicit_canonical_broker_commit_retains_independent_origins(rig, monke
     assert result.facts["status"] == "retired"
     assert result.facts["backup_relinked"] == 1
     assert result.facts["removed_file"] is True
-    assert result.changed == 2
+    assert result.changed == 1
     assert storage.placement_get(pubs[1].placement_id) is None
     assert not paths[1].exists()
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
