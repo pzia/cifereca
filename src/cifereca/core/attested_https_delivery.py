@@ -243,6 +243,9 @@ def download_attested_https(
                 temporary_made = False
                 linked = False
                 written_inode = None
+                # Keep the writer inode alive through link verification;
+                # otherwise an unlink/recreate can reuse st_ino instantly.
+                pinned_fd = None
                 try:
                     file_flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
                                   | getattr(os, "O_NOFOLLOW", 0))
@@ -253,6 +256,7 @@ def download_attested_https(
                         total = 0
                         with os.fdopen(handle, "wb") as writer:
                             written_inode = os.fstat(writer.fileno())
+                            pinned_fd = os.dup(writer.fileno())
                             for chunk in response.iter_bytes(chunk_size=1024 * 1024):
                                 check_current()
                                 total += len(chunk)
@@ -325,6 +329,8 @@ def download_attested_https(
                                 # Cleanup cannot falsely report a failed GET
                                 # or provoke a second download.
                                 pass
+                        if pinned_fd is not None:
+                            os.close(pinned_fd)
                     return PublicDelivery(
                         physical, digest.hexdigest(), total, content_type, redirects,
                     )
