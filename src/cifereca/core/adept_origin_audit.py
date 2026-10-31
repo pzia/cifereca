@@ -60,7 +60,7 @@ def _selectable_acquisition_ref(acquisition_id: Any) -> str | None:
     """
     if (type(acquisition_id) is not str or not acquisition_id
             or acquisition_id != acquisition_id.strip()
-            or any(char in acquisition_id for char in ("\\x00", "\\r", "\\n"))):
+            or any(char in acquisition_id for char in ("\x00", "\r", "\n"))):
         return None
     return _opaque_ref("acquisition", acquisition_id)
 
