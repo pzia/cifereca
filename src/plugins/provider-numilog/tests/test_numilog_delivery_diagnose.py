@@ -111,3 +111,57 @@ def test_old_journal_without_delivery_never_claims_success():
     ]))
     assert report["coverage"]["delivery_attempts"] == 0
     assert not report["counts"]
+
+
+def startup(run_ref, phase, code, *, positions=(), task="synthetic-task",
+            attempted=0, downloaded=0, skipped=0, failed=0, status="running"):
+    return {
+        "timestamp": "2026-10-29T06:01:36+00:00",
+        "module": "NUMILOG", "operation": "startup_materialization",
+        "task_ref": task,
+        "detail": {
+            "run_ref": run_ref, "task_ref": task, "task_kind": "source-materialize",
+            "phase": phase, "cause_phase": "preflight", "code": code,
+            "status": status, "attempted": attempted, "downloaded": downloaded,
+            "skipped": skipped, "failed": failed,
+            "item_decisions": [
+                {"position": i, "decision": "already_local_verified" if i <= 3
+                 else "needs_reconciliation"} for i in positions
+            ],
+        },
+    }
+
+
+def test_historical_six_purchases_exposes_preflight_block_before_any_http():
+    rows = [
+        startup("010203040506", "preflight", "started", positions=(1, 2, 3),
+                skipped=3),
+        startup("010203040506", "completed", "preflight_failed",
+                positions=(1, 2, 3, 4, 5, 6), status="blocked", skipped=3),
+    ]
+    report = diagnose.analyze(journal(rows))
+    assert report["coverage"]["delivery_attempts"] == 0
+    assert report["coverage"]["startup_runs"] == 1
+    run = report["startup_runs"][0]
+    assert run["terminal_code"] == "preflight_failed"
+    assert run["status"] == "blocked"
+    assert run["attempted"] == run["downloaded"] == 0
+    assert run["skipped"] == 3
+    assert [item["decision"] for item in run["item_decisions"]] == (
+        ["already_local_verified"] * 3 + ["needs_reconciliation"] * 3
+    )
+
+
+def test_preflight_fields_are_closed_and_task_scoped():
+    malicious = startup("010203040506", "completed", "preflight_failed",
+                        positions=(1,), status="blocked")
+    malicious["detail"]["item_decisions"][0]["decision"] = (
+        "url=https://private.example/?token=SYNTHETIC_SECRET"
+    )
+    other = startup("abcdefabcdef", "completed", "complete",
+                    task="another-task", status="complete")
+    report = diagnose.analyze(journal([malicious, other]),
+                              task_ref="synthetic-task")
+    assert report["coverage"]["startup_runs"] == 1
+    assert report["startup_runs"][0]["item_decisions"] == []
+    assert "SYNTHETIC_SECRET" not in json.dumps(report)
