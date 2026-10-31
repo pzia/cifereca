@@ -99,6 +99,12 @@ def build_identity() -> dict[str, Any]:
                 # Contradictory proofs are never silently reconciled.
                 if packaged_commit is not None and packaged_commit != selected:
                     identity.update(status="unavailable", commit_sha=None, origin="provenance_conflict")
+                elif packaged and packaged_commit is None:
+                    # An installed wheel explicitly reports an unverified
+                    # source build: a GitHub ref alone cannot attest its bytes.
+                    identity.update(status="unavailable", commit_sha=None, origin="wheel_provenance_unavailable")
                 else:
+                    # Compatibility for managed installations predating
+                    # embedded wheel metadata: the updater selected this SHA.
                     identity.update(status="known", commit_sha=selected, origin="managed_github_receipt")
     return identity
