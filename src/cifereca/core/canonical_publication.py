@@ -92,6 +92,7 @@ def publish_completed_acquisition(
     adept_receipt_ref: str = "",
     context_current: Callable[[], bool] | None = None,
     transaction_guard: Callable[[sqlite3.Connection], bool] | None = None,
+    expected_source_policy_revision: str | None = None,
 ) -> PublicationResult:
     """Publish an *already completed* authorized acquisition into schema v14.
 
@@ -179,6 +180,21 @@ def publish_completed_acquisition(
             raise ValueError("canonical_publisher_context_rebound")
         # The Core policy guard uses THIS connection, never Storage methods
         # that would re-enter its non-recursive lock. Recheck after hashing.
+        if expected_source_policy_revision is not None:
+            from ..plugin_api.provider_rights_observation import ProviderRightsScope
+            from .source_sync_consent import policy_in_transaction
+            if (type(expected_source_policy_revision) is not str
+                    or len(expected_source_policy_revision) != 32
+                    or any(ch not in "0123456789abcdef"
+                           for ch in expected_source_policy_revision)):
+                raise ValueError("canonical_source_policy_revision_invalid")
+            policy = policy_in_transaction(db, ProviderRightsScope(
+                scope.identity_id, scope.provider_id,
+                scope.credential_id, scope.account_id,
+            ))
+            if (policy.mode != "on"
+                    or policy.revision != expected_source_policy_revision):
+                raise ValueError("canonical_source_policy_revoked")
         if transaction_guard is not None and transaction_guard(db) is not True:
             raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.
