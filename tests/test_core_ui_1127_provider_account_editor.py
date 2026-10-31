@@ -3,6 +3,8 @@ from __future__ import annotations
 from tests.settings_source import settings_source_text
 
 import ast
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -344,3 +346,49 @@ def test_unknown_provider_editor_keeps_opaque_account_attributes():
     assert editor['original_account']['sync_receipt'] == 'receipt-reference'
     assert editor['enabled'].active is False
     assert data['provider_meta'] == {'opaque': ['untouched']}
+
+
+
+@pytest.mark.parametrize("saved_owner", [None, False, 17, {}, [], "", "  "])
+def test_p1_existing_account_with_invalid_identity_is_not_preassigned(saved_owner):
+    """#3731: do not display the first identity as owner of an old account."""
+    original = {"id": "existing", "identity_id": saved_owner, "enabled": False}
+    editor, _delete, _container, _adw = _render(
+        "provider.future", data=original, configured=[
+            {"id": "alice"}, {"id": "bob"},
+        ],
+    )
+    assert editor["identity"].text == ""
+    assert editor["original_account"]["identity_id"] is saved_owner
+    assert original["identity_id"] is saved_owner
+
+
+def test_p1_missing_persisted_owner_is_not_preassigned_to_first_identity():
+    saved = {"id": "existing", "enabled": True}
+    editor, _delete, _container, _adw = _render(
+        "provider.future", data=saved, configured=[
+            {"id": "alice"}, {"id": "bob"},
+        ],
+    )
+    assert editor["identity"].text == ""
+    assert editor["original_account"] == saved
+    assert "identity_id" not in saved
+
+
+def test_p1_new_provider_account_still_preselects_first_identity():
+    editor, _delete, _container, _adw = _render(
+        "provider.future", data={}, configured=[
+            {"id": "alice"}, {"id": "bob"},
+        ],
+    )
+    assert editor["identity"].text == "alice"
+    assert editor["enabled"].active is False
+
+
+def test_p1_valid_existing_provider_owner_is_preserved_without_normalization():
+    editor, _delete, _container, _adw = _render(
+        "provider.future",
+        data={"id": "existing", "identity_id": "bob"},
+        configured=[{"id": "alice"}, {"id": "bob"}],
+    )
+    assert editor["identity"].text == "bob"
