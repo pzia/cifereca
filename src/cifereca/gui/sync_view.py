@@ -341,21 +341,16 @@ def sync_source_phase_summary(source: object) -> str:
             continue
         raw_status = getattr(row, "status", None)
         status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
-        # A declared *separate* loan materialization path is not evidence of
-        # success in the generic Kobo-only materialization phase. Show where
-        # the user can control it, without hardcoding the supplier into UI.
+        # An unsupported phase must not be rewritten based on a supplier ID.
+        # The capability projection is the only available generic evidence.
         sync_caps = getattr(source, "sync_capabilities", ())
         if (phase == "materialize" and raw_status == "not_supported"
-                and type(sync_caps) is tuple and len(sync_caps) <= 32
-                and "loan_auto_materialization" in sync_caps):
-            status = 'Voir « Télécharger automatiquement les prêts » (opération distincte)'
-        elif (phase == "materialize" and type(raw_status) is str
-                and raw_status == "not_supported"
-                and _public_sync_provider_slug(source) == "numilog"):
-            # The generic materialization broker only supports Kobo. Numilog
-            # has a separate consent/status row on this same page; this header
-            # must not claim that all Numilog local downloads are unsupported.
-            status = "Voir « Sauvegarde automatique des achats Numilog »"
+                and isinstance(sync_caps, (tuple, list, frozenset))
+                and len(sync_caps) <= 32
+                and any(cap in sync_caps for cap in (
+                    "loan_auto_materialization", "local_materialization",
+                ))):
+            status = "Téléchargement distinct de cette synchronisation"
         attempt = _timestamp_label(getattr(row, "last_attempt", ""))
         success = _timestamp_label(getattr(row, "last_success", ""))
         detail = heading + " : " + status
