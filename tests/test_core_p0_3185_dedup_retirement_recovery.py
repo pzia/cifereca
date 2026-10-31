@@ -2,6 +2,10 @@
 import json
 import sqlite3
 from pathlib import Path
+import hashlib
+
+from cifereca.core.canonical_publication import publish_completed_acquisition
+from tests.test_core_p0_3171_atomic_publication_v14 import new_source
 
 import pytest
 
@@ -69,8 +73,8 @@ def test_recovery_after_unlink_denial_revalidates_and_finishes(rig, monkeypatch)
     assert not result.cleanup_pending
     assert not paths[1].exists()
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
-    assert storage.placement_get(pubs[1].placement_id)["state"] == "dedup_retired"
-    assert rows(storage) == before
+    assert storage.placement_get(pubs[1].placement_id) is None
+    assert rows(storage) == (1, 2, 3, 3)
     assert _run_recovery(rig).cleanup_pending is False
 
 
@@ -100,7 +104,7 @@ def test_missing_copy_after_interruption_is_not_an_active_placement(rig, monkeyp
     result = _run_recovery(rig)
     assert result.retired_placement and not result.removed_file
     assert not result.cleanup_pending
-    assert storage.placement_get(pubs[1].placement_id)["state"] == "dedup_retired"
+    assert storage.placement_get(pubs[1].placement_id) is None
 
 
 def test_sql_failure_after_unlink_retains_recovery_tombstone(rig):
@@ -108,8 +112,8 @@ def test_sql_failure_after_unlink_retains_recovery_tombstone(rig):
     with storage._lock, storage._connect() as db:
         db.execute(
             "CREATE TRIGGER block_retired_state "
-            "BEFORE UPDATE OF state ON placements "
-            "WHEN NEW.state='dedup_retired' "
+            "BEFORE DELETE ON placements "
+            "WHEN OLD.state='dedup_cleanup_pending' "
             "BEGIN SELECT RAISE(ABORT,'synthetic_post_unlink_failure'); END"
         )
     with InterProcessLock(lock_path) as lock:
@@ -166,3 +170,37 @@ def test_foreign_profile_tombstone_cannot_be_recovered(rig, monkeypatch):
         )
     assert result.cleanup_pending and not result.removed_file
     assert paths[1].read_bytes() == BYTES
+
+
+def test_successful_cleanup_releases_path_for_new_unrelated_book(rig):
+    storage, root, paths, pubs, _snapshot, lock_path = rig
+    original_artifact = pubs[1].artifact_id
+    with InterProcessLock(lock_path) as lock:
+        first = retire_verified_canonical_duplicate(
+            storage, library_root=root,
+            candidate_placement_id=pubs[1].placement_id,
+            keeper_placement_id=pubs[0].placement_id,
+            shared_lock=lock,
+        )
+    assert first.retired_placement and first.removed_file
+    assert not first.cleanup_pending
+    assert storage.placement_get(pubs[1].placement_id) is None
+    assert not paths[1].exists()
+    # The former path is not a permanent UNIQUE tombstone. Publishing a
+    # genuinely different source/artifact there must remain supported.
+    new_bytes = BYTES + b"\nSynthetic new independent file\n"
+    paths[1].write_bytes(new_bytes)
+    source, snapshot = new_source(
+        "A", provider="seller-b", credential="card-b",
+        account="buyer-b", edition="new-independent-book",
+    )
+    new_sha = hashlib.sha256(new_bytes).hexdigest()
+    published = publish_completed_acquisition(
+        storage, library_root=root, path=paths[1], source=source,
+        snapshot=snapshot, final_sha256=new_sha,
+        delivery_receipt_ref="new-synthetic-delivery-receipt",
+    )
+    assert published.artifact_id != original_artifact
+    assert storage.placement_get(published.placement_id)["state"] == "present"
+    assert paths[1].read_bytes() == new_bytes
+    assert paths[0].read_bytes() == BYTES
