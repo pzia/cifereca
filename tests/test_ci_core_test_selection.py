@@ -181,3 +181,31 @@ def test_installed_recorder_missing_headless_contract_fails_to_full_selection(tm
     (tmp_path / "tests").mkdir()
     (tmp_path / native).write_text("# synthetic native test")
     assert selector.select([native], tmp_path) == ("full", ["tests"])
+
+
+def test_imported_test_fixture_forces_full_core_selection(tmp_path):
+    selector = _module()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_fixture.py").write_text("VALUE = 1\n")
+    (tests / "test_consumer.py").write_text("from tests.test_fixture import VALUE\n")
+    assert selector.select(["tests/test_fixture.py"], tmp_path) == ("full", ["tests"])
+
+
+def test_test_filename_used_only_as_data_remains_targeted(tmp_path):
+    selector = _module()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_fixture.py").write_text("VALUE = 1\n")
+    (tests / "test_consumer.py").write_text('PATH = "tests/test_fixture.py"\n')
+    assert selector.select(["tests/test_fixture.py"], tmp_path) == (
+        "changed", ["tests/test_fixture.py"]
+    )
+
+
+def test_pr_ci_forces_full_for_removed_or_renamed_test_modules():
+    workflow = (ROOT / ".github/workflows/pr-ci.yml").read_text(encoding="utf-8")
+    assert 'git diff --name-status "$BASE_SHA...$HEAD_SHA" -- tests/' in workflow
+    assert "grep -Eq '^(D|R[0-9]*|C[0-9]*|T|U)[[:space:]]'" in workflow
+    assert "core_mode=full" in workflow
+    assert "core_targets=tests" in workflow
