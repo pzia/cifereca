@@ -54,6 +54,17 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     credential and account-option schemas; values contain no widgets.
     """
     draft = deepcopy(config)
+    # A malformed snapshot such as accounts={} is iterable but empty:
+    # rebuilding from it could silently delete every editable provider account.
+    # Require actual GTK editor sequences before constructing any draft rows.
+    if type(values.get('identities')) not in (list, tuple):
+        raise SettingsValidationError(
+            'Liste d’identités invalide : recharger les paramètres.'
+        )
+    if type(values.get('accounts')) not in (list, tuple):
+        raise SettingsValidationError(
+            'Liste de comptes fournisseurs invalide : recharger les paramètres.'
+        )
     saved_identities: list[dict[str, Any]] = []
     identity_ids: set[str] = set()
     directory_names: set[str] = set()
