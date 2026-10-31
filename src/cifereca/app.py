@@ -5,6 +5,7 @@ import time
 
 from . import __version__
 from .logging_utils import configure_logging, set_diagnostics_level
+from .startup_revision import startup_git_commit
 from .core import CiferecaCore
 
 
@@ -65,7 +66,7 @@ def main() -> int:
     sys.argv = cleaned
     logger = configure_logging(verbose=verbose)
     t0 = time.monotonic()
-    logger.info("TRACE startup begin version=%s verbose=%s no_plugins=%s forced_plugin_count=%s", __version__, verbose, no_plugins, len(force_plugins))
+    logger.info("TRACE startup begin version=%s git_commit=%s verbose=%s no_plugins=%s forced_plugin_count=%s", __version__, startup_git_commit() or "unavailable", verbose, no_plugins, len(force_plugins))
     try:
         import gi
         gi.require_version("Gtk", "4.0")
