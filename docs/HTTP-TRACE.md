@@ -156,12 +156,18 @@ l'archive HTTP Trace de cette tentative, sans modifier le comportement des
 opérations réseau :
 
 ```bash
-cifereca sync list --provider numilog --json
-cifereca sync run --provider numilog \
-  --identity '<identity_id>' --credential '<credential_id>' \
-  --account-id '<account_id>' --confirm --json \
+cifereca-cli sync list --identity '<identity_id>' --json
+cifereca-cli sync run --identity '<identity_id>' --provider numilog \
+  --confirm --json \
   --trace-export ./numilog-http-prive.zip --confirm-trace-export
 ```
+
+Si le profil ne possède qu'une source activée, `--provider numilog` est
+facultatif. En présence de plusieurs comptes compatibles, la commande refuse
+de choisir et demande de préciser `--provider`, `--credential` ou
+`--account-id`. La sélection des comptes persistés est faite hors réseau
+avant toute tentative de connexion. `sync list` permet de trouver les
+sélecteurs utiles.
 
 La double confirmation est obligatoire : ce ZIP **brut** peut contenir URLs
 signées, cookies, clés, corps de réponse et informations d'authentification.

@@ -310,8 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             preflight_code = "legacy_account_selector_unsupported"
         elif not a.confirm:
             preflight_code = "explicit_run_confirmation_required"
-        elif not (a.provider and a.identity and a.credential
-                  and a.account_id is not None):
+        elif not a.identity:
             preflight_code = "source_scope_required"
         elif a.trace_export is not None and not a.confirm_trace_export:
             preflight_code = "trace_export_confirmation_required"
@@ -332,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "sync":
             from .core.sync_cli_contract import (
                 SyncSelectionError, select_sync_accounts, require_exact_sync_account,
-                safe_sync_result,
+                require_unique_sync_account, safe_sync_result,
             )
             # Initial connection can authenticate unrelated configured sources.
             # Never enable raw HTTP capture until the exact target is selected.
@@ -349,15 +348,39 @@ def main(argv: list[str] | None = None) -> int:
                     raise SyncSelectionError("explicit_run_confirmation_required")
                 # list reads persisted bindings only: no connect, no
                 # provider session and no remote inventory request.
-                if a.sync_cmd == "run":
-                    if not (a.provider and a.identity and a.credential
-                            and a.account_id is not None):
-                        raise SyncSelectionError("source_scope_required")
-                    service.connect_configured()
                 selectors = dict(
                     provider=a.provider, identity=a.identity,
                     credential=a.credential, account_id=a.account_id,
                 )
+                if a.sync_cmd == "run":
+                    # Resolve one exact enabled persisted binding before ANY
+                    # connection/authentication. Ambiguity must not authorize
+                    # a provider network call or accidental cross-account run.
+                    from types import SimpleNamespace
+                    connections = {
+                        (row["identity_id"], row["provider_id"], row["credential_id"])
+                        for row in core.storage.provider_connections()
+                        if row["enabled"] is True
+                    }
+                    eligible = [
+                        SimpleNamespace(
+                            identity_id=row["identity_id"],
+                            provider_id=row["provider_id"],
+                            credential_id=row["credential_id"],
+                            unique_id=row["account_id"],
+                        )
+                        for row in core.storage.provider_accounts()
+                        if (row["identity_id"], row["provider_id"], row["credential_id"])
+                        in connections
+                    ]
+                    resolved = require_unique_sync_account(eligible, **selectors)
+                    selectors = dict(
+                        provider=resolved.provider_id,
+                        identity=resolved.identity_id,
+                        credential=resolved.credential_id,
+                        account_id=resolved.unique_id,
+                    )
+                    service.connect_configured()
                 if a.sync_cmd == "list":
                     from types import SimpleNamespace
                     connections = {
