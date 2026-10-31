@@ -77,7 +77,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
     account_editors: list[dict[str, Any]] = []
     configured_rows = self.config.provider_accounts()
 
-    def add_account_editor(data: dict[str, Any] | None = None, provider_id: str = "paris") -> None:
+    def add_account_editor(data: dict[str, Any] | None = None, provider_id: str = "") -> None:
         data = dict(data or {})
         provider_id = str(data.get("provider") or provider_id).lower()
         descriptor = descriptors.get(provider_id)
@@ -106,7 +106,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
         delete_button.connect("clicked", delete_account)
 
     for configured in configured_rows:
-        add_account_editor(configured, str(configured.get("provider") or "paris"))
+        add_account_editor(configured, str(configured.get("provider") or ""))
 
     for add, provider_id in build_provider_account_buttons(
         section=box, descriptors=descriptors.values(),
