@@ -442,3 +442,42 @@ def test_legacy_backup_profile_index_out_of_range_preserves_default(editor):
     values = editor[1]
     values["vault_profile_index"] = 99
     assert validate(editor).data["kobo_backup"]["display_profile"] == "Android"
+
+
+def test_generic_provider_duplicate_account_ids_rejected_before_save(editor):
+    config, values = editor
+    values['accounts'] = [
+        account('future-provider', account_id='same'),
+        account('future-provider', account_id='same'),
+    ]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='dupliqué'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert config.data == before
+
+
+def test_generic_provider_empty_account_id_rejected(editor):
+    values = editor[1]
+    values['accounts'] = [account('future-provider', account_id='')]
+    with pytest.raises(SettingsValidationError, match='vide ou dupliqué'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+
+
+def test_provider_descriptor_disappearing_mid_edit_is_safe_error(editor):
+    config, values = editor
+    values['accounts'] = [account('future-provider', account_id='future-1')]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match='Fournisseur indisponible'):
+        validate(editor, descriptors={})
+    assert config.data == before
+
+
+def test_preserved_unknown_provider_account_id_cannot_be_reused(editor):
+    config, values = editor
+    old = dict(id='existing', provider='retired-provider', identity_id='alice',
+               label='Legacy', enabled=False, credentials={}, options={})
+    config.set('providers.accounts', [old])
+    values['accounts'] = [account('future-provider', account_id='existing')]
+    with pytest.raises(SettingsValidationError, match='dupliqué'):
+        validate(editor, descriptors={'future-provider': descriptor('future-provider')})
+    assert config.provider_accounts() == [old]
