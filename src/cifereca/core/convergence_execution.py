@@ -136,6 +136,7 @@ def execute_admitted_convergence(
         type(account) is not Account
         or type(snapshot) is not ProviderRightsSnapshot
         or type(admitted_epoch) is not int
+        or (persisted_consent is None and expected_source_policy_revision is None)
         or (persisted_consent is not None and type(persisted_consent) is not frozenset)
         or any(type(key) is not SourceKey for key in (persisted_consent or ()))
         or not callable(deliver) or not callable(cancelled)
