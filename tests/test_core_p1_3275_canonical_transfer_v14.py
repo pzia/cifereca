@@ -277,3 +277,43 @@ def test_other_lock_does_not_authorize_canonical_transfer(case):
                 explicitly_authorized=True, shared_lock=unrelated,
             )
     assert rows(db) == before
+
+
+def test_transfer_cannot_resurrect_destination_with_pending_dedup_recovery(case):
+    import json
+    import os
+
+    db, root, a = case
+    b = target(root.parent, "B")
+    first = transfer(db, root, a, b, "A", "B", transfer_id="first-to-B")
+    keeper = target(root.parent, "B", "independent-keeper.pdf")
+    kept_placement = db.placement_put({
+        "path": str(keeper), "artifact_id": first.artifact_id,
+        "identity_id": "B", "state": "present",
+    })
+    st = os.stat(b, follow_symlinks=False)
+    evidence = json.dumps({
+        "core.canonical-dedup-retirement.v1": {
+            "schema": "core.canonical-dedup-retirement.v1",
+            "keeper_placement_id": kept_placement,
+            "stat": {key: getattr(st, "st_" + key) for key in (
+                "dev", "ino", "size", "mtime_ns", "ctime_ns",
+            )},
+        },
+    }, sort_keys=True)
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE placements SET state='dedup_cleanup_pending',"
+            "metadata_json=? WHERE placement_id=?",
+            (evidence, first.placement_id),
+        )
+    before = rows(db)
+    with pytest.raises(ValueError, match="canonical_transfer_pending_duplicate_cleanup"):
+        transfer(db, root, a, b, "A", "B", transfer_id="second-to-B")
+    assert rows(db) == before  # New transfer SourceReference/OriginLink rolled back.
+    with db._lock, db._connect() as sql:
+        assert sql.execute(
+            "SELECT state,metadata_json FROM placements WHERE placement_id=?",
+            (first.placement_id,),
+        ).fetchone() == ("dedup_cleanup_pending", evidence)
+    assert b.read_bytes() == keeper.read_bytes() == a.read_bytes() == BYTES
