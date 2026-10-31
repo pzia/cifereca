@@ -421,7 +421,7 @@ def test_same_inode_overwrite_before_link_never_publishes_stale_digest(
         with os.fdopen(
             os.open(source, os.O_WRONLY | os.O_TRUNC, dir_fd=fd), "wb",
         ) as forged:
-            forged.write(b"forged verified byte")
+            forged.write(b"forgery verified byte")
             forged.flush()
             os.fsync(forged.fileno())
         changed.append(True)
@@ -430,7 +430,7 @@ def test_same_inode_overwrite_before_link_never_publishes_stale_digest(
     intended = b"genuine expected byte"
     # Both have equal length, so an inode-only or file-size check cannot
     # detect this attack. The SHA digest needs a second physical read.
-    assert len(intended) == len(b"forged verified byte")
+    assert len(intended) == len(b"forgery verified byte")
     _client(monkeypatch, lambda request: httpx.Response(
         200, content=intended,
     ))
