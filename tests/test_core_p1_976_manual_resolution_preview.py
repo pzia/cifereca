@@ -252,3 +252,64 @@ def test_cli_preview_rejects_invalid_selection_without_opening_core(
             "--acquisition-ref", acquisition,
         ])
     assert caught.value.code == 2
+
+
+def test_two_canonical_branches_of_same_paris_borrower_block_preview(tmp_path):
+    db, store = _setup(tmp_path)
+    try:
+        with db._lock, db._connect() as conn:
+            _canonical(conn, "source-other-branch", branch="external-loan")
+        report = _preview(store)
+        assert report["status"] == "ambiguous_canonical_branch"
+        assert report["review_reasons"] == [
+            "historical_loan_does_not_attest_canonical_branch"
+        ]
+        _no_permission(report)
+    finally:
+        db.close()
+
+
+def test_other_library_complete_receipt_same_paris_borrower_blocks_preview(tmp_path):
+    first = _historical_acq("alice", "paris-a")
+    second = _historical_acq("bob", "paris-a")
+    second["acquisition_id"] = "acq-cross-library"
+    db, store = _setup(tmp_path, acquisitions=[first, second])
+    try:
+        report = _preview(store)
+        assert report["status"] == "ambiguous_library_destination"
+        assert report["review_reasons"] == [
+            "historical_adept_acquisition_in_other_library"
+        ]
+        _no_permission(report)
+        assert report["recorded_adept_profile_id"] == "adobe-a"
+    finally:
+        db.close()
+
+
+def test_multiple_completed_receipts_same_local_source_block_manual_selection(tmp_path):
+    first = _historical_acq()
+    second = _historical_acq()
+    second["acquisition_id"] = "acq-paris-a-second-receipt"
+    db, store = _setup(tmp_path, acquisitions=[first, second])
+    try:
+        report = _preview(store)
+        assert report["status"] == "ambiguous_historical_acquisitions"
+        assert report["review_reasons"] == [
+            "multiple_completed_receipts_for_local_source"
+        ]
+        assert report["historical_evidence"] == "inventory_attested"
+        _no_permission(report)
+    finally:
+        db.close()
+
+
+def test_another_paris_borrower_receipt_does_not_block_selected_exact_source(tmp_path):
+    first = _historical_acq()
+    second = _historical_acq("bob", "paris-b")
+    db, store = _setup(tmp_path, acquisitions=[first, second])
+    try:
+        report = _preview(store)
+        assert report["status"] == "review_candidate"
+        _no_permission(report)
+    finally:
+        db.close()
