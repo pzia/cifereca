@@ -28,7 +28,7 @@ def test_kobo_scope_remains_notices_only_and_no_acquisition():
     assert "inventaire des livres achetés, droits sur les livres possédés" in result.summary
     assert "ne télécharge aucun ebook" in result.summary
     assert "Acquisition locale Kobo disponible sur commande dédiée" in result.summary
-    assert result.action_label == "Mettre à jour les notices Kobo en ligne"
+    assert result.action_label == "Synchroniser Kobo"
 
 
 def test_public_catalogue_is_not_described_as_a_failed_sync():
