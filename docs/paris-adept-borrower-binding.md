@@ -148,6 +148,27 @@ sans branche canonique ne peut pas résoudre deux branches du même compte.
 `return_authorized=false` reste invariable. Voir
 [la revue historique/canonique](CORE-P1-976-HISTORICAL-CANONICAL-BRIDGE.md).
 
+Pour examiner **une proposition de résolution explicite**, sélectionner une
+`source_reference_id` dans `audit-canonical.sources` et une
+`acquisition_ref` opaque dans `audit-origin.origins`, puis appeler :
+
+```bash
+cifereca-cli paris-adept preview-resolution \
+  --loan-id "<id-pret-paris>" --item-id "<id-item>" \
+  --source-reference-id "<source-reference-id>" \
+  --acquisition-ref "<ref-opaque-16-hex>"
+```
+
+Cette prévisualisation ne crée **aucun** grant ni association. Elle refuse
+les choix absents/ambigus, les profils concurrents, les droits non attestés,
+les liens canoniques incomplets, plusieurs branches v14 portant le même scope
+historique, les reçus ADEPT complets concurrents sous le même compte local et
+les acquisitions enregistrées dans une autre bibliothèque sans preuve
+transactionnelle. Même `review_candidate`
+exige encore la preuve du profil Adobe ayant réellement activé le prêt et
+`return_authorized=false`, `commit_available=false` restent constants.
+Les références sont des sélecteurs locaux, **jamais** des jetons d'autorisation.
+
 La commande globale `audit` effectue un rapprochement **en lecture seule** des prêts actifs
 et acquisitions déjà enregistrés en base, des connexions Paris et des profils
 ADEPT associés. Aucune activation, connexion fournisseur, vérification
