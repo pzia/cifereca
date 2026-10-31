@@ -36,6 +36,48 @@ class _VariantScopeConflict(Conflict):
 
 
 
+def _canonical_b_pair(row: dict[str, Any] | None, keeper: dict[str, Any] | None) -> bool:
+    """The legacy source-scoped deleter cannot retire canonical B placements."""
+    return (
+        type(row) is dict and type(keeper) is dict
+        and row.get("provider_id") is None and row.get("source_item_id") is None
+        and keeper.get("provider_id") is None and keeper.get("source_item_id") is None
+    )
+
+
+def _canonical_maintenance_root(service: Any) -> Path:
+    """Only the configured library root may authorize a physical maintenance."""
+    config = getattr(service, "config", None)
+    get = getattr(config, "get", None)
+    if not callable(get):
+        raise Conflict("Racine de bibliothèque indisponible", code="canonical_dedup_root_unavailable")
+    raw = get("library.directory", None)
+    if (type(raw) is not str or not 0 < len(raw) <= 4096
+            or any(ord(c) < 32 for c in raw)):
+        raise Conflict("Racine de bibliothèque indisponible", code="canonical_dedup_root_unavailable")
+    try:
+        root = Path(os.path.expandvars(raw)).expanduser()
+        if (not root.is_absolute() or not root.is_dir()):
+            raise ValueError("non_canonical_root")
+        return root.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        raise Conflict("Racine de bibliothèque indisponible", code="canonical_dedup_root_unavailable") from None
+
+
+def _canonical_maintenance_action(request: LibraryMutationRequest) -> str:
+    """Strictly opt-in: a malformed plan or option may never authorize unlink."""
+    options = request.options
+    if type(options) is not dict:
+        raise Conflict("Option de dédoublonnage invalide", code="canonical_dedup_invalid_action")
+    action = options.get("action", "preview")
+    if type(action) is not str or action not in ("preview", "commit", "recover"):
+        raise Conflict("Option de dédoublonnage invalide", code="canonical_dedup_invalid_action")
+    return action
+
+
+
+
+
 def _media_type(fmt: str, explicit: str | None = None) -> str:
     if explicit:
         return explicit
@@ -660,9 +702,50 @@ class LibraryMaintenanceBrokerImpl:
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             return LibraryMutationPlan(op, f"Matérialiser le placement vers l'identité {request.target_identity_id}", request, changes=(request.placement_id, request.target_identity_id))
+        if op == "canonical_dedup":
+            from .core.canonical_dedup_supervisor import supervise_canonical_duplicate
+
+            action = _canonical_maintenance_action(request)
+            root = _canonical_maintenance_root(self.service)
+            candidate = self.service.storage.placement_get(request.placement_id)
+            keeper = self.service.storage.placement_get(request.keep_placement_id)
+            if candidate is None or keeper is None:
+                raise NotFound("Placement canonique inconnu", code="placement_not_found")
+            # A preview is always read-only; pending tombstones may be
+            # recovered, but must never be re-committed as a fresh deletion.
+            if action == "recover":
+                if candidate.get("state") != "dedup_cleanup_pending":
+                    raise Conflict("Aucun nettoyage canonique à reprendre", code="canonical_dedup_no_pending_cleanup")
+                summary = "Reprendre le nettoyage canonique interrompu"
+                reason = "explicit_recovery_required"
+            else:
+                evidence = supervise_canonical_duplicate(
+                    self.service.storage, library_root=root,
+                    candidate_placement_id=request.placement_id,
+                    keeper_placement_id=request.keep_placement_id,
+                    action="preview",
+                )
+                reason = evidence.reason
+                if action == "commit" and reason not in (
+                    "active_references", "verified_no_active_references",
+                ):
+                    raise Conflict("Doublon canonique non vérifié", code="canonical_dedup_pair_unverified")
+                summary = ("Contrôler le doublon canonique"
+                           if action == "preview" else
+                           "Consolider puis supprimer le doublon canonique confirmé")
+            destructive = action in ("commit", "recover")
+            return LibraryMutationPlan(
+                op, summary, request, destructive=destructive,
+                changes=(request.placement_id,) if destructive else (),
+                warnings=(("La suppression physique nécessite une confirmation explicite.",)
+                          if destructive else ()),
+                facts={"action": action, "reason": reason},
+            )
         if op == "delete_duplicate":
             row=self.service.storage.placement_get(request.placement_id); keep=self.service.storage.placement_get(request.keep_placement_id)
             if row is None or keep is None: raise NotFound("Placement inconnu", code="placement_not_found")
+            if _canonical_b_pair(row, keep):
+                raise Conflict("Utiliser le dédoublonnage canonique supervisé", code="canonical_dedup_supervised_required")
             if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
                 raise _DuplicateScopeConflict("Doublon hors du même périmètre vérifié")
             from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
@@ -860,6 +943,68 @@ class LibraryMaintenanceBrokerImpl:
             result=self.service.materialize_to_identity(request.placement_id,str(request.target_identity_id))
             row=self.service.storage.placement_get(str(result.get("placement_id") or ""))
             return LibraryMutationResult(True,1,plan.summary,(_placement_ref(row),) if row else (),facts=result)
+        if request.operation == "canonical_dedup":
+            from .core.canonical_dedup_supervisor import supervise_canonical_duplicate
+            from .locking import InterProcessLock, LockBusyError
+            from .paths import acquisition_lock_file
+
+            action = _canonical_maintenance_action(request)
+            if (plan.operation != request.operation
+                    or plan.destructive is not (action in ("commit", "recover"))
+                    or type(plan.facts) is not dict
+                    or plan.facts.get("action") != action):
+                raise Conflict("Plan de dédoublonnage invalide", code="canonical_dedup_invalid_plan")
+            root = _canonical_maintenance_root(self.service)
+            if action == "preview":
+                status = supervise_canonical_duplicate(
+                    self.service.storage, library_root=root,
+                    candidate_placement_id=request.placement_id,
+                    keeper_placement_id=request.keep_placement_id,
+                    action="preview",
+                )
+            else:
+                # Explicit confirmation MUST be supplied by the caller after
+                # human approval. A legacy delete_duplicate, an old plan or a
+                # general maintenance scan never implicitly opts in.
+                if request.options.get("confirmed") is not True:
+                    raise Conflict(
+                        "Confirmation explicite requise",
+                        code="canonical_dedup_confirmation_required",
+                    )
+                try:
+                    if control is not None: control.check_cancelled()
+                    with InterProcessLock(acquisition_lock_file()) as lease:
+                        if control is not None: control.check_cancelled()
+                        status = supervise_canonical_duplicate(
+                            self.service.storage, library_root=root,
+                            candidate_placement_id=request.placement_id,
+                            keeper_placement_id=request.keep_placement_id,
+                            action=action, shared_lock=lease, confirmed=True,
+                        )
+                except LockBusyError as exc:
+                    raise Conflict(
+                        "Bibliothèque occupée : dédoublonnage indisponible",
+                        code="canonical_dedup_lock_busy",
+                    ) from exc
+            changed = (
+                status.catalogue_relinked + status.backup_relinked
+                + status.receipt_relinked + int(status.removed_file)
+            )
+            return LibraryMutationResult(
+                status.status in ("preview_ready", "retired"),
+                changed if action != "preview" else 0,
+                "Dédoublonnage canonique supervisé : " + status.status,
+                warnings=(("Reprise explicite nécessaire.",)
+                          if status.status == "cleanup_pending" else ()),
+                facts={
+                    "action": action, "status": status.status,
+                    "reason": status.reason,
+                    "catalogue_relinked": status.catalogue_relinked,
+                    "backup_relinked": status.backup_relinked,
+                    "receipt_relinked": status.receipt_relinked,
+                    "removed_file": status.removed_file,
+                },
+            )
         if request.operation == "delete_duplicate":
             # The destructive operation must use the same non-blocking,
             # interprocess acquisition lock as Sync. Revalidate and hash
@@ -872,6 +1017,8 @@ class LibraryMaintenanceBrokerImpl:
                     row=self.service.storage.placement_get(request.placement_id)
                     if row is None: return LibraryMutationResult(True,0,"Placement déjà absent")
                     keep=self.service.storage.placement_get(request.keep_placement_id)
+                    if _canonical_b_pair(row, keep):
+                        raise Conflict("Utiliser le dédoublonnage canonique supervisé", code="canonical_dedup_supervised_required")
                     if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
                         raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable")
                     from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
