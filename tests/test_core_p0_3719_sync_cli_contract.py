@@ -22,10 +22,14 @@ def test_unknown_provider_is_not_special_cased():
 
 def test_cross_profile_and_multi_account_are_not_implicitly_selected():
     accounts = [_account(), _account(identity="p2"), _account(account="a2")]
-    with pytest.raises(SyncSelectionError, match="ambiguous_source_selection"):
+    with pytest.raises(SyncSelectionError, match="source_scope_required"):
         require_exact_sync_account(
-            accounts, provider="future-provider", identity="p1", credential="c1", account_id="a1"
+            accounts, provider="future-provider", identity="p1", credential="c1"
         )
+    assert require_exact_sync_account(
+        accounts, provider="future-provider", identity="p1",
+        credential="c1", account_id="a1",
+    ) is accounts[0]
     assert require_exact_sync_account(
         accounts, provider="future-provider", identity="p1",
         credential="c1", account_id="a2",
