@@ -6,7 +6,7 @@ import pytest
 
 from cifereca.core.source_sync_consent import policy_key
 from test_core_p0_3171_atomic_publication_v14 import (
-    new_source, register, target, publish, rows,
+    new_source, register, target, publish, rows, store,
 )
 
 
