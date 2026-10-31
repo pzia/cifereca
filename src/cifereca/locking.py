@@ -54,7 +54,13 @@ class InterProcessLock:
     def acquire(self) -> None:
         if self._lease is not None:
             raise RuntimeError("InterProcessLock already acquired")
-        key = str(self.path.expanduser().resolve(strict=False))
+        # Keep the caller's absolute lexical pathname stable even if a
+        # malicious writer replaces its target with a symlink mid-lock.
+        # The inode check below must reject that replacement, not silently
+        # treat the new target as an unrelated freely acquirable lock.
+        key = os.path.normcase(
+            os.path.abspath(os.path.expanduser(str(self.path)))
+        )
         registry = self._registry()
         if self._reentrant and key in registry:
             held = registry[key]

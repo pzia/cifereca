@@ -83,3 +83,19 @@ def test_double_acquire_same_object_is_rejected(tmp_path: Path):
         lock.release()
     with InterProcessLock(path):
         pass
+
+
+def test_replaced_symlink_target_cannot_borrow_old_lease(tmp_path: Path):
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("Windows test environments may prohibit symlinks")
+    path = tmp_path / "acquisition.lock"
+    replacement = tmp_path / "replacement.lock"
+    with InterProcessLock(path):
+        replacement.write_text("pid=other\n")
+        path.unlink()
+        path.symlink_to(replacement)
+        with pytest.raises(LockBusyError):
+            with InterProcessLock(path, reentrant=True):
+                pass
