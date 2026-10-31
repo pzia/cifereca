@@ -97,6 +97,17 @@ class ConvergenceOutcome:
     artifact_id: str = ""
 
 
+def _source_policy_generation_current(storage, scope, expected_revision: str) -> bool:
+    """Fail closed when a source grant was revoked or renewed after admission."""
+    from .source_sync_consent import read_policy
+    try:
+        policy = read_policy(storage, scope)
+        return policy.mode == "on" and policy.revision == expected_revision
+    except Exception:
+        _LOG.warning("TRACE convergence code=canonical_source_policy_lookup_failed")
+        return False
+
+
 def execute_admitted_convergence(
     service,
     account: Account,
@@ -238,6 +249,15 @@ def execute_admitted_convergence(
 
     def live_consent(key: SourceKey) -> bool:
         try:
+            # A source-level ON grant is generation-bound. A revoked or
+            # renewed grant cannot authorize a GET from a stale snapshot.
+            # Legacy callers without a revision remain on their existing
+            # compatibility path until their admission is migrated.
+            if expected_source_policy_revision is not None:
+                if not _source_policy_generation_current(
+                    initial_storage, scope, expected_source_policy_revision
+                ):
+                    return False
             return consent_still_current(key) is True
         except Exception:
             # Revoked/malformed/unavailable consent state never grants GET.
