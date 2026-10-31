@@ -986,10 +986,10 @@ class LibraryMaintenanceBrokerImpl:
                         "Bibliothèque occupée : dédoublonnage indisponible",
                         code="canonical_dedup_lock_busy",
                     ) from exc
-            changed = (
-                status.catalogue_relinked + status.backup_relinked
-                + status.receipt_relinked + int(status.removed_file)
-            )
+            # Public maintenance.changed counts *retired placements*, not
+            # SQL reference relinks. Report those separately in facts so
+            # existing destructive tool progress remains 0/1 per candidate.
+            changed = int(status.removed_file)
             return LibraryMutationResult(
                 status.status in ("preview_ready", "retired"),
                 changed if action != "preview" else 0,
