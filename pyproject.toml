@@ -36,4 +36,4 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.setuptools.package-data]
-cifereca = ["builtin_ui/*.json", "builtin_ui/*.py", "plugin-release.json"]
+cifereca = ["builtin_ui/*.json", "builtin_ui/*.py", "plugin-release.json", "_build_revision.txt"]
