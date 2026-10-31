@@ -304,7 +304,12 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if a.username or a.account:
                     raise SyncSelectionError("legacy_account_selector_unsupported")
-                # Existing Core account discovery: never select a provider
+                # Fail before provider discovery: connect_configured may
+                # perform authentication/network I/O, even when no book sync
+                # has been requested yet.
+                if a.sync_cmd == "run" and not a.confirm:
+                    raise SyncSelectionError("explicit_run_confirmation_required")
+                # Existing Core account discovery; never select a provider
                 # implicitly for a network run. No provider-specific dispatch.
                 service.connect_configured()
                 selectors = dict(
