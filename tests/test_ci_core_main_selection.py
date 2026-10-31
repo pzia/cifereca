@@ -77,6 +77,15 @@ def test_changed_test_module_reused_as_fixture_forces_full_suite(tmp_path):
     assert select(root, before, head) == ("full", "tests", "shared-test-fixture")
 
 
+def test_dynamic_test_consumer_forces_full_on_main_push(tmp_path):
+    root, _initial = fixture(tmp_path)
+    write(root, "tests/test_dependent.py", 'pytest_plugins = ["tests.test_storage"]\n')
+    before = commit(root, "plugin consumer established")
+    write(root, "tests/test_storage.py", "def test_changed_fixture(): pass\n")
+    head = commit(root, "modify shared pytest plugin")
+    assert select(root, before, head) == ("full", "tests", "shared-test-fixture")
+
+
 def test_ui_component_uses_existing_core_selection_and_smoke_targets(tmp_path):
     root, before = fixture(tmp_path)
     write(root, "src/cifereca/gui/cover_preview.py", "VALUE = 2\n")
