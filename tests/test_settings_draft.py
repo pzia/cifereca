@@ -1464,3 +1464,73 @@ def test_valid_download_and_diagnostics_snapshot_preserves_current_behavior(edit
         "tool", "--safe",
     ]
     assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, True, False, 42, [], {}, ("source",)])
+def test_p1_malformed_provider_account_id_is_not_coerced(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["id"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identifiant de compte fournisseur"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, True, 3, [], {}, ("provider.future",)])
+def test_p1_malformed_provider_slug_never_reaches_descriptor_lookup(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["provider"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Fournisseur indisponible"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, True, 2, [], {}])
+def test_p1_malformed_account_label_does_not_turn_into_saved_text(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["label"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Libellé de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, 4, [], "yes"])
+def test_p1_untyped_account_deletion_flag_is_not_accepted(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["deleted"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Suppression de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, True, 4, [], "source"])
+def test_p1_untyped_account_editor_is_rejected_without_traceback(editor, invalid):
+    config, values = editor
+    values["accounts"] = [invalid]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Compte fournisseur invalide"):
+        validate(editor)
+    assert config.data == before and not config.path.exists()
+
+
+def test_p1_valid_existing_and_new_account_keys_remain_exact(editor):
+    config, values = editor
+    values["accounts"] = [account("provider.future", account_id="source-explicit")]
+    row, = validate(
+        editor, descriptors={"provider.future": descriptor("provider.future")},
+    ).data["providers"]["accounts"]
+    assert row["id"] == "source-explicit"
+    assert row["provider"] == "provider.future"
+    assert row["label"] == "provider.future"
+    assert row["enabled"] is True
