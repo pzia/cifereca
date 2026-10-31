@@ -1,6 +1,6 @@
 """#1498: destructive duplicate cleanup uses real pair counts only."""
 import pytest
-from cifereca.plugin_api import LibraryMutationResult, MaintenancePlan
+from cifereca.plugin_api import Conflict, LibraryMutationResult, MaintenancePlan
 from cifereca_library_audits import DuplicateCleanupTool
 
 
@@ -188,3 +188,77 @@ def test_broker_exception_class_and_message_never_leak_from_duplicate_cleanup(st
         assert secret not in str(result.warnings)
         assert secret not in result.summary
         assert all(secret not in event["message"] for event in control.events)
+
+
+def test_canonical_b_duplicate_falls_back_only_to_supervised_confirmed_broker():
+    class CanonicalBroker(Broker):
+        def plan(self, request):
+            self.requests.append(request)
+            if request.operation == "delete_duplicate":
+                error = Conflict("Use safe canonical maintenance")
+                error.code = "canonical_dedup_supervised_required"
+                raise error
+            assert request.operation == "canonical_dedup"
+            assert request.options == {"action": "commit", "confirmed": True}
+            return request
+
+    broker = CanonicalBroker()
+    tool, plan, control, _ = _case((("B-candidate", "B-keeper"),), broker)
+    result = tool.run(plan, control)
+    assert result.ok and result.changed == 1
+    assert [(request.operation, request.placement_id, request.keep_placement_id)
+            for request in broker.requests] == [
+        ("delete_duplicate", "B-candidate", "B-keeper"),
+        ("canonical_dedup", "B-candidate", "B-keeper"),
+    ]
+    assert all("B-candidate" not in str(e) for e in control.events)
+
+
+def test_unrecognized_legacy_conflict_does_not_authorize_canonical_fallback():
+    class OtherConflictBroker(Broker):
+        def plan(self, request):
+            self.requests.append(request)
+            error = Conflict("PRIVATE_PATH /home/owner/secret.epub")
+            error.code = "legacy_owner_changed"
+            raise error
+
+    broker = OtherConflictBroker()
+    tool, plan, control, _ = _case((("PRIVATE_CANDIDATE", "PRIVATE_KEEP"),), broker)
+    result = tool.run(plan, control)
+    assert not result.ok and result.changed == 0
+    assert result.facts["failures"] == 1
+    assert [r.operation for r in broker.requests] == ["delete_duplicate"]
+    assert "PRIVATE_PATH" not in str(result.warnings)
+    assert "PRIVATE_CANDIDATE" not in str(result.warnings)
+
+
+def test_canonical_fallback_does_not_convert_partial_core_result_into_success():
+    class PendingBroker(Broker):
+        def plan(self, request):
+            self.requests.append(request)
+            if request.operation == "delete_duplicate":
+                error = Conflict("Requires B engine")
+                error.code = "canonical_dedup_supervised_required"
+                raise error
+            return request
+
+        def run(self, request, control):
+            assert request.operation == "canonical_dedup"
+            return LibraryMutationResult(
+                False, 0, "PRIVATE_STACK_OR_SOURCE",
+                warnings=("/home/private/source.epub",),
+                facts={"status": "cleanup_pending"},
+            )
+
+    broker = PendingBroker()
+    tool, plan, control, _ = _case((("B-candidate", "B-keeper"),), broker)
+    result = tool.run(plan, control)
+    assert not result.ok and result.changed == 0
+    assert result.facts["failures"] == 1
+    assert "PRIVATE" not in str(result.warnings)
+    assert "private" not in str(result.warnings)
+    assert [(r.operation, r.options.get("confirmed"))
+            for r in broker.requests] == [
+        ("delete_duplicate", None),
+        ("canonical_dedup", True),
+    ]

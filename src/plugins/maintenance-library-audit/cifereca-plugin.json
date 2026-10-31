@@ -138,7 +138,7 @@
       "priority": 46,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
-      "help_text": "Le plugin ne supprime aucun fichier lui-même : delete_duplicate est planifié et exécuté par library.maintenance, qui revérifie l’identité de l’artefact.",
+      "help_text": "Le plugin ne supprime aucun fichier lui-même : après confirmation destructive, library.maintenance exécute delete_duplicate pour les placements historiques ou canonical_dedup supervisé pour les copies canoniques B, avec contrôles des origines et reprise après interruption.",
       "capabilities": [
         "maintenance.cleanup",
         "maintenance.cleanup.duplicates"
