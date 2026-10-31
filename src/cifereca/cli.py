@@ -78,6 +78,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--scope", choices=["all", "physical", "digital", "unknown"], default="all")
     s.add_argument("--provider", default="all", help="Provider id (paris, gallica, kobo, ...)")
     s.add_argument("--field", choices=["all", "title", "author", "isbn", "subject"], default="all")
+    acquisition_audit = sub.add_parser(
+        "acquisition-audit", help="Audit canonique hors réseau d'une source exacte"
+    )
+    acquisition_audit.add_argument("--provider", default="")
+    acquisition_audit.add_argument("--identity", default="")
+    acquisition_audit.add_argument("--credential", default="")
+    acquisition_audit.add_argument("--account-id", default=None)
+    acquisition_audit.add_argument("--verify-files", action="store_true")
+    acquisition_audit.add_argument("--json", action="store_true")
+    acquisition_audit.add_argument("--output", type=Path, metavar="JSON")
     generic_sync = sub.add_parser("sync", help="Synchronisation ciblée par source, indépendante du fournisseur")
     generic_sub = generic_sync.add_subparsers(dest="sync_cmd", required=True)
     for command in ("list", "run"):
@@ -301,6 +311,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
+    if a.cmd == "acquisition-audit":
+        if a.username or a.account or not a.identity:
+            print(json.dumps({"status": "failed", "code": "source_scope_required"}))
+            return 2
+        if a.output is not None and os.path.lexists(a.output):
+            print(json.dumps({"status": "failed", "code": "audit_destination_exists"}))
+            return 2
+
     if a.cmd == "sync" and a.sync_cmd == "run":
         from .core.sync_cli_contract import SyncSelectionError
         # Reject unsafe/incomplete requests before opening Core, loading
@@ -328,6 +346,47 @@ def main(argv: list[str] | None = None) -> int:
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library
     try:
+        if a.cmd == "acquisition-audit":
+            from types import SimpleNamespace
+            from .core.sync_cli_contract import SyncSelectionError, require_unique_sync_account
+            from .core.acquisition_audit import inspect_exact_source, write_acquisition_audit
+            try:
+                # Persisted local bindings only: no plugin discovery, login,
+                # remote inventory, rights synchronization or file mutation.
+                eligible = [
+                    SimpleNamespace(
+                        identity_id=row["identity_id"],
+                        provider_id=row["provider_id"],
+                        credential_id=row["credential_id"],
+                        unique_id=row["account_id"],
+                    )
+                    for row in core.storage.provider_accounts()
+                ]
+                account = require_unique_sync_account(
+                    eligible, provider=a.provider, identity=a.identity,
+                    credential=a.credential, account_id=a.account_id,
+                )
+                root = service.library_dir() if a.verify_files else None
+                audit = inspect_exact_source(
+                    core.storage, account, library_root=root,
+                    verify_files=a.verify_files,
+                )
+                result = {"status": "success", "audit": audit}
+                if a.output is not None:
+                    write_acquisition_audit(a.output, audit)
+                    result = {"status": "success", "output": "created"}
+                code = 0
+            except SyncSelectionError as exc:
+                result = {"status": "failed", "code": str(exc)}
+                code = 2
+            except FileExistsError:
+                result = {"status": "failed", "code": "audit_destination_exists"}
+                code = 2
+            except Exception:
+                result = {"status": "failed", "code": "audit_unavailable"}
+                code = 2
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return code
         if a.cmd == "sync":
             from .core.sync_cli_contract import (
                 SyncSelectionError, select_sync_accounts, require_exact_sync_account,
