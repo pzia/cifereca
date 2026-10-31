@@ -160,7 +160,6 @@ def repair_exact_published_staging(
             or not placement_id or not isinstance(library_root, Path)
             or type(shared_lock) is not InterProcessLock
             or shared_lock._handle is None
-            or shared_lock.path.resolve() != acquisition_lock_file().resolve()
             or not callable(context_current) or not callable(consent_current)
             or (transaction_guard is not None and not callable(transaction_guard))):
         raise ValueError("canonical_stock_admission_required")
@@ -181,6 +180,11 @@ def repair_exact_published_staging(
     root, profile = _profile(storage, library_root, source)
     if _stage_parts(Path(row[0]), profile) is None:
         return False
+    # Recheck the exclusive acquisition lock ONLY for the staging mutation.
+    # Normal present-attested placements are read-only and cannot be
+    # degraded by an unrelated repair-specific admission configuration.
+    if shared_lock.path.resolve() != acquisition_lock_file().resolve():
+        raise ValueError("canonical_stock_lock_mismatch")
     # Only verified historical staging may reach the expensive proof/FS gate.
     old = _path_verified(
         storage, root=root, source=source, path=Path(row[0]),
