@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .build_identity import build_identity
 from .paths import config_file, database_file
 from .storage import CURRENT_SCHEMA_VERSION
 
@@ -182,6 +183,7 @@ def build_support_report(
     ]
     overall = "error" if "error" in statuses else ("warning" if "warning" in statuses else "ok")
     provenance = install.get("provenance") if isinstance(install.get("provenance"), dict) else {}
+    identity = build_identity()
 
     report = {
         "format": 1,
@@ -194,9 +196,10 @@ def build_support_report(
             "source": provenance.get("type") or "unknown",
             "repository": provenance.get("repository") or "",
             "ref": provenance.get("ref") or "",
-            "commit": provenance.get("commit") or "",
+            "commit": identity["commit_sha"] or "",
             "installed_at": install.get("installed_at") or "",
         },
+        "build_identity": identity,
         "runtime": runtime,
         "database": db,
         "config": cfg,
