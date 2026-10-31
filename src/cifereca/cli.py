@@ -90,6 +90,14 @@ def main(argv: list[str] | None = None) -> int:
     generic_sub.choices["run"].add_argument(
         "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
     )
+    generic_sub.choices["run"].add_argument(
+        "--trace-export", type=Path, metavar="ZIP",
+        help="Capture HTTP brute privée 0600 pendant la sync ciblée ; peut contenir des credentials"
+    )
+    generic_sub.choices["run"].add_argument(
+        "--confirm-trace-export", action="store_true",
+        help="Je confirme la création locale d'un ZIP HTTP brut incluant possiblement des secrets"
+    )
     ks_sync = sub.add_parser("kobo-sync", help="Synchronise localement les ebooks Kobo possédés")
     ks_sync.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
     kb = sub.add_parser("kobo-backup", help="Alias historique de kobo-sync")
@@ -305,6 +313,14 @@ def main(argv: list[str] | None = None) -> int:
         elif not (a.provider and a.identity and a.credential
                   and a.account_id is not None):
             preflight_code = "source_scope_required"
+        elif a.trace_export is not None and not a.confirm_trace_export:
+            preflight_code = "trace_export_confirmation_required"
+        elif a.confirm_trace_export and a.trace_export is None:
+            preflight_code = "trace_export_destination_required"
+        elif a.trace_export is not None and os.path.lexists(a.trace_export):
+            # Refuse before any remote provider connection or acquisition.
+            # Core export also checks O_EXCL against symlink/concurrent races.
+            preflight_code = "trace_export_destination_exists"
         if preflight_code is not None:
             print(json.dumps({"status": "failed", "code": preflight_code},
                              ensure_ascii=False))
@@ -318,6 +334,11 @@ def main(argv: list[str] | None = None) -> int:
                 SyncSelectionError, select_sync_accounts, require_exact_sync_account,
                 safe_sync_result,
             )
+            # Initial connection can authenticate unrelated configured sources.
+            # Never enable raw HTTP capture until the exact target is selected.
+            trace_requested = a.sync_cmd == "run" and a.trace_export is not None
+            trace_started = False
+            trace_outcome = "not_started"
             try:
                 if a.username or a.account:
                     raise SyncSelectionError("legacy_account_selector_unsupported")
@@ -370,6 +391,11 @@ def main(argv: list[str] | None = None) -> int:
                     if not a.confirm:
                         raise SyncSelectionError("explicit_run_confirmation_required")
                     account = require_exact_sync_account(list(service.accounts), **selectors)
+                    if trace_requested:
+                        from .logging_utils import diagnostics_level, set_diagnostics_level
+                        trace_previous_level = diagnostics_level()
+                        set_diagnostics_level("trace")
+                        trace_started = True
                     raw = service.synchronize_account_source(account)
                     result = {"provider": account.provider_id,
                               "identity": account.identity_id,
@@ -381,6 +407,22 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 result = {"status": "failed", "code": "sync_unavailable"}
                 code = 2
+            finally:
+                if trace_started:
+                    try:
+                        from .http_trace import HTTP_TRACE
+                        # O_EXCL, atomic ZIP and 0600 are enforced by Core.
+                        # Capture is opt-in and never uploaded or echoed.
+                        HTTP_TRACE.export(a.trace_export)
+                        trace_outcome = "created"
+                    except Exception:
+                        trace_outcome = "export_failed"
+                    finally:
+                        set_diagnostics_level(trace_previous_level)
+            if trace_requested:
+                result["http_trace"] = trace_outcome
+                if trace_outcome == "export_failed":
+                    code = 2
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return code
         if a.cmd == "doctor":

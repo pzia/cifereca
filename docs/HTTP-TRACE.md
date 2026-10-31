@@ -149,6 +149,42 @@ Cette première tranche fournit les primitives et le broker. L'adoption des
 clients Core/plugins et le bouton Diagnostics nécessitent leurs adaptations
 respectives : cette API seule ne prétend pas couvrir leurs échanges existants.
 
+## Capture HTTP privée pendant une Sync CLI ciblée (#3838)
+
+Une synchronisation manuelle d'un compte exact peut **en option** conserver
+l'archive HTTP Trace de cette tentative, sans modifier le comportement des
+opérations réseau :
+
+```bash
+cifereca sync list --provider numilog --json
+cifereca sync run --provider numilog \
+  --identity '<identity_id>' --credential '<credential_id>' \
+  --account-id '<account_id>' --confirm --json \
+  --trace-export ./numilog-http-prive.zip --confirm-trace-export
+```
+
+La double confirmation est obligatoire : ce ZIP **brut** peut contenir URLs
+signées, cookies, clés, corps de réponse et informations d'authentification.
+Ne pas le joindre à un ticket public. La destination doit être absente avant
+l'ouverture du Core ; l'écriture atomique `0600`, sans remplacement ni suivi de
+symlink, demeure vérifiée à l'export. Le CLI n'affiche ni chemin, ni contenu,
+ni credential de la capture, uniquement `http_trace: created`,
+`export_failed` ou `not_started`; un échec d'export rend l'exit code non nul.
+
+Le Core démarre en diagnostic `detailed` pour connecter les providers
+configurés ; la capture `trace` ne s'active **qu'après sélection du compte
+exact**, immédiatement avant `synchronize_account_source`, et cesse après
+l'export, avant fermeture du Core. La connexion préalable n'est pas capturée.
+Le tampon est global au processus : d'éventuelles requêtes HTTPX concurrentes
+durant cette fenêtre peuvent également figurer dans le ZIP ; examiner les
+échanges `producer` et le contexte avant de tirer des conclusions. Aucun
+nouvel appel HTTP n'est effectué par l'export lui-même.
+
+Une réussite fournisseur n'est pas un contrôle du fichier final : vérifier
+séparément le SHA-256, le Placement et les OriginLinks du profil. Pour un
+premier tri sans valeur sensible, analyser l'export ZIP du journal avec
+`src/plugins/provider-numilog/numilog_delivery_diagnose.py` (issue #2797).
+
 ## Destinations publiques avec DNS épinglé — API 1.4.2 (#3335)
 
 `HTTPX_TRANSPORT.public_client(producer=..., timeout=...)` utilise le même
