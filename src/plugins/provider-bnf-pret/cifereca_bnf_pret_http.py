@@ -7,7 +7,6 @@ import logging
 import re
 from uuid import uuid4
 import time
-import traceback
 from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
@@ -21,6 +20,39 @@ ACTIVITY = ORIGIN + '/my_profile/activity'
 
 class ReaderHTTPError(RuntimeError):
     """Only closed codes may leave this transport boundary."""
+
+
+# A provider exception may embed a signed ACSM URL, nonce, session cookie
+# or response text. Only these closed technical codes can enter DIAG_JSON.
+_JOURNAL_READER_CODES = frozenset({
+    "url_refused", "mutation_refused", "post_redirect_refused",
+    "redirect_invalid", "redirect_limit", "auth_required", "access_denied",
+    "rate_limited", "http_unavailable", "unexpected_content", "html_limit",
+    "invalid_dom", "transport_unavailable", "operation_timeout",
+    "auth_interactive_required", "unsupported_form",
+    "authentication_failed", "auth_step_limit",
+    "download_redirect_refused", "invalid_loan_token", "token_limit",
+})
+
+
+
+def _logged_content_type(value: str) -> str:
+    """Keep only a bounded MIME and known charset, never opaque parameters.
+
+    Content-Type is remote-controlled. RFC parameters can carry filenames,
+    signed links or tokens; the journal does not need their values.
+    """
+    if type(value) is not str or len(value) > 256:
+        return "redacted"
+    main, separator, params = value.partition(";")
+    media = main.strip().lower()
+    if re.fullmatch(r"[a-z0-9][a-z0-9.+_-]{0,63}/[a-z0-9][a-z0-9.+_-]{0,63}", media) is None:
+        return "redacted"
+    if separator:
+        charset = re.fullmatch(r"\s*charset=(UTF-8|US-ASCII|ISO-8859-1|WINDOWS-1252)\s*", params, re.IGNORECASE)
+        if charset:
+            return media + "; charset=" + charset.group(1).upper()
+    return media
 
 
 def allowed_url(url: str, *, authenticating: bool = False) -> str:
@@ -124,20 +156,20 @@ class ReaderHTTPClient:
         try:
             with self.http.stream(method, url, **kwargs) as response:
                 detail.update(http_status=response.status_code,
-                              content_type=response.headers.get('content-type', ''))
+                              content_type=_logged_content_type(response.headers.get('content-type', '')))
                 self._observe(dict(detail, event='response'), 'running', started)
                 yield response
         except Exception as exc:
-            code = (str(exc) if isinstance(exc, ReaderHTTPError) else
+            raw_code = str(exc) if isinstance(exc, ReaderHTTPError) else ""
+            code = (raw_code if raw_code in _JOURNAL_READER_CODES else
                     'transport_unavailable' if isinstance(exc, (httpx.HTTPError, UnicodeError))
                     else 'unexpected_failure')
-            # Keep the compatibility error code but never replace the raw
-            # technical cause in the one canonical diagnostic event. This is
-            # the exception already observed, not a new HTTP capture.
+            # The exception class and bounded code are diagnostic evidence.
+            # Raw messages/tracebacks can expose signed URLs, cookies or SAML.
             self._observe(dict(
                 detail, event='terminal', code=code,
-                error_type=type(exc).__name__, error_message=str(exc),
-                error_traceback=traceback.format_exc(),
+                error_type=type(exc).__name__, error_message=code,
+                error_traceback='redacted',
             ), 'failed', started)
             raise
         else:

@@ -229,8 +229,10 @@ class HTTPProviderTests(unittest.TestCase):
                 self.assertEqual((detail['provider'], detail['phase'], detail['code']),
                                  ('bnf-pret', 'login', expected))
                 self.assertEqual(detail['error_type'], 'ReaderHTTPError')
-                self.assertEqual(detail['error_message'], error)
-                self.assertIn(error, detail['error_traceback'])
+                self.assertEqual(detail['error_message'], expected)
+                self.assertEqual(detail['error_traceback'], 'redacted')
+                if error != expected:
+                    self.assertNotIn(error, json.dumps(detail))
             finally:
                 s.close()
 
@@ -247,7 +249,9 @@ class HTTPProviderTests(unittest.TestCase):
             rows = [json.loads(row.split('DIAG_JSON ', 1)[1])
                     for row in logs.output if 'DIAG_JSON ' in row]
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]['detail']['error_message'], message)
+            self.assertEqual(rows[0]['detail']['error_message'], 'bnf_reader_failed')
+            self.assertEqual(rows[0]['detail']['error_traceback'], 'redacted')
+            self.assertNotIn(message, repr(logs.output))
             self.assertEqual(rows[0]['detail']['code'], 'bnf_reader_failed')
             self.assertEqual(rows[0]['detail']['phase'], 'login')
         finally:

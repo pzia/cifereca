@@ -4,7 +4,6 @@ from pathlib import Path
 import hashlib
 import json
 import logging
-import traceback
 from datetime import datetime, timezone
 import threading
 from uuid import uuid4
@@ -108,13 +107,13 @@ class BnfProviderSession(ProviderSession):
 
     def _report_failure(self, phase, error):
         code = _public_code(error)
-        # The public error code is for callers, not a replacement for the
-        # actual cause of this observed failure in the canonical raw journal.
+        # Exception messages and tracebacks may include signed ACSM URLs,
+        # cookies, or SAML contents. Emit only closed, stable diagnostic facts.
         detail = {
             'provider': 'bnf-pret', 'phase': phase, 'code': code,
             'error_type': type(error).__name__,
-            'error_message': str(error),
-            'error_traceback': ''.join(traceback.format_exception(error)),
+            'error_message': code,
+            'error_traceback': 'redacted',
         }
         try:
             if self.diagnostics is not None:

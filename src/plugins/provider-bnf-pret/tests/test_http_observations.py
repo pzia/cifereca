@@ -168,7 +168,7 @@ def test_authentication_has_no_new_http_observations(caplog):
     (RuntimeError("SYNTHETIC_PRIVATE_UNEXPECTED_CAUSE"),
      "unexpected_failure"),
 ])
-def test_canonical_failed_http_event_keeps_raw_exception_and_closed_code(
+def test_canonical_failed_http_event_redacts_private_exception_and_keeps_closed_code(
     failure, reason, caplog,
 ):
     calls = []
@@ -194,10 +194,65 @@ def test_canonical_failed_http_event_keeps_raw_exception_and_closed_code(
         assert detail["logical_endpoint"] == "activity"
         assert detail["code"] == reason  # existing consumer vocabulary
         assert detail["error_type"] == type(failure).__name__
-        assert detail["error_message"] == str(failure)
-        assert str(failure) in detail["error_traceback"]
+        assert detail["error_message"] == reason
+        assert detail["error_traceback"] == "redacted"
+        assert str(failure) not in json.dumps(events)
         assert "http_status" not in detail  # never invent headers/status
         assert "content_type" not in detail
         assert events[0]["detail"]["request_ref"] == detail["request_ref"]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(("failure", "expected"), [
+    (httpx.ConnectTimeout(
+        "https://pret.bnf.fr/loans/synthetic-loan?token=PRIVATE_ACSM_SIGNATURE"
+    ), "transport_unavailable"),
+    (ReaderHTTPError("PRIVATE_ACSM_SIGNATURE cookie=PRIVATE_LOGIN"),
+     "unexpected_failure"),
+])
+def test_private_signed_token_is_absent_from_http_diagnostic_sinks(
+    failure, expected, caplog,
+):
+    def handler(request):
+        raise failure
+
+    client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises((httpx.HTTPError, ReaderHTTPError)):
+                client.activity()
+        rows = observations(caplog)
+        assert len(rows) == 2
+        detail = rows[-1]["detail"]
+        assert detail["code"] == expected
+        assert detail["error_message"] == expected
+        assert detail["error_traceback"] == "redacted"
+        assert "PRIVATE_ACSM_SIGNATURE" not in caplog.text
+        assert "PRIVATE_LOGIN" not in caplog.text
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("text/html; charset=UTF-8", "text/html; charset=UTF-8"),
+    ("application/vnd.adobe.adept+xml", "application/vnd.adobe.adept+xml"),
+    ("application/epub+zip; filename=PRIVATE_ACSM_SIGNATURE", "application/epub+zip"),
+    ("text/html; charset=PRIVATE_ACSM_SIGNATURE", "text/html"),
+    ("not-a-mime?token=PRIVATE_ACSM_SIGNATURE", "redacted"),
+])
+def test_untrusted_mime_parameters_are_not_logged(raw, expected, caplog):
+    client = ReaderHTTPClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            403, headers={"content-type": raw},
+        )
+    ))
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises(ReaderHTTPError, match="access_denied"):
+                client.activity()
+        terminal = observations(caplog)[-1]
+        assert terminal["detail"]["content_type"] == expected
+        assert "PRIVATE_ACSM_SIGNATURE" not in caplog.text
     finally:
         client.close()
