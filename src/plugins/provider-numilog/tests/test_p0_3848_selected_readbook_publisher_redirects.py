@@ -4,8 +4,6 @@ All owned-card HTML, ACSM payloads and remote addresses are synthetic.
 Neither the legacy unselected downloader nor private library scraping gains
 permission to follow an arbitrary external redirect.
 """
-import socket
-
 import httpx
 import pytest
 
@@ -13,6 +11,7 @@ import cifereca_numilog as provider
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
 from tests.test_p0_2797_selected_readbook_dwld_offer import card, chosen_offer, page, rig
 from tests.test_numilog_signed_acsm_transport_p0 import ACSM
+from tests.pinned_public_https_fixture import mock_selected_public_client
 
 
 READBOOK = "https://www.numilog.com/Pages/Compte/readBook.ashx?lid=12&m=dwld"
@@ -21,22 +20,10 @@ EDEN = "https://www.edenlivres.fr/organisations/75/transactions/SYNTHETIC/receip
 NEXT = "https://unknown-publisher.example.org/delivery?token=SYNTHETIC%2FKEEP"
 
 
-@pytest.fixture(autouse=True)
-def public_dns(monkeypatch):
-    seen = []
-
-    def resolve(host, port, **kwargs):
-        seen.append((host, port))
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
-
-    monkeypatch.setattr(provider.socket, "getaddrinfo", resolve)
-    return seen
-
-
 @pytest.mark.parametrize("publisher", [DILICOM, EDEN])
 @pytest.mark.parametrize("extra_redirect", [False, True])
 def test_selected_readbook_follows_external_acsm_redirect_chain(
-    tmp_path, public_dns, publisher, extra_redirect,
+    tmp_path, monkeypatch, publisher, extra_redirect,
 ):
     session, broker, _ = rig(page(card()))
     account, right, offer = chosen_offer(session)
@@ -61,6 +48,7 @@ def test_selected_readbook_follows_external_acsm_redirect_chain(
         follow_redirects=False, trust_env=False,
     )
     session.client.cookies.set("owned-session", "FIXTURE", domain="www.numilog.com")
+    public_clients = mock_selected_public_client(monkeypatch, provider, handler)
     staging = tmp_path / "selected-staging"
     staging.mkdir()
     try:
@@ -84,10 +72,10 @@ def test_selected_readbook_follows_external_acsm_redirect_chain(
         assert all(not req.headers.get("cookie") for req in requests[1:])
         assert all(not req.headers.get("authorization") for req in requests[1:])
         assert all("lid=" not in req.headers.get("referer", "") for req in requests[1:])
-        if provider.url_origin(publisher) not in session.allowed_origins:
-            assert (publisher.split("/")[2], 443) in public_dns
-        if extra_redirect:
-            assert ("unknown-publisher.example.org", 443) in public_dns
+        # Exact selected delivery runs via the Core-pinned public client.
+        # A preliminary socket.getaddrinfo monkeypatch is not proof of
+        # TCP peer pinning; Core's transport has independent security tests.
+        assert len(public_clients) == 1
     finally:
         session.close()
 
