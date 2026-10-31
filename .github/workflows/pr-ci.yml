@@ -149,7 +149,7 @@ jobs:
             fi
           fi
 
-          if matches '^\\.github/workflows/'; then
+          if matches '^\.github/workflows/'; then
             # Scope only an isolated, recognized workflow edit. Any mixed or
             # unknown diff keeps the existing exhaustive CI contract.
             workflow_changed=""
