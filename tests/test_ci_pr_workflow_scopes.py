@@ -41,12 +41,12 @@ def _shell_policy() -> str:
     )
 
 
-def _scope(tmp_path: Path, *paths: str) -> dict[str, str]:
+def _scope(tmp_path: Path, *paths: str, cwd: Path = ROOT) -> dict[str, str]:
     changed = tmp_path / "changed-files.txt"
     changed.write_text("\n".join(paths) + "\n", encoding="utf-8")
     run = subprocess.run(
         ["bash", "-c", _shell_policy(), "--", str(changed)],
-        check=True, capture_output=True, text=True, timeout=10,
+        cwd=cwd, check=True, capture_output=True, text=True, timeout=10,
     )
     return dict(line.split("=", 1) for line in run.stdout.splitlines())
 
@@ -145,3 +145,18 @@ def test_workflow_only_e2e_edit_cannot_disable_its_real_pr_gate():
     assert "    name: E2E GTK · core\n" in source
     assert "    timeout-minutes: 15\n" in source
     assert "continue-on-error: true" not in source
+
+
+@pytest.mark.parametrize("deleted", [
+    ".github/workflows/core-tests.yml",
+    ".github/workflows/plugin-tests.yml",
+    ".github/workflows/e2e-smoke.yml",
+    ".github/workflows/core-install.yml",
+    ".github/workflows/dataset-harness.yml",
+])
+def test_deleted_specialized_workflow_is_rejected(tmp_path, deleted):
+    # The synthetic checkout has no specialized workflow file. The same Bash
+    # policy must fail rather than report successful scoped validation.
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        _scope(tmp_path, deleted, cwd=tmp_path)
+    assert "Specialized CI workflow was deleted" in exc.value.stderr
