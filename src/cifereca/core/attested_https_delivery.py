@@ -269,6 +269,27 @@ def download_attested_https(
                                 dst_dir_fd=descriptor, follow_symlinks=False)
                         linked = True
                         os.fsync(descriptor)
+                        # The original pinned directory can be renamed while
+                        # the stream is in flight. Refuse to hand downstream a
+                        # path now pointing into a different directory/owner.
+                        recheck_fd = _directory_fd(physical)
+                        try:
+                            old_dir = os.fstat(descriptor)
+                            new_dir = os.fstat(recheck_fd)
+                            original = os.stat(
+                                temporary, dir_fd=descriptor, follow_symlinks=False,
+                            )
+                            published = os.stat(
+                                physical.name, dir_fd=recheck_fd, follow_symlinks=False,
+                            )
+                            if ((old_dir.st_dev, old_dir.st_ino)
+                                    != (new_dir.st_dev, new_dir.st_ino)
+                                    or not stat.S_ISREG(published.st_mode)
+                                    or (original.st_dev, original.st_ino)
+                                    != (published.st_dev, published.st_ino)):
+                                raise ValueError("delivery_staging_changed")
+                        finally:
+                            os.close(recheck_fd)
                     except BaseException:
                         # A failed fsync or concurrent cancellation must not
                         # leave the failed attempt advertised as a completed
