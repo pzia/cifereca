@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import tempfile
-from urllib.parse import urljoin
+import secrets
 from xml.etree import ElementTree
 import zipfile
 
@@ -188,108 +187,65 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
         )
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
-        # Always use Core's public-peer pinned transport, never the authenticated
-        # Vault client or system proxies. A 302/307 cannot leak a signed URL,
-        # cookies or an Authorization header to another origin.
+        # The single Core attested-delivery transport owns all supplier
+        # redirects, pinned public TCP peers, staging integrity and limits.
+        # Vault's authenticated client and POSTs never enter this path.
         if not stage_current():
             raise ProviderCapabilityError("kobo_candidate_staging_rebound")
-        # Use an open Linux dirfd: a symlink swap during the Vault or
-        # HTTPX request cannot redirect the candidate into another folder.
-        fd, filename = tempfile.mkstemp(
-            prefix=".kobo-selected-", suffix="." + fmt,
-            dir=Path("/proc/self/fd") / str(stagefd),
-        )
-        path = Path(filename)
-        succeeded = False
+        candidate = target / (".kobo-selected-" + secrets.token_hex(12) + "." + fmt)
+        staged = False
+        accepted = False
         try:
-            with os.fdopen(fd, "wb") as out:
-                if not bound():
-                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
-                with HTTPX_TRANSPORT.public_client(
-                    producer="provider.kobo.delivery", timeout=30,
-                ) as transfer:
-                    # Signed descriptor GET only. Redirects remain explicit:
-                    # no Vault POST/auth, cookies, bearer headers or private
-                    # Referrer may follow the supplier to another origin.
-                    current = url
-                    seen = set()
-                    for hop in range(9):
-                        if not bound():
-                            raise ProviderCapabilityError("kobo_candidate_owner_changed")
-                        if not stage_current():
-                            raise ProviderCapabilityError("kobo_candidate_staging_rebound")
-                        if current in seen:
-                            raise ProviderCapabilityError("kobo_candidate_redirect_loop")
-                        seen.add(current)
-                        # Same policy as the freshly attested GET, independently
-                        # validated before each HTTP request. The Core transport
-                        # pins the actual TCP peer to a public IP on every hop.
-                        if not _safe_https_get({
-                            "transport": "https", "method": "GET", "url": current,
-                        }):
-                            raise ProviderCapabilityError("kobo_candidate_redirect_refused")
-                        transfer.cookies.clear()
-                        with transfer.stream("GET", current, headers={
-                            "Accept": "application/octet-stream",
-                        }, follow_redirects=False) as response:
-                            if not bound():
-                                raise ProviderCapabilityError("kobo_candidate_owner_changed")
-                            if response.status_code in (301, 302, 303, 307, 308):
-                                if hop == 8:
-                                    raise ProviderCapabilityError("kobo_candidate_redirect_limit")
-                                location = response.headers.get("location")
-                                if (type(location) is not str or not location
-                                        or any(ord(ch) < 33 or ord(ch) == 127
-                                               or ch.isspace() or ch == "\\" for ch in location)):
-                                    raise ProviderCapabilityError("kobo_candidate_redirect_refused")
-                                try:
-                                    next_url = urljoin(current, location)
-                                except ValueError:
-                                    raise ProviderCapabilityError("kobo_candidate_redirect_refused") from None
-                                if not _safe_https_get({
-                                    "transport": "https", "method": "GET", "url": next_url,
-                                }):
-                                    raise ProviderCapabilityError("kobo_candidate_redirect_refused")
-                                current = next_url
-                                continue
-                            if response.status_code != 200:
-                                raise ProviderCapabilityError("kobo_candidate_http_unavailable")
-                            declared = response.headers.get("content-length", "")
-                            if declared.isdecimal() and int(declared) > _MAX_DELIVERY_BYTES:
-                                raise ProviderCapabilityError("kobo_candidate_size_exceeded")
-                            media = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                            if media in ("text/html", "text/plain", "application/json"):
-                                raise ProviderCapabilityError("kobo_candidate_not_a_file")
-                            size = 0
-                            for chunk in response.iter_bytes():
-                                if not bound():
-                                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
-                                if not stage_current():
-                                    raise ProviderCapabilityError("kobo_candidate_staging_rebound")
-                                size += len(chunk)
-                                if size > _MAX_DELIVERY_BYTES:
-                                    raise ProviderCapabilityError("kobo_candidate_size_exceeded")
-                                out.write(chunk)
-                            break
-                out.flush()
-                os.fsync(out.fileno())
-            if (not bound() or not _candidate_format_ok(path, fmt)):
-                raise ProviderCapabilityError(
-                    "kobo_candidate_owner_changed" if not bound()
-                    else "kobo_candidate_format_invalid"
-                )
-            # A supplier stream is never a Core receipt or verified OriginLink.
-            # Only this staging path is returned; the signed URL remains private.
+            if not bound():
+                raise ProviderCapabilityError("kobo_candidate_owner_changed")
+            receipt = HTTPX_TRANSPORT.attested_https_download(
+                producer="provider.kobo.delivery", url=url, target=candidate,
+                admission_current=lambda: bound() and stage_current(),
+                headers={"Accept": "application/octet-stream"},
+                timeout=30, max_bytes=_MAX_DELIVERY_BYTES, max_redirects=8,
+            )
+            staged = True
+            if not bound():
+                raise ProviderCapabilityError("kobo_candidate_owner_changed")
             if not stage_current():
                 raise ProviderCapabilityError("kobo_candidate_staging_rebound")
-            succeeded = True
-            return target / path.name, ""
-        except (httpx.HTTPError, OSError, ValueError):
+            if not _candidate_format_ok(receipt.path, fmt):
+                raise ProviderCapabilityError("kobo_candidate_format_invalid")
+            # A staged file is not a Core OriginLink/Placement or consent grant.
+            accepted = True
+            return receipt.path, ""
+        except ValueError as exc:
+            code = str(exc)
+            if code == "delivery_admission_changed":
+                raise ProviderCapabilityError(
+                    "kobo_candidate_owner_changed" if not bound()
+                    else "kobo_candidate_staging_rebound" if not stage_current()
+                    else "kobo_candidate_admission_changed"
+                ) from None
+            known = {
+                "delivery_redirect_loop": "kobo_candidate_redirect_loop",
+                "delivery_redirect_limit": "kobo_candidate_redirect_limit",
+                "delivery_redirect_invalid": "kobo_candidate_redirect_refused",
+                "delivery_redirect_missing": "kobo_candidate_redirect_refused",
+                "delivery_url_invalid": "kobo_candidate_redirect_refused",
+                "delivery_ip_literal_refused": "kobo_candidate_redirect_refused",
+                "delivery_size_exceeded": "kobo_candidate_size_exceeded",
+                "delivery_html_instead_of_file": "kobo_candidate_not_a_file",
+                "delivery_http_status": "kobo_candidate_http_unavailable",
+            }
             raise ProviderCapabilityError(
-                "kobo_candidate_transport_failed"
+                known.get(code, "kobo_candidate_transport_failed")
             ) from None
+        except (httpx.HTTPError, OSError):
+            raise ProviderCapabilityError("kobo_candidate_transport_failed") from None
         finally:
-            if not succeeded:
-                path.unlink(missing_ok=True)
+            if staged and not accepted:
+                # Core has already cleaned unsuccessful streams. Remove a
+                # successfully staged but provider-rejected format only inside
+                # the original Core-created directory inode.
+                try:
+                    os.unlink(candidate.name, dir_fd=stagefd)
+                except OSError:
+                    pass
     finally:
         os.close(stagefd)
