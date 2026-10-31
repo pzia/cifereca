@@ -63,6 +63,8 @@ def qualify_selected_offers(
     # fallback, and never try this preflight without exact persisted consent.
     if not any(SourceKey(scope, row.edition_id, row.right_id,
                          row.kind, snapshot.branch) in (persisted_consent or ())
+               or (persisted_consent is None and row.provider_attested
+                   and row.delivery == "unknown")
                for row in snapshot.rights if row.provider_attested
                and row.delivery == "unknown"):
         return snapshot
