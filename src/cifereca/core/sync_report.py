@@ -85,7 +85,8 @@ def audit_source_counts(storage, account) -> dict[str, object]:
         from .acquisition_staging_evidence import receipt_staging_evidence
         # Exact account only; no title/SHA-only provenance attribution.
         staging = receipt_staging_evidence(
-            db, coords=coords, staging_root=storage.path.parent / "acquisition-work",
+            db, coords=coords, staging_root=(storage.path.parent / "acquisition-work")
+            if isinstance(getattr(storage, "path", None), Path) else None,
             verify_files=True, reference=lambda _ref: "private",
         )
     return {
