@@ -45,7 +45,7 @@ def startup_git_commit() -> str | None:
     """Prefer explicit deployment metadata, packaged SHA, then Git checkout.
 
     No repository path, stderr or Git configuration is logged. Source archives
-    without a .git checkout simply report no Git revision.
+    without a stamped marker or .git checkout report no Git revision.
     """
     configured = os.environ.get("CIFERECA_GIT_COMMIT", "").strip()
     if _REVISION.fullmatch(configured):
