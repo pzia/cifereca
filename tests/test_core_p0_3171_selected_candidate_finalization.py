@@ -437,6 +437,14 @@ def test_post_staging_sql_failure_retains_receipt_then_promotes_without_second_g
     publisher = convergence_execution.publish_completed_acquisition
 
     def unavailable(*_args, **_kwargs):
+        target = Path(_kwargs["path"])
+        assert target.parent == root / "A" / "Acquisitions"
+        assert target.read_bytes() == BYTES
+        # Even after the durable FS copy, a concurrent library scan must not
+        # mistake uncommitted bytes for a received provider acquisition.
+        catalog = LocalCatalog(db, root)
+        assert catalog.index_path(target)["reason"] == "canonical_staging_not_published"
+        assert catalog.scan().cataloged == 0
         raise RuntimeError("private synthetic failure after verified promotion")
 
     monkeypatch.setattr(
@@ -463,3 +471,32 @@ def test_post_staging_sql_failure_retains_receipt_then_promotes_without_second_g
     third = synchronize_account_source(service, service.account)
     assert third["canonical_execution"]["present_attested"] == 1
     assert gets == ["signed-right-offer"]
+
+
+def test_symlinked_final_directory_refuses_promotion_then_recovers_without_get(
+    rig,
+):
+    """#3909: copied staging bytes must never escape the identity directory."""
+    service, db, root = rig
+    _prepare(service)
+    gets = []
+    outside = root.parent / "untrusted"
+    outside.mkdir()
+    (root / "A").mkdir(parents=True, exist_ok=True)
+    (root / "A" / "Acquisitions").symlink_to(outside, target_is_directory=True)
+
+    def candidate(*args, **kwargs):
+        gets.append(kwargs["delivery_offer_id"])
+        return _native(*args, **kwargs)
+
+    service.session.rights_selected_delivery_candidate = candidate
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["failed"] == 1
+    assert gets == ["signed-right-offer"]
+    assert db.placements() == [] and list(outside.iterdir()) == []
+
+    (root / "A" / "Acquisitions").unlink()
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
