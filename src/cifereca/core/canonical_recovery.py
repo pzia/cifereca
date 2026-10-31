@@ -272,8 +272,24 @@ def mark_completed_delivery_published(
             or type(artifact_id) is not str
             or not artifact_id.startswith("sha256:")):
         raise ValueError("canonical_intake_invalid_published_transition")
+    if (len(artifact_id) != 71
+            or any(c not in "0123456789abcdef" for c in artifact_id[7:])
+            or not offer_id or len(offer_id) > 1024
+            or any(c in offer_id for c in "\x00\r\n")):
+        raise ValueError("canonical_intake_invalid_published_transition")
     now = int(time.time())
     with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT status,artifact_id FROM acquisition_ledger "
+            "WHERE acquisition_id=?", (_stage_id(source, offer_id),),
+        ).fetchone()
+        if row is None or row[0] not in (_STAGED, "complete"):
+            raise ValueError("canonical_intake_checkpoint_missing")
+        if row[0] == "complete":
+            if row[1] != artifact_id:
+                raise ValueError("canonical_intake_checkpoint_conflict")
+            return
         db.execute(
             "UPDATE acquisition_ledger SET status='complete',artifact_id=?,"
             "updated_at=? WHERE acquisition_id=? AND status=?",
