@@ -142,3 +142,40 @@ def test_error_label_and_header_attention_are_consistent_for_unknown_provider():
     assert row.prefixes[0].icon_name == "dialog-error-symbolic"
     assert "PRIVATE" not in row.subtitle
     assert window.runner.tasks == []
+
+
+
+@pytest.mark.parametrize(("source_status", "materialization_status"), [
+    ("partial", "failed"),
+    ("partial", "blocked"),
+    ("success", "materialization_failed"),
+    ("success", "failed"),
+    ("running", "failed"),
+])
+def test_failed_materialization_phase_cannot_hide_under_success_or_partial_headline(
+    source_status, materialization_status,
+):
+    item = source(
+        provider="provider.future",
+        status=source_status,
+        materialize=materialization_status,
+        error="Synchronisation partielle" if source_status == "partial" else "",
+        last_success="2026-10-31T09:00:00+00:00",
+    )
+    assert sync_source_attention(item)[0] == "error"
+    shown = sync_source_presentation(item)
+    assert shown.sync_label == "Échec"
+    assert "Synchronisation : Échec" in shown.summary
+    assert "Dernier succès confirmé" in shown.summary
+
+
+def test_partial_inventory_with_successful_local_phase_is_not_a_failure_label():
+    item = source(materialize="success")
+    assert sync_source_attention(item)[0] == "info"
+    assert sync_source_presentation(item).sync_label == "Partielle"
+
+
+def test_non_sync_capable_source_does_not_display_failed_phase_as_download_error():
+    item = source(sync_capable=False, materialize="failed")
+    assert sync_source_attention(item) is None
+    assert sync_source_presentation(item).sync_label == "Non prise en charge"
