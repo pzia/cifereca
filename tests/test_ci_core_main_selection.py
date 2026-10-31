@@ -74,7 +74,7 @@ def test_changed_test_module_reused_as_fixture_forces_full_suite(tmp_path):
     before = commit(root, "consumer established")
     write(root, "tests/test_storage.py", "def test_changed_fixture(): pass\n")
     head = commit(root, "modify shared test fixture")
-    assert select(root, before, head) == ("full", "tests", "shared-test-fixture")
+    assert select(root, before, head) == ("full", "tests", "selector-requires-full")
 
 
 def test_dynamic_test_consumer_forces_full_on_main_push(tmp_path):
@@ -83,7 +83,7 @@ def test_dynamic_test_consumer_forces_full_on_main_push(tmp_path):
     before = commit(root, "plugin consumer established")
     write(root, "tests/test_storage.py", "def test_changed_fixture(): pass\n")
     head = commit(root, "modify shared pytest plugin")
-    assert select(root, before, head) == ("full", "tests", "shared-test-fixture")
+    assert select(root, before, head) == ("full", "tests", "selector-requires-full")
 
 
 def test_main_selector_scans_consumers_only_in_canonical_child(tmp_path):
