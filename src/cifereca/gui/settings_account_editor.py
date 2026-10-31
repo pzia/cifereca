@@ -43,7 +43,15 @@ def build_provider_account_editor(
                 fallback = provider_option(provider_id, field.key, None)
             if not fallback and hasattr(config, "get"):
                 fallback = config.get(field.legacy_config_key)
-        entry.set_text(str(options.get(field.key) or fallback or field.default))
+        # The descriptor text option is optional: never turn None into the
+        # literal string "None" in a widget (and then persist it on save).
+        default = field.default if type(field.default) is str else ""
+        selected = next(
+            (value for value in (options.get(field.key), fallback, default)
+             if type(value) is str and value),
+            "",
+        )
+        entry.set_text(selected)
         group.add(entry)
         option_fields[field.key] = entry
     account_note = getattr(descriptor, "account_note", None)
