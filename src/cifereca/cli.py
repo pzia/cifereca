@@ -101,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
     )
     generic_sub.choices["run"].add_argument(
+        "--verify-files", action="store_true",
+        help="Vérifier les fichiers et SHA-256 dans les audits du rapport ZIP"
+    )
+    generic_sub.choices["run"].add_argument(
         "--report", type=Path, metavar="ZIP",
         help="Rapport local expurgé de synchronisation (compteurs SQLite et phases CLI)"
     )
@@ -343,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
             # A sensitive raw HTTP archive must NEVER masquerade as the
             # redacted acquisition report at the same selected destination.
             preflight_code = "report_trace_destination_conflict"
+        elif a.verify_files and a.report is None:
+            preflight_code = "report_required_for_file_verification"
         elif a.report is not None and os.path.lexists(a.report):
             preflight_code = "report_destination_exists"
         elif a.trace_export is not None and os.path.lexists(a.trace_export):
@@ -464,10 +470,12 @@ def main(argv: list[str] | None = None) -> int:
                         report_account = resolved
                         report_ref = secrets.token_hex(16)
                         report_secret = secrets.token_bytes(32)
+                        report_library_root = service.library_dir() if a.verify_files else None
                         report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                         try:
                             report_before = audit_source_counts(
                                 core.storage, resolved, pseudonym_key=report_secret,
+                                library_root=report_library_root, verify_files=a.verify_files,
                             )
                         except Exception:
                             report_before = {"status": "unavailable", "reason": "audit_unavailable"}
@@ -543,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
                     try:
                         report_after = audit_source_counts(
                             core.storage, report_account, pseudonym_key=report_secret,
+                            library_root=report_library_root, verify_files=a.verify_files,
                         )
                     except Exception:
                         report_after = {"status": "unavailable", "reason": "audit_unavailable"}
