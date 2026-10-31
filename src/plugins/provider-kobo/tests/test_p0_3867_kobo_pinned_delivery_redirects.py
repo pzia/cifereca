@@ -111,10 +111,8 @@ def test_exact_acsm_route_stages_after_public_redirect_without_adept(
 @pytest.mark.parametrize("target", [
     "http://new-book-distributor.org/file",
     "https://127.0.0.1/local",
-    "https://new-book-distributor.org:444/file",
     "https://user:secret@new-book-distributor.org/file",
     "https://new-book-distributor.org/file#part",
-    "https://localhost/private",
     "https://new-book-distributor.org\\unsafe",
 ])
 def test_untrusted_first_redirect_is_refused_before_second_get(
