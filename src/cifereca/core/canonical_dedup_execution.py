@@ -23,6 +23,18 @@ from .canonical_recovery import _lock_ok
 from .convergence_verified_presence import _verified_copy
 
 
+def _closed_reason(exc: BaseException, *, prefix: str, fallback: str) -> str:
+    """Allow only fixed internal diagnostic tokens, never paths or secrets."""
+    if type(exc) is ValueError and len(exc.args) == 1:
+        value = exc.args[0]
+        if (type(value) is str and 0 < len(value) <= 100
+                and value.startswith(prefix)
+                and all(character in "abcdefghijklmnopqrstuvwxyz0123456789_"
+                        for character in value)):
+            return value
+    return fallback
+
+
 @dataclass(frozen=True, slots=True)
 class CanonicalDedupExecutionResult:
     status: str
@@ -154,11 +166,13 @@ def execute_canonical_duplicate(
         catalogue = prepared.catalogue_relinked
         backups = prepared.backup_relinked
         receipts = prepared.receipt_relinked
-    except (ValueError, sqlite3.Error, OSError):
-        # A late refusal leaves both physical copies intact; successful
-        # earlier relinks are durable but must be counted via a new audit.
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        # A late refusal leaves both physical copies intact. Only closed
+        # codes from the canonical prepare/relink primitives may be exposed.
         return CanonicalDedupExecutionResult(
-            "blocked", "reference_relink_failed",
+            "blocked", _closed_reason(
+                exc, prefix="canonical_", fallback="reference_relink_failed",
+            ),
         )
 
     final = preview_canonical_duplicate(
@@ -181,10 +195,12 @@ def execute_canonical_duplicate(
             keeper_placement_id=keeper_placement_id,
             shared_lock=shared_lock,
         )
-    except (ValueError, sqlite3.Error, OSError):
+    except (ValueError, sqlite3.Error, OSError) as exc:
         return CanonicalDedupExecutionResult(
-            "blocked", "retirement_revalidation_failed",
-            catalogue, backups, receipts,
+            "blocked", _closed_reason(
+                exc, prefix="canonical_retire_",
+                fallback="retirement_revalidation_failed",
+            ), catalogue, backups, receipts,
         )
     if not _keeper_verified(
         storage, library_root=library_root,
