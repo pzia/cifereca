@@ -124,6 +124,17 @@ def preview_paris_adept_resolution_candidate(
                       selected=selected, canonical_source=source, strength=strength)
 
     expected_ref = _opaque_ref("paris", *exact_borrower_scope)
+    if sum(
+        row["source_ref"] == expected_ref
+        for row in historical["origins"]
+    ) > 1:
+        # Several completed receipts at the same local account scope may be
+        # retries or distinct Adobe loans. An arbitrary human-selected row
+        # must not suppress the others, even if profiles currently agree.
+        return result("ambiguous_historical_acquisitions",
+                      ["multiple_completed_receipts_for_local_source"],
+                      selected=selected, canonical_source=source, strength=strength)
+
     borrower_ref = selected.get("paris_borrower_ref")
     if borrower_ref and any(
         row is not selected and row.get("paris_borrower_ref") == borrower_ref
