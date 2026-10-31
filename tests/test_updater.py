@@ -592,6 +592,7 @@ def test_github_wheelhouse_preparation_runs_before_managed_install(tmp_path, mon
     events = []
     def checkout(repository, ref, dest):
         _mini_project(dest)
+        (dest / "src" / "cifereca").mkdir(parents=True)
         (dest / "scripts").mkdir()
         (dest / "scripts" / "prepare-admitted-wheelhouse.py").write_text(
             "print('admitted_wheelhouse_ready')\\n", encoding="utf-8",
