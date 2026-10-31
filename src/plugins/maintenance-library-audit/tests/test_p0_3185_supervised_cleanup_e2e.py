@@ -5,14 +5,97 @@ no GTK fake click, no provider network, and no license/DRM activity.
 """
 from pathlib import Path
 from types import SimpleNamespace
+import hashlib
 
 import pytest
 
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+from cifereca.core.canonical_publication import publish_completed_acquisition
+from cifereca.core.source_convergence import SourceKey
 from cifereca.plugin_api import LibraryMutationRequest, MaintenancePlan
+from cifereca.plugin_api.provider_rights_observation import (
+    ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
+)
+from cifereca.storage import Storage
 from cifereca_library_audits import DuplicateCleanupTool
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
-from tests.test_core_p0_3185_canonical_backup_relink import rig, backup
+
+
+BYTES = b"%PDF-1.7\\nSynthetic completed publication\\n"
+SHA = hashlib.sha256(BYTES).hexdigest()
+STAMP = "2026-10-28T08:00:00+00:00"
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    storage = Storage(tmp_path / "library.sqlite")
+    root = tmp_path / "EBooks"
+    paths, publications = [], []
+    for identity, provider, credential, account, name in (
+        ("A", "seller-a", "card-a", "buyer-a", "first.pdf"),
+        ("A", "seller-b", "card-b", "buyer-b", "second.pdf"),
+        ("B", "seller-c", "card-c", "buyer-c", "foreign.pdf"),
+    ):
+        storage.identity_put({
+            "identity_id": identity, "directory_name": identity, "label": identity,
+        })
+        connection = storage.provider_connection_put({
+            "identity_id": identity, "provider_id": provider,
+            "credential_id": credential, "label": "Synthetic",
+        })
+        storage.provider_account_put({
+            "identity_id": identity, "provider_id": provider,
+            "credential_id": credential, "connection_id": connection,
+            "account_id": account, "label": "Synthetic",
+        })
+        path = root / identity / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(BYTES)
+        scope = ProviderRightsScope(identity, provider, credential, account)
+        source = SourceKey(scope, "book", "purchase", "purchase", "purchases")
+        observed = ProviderRightObservation(
+            "book", "purchase", "purchase", "active",
+            "provider_response", "positive-right-observation", STAMP, "unknown",
+        )
+        rights = ProviderRightsSnapshot(
+            scope, (observed,), status="partial", coverage="partial",
+            branch="purchases",
+        )
+        published = publish_completed_acquisition(
+            storage, library_root=root, path=path,
+            source=source, snapshot=rights, final_sha256=SHA,
+            delivery_receipt_ref="synthetic-completed-delivery",
+        )
+        paths.append(path)
+        publications.append(published)
+    lock_path = tmp_path / "locks" / "acquisition.lock"
+    monkeypatch.setattr(
+        "cifereca.core.canonical_recovery.acquisition_lock_file",
+        lambda: lock_path,
+    )
+    try:
+        yield storage, root, paths, publications, lock_path
+    finally:
+        storage.close()
+
+
+def rows(storage):
+    with storage._lock, storage._connect() as db:
+        return tuple(
+            db.execute("SELECT count(*) FROM " + table).fetchone()[0]
+            for table in ("artifacts", "placements", "source_references", "origin_links")
+        )
+
+
+def backup(rig):
+    storage, _root, paths, _pubs, _lock = rig
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO backup_items(provider_id,credential_id,item_id,"
+            "title,local_path,status,updated_at,identity_id,account_id,"
+            "sha256,size) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("seller-b", "card-b", "book", "Synthetic", str(paths[1]),
+             "complete", 1, "A", "buyer-b", SHA, len(BYTES)),
+        )
 
 
 class _Control:
