@@ -27,6 +27,7 @@ UI_AUX_FILES = {
 FULL_CORE_FILES = {
     "pyproject.toml",
     "scripts/ci-select-core-tests.py",
+    "scripts/ci_select_core_push.py",
     "scripts/ci_test_dependency_guard.py",
     # #2141: the page's actual GTK composition, action grouping and
     # presentation are covered by legacy test_core_p0_* suites, not only

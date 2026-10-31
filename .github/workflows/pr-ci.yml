@@ -81,7 +81,7 @@ jobs:
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
           lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
-          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
+          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_core_push\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
             core=true
           fi
 

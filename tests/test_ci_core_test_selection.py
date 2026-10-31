@@ -53,6 +53,7 @@ def test_pyproject_or_selector_change_keeps_full_suite():
     selector = _module()
     assert selector.select(["pyproject.toml"], ROOT) == ("full", ["tests"])
     assert selector.select(["scripts/ci-select-core-tests.py"], ROOT) == ("full", ["tests"])
+    assert selector.select(["scripts/ci_select_core_push.py"], ROOT) == ("full", ["tests"])
     assert selector.select(["scripts/ci_test_dependency_guard.py"], ROOT) == ("full", ["tests"])
 
 
