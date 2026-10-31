@@ -43,7 +43,7 @@ def _count(rows, allowed: frozenset[str]) -> dict[str, int]:
     return data
 
 
-def audit_source_counts(storage, account) -> dict[str, object]:
+def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None) -> dict[str, object]:
     """One exact persisted source scope; no network and no private rows."""
     coords = (
         account.identity_id, account.provider_id,
@@ -82,8 +82,13 @@ def audit_source_counts(storage, account) -> dict[str, object]:
             "WHERE identity_id=? AND provider_id=? AND credential_id=? "
             "AND account_id=? GROUP BY status", coords,
         ).fetchall()
+    from .acquisition_audit import inspect_exact_source
+    per_resource = inspect_exact_source(
+        storage, account, verify_files=False, pseudonym_key=pseudonym_key,
+    )
     return {
         "schema_version": 1, "audit_scope": "exact_source",
+        "resource_evidence": per_resource,
         "physical_verification": "not_performed",
         "catalogue_projection_verification": "not_performed",
         "rights_by_kind": _count(rights, _KINDS),
@@ -110,7 +115,7 @@ def _safe_result(result: dict[str, object]) -> dict[str, object]:
 def _json_bytes(value: object) -> bytes:
     payload = (json.dumps(value, sort_keys=True, separators=(",", ":"),
                           ensure_ascii=True) + "\n").encode("ascii")
-    if len(payload) > 65536:
+    if len(payload) > 512 * 1024:
         raise ValueError("sync_report_size_limit")
     return payload
 
@@ -155,7 +160,7 @@ def write_sync_report(
         "completed_at": ended,
         "status": safe_result["status"],
         "exit_code": exit_code,
-        "evidence_coverage": "canonical_sqlite_counts_only",
+        "evidence_coverage": "canonical_sqlite_graph_without_filesystem",
         "event_coverage": "cli_milestones_only",
         "build_identity": identity,
     }
