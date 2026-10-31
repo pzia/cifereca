@@ -320,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
             preflight_code = "trace_export_confirmation_required"
         elif a.confirm_trace_export and a.trace_export is None:
             preflight_code = "trace_export_destination_required"
+        elif (a.report is not None and a.trace_export is not None
+              and os.path.abspath(a.report) == os.path.abspath(a.trace_export)):
+            # A sensitive raw HTTP archive must NEVER masquerade as the
+            # redacted acquisition report at the same selected destination.
+            preflight_code = "report_trace_destination_conflict"
         elif a.report is not None and os.path.lexists(a.report):
             preflight_code = "report_destination_exists"
         elif a.trace_export is not None and os.path.lexists(a.trace_export):
