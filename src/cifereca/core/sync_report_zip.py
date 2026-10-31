@@ -29,7 +29,7 @@ _CODES = {
 }
 _COUNTS = _CODES | {
     "staged_visible_in_library", "published_linked_to_origin",
-    "separate_local_and_remote_cards",
+    "separate_local_and_remote_cards", "unlinked_receipts_staged",
 }
 _STATES = {"active", "inactive", "unknown"}
 _KINDS = {"purchase", "loan", "notice", "internal"}
@@ -102,12 +102,18 @@ def _safe_audit(value: Any) -> dict[str, Any]:
                 or attempts is not None and (type(attempts) is not int
                                              or not 0 <= attempts <= 10_000)):
             raise ValueError("report_audit_receipt_invalid")
+        flags = ("physical_artifact_found", "staging_only",
+                 "published_final_placement", "staged_visible_in_library",
+                 "origin_link_present")
+        if any(type(item.get(flag)) is not bool for flag in flags):
+            raise ValueError("report_audit_receipt_invalid")
         code = item.get("error_code")
         safe_receipts.append({
             "receipt_ref": _require_ref(item.get("receipt_ref")),
             "state": item["state"], "attempt_count": attempts,
             "artifact_recorded": item["artifact_recorded"],
-            "error_code": code if code in _EVENT_CODES else "unknown",
+            "error_code": code if type(code) is str and code in _EVENT_CODES else "unknown",
+            **{flag: item[flag] for flag in flags},
         })
     counts = value.get("counts")
     if type(counts) is not dict or any(
@@ -133,6 +139,7 @@ def _safe_audit(value: Any) -> dict[str, Any]:
                            else "presence_only"),
             "provider_inventory": "not_refreshed",
             "catalogue_matching": "exact_origin_only",
+            "legacy_receipts": "exact_account_artifacts_no_source_inference",
         },
     }
 
