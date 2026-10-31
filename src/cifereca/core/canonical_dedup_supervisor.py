@@ -7,6 +7,8 @@ ordinary source Sync: a successful B must not trigger a destructive decision.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+import sqlite3
 from pathlib import Path
 from typing import Literal
 
@@ -44,10 +46,13 @@ class SupervisedCanonicalDedup:
 
 def _verified_postcheck(
     storage, *, library_root: Path, candidate_placement_id: str,
-    keeper_placement_id: str,
+    keeper_placement_id: str, candidate_path: str,
 ) -> bool:
-    """Never report success unless keeper is still B, same-profile and SHAed."""
+    """Require both a verified surviving keeper and physical candidate absence."""
     try:
+        if (type(candidate_path) is not str or not candidate_path
+                or os.path.lexists(candidate_path)):
+            return False
         with storage._lock, storage._connect() as db:
             if db.execute(
                 "SELECT 1 FROM placements WHERE placement_id=?",
@@ -88,11 +93,11 @@ def _verified_postcheck(
                 folder for _, folder in profiles
                 if type(folder) is str and folder
             )
-        return _verified_copy(
+        return (not os.path.lexists(candidate_path) and _verified_copy(
             keeper[0], root=library_root, owner_directory=owner_dirs[0],
             registered_directories=allowed, size=artifact[1],
             sha256=artifact[0],
-        )
+        ) and not os.path.lexists(candidate_path))
     except Exception:
         # An unreadable SQLite/FS postcheck must never be a success signal.
         return False
@@ -128,7 +133,7 @@ def supervise_canonical_duplicate(
             removed,
         )
 
-    def finalize(outcome: CanonicalRetirementResult, *, prep=None):
+    def finalize(outcome: CanonicalRetirementResult, *, candidate_path: str, prep=None):
         if not outcome.retired_placement:
             return report("blocked", "no_retirement_record", prep=prep)
         if outcome.cleanup_pending:
@@ -138,6 +143,7 @@ def supervise_canonical_duplicate(
             storage, library_root=library_root,
             candidate_placement_id=candidate_placement_id,
             keeper_placement_id=keeper_placement_id,
+            candidate_path=candidate_path,
         ):
             return report("postcheck_failed", "keeper_verification_failed",
                           prep=prep, removed=outcome.removed_file)
@@ -167,14 +173,18 @@ def supervise_canonical_duplicate(
     if action == "recover":
         with storage._lock, storage._connect() as db:
             row = db.execute(
-                "SELECT state FROM placements WHERE placement_id=?",
+                "SELECT state,path FROM placements WHERE placement_id=?",
                 (candidate_placement_id,),
             ).fetchone()
-        if row is None or row[0] != "dedup_cleanup_pending":
+        if (row is None or row[0] != "dedup_cleanup_pending"
+                or type(row[1]) is not str or not row[1]):
             return report("blocked", "no_pending_cleanup")
         try:
-            return finalize(recover_canonical_duplicate_retirement(storage, **kwargs))
-        except ValueError:
+            return finalize(
+                recover_canonical_duplicate_retirement(storage, **kwargs),
+                candidate_path=row[1],
+            )
+        except (ValueError, sqlite3.Error, OSError):
             return report("blocked", "recovery_refused")
 
     evidence = preview_canonical_duplicate(
@@ -189,7 +199,7 @@ def supervise_canonical_duplicate(
 
     try:
         prepared = prepare_verified_canonical_duplicate(storage, **kwargs)
-    except ValueError:
+    except (ValueError, sqlite3.Error, OSError):
         # Earlier *safe*, independently committed relinks may remain. A
         # retry will skip these idempotently; neither B nor bytes were lost.
         return report("blocked", "relink_refused")
@@ -204,12 +214,21 @@ def supervise_canonical_duplicate(
     if verified.status != "unreferenced":
         return report("blocked", "revalidation_refused", prep=prepared)
 
+    # Retire will revalidate this exact stored Placement path. Capture it
+    # only for an independent physical postcheck; never expose it in results.
+    with storage._lock, storage._connect() as db:
+        candidate = db.execute(
+            "SELECT path FROM placements WHERE placement_id=? AND state='present'",
+            (candidate_placement_id,),
+        ).fetchone()
+    if candidate is None or type(candidate[0]) is not str or not candidate[0]:
+        return report("blocked", "revalidation_refused", prep=prepared)
     try:
         return finalize(
             retire_verified_canonical_duplicate(storage, **kwargs),
-            prep=prepared,
+            candidate_path=candidate[0], prep=prepared,
         )
-    except ValueError:
+    except (ValueError, sqlite3.Error, OSError):
         return report("blocked", "commit_refused", prep=prepared)
 
 
