@@ -49,7 +49,7 @@ def _logged_content_type(value: str) -> str:
     if re.fullmatch(r"[a-z0-9][a-z0-9.+_-]{0,63}/[a-z0-9][a-z0-9.+_-]{0,63}", media) is None:
         return "redacted"
     if separator:
-        charset = re.fullmatch(r"\\s*charset=(UTF-8|US-ASCII|ISO-8859-1|WINDOWS-1252)\\s*", params, re.IGNORECASE)
+        charset = re.fullmatch(r"\s*charset=(UTF-8|US-ASCII|ISO-8859-1|WINDOWS-1252)\s*", params, re.IGNORECASE)
         if charset:
             return media + "; charset=" + charset.group(1).upper()
     return media
