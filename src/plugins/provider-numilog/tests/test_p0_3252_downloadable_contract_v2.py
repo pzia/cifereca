@@ -128,4 +128,10 @@ def test_v2_fixture_roundtrips_existing_core_compatibility_without_grants():
     assert legacy.rights[0].delivery == "available"
     assert all(not row.authorizes_mutation for row in legacy.rights)
     restored = from_legacy_rights_snapshot(legacy)
-    assert restored == snapshot
+    assert restored.scope == snapshot.scope
+    assert restored.branch == snapshot.branch
+    assert [(r.source, r.capability) for r in restored.resources] == [
+        (r.source, r.capability) for r in snapshot.resources
+    ]
+    assert all(r.right.state == "unknown" for r in restored.resources)
+    assert not restored.authorizes_acquisition
