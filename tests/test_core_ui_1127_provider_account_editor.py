@@ -330,3 +330,17 @@ def test_unknown_provider_editor_preserves_undeclared_retired_credentials():
     assert 'retired_token' not in editor['fields']
     assert editor['original_credentials']['retired_token'] == 'opaque-old-secret'
     assert data['credentials']['retired_token'] == 'opaque-old-secret'
+
+
+def test_unknown_provider_editor_keeps_opaque_account_attributes():
+    data = {
+        'id': 'future-account', 'provider': 'future-provider',
+        'enabled': False, 'credentials': {'card': 'current'},
+        'provider_meta': {'opaque': ['untouched']},
+        'sync_receipt': 'receipt-reference',
+    }
+    editor, _, _, _ = _render('future-provider', data=data)
+    assert editor['original_account']['provider_meta'] == {'opaque': ['untouched']}
+    assert editor['original_account']['sync_receipt'] == 'receipt-reference'
+    assert editor['enabled'].active is False
+    assert data['provider_meta'] == {'opaque': ['untouched']}
