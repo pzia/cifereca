@@ -1,6 +1,13 @@
 """#976 — synthetic local history never grants an ADEPT return from v14 links."""
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from cifereca import cli
+
 from cifereca.core.adept_transaction_reconciliation import (
     review_paris_adept_transaction,
 )
@@ -263,3 +270,62 @@ def test_invalid_transaction_keys_never_access_storage_or_inspector():
         assert result["sources"] == []
         assert result["return_authorized"] is False
         assert "PRIVATE" not in repr(result)
+
+
+def test_cli_transaction_bridge_reads_both_layers_without_provider_connection(
+    tmp_path, monkeypatch, capsys,
+):
+    db = Storage(tmp_path / "cli-bridge.db")
+    try:
+        _artifact(db)
+        with db._lock, db._connect() as conn:
+            _canonical(conn)
+        storage = EvidenceStore(
+            db, rights=[_historical_right()],
+            acquisitions=[_historical_acq()],
+        )
+
+        def forbidden_connection(*args, **kwargs):
+            raise AssertionError("transaction audit must not connect to Paris")
+
+        core = SimpleNamespace(
+            storage=storage,
+            library=SimpleNamespace(connect_configured=forbidden_connection),
+            close=lambda: None,
+        )
+        monkeypatch.setattr(cli.CiferecaCore, "open", lambda **_: core)
+        result = cli.main([
+            "paris-adept", "audit-transaction",
+            "--loan-id", "paris-loan", "--item-id", "item-1",
+        ])
+        report = json.loads(capsys.readouterr().out)
+        assert result == 0
+        assert report["status"] == "scope_overlap_only"
+        assert report["sources"][0]["legacy_scope_overlap"] == (
+            "persisted_entitlement_scope_only"
+        )
+        assert not report["return_authorized"]
+        assert report["adobe_profile_resolution"] == "unknown"
+        assert storage.calls == ["rights", "ledger"]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(("loan", "item"), [
+    (" ", "item-1"), ("paris-loan", ""), ("paris-loan", "\x00item"),
+])
+def test_cli_bridge_bad_transaction_keys_are_refused_before_core_open(
+    monkeypatch, loan, item,
+):
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("invalid transaction keys must not open Core")
+        ),
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli.main([
+            "paris-adept", "audit-transaction",
+            "--loan-id", loan, "--item-id", item,
+        ])
+    assert exc.value.code == 2
