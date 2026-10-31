@@ -58,8 +58,15 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     identity_ids: set[str] = set()
     directory_names: set[str] = set()
     for editor in values['identities']:
-        if editor.get('deleted'):
+        if type(editor) is not dict:
+            raise SettingsValidationError('Éditeur d’identité invalide : recharger les paramètres.')
+        delete_identity = editor.get('deleted', False)
+        if type(delete_identity) is not bool:
+            raise SettingsValidationError('Suppression d’identité invalide : recharger les paramètres.')
+        if delete_identity:
             continue
+        if type(editor.get('id')) is not str:
+            raise SettingsValidationError('Identité invalide : utilisez uniquement lettres, chiffres, point, tiret ou underscore.')
         identity_id = editor['id'].strip()
         if not identity_id or not re.fullmatch('[A-Za-z0-9._-]+', identity_id):
             raise SettingsValidationError('Identité invalide : utilisez uniquement lettres, chiffres, point, tiret ou underscore.')
