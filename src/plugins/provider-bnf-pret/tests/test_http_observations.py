@@ -232,3 +232,27 @@ def test_private_signed_token_is_absent_from_http_diagnostic_sinks(
         assert "PRIVATE_LOGIN" not in caplog.text
     finally:
         client.close()
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("text/html; charset=UTF-8", "text/html; charset=UTF-8"),
+    ("application/vnd.adobe.adept+xml", "application/vnd.adobe.adept+xml"),
+    ("application/epub+zip; filename=PRIVATE_ACSM_SIGNATURE", "application/epub+zip"),
+    ("text/html; charset=PRIVATE_ACSM_SIGNATURE", "text/html"),
+    ("not-a-mime?token=PRIVATE_ACSM_SIGNATURE", "redacted"),
+])
+def test_untrusted_mime_parameters_are_not_logged(raw, expected, caplog):
+    client = ReaderHTTPClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            403, headers={"content-type": raw},
+        )
+    ))
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises(ReaderHTTPError, match="access_denied"):
+                client.activity()
+        terminal = observations(caplog)[-1]
+        assert terminal["detail"]["content_type"] == expected
+        assert "PRIVATE_ACSM_SIGNATURE" not in caplog.text
+    finally:
+        client.close()
