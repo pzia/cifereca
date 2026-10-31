@@ -54,6 +54,13 @@
             "maximum": 100,
             "default": 50,
             "title": "Taille de page"
+          },
+          "inventory_failures_per_page": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3,
+            "default": 0,
+            "title": "Échecs synthétiques par page d’inventaire"
           }
         }
       },
