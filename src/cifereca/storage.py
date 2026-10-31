@@ -4304,12 +4304,17 @@ class Storage:
             # Lock the read + upsert against concurrent SQLite writers.
             db.execute("BEGIN IMMEDIATE")
             current = db.execute(
-                "SELECT placement_id,identity_id,provider_id,source_item_id "
+                "SELECT placement_id,identity_id,provider_id,source_item_id,state "
                 "FROM placements WHERE path=?", (path,),
             ).fetchone()
             if current is not None:
+                # A post-placement dedup tombstone is not a materialization.
+                # Do not resurrect or overwrite its original inode evidence
+                # while an explicit recovery is still pending.
+                if current[4] == "dedup_cleanup_pending":
+                    raise ValueError("dedup_cleanup_pending")
                 for stored, proposed in zip(
-                    current[1:],
+                    current[1:4],
                     (row.get("identity_id"), row.get("provider_id"),
                      row.get("source_item_id")),
                 ):
