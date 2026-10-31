@@ -567,12 +567,17 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
 
     if not capable:
         sync_label = "Non prise en charge"
+    elif status in {"error", "failed"} or (
+        error and not (status == "partial" and getattr(source, "error", None) == "Synchronisation partielle")
+    ):
+        # A genuine broker error takes precedence over a stale partial/running
+        # label, consistent with sync_source_attention. The single closed Core
+        # partial-coverage marker is not an acquisition failure.
+        sync_label = "Échec"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
         sync_label = "Partielle" + (f" · {last_attempt}" if last_attempt else "")
-    elif error or status in {"error", "failed"}:
-        sync_label = "Échec"
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
