@@ -77,7 +77,7 @@ def test_kobo_sync_action_describes_online_notices_not_downloads():
     source = _source(provider_id="kobo", label="Compte Kobo lié")
     presentation = sync_source_presentation(source)
     assert presentation.action_enabled is True
-    assert presentation.action_label == "Synchroniser Paris · Camille"
+    assert presentation.action_label == "Synchroniser Compte Kobo lié"
     assert "ne télécharge aucun ebook" in presentation.summary
     assert "Connexion : Connectée" in presentation.summary
 
