@@ -29,6 +29,9 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
     if not changed_modules:
         return False
     stems = {module.rsplit(".", 1)[-1] for module in changed_modules}
+    # Dynamic imports can construct "tests.<name>" without spelling out a
+    # changed test module. Inert namespace references do not need AST parsing.
+    dynamic_loaders = ("import_module", "__import__", "spec_from_file_location", "SourceFileLoader")
     for glob in TEST_CONSUMER_GLOBS:
         for candidate in root.glob(glob):
             if not candidate.is_file() or candidate.relative_to(root).as_posix() in changed_modules.values():
@@ -36,7 +39,11 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
             if candidate.is_symlink():
                 return True
             source = candidate.read_text(encoding="utf-8", errors="replace")
-            if not any(stem in source for stem in stems) and "tests." not in source:
+            mentions_changed_test = any(stem in source for stem in stems)
+            may_import_dynamically = "tests." in source and any(
+                loader in source for loader in dynamic_loaders
+            )
+            if not mentions_changed_test and not may_import_dynamically:
                 continue
             parsed = ast.parse(source, filename=str(candidate))
             for node in ast.walk(parsed):
