@@ -238,6 +238,16 @@ def execute_admitted_convergence(
 
     def live_consent(key: SourceKey) -> bool:
         try:
+            # A source-level ON grant is generation-bound. A revoked or
+            # renewed grant cannot authorize a GET from a stale snapshot.
+            # Legacy callers without a revision remain on their existing
+            # compatibility path until their admission is migrated.
+            if expected_source_policy_revision is not None:
+                from .source_sync_consent import read_policy
+                policy = read_policy(initial_storage, scope)
+                if (policy.mode != "on"
+                        or policy.revision != expected_source_policy_revision):
+                    return False
             return consent_still_current(key) is True
         except Exception:
             # Revoked/malformed/unavailable consent state never grants GET.
