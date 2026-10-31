@@ -36,7 +36,7 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
             if candidate.is_symlink():
                 return True
             source = candidate.read_text(encoding="utf-8", errors="replace")
-            if not any(stem in source for stem in stems) and "tests.test_" not in source:
+            if not any(stem in source for stem in stems) and "tests." not in source:
                 continue
             parsed = ast.parse(source, filename=str(candidate))
             for node in ast.walk(parsed):
