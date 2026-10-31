@@ -70,7 +70,7 @@ def rig(*, provider="provider.future", mode="manual", interval=60,
     window, broker, calls, _build, _page = _fixture(sources=[])
     source = _source(
         provider_id=provider, identity_id="alice", source_id="exact-route",
-        sync_capabilities=("remote_inventory",) if cap else (),
+        sync_capabilities=("remote_inventory", "scheduled_refresh") if cap else (),
         enabled=enabled, connected=connected, sync_capable=True,
     )
     state = {"mode": mode, "interval_minutes": interval}
@@ -221,6 +221,14 @@ def test_failed_policy_update_is_generic_and_does_not_retry():
     assert state["mode"] == "on_start"
 
 
+def test_remote_inventory_without_scheduled_refresh_never_exposes_fake_consent():
+    fn, w, b, s, scope, group, state, reads, writes, dialogs = rig(cap=False)
+    s.sync_capabilities = ("remote_inventory",)
+    fn(w, b, s, scope, group)
+    assert group.children == []
+    assert reads == writes == dialogs == []
+
+
 def test_modern_sync_page_shows_separate_inventory_and_file_consent(monkeypatch):
     module = ModuleType("cifereca.gui.source_inventory_schedule_controls")
     dialogs = []
@@ -232,7 +240,7 @@ def test_modern_sync_page_shows_separate_inventory_and_file_consent(monkeypatch)
     w, b, calls, _build, _page = _fixture(sources=[])
     source = _source(
         provider_id="provider.future", source_id="opaque-source",
-        sync_capabilities=("remote_inventory",),
+        sync_capabilities=("remote_inventory", "scheduled_refresh"),
     )
     b.sources = lambda iid: [source]
     b.source_sync_consent = lambda sid: dict(
