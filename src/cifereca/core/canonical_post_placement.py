@@ -68,6 +68,31 @@ def verified_post_placement_duplicates(
     return tuple(other_id for other_id, path in candidates if valid(path))
 
 
+def preview_post_placement_supervised_pairs(
+    storage, *, library_root: Path, placement_id: str,
+) -> tuple[tuple[str, str, str], ...]:
+    """Bridge post-B candidates into #3185 preview without committing deletion.
+
+    A source Sync MUST NOT invoke the destructive supervisor. The returned
+    triplets contain only candidate placement IDs, status and reason: no
+    filesystem paths, provider credentials or receipt data.
+    """
+    from .canonical_dedup_supervisor import supervise_canonical_duplicate
+
+    candidates = verified_post_placement_duplicates(
+        storage, library_root=library_root, placement_id=placement_id,
+    )
+    results = []
+    for candidate in candidates:
+        outcome = supervise_canonical_duplicate(
+            storage, library_root=library_root,
+            candidate_placement_id=candidate,
+            keeper_placement_id=placement_id, action="preview",
+        )
+        results.append((candidate, outcome.status, outcome.reason))
+    return tuple(results)
+
+
 _PENDING_PREFIX = "core.canonical-dedup-pending.v1."
 
 
@@ -258,6 +283,7 @@ def clear_checkpoint_if_no_duplicates(
 
 __all__ = [
     "verified_post_placement_duplicates",
+    "preview_post_placement_supervised_pairs",
     "checkpoint_post_placement_duplicates",
     "clear_checkpoint_if_no_duplicates",
 ]
