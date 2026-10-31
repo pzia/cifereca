@@ -19,6 +19,20 @@ def _opaque_ref(*parts: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _paris_borrower_ref(credential_id: Any, account_id: Any) -> str | None:
+    """Opaque local account coordinate; never a proof of borrower ownership.
+
+    Do not stringify malformed historical JSON into a borrower match.
+    Library identity intentionally does not participate: different local
+    destinations can record claims about the same Paris account.
+    """
+    if (type(credential_id) is not str or not credential_id.strip()
+            or type(account_id) is not str or not account_id.strip()
+            or "\x00" in credential_id or "\x00" in account_id):
+        return None
+    return _opaque_ref("paris-borrower", credential_id, account_id)
+
+
 def _artifact_state(metadata: Mapping[str, Any], artifact_inspector: Callable[[Path], Any]) -> str:
     text = str(metadata.get("path") or "").strip()
     if not text:
@@ -164,6 +178,9 @@ def inspect_paris_adept_origins(
         origins.append({
             "library_identity_id": identity,
             "source_ref": _opaque_ref("paris", identity, credential, account),
+            "paris_borrower_ref": _paris_borrower_ref(
+                row.get("credential_id"), row.get("account_id"),
+            ),
             "source_visibility_evidence": (
                 "persisted_entitlement" if recorded_source in recorded_source_keys
                 else "acquisition_only"
@@ -183,10 +200,20 @@ def inspect_paris_adept_origins(
             ),
             "artifact_state": _artifact_state(metadata, artifact_inspector),
         })
+    # An independent borrower-only ref makes a destination mismatch visible
+    # without upgrading an acquisition-only row to provider entitlement.
     sources = sorted({
-        (identity, _opaque_ref("paris", identity, credential, account))
-        for identity, credential, account in source_rows
-    })
+        (
+            str(row.get("identity_id") or ""),
+            _opaque_ref(
+                "paris", str(row.get("identity_id") or ""),
+                str(row.get("credential_id") or ""),
+                str(row.get("account_id") or ""),
+            ),
+            _paris_borrower_ref(row.get("credential_id"), row.get("account_id")),
+        )
+        for row in rights
+    }, key=lambda row: (row[0], row[1], row[2] or ""))
     origins.sort(key=lambda row: (row["source_ref"], row["acquisition_ref"]))
     profiles = {row["recorded_adept_profile_id"] for row in origins if row["recorded_adept_profile_id"]}
     strengths = {row["evidence"] for row in origins}
@@ -251,8 +278,9 @@ def inspect_paris_adept_origins(
         "adobe_loan_state_disagreement": state_disagreement,
         "origin_resolution": origin_resolution,
         "sources": [
-            {"library_identity_id": identity, "source_ref": ref}
-            for identity, ref in sources
+            {"library_identity_id": identity, "source_ref": ref,
+             "paris_borrower_ref": borrower_ref}
+            for identity, ref, borrower_ref in sources
         ],
         "origins": origins,
     }
