@@ -186,8 +186,19 @@ def audit_account(
             "AND credential_id=? AND account_id=? LIMIT ?",
             (identity_id, provider_id, credential_id, account_id, _MAX_ROWS + 1),
         ).fetchall()
+        receipt_placements = db.execute(
+            "SELECT p.artifact_id,p.placement_id,p.path,p.state,"
+            "a.sha256,a.size FROM placements p "
+            "JOIN artifacts a ON a.artifact_id=p.artifact_id "
+            "WHERE p.identity_id=? AND p.artifact_id IN ("
+            "SELECT artifact_id FROM acquisition_ledger "
+            "WHERE identity_id=? AND provider_id=? AND credential_id=? AND account_id=? "
+            "AND artifact_id IS NOT NULL) LIMIT ?",
+            (identity_id, identity_id, provider_id, credential_id,
+             account_id, _MAX_ROWS + 1),
+        ).fetchall()
     if (len(local_cards) > _MAX_ROWS or len(remote_cards) > _MAX_ROWS
-            or len(receipts) > _MAX_ROWS):
+            or len(receipts) > _MAX_ROWS or len(receipt_placements) > _MAX_ROWS):
         raise ValueError("audit_limit")
     cards = {row[0] for row in local_cards if row[1] == "local"}
     remote_items = {row[0] for row in remote_cards if type(row[0]) is str}
@@ -198,6 +209,7 @@ def audit_account(
 
     items: list[dict[str, Any]] = []
     counts: Counter[str] = Counter()
+    observed_stage_placements: set[str] = set()
     for source_id, edition, right, kind, state, can_sync in sources:
         grouped = scoped_links.get(source_id, [])
         has_origin = bool(grouped)
@@ -229,6 +241,8 @@ def audit_account(
             if zone == "staging" and exists:
                 staging_found = True
                 visible_staging |= placement_id in cards
+                if placement_id in cards:
+                    observed_stage_placements.add(placement_id)
         remote_pair = right in remote_items or edition in remote_items
         separated = bool(remote_pair and (linked_ui or visible_staging))
         if final_verified:
@@ -266,19 +280,61 @@ def audit_account(
             # Title/ISBN matching is never authoritative or attempted here.
             "match_basis": "origin_exact" if has_origin else "none",
         })
-    safe_receipts = [{
-        "receipt_ref": _opaque(salt, r[0]),
-        "state": r[1] if r[1] in (
-            "discovered", "pending", "acquiring", "complete",
-            "retryable_error", "attention_required", "failed",
-        ) else "unknown",
-        "artifact_recorded": bool(r[2]),
-        "attempt_count": r[3] if type(r[3]) is int and 0 <= r[3] <= 10_000 else None,
-        "error_code": r[4] if r[4] in (
-            "source_disabled", "operation_busy", "source_sync_partial",
-            "http_error", "preflight_failed", "publication_failed",
-        ) else "unclassified",
-    } for r in receipts]
+    receipt_placement_by_artifact: dict[str, list[tuple]] = {}
+    for artifact_id, placement_id, path, state, sha, size in receipt_placements:
+        receipt_placement_by_artifact.setdefault(artifact_id, []).append(
+            (placement_id, path, state, sha, size)
+        )
+    provider_origin_artifacts = {
+        row[2] for grouped in scoped_links.values() for row in grouped
+    }
+    safe_receipts = []
+    for receipt_id, status, artifact_id, attempts, error_code in receipts:
+        receipt_stage = False
+        receipt_final_verified = False
+        receipt_visible_stage = False
+        receipt_artifact_found = False
+        for placement_id, path, state, sha, size in receipt_placement_by_artifact.get(artifact_id, ()):
+            zone, physical_path, anchor = _path_scope(
+                path, library_root=library_root, owner_directory=owner_directory,
+                staging_roots=staging_roots,
+            )
+            observed = _physical(
+                physical_path, anchor, sha=sha, size=size,
+                verify_files=verify_files,
+            )
+            present = observed in ("verified", "present_unverified")
+            receipt_artifact_found |= present
+            if zone == "staging" and present:
+                receipt_stage = True
+                if placement_id in cards:
+                    receipt_visible_stage = True
+                    if placement_id not in observed_stage_placements:
+                        counts["staged_visible_in_library"] += 1
+                        observed_stage_placements.add(placement_id)
+            if zone == "final" and state == "present" and observed == "verified":
+                receipt_final_verified = True
+        has_exact_origin = artifact_id in provider_origin_artifacts
+        if receipt_stage and not has_exact_origin:
+            counts["unlinked_receipts_staged"] += 1
+        safe_receipts.append({
+            "receipt_ref": _opaque(salt, receipt_id),
+            "state": status if status in (
+                "discovered", "pending", "acquiring", "complete",
+                "retryable_error", "attention_required", "failed",
+            ) else "unknown",
+            "artifact_recorded": bool(artifact_id),
+            "attempt_count": attempts if type(attempts) is int and 0 <= attempts <= 10_000 else None,
+            "error_code": error_code if error_code in (
+                "source_disabled", "operation_busy", "source_sync_partial",
+                "http_error", "preflight_failed", "publication_failed",
+            ) else "unclassified",
+            "physical_artifact_found": receipt_artifact_found,
+            "staging_only": receipt_stage and not receipt_final_verified,
+            "published_final_placement": receipt_final_verified and has_exact_origin,
+            "staged_visible_in_library": receipt_visible_stage,
+            "origin_link_present": has_exact_origin,
+        })
     return {
         "schema_version": 1, "scope": "exact_account",
         "snapshot_availability": "available",
@@ -293,5 +349,6 @@ def audit_account(
             "filesystem": "sha_checked" if verify_files else "presence_only",
             "provider_inventory": "not_refreshed",
             "catalogue_matching": "exact_origin_only",
+            "legacy_receipts": "exact_account_artifacts_no_source_inference",
         },
     }
