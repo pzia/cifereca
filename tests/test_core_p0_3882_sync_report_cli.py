@@ -140,3 +140,16 @@ def test_raw_http_export_cannot_alias_redacted_report(monkeypatch, tmp_path, cap
     assert rc == 2
     assert json.loads(capsys.readouterr().out)["code"] == "report_trace_destination_conflict"
     assert not destination.exists()
+
+
+
+def test_file_verification_needs_report_destination(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("no Core before preflight")),
+    )
+    assert cli.main([
+        "sync", "run", "--identity", "profile-a",
+        "--confirm", "--verify-files",
+    ]) == 2
+    assert json.loads(capsys.readouterr().out)["code"] == "report_required_for_file_verification"
