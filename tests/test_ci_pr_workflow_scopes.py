@@ -35,7 +35,7 @@ def _shell_policy() -> str:
         + BEGIN
         + body
         + "\n"
-        + 'printf "core=%s\\nmode=%s\\ntargets=%s\\nplugins=%s\\nplugin_scope_all=%s\\npackaging=%s\\ninstall=%s\\ndataset=%s\\n" '
+        + 'printf "core=%s\nmode=%s\ntargets=%s\nplugins=%s\nplugin_scope_all=%s\npackaging=%s\ninstall=%s\ndataset=%s\n" '
         + '"$core" "$core_mode" "$core_targets" "$plugins" "$plugin_scope_all" '
         + '"$packaging" "$install" "$dataset"\n'
     )
@@ -86,10 +86,12 @@ def test_only_relevant_workflow_contract_tests_run(tmp_path, path, targets, expe
     assert selected["targets"] != "tests"
 
 
-def test_dataset_workflow_runs_only_simulation_gate(tmp_path):
+def test_dataset_workflow_runs_simulation_and_its_workflow_contract(tmp_path):
     selected = _scope(tmp_path, ".github/workflows/dataset-harness.yml")
     assert selected["dataset"] == "true"
-    assert selected["core"] == "false"
+    assert selected["core"] == "true"
+    assert selected["mode"] == "ci-contract"
+    assert selected["targets"] == "tests/test_ci_pr_workflow_scopes.py"
     assert selected["plugins"] == "false"
     assert selected["packaging"] == "false"
     assert selected["install"] == "false"
@@ -142,6 +144,7 @@ def test_workflow_only_e2e_edit_cannot_disable_its_real_pr_gate():
     event = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
     assert "  pull_request:\n    paths:\n" in event
     assert "      - '.github/workflows/e2e-smoke.yml'\n" in event
+    assert "tests/test_ci_pr_workflow_scopes.py" in _scope(Path(__file__).parent, ".github/workflows/e2e-smoke.yml")["targets"].split()
     assert "    name: E2E GTK · core\n" in source
     assert "    timeout-minutes: 15\n" in source
     assert "continue-on-error: true" not in source
@@ -160,3 +163,19 @@ def test_deleted_specialized_workflow_is_rejected(tmp_path, deleted):
     with pytest.raises(subprocess.CalledProcessError) as exc:
         _scope(tmp_path, deleted, cwd=tmp_path)
     assert "Specialized CI workflow was deleted" in exc.value.stderr
+
+
+def test_dataset_only_edits_cannot_disable_manual_smoke_contract():
+    source = (ROOT / ".github/workflows/dataset-harness.yml").read_text(encoding="utf-8")
+    event = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+    assert "  workflow_dispatch:\n" in event
+    assert "  pull_request:" not in event
+    for command in (
+        "python -m unittest discover -s simulation/tests -v",
+        "python simulation/datasetctl.py up ux-small",
+        "python simulation/datasetctl.py status ux-small",
+        "python simulation/datasetctl.py config ux-small",
+        "python simulation/datasetctl.py down ux-small",
+    ):
+        assert command in source, command
+    assert "if: always()" in source
