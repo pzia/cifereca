@@ -81,7 +81,8 @@ def build_provider_account_editor(
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields,
         "option_fields": option_fields,
-        "original_options": options, "invalid_saved_snapshot": invalid_saved_snapshot,
+        "original_options": options, "original_credentials": credentials,
+        "invalid_saved_snapshot": invalid_saved_snapshot,
         "deleted": False,
     }
     return editor, delete_button
