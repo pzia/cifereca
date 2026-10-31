@@ -8,3 +8,6 @@ dist/
 offline-wheels/
 *.whl
 *.zip
+
+# Generated only in validated release and GitHub checkout staging
+src/cifereca/_build_revision.txt
