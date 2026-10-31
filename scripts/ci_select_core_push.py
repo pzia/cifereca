@@ -38,6 +38,30 @@ def _safe_path(path: str) -> bool:
     return path == "AGENTS.md" or path.startswith(("docs/", ".agents/"))
 
 
+
+def _has_test_consumers(root: Path, changed: str) -> bool:
+    """Refuse single-test selection when another test imports this module.
+
+    Test modules are also used as fixtures in the repository. The read-only
+    textual prefilter deliberately errs toward full coverage, including dynamic
+    imports written as filename strings.
+    """
+    module_name = changed.removesuffix(".py").replace("/", ".")
+    filename = Path(changed).name
+    stem = Path(changed).stem
+    for pattern in ("tests/**/*.py", "src/plugins/*/tests/**/*.py", "scripts/test*.py"):
+        for candidate in root.glob(pattern):
+            if not candidate.is_file() or candidate == root / changed:
+                continue
+            source = candidate.read_text(encoding="utf-8", errors="replace")
+            if (module_name in source or filename in source
+                    or f"from tests import {stem}" in source
+                    or f"from . import {stem}" in source
+                    or f"from .{stem} import" in source):
+                return True
+    return False
+
+
 def select_push(
     root: Path, *, event: str, before: str, head: str,
     selector: Path | None = None,
@@ -72,6 +96,8 @@ def select_push(
                 return *full, "renamed-deleted-or-unsupported-status"
             if any(ch in path for ch in "\n\r\t") or not _safe_path(path):
                 return *full, "shared-or-ambiguous-path"
+            if path.startswith("tests/test_") and _has_test_consumers(root, path):
+                return *full, "shared-test-fixture"
             paths.append(path)
 
         script = selector or root / "scripts/ci-select-core-tests.py"
