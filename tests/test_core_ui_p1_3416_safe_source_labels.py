@@ -62,3 +62,53 @@ def test_secret_label_with_invalid_provider_uses_fixed_unknown_fallback():
     assert sync_source_identity_label(item) == "fournisseur inconnu"
     assert sync_source_presentation(item).action_label == "Synchroniser fournisseur inconnu"
     assert "SECRET" not in sync_source_presentation(item).summary
+
+
+
+@pytest.mark.parametrize("credential_label", [
+    "Authorization: Bearer PRIVATE_TOKEN",
+    "authorization: Basic PRIVATE_AUTH",
+    "Proxy-Authorization: PRIVATE_PROXY",
+    "COOKIE: session=PRIVATE_COOKIE",
+    "Set-Cookie: session=PRIVATE_COOKIE",
+    "X-Api-Key: PRIVATE_API_KEY",
+    "Compte access_token=PRIVATE_TOKEN",
+    "Compte refresh_token=PRIVATE_REFRESH",
+    "Compte api_key=PRIVATE_KEY",
+    "Compte api-key=PRIVATE_KEY",
+    "Compte password=PRIVATE_PASSWORD",
+    "Compte password: PRIVATE_PASSWORD",
+    "Compte client_secret=PRIVATE_CLIENT",
+    "Compte secret=PRIVATE_SECRET",
+    "Compte session_token=PRIVATE_SESSION",
+])
+def test_p1_auth_header_and_credential_label_never_reach_ui_or_task(credential_label):
+    """Only source route IDs, never credential-like supplier labels, drive work."""
+    item = _source(
+        provider_id="provider.future", source_id="source-route",
+        label=credential_label,
+    )
+    assert sync_source_identity_label(item) == "provider.future"
+    assert sync_source_row_labels([item]) == ("provider.future",)
+    shown = sync_source_presentation(item)
+    assert shown.action_label == "Synchroniser provider.future"
+    window, broker, calls, _build, _page = _fixture(sources=[item])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.title == "provider.future"
+    row.suffixes[1].click()
+    assert window.runner.tasks[0].label == "Synchronisation provider.future…"
+    assert "PRIVATE" not in repr(row) + shown.summary + window.runner.tasks[0].label
+    assert window.runner.tasks[0].work() == "ok"
+    assert ("sync-source", "source-route") in calls
+
+
+def test_p1_human_label_with_non_authenticating_word_remains_visible():
+    item = _source(
+        provider_id="provider.future", label="Publications et livres numériques",
+    )
+    assert sync_source_identity_label(item, disambiguate=False) == (
+        "Publications et livres numériques"
+    )
+    assert sync_source_presentation(item).action_label == (
+        "Synchroniser Publications et livres numériques"
+    )
