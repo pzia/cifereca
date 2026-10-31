@@ -626,7 +626,8 @@ class BnfProviderSession(ProviderSession):
             raise ProviderCapabilityError('bnf_selected_delivery_target_invalid')
         try:
             staging = Path(target_dir)
-            if staging.is_symlink() or not staging.is_dir():
+            if (staging.is_symlink() or not staging.is_dir()
+                    or staging.resolve(strict=True) != staging.absolute()):
                 raise ProviderCapabilityError('bnf_selected_delivery_target_invalid')
         except (OSError, ValueError, TypeError):
             raise ProviderCapabilityError('bnf_selected_delivery_target_invalid') from None
