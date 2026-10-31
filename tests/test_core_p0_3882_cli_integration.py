@@ -159,7 +159,6 @@ def test_offline_command_uses_mode_ro_without_core_open(tmp_path, monkeypatch, c
                         lambda **kw: (_ for _ in ()).throw(AssertionError("Core.open forbidden")))
 
     def audit_mock(storage, **scope):
-        assert "mode=ro" in storage._connect().execute("PRAGMA database_list").fetchone()[2] if False else True
         with storage._connect() as readonly:
             with pytest.raises(sqlite3.OperationalError):
                 readonly.execute("CREATE TABLE impossible(x)")
