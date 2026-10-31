@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import tempfile
+from urllib.parse import urljoin
 from xml.etree import ElementTree
 import zipfile
 
@@ -207,35 +208,69 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 with HTTPX_TRANSPORT.public_client(
                     producer="provider.kobo.delivery", timeout=30,
                 ) as transfer:
-                    with transfer.stream("GET", url, headers={
-                        "Accept": "application/octet-stream",
-                    }, follow_redirects=False) as response:
-                        if response.status_code != 200:
-                            raise ProviderCapabilityError(
-                                "kobo_candidate_http_unavailable"
-                            )
-                        declared = response.headers.get("content-length", "")
-                        if declared.isdecimal() and int(declared) > _MAX_DELIVERY_BYTES:
-                            raise ProviderCapabilityError(
-                                "kobo_candidate_size_exceeded"
-                            )
-                        media = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                        if media in ("text/html", "text/plain", "application/json"):
-                            raise ProviderCapabilityError(
-                                "kobo_candidate_not_a_file"
-                            )
-                        size = 0
-                        for chunk in response.iter_bytes():
+                    # Signed descriptor GET only. Redirects remain explicit:
+                    # no Vault POST/auth, cookies, bearer headers or private
+                    # Referrer may follow the supplier to another origin.
+                    current = url
+                    seen = set()
+                    for hop in range(9):
+                        if not bound():
+                            raise ProviderCapabilityError("kobo_candidate_owner_changed")
+                        if not stage_current():
+                            raise ProviderCapabilityError("kobo_candidate_staging_rebound")
+                        if current in seen:
+                            raise ProviderCapabilityError("kobo_candidate_redirect_loop")
+                        seen.add(current)
+                        # Same policy as the freshly attested GET, independently
+                        # validated before each HTTP request. The Core transport
+                        # pins the actual TCP peer to a public IP on every hop.
+                        if not _safe_https_get({
+                            "transport": "https", "method": "GET", "url": current,
+                        }):
+                            raise ProviderCapabilityError("kobo_candidate_redirect_refused")
+                        transfer.cookies.clear()
+                        with transfer.stream("GET", current, headers={
+                            "Accept": "application/octet-stream",
+                        }, follow_redirects=False) as response:
                             if not bound():
-                                raise ProviderCapabilityError(
-                                    "kobo_candidate_owner_changed"
-                                )
-                            size += len(chunk)
-                            if size > _MAX_DELIVERY_BYTES:
-                                raise ProviderCapabilityError(
-                                    "kobo_candidate_size_exceeded"
-                                )
-                            out.write(chunk)
+                                raise ProviderCapabilityError("kobo_candidate_owner_changed")
+                            if response.status_code in (301, 302, 303, 307, 308):
+                                if hop == 8:
+                                    raise ProviderCapabilityError("kobo_candidate_redirect_limit")
+                                location = response.headers.get("location")
+                                if (type(location) is not str or not location
+                                        or any(ord(ch) < 33 or ord(ch) == 127
+                                               or ch.isspace() or ch == "\\\\" for ch in location)):
+                                    raise ProviderCapabilityError("kobo_candidate_redirect_refused")
+                                try:
+                                    next_url = urljoin(current, location)
+                                except ValueError:
+                                    raise ProviderCapabilityError("kobo_candidate_redirect_refused") from None
+                                if not _safe_https_get({
+                                    "transport": "https", "method": "GET", "url": next_url,
+                                }):
+                                    raise ProviderCapabilityError("kobo_candidate_redirect_refused")
+                                current = next_url
+                                continue
+                            if response.status_code != 200:
+                                raise ProviderCapabilityError("kobo_candidate_http_unavailable")
+                            declared = response.headers.get("content-length", "")
+                            if declared.isdecimal() and int(declared) > _MAX_DELIVERY_BYTES:
+                                raise ProviderCapabilityError("kobo_candidate_size_exceeded")
+                            media = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                            if media in ("text/html", "text/plain", "application/json"):
+                                raise ProviderCapabilityError("kobo_candidate_not_a_file")
+                            size = 0
+                            for chunk in response.iter_bytes():
+                                if not bound():
+                                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
+                                if not stage_current():
+                                    raise ProviderCapabilityError("kobo_candidate_staging_rebound")
+                                size += len(chunk)
+                                if size > _MAX_DELIVERY_BYTES:
+                                    raise ProviderCapabilityError("kobo_candidate_size_exceeded")
+                                out.write(chunk)
+                            break
                 out.flush()
                 os.fsync(out.fileno())
             if (not bound() or not _candidate_format_ok(path, fmt)):
