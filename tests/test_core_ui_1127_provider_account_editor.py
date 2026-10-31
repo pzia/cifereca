@@ -288,3 +288,18 @@ def test_unknown_provider_valid_text_credentials_remain_unchanged():
     editor, _, _, _ = _render('synthetic-provider', data=original)
     assert editor['fields']['card'].text == 'abc-0123'
     assert editor['fields']['password'].text == 'private-value'
+
+
+def test_unknown_provider_corrupt_enabled_value_never_activates_source():
+    """#3731: truthy legacy snapshots cannot turn into an enabled account."""
+    for invalid in ("true", "false", 1, 0, None, [], {}, ["enabled"]):
+        editor, _, _, _ = _render(
+            "future-provider", data={"id": "existing", "enabled": invalid},
+        )
+        assert editor["enabled"].active is False
+    assert _render("future-provider", data={"id": "existing", "enabled": True})[0]["enabled"].active is True
+    assert _render("future-provider", data={"id": "existing", "enabled": False})[0]["enabled"].active is False
+    # Existing accounts without the historical key remain compatible;
+    # new accounts without any saved state stay disabled.
+    assert _render("future-provider", data={"id": "existing"})[0]["enabled"].active is True
+    assert _render("future-provider", data={})[0]["enabled"].active is False
