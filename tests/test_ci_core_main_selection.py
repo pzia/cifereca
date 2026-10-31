@@ -86,6 +86,24 @@ def test_dynamic_test_consumer_forces_full_on_main_push(tmp_path):
     assert select(root, before, head) == ("full", "tests", "shared-test-fixture")
 
 
+def test_main_selector_scans_consumers_only_in_canonical_child(tmp_path):
+    # A duplicate scan here reads the entire test tree a second time.
+    push_script = (ROOT / "scripts/ci_select_core_push.py").read_text(encoding="utf-8")
+    canonical = (ROOT / "scripts/ci-select-core-tests.py").read_text(encoding="utf-8")
+    assert "has_test_consumers" not in push_script
+    assert "has_test_consumers(root, changed_tests)" in canonical
+
+    root, _initial = fixture(tmp_path)
+    write(
+        root, "tests/test_consumer.py",
+        '__import__("tests." + module_name)\\n'.replace("\\\\n", "\\n"),
+    )
+    before = commit(root, "unresolved test namespace consumer")
+    write(root, "tests/test_storage.py", "def test_changed(): pass\n")
+    head = commit(root, "modify imported test")
+    assert select(root, before, head) == ("full", "tests", "selector-requires-full")
+
+
 def test_ui_component_uses_existing_core_selection_and_smoke_targets(tmp_path):
     root, before = fixture(tmp_path)
     write(root, "src/cifereca/gui/cover_preview.py", "VALUE = 2\n")
