@@ -4,7 +4,7 @@ import pytest
 
 from cifereca.core.sync_cli_contract import (
     SyncSelectionError, require_exact_sync_account, safe_sync_result,
-    select_sync_accounts,
+    select_sync_accounts, require_unique_sync_account,
 )
 
 
@@ -71,3 +71,37 @@ def test_empty_primary_account_id_requires_explicit_selection():
                                    identity="p1", credential="c1")
     assert require_exact_sync_account(accounts, provider="future-provider",
                                       identity="p1", credential="c1", account_id="") is accounts[0]
+
+
+def test_unique_source_selection_needs_only_identity_when_unambiguous():
+    accounts = [_account(identity="p1"), _account(identity="p2")]
+    assert require_unique_sync_account(accounts, identity="p1") is accounts[0]
+    assert require_unique_sync_account(
+        accounts, identity="p2", provider="future-provider",
+    ) is accounts[1]
+
+
+def test_identity_only_refuses_ambiguous_sources_without_guessing_ids():
+    accounts = [_account(), _account(credential="c2"), _account(identity="p2")]
+    with pytest.raises(SyncSelectionError, match="ambiguous_source_selection"):
+        require_unique_sync_account(accounts, identity="p1")
+    assert require_unique_sync_account(
+        accounts, identity="p1", credential="c2",
+    ) is accounts[1]
+
+
+def test_no_identity_and_missing_source_fail_closed():
+    with pytest.raises(SyncSelectionError, match="source_scope_required"):
+        require_unique_sync_account([_account()], provider="future-provider")
+    with pytest.raises(SyncSelectionError, match="source_not_found"):
+        require_unique_sync_account([_account()], identity="missing")
+
+
+def test_duplicate_identity_account_binding_is_not_auto_selected():
+    with pytest.raises(SyncSelectionError, match="ambiguous_source_binding"):
+        require_unique_sync_account([_account(), _account()], identity="p1")
+
+
+def test_empty_upstream_account_id_can_be_auto_selected_when_unique():
+    account = _account(account="")
+    assert require_unique_sync_account([account], identity="p1") is account
