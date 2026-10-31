@@ -603,7 +603,7 @@ def test_github_wheelhouse_preparation_runs_before_managed_install(tmp_path, mon
     def staged(source, python):
         events.append("admit")
         assert (source / "scripts" / "prepare-admitted-wheelhouse.py").is_file()
-        assert (source / "src" / "cifereca" / "_build_revision.txt").read_text() == "a" * 40 + "\\n"
+        assert (source / "src" / "cifereca" / "_build_revision.txt").read_text() == "a" * 40 + "\n"
 
     def installed(source, **kwargs):
         events.append("install")
