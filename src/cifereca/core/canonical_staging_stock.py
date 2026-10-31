@@ -161,20 +161,28 @@ def repair_exact_published_staging(
             or not callable(context_current) or not callable(consent_current)
             or (transaction_guard is not None and not callable(transaction_guard))):
         raise ValueError("canonical_stock_admission_required")
-    root, profile = _profile(storage, library_root, source)
+    # Cheap read-only gate for the overwhelmingly common already-final
+    # placement. Never hash hundreds of verified Kobo/other books a second
+    # time merely to discover that none is in canonical staging.
     with storage._lock, storage._connect() as db:
         row = db.execute(
-            "SELECT path FROM placements WHERE placement_id=?", (placement_id,),
+            "SELECT p.path,a.sha256 FROM placements AS p "
+            "JOIN artifacts AS a ON a.artifact_id=p.artifact_id "
+            "WHERE p.placement_id=?", (placement_id,),
         ).fetchone()
-    if row is None or type(row[0]) is not str:
+    if (row is None or type(row[0]) is not str
+            or type(row[1]) is not str):
         raise ValueError("canonical_stock_placement_missing")
-    # No FS mutation or account/receipt access for already-final placements.
+    if ".canonical-delivery" not in Path(row[0]).parts:
+        return False
+    root, profile = _profile(storage, library_root, source)
+    if _stage_parts(Path(row[0]), profile) is None:
+        return False
+    # Only verified historical staging may reach the expensive proof/FS gate.
     old = _path_verified(
         storage, root=root, source=source, path=Path(row[0]),
-        final_sha256=_file_sha(storage, placement_id),
+        final_sha256=row[1],
     )
-    if _stage_parts(old, profile) is None:
-        return False
     with storage._lock, storage._connect() as db:
         original, proof = _record(db, source, placement_id)
     if original[0] != str(old):
@@ -278,18 +286,6 @@ def repair_exact_published_staging(
     except Exception:
         _LOG.warning("TRACE convergence code=canonical_stock_cleanup_deferred")
     return True
-
-
-def _file_sha(storage, placement_id: str) -> str:
-    with storage._lock, storage._connect() as db:
-        row = db.execute(
-            "SELECT a.sha256 FROM placements AS p JOIN artifacts AS a "
-            "ON a.artifact_id=p.artifact_id WHERE p.placement_id=?",
-            (placement_id,),
-        ).fetchone()
-    if row is None or type(row[0]) is not str:
-        raise ValueError("canonical_stock_artifact_missing")
-    return row[0]
 
 
 __all__ = ["repair_exact_published_staging"]
