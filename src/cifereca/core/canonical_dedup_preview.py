@@ -27,6 +27,11 @@ class CanonicalDedupPreview:
     catalogue_references: int = 0
     backup_references: int = 0
     other_or_unknown_references: bool = False
+    # Counts apply to the Artifact in the exact identity, not to either
+    # physical path or the entitlement of its owner. Never transfer rights.
+    artifact_origin_links: int = 0
+    linked_source_references: int = 0
+    provenance_counted: bool = False
 
     @property
     def may_attempt_retirement(self) -> bool:
@@ -47,10 +52,12 @@ def preview_canonical_duplicate(
     evidence for deletion.
     """
     def report(status: str, reason: str, *, catalogue: int = 0,
-               backup: int = 0, other: bool = False) -> CanonicalDedupPreview:
+               backup: int = 0, other: bool = False, origins: int = 0,
+               linked_sources: int = 0, counted: bool = False,
+               ) -> CanonicalDedupPreview:
         return CanonicalDedupPreview(
             status, reason, candidate_placement_id, keeper_placement_id,
-            catalogue, backup, other,
+            catalogue, backup, other, origins, linked_sources, counted,
         )
 
     if (not isinstance(library_root, Path)
@@ -135,6 +142,21 @@ def preview_canonical_duplicate(
             ).fetchone()[0]
             if catalogue > 100_000 or backup > 100_000:
                 return report("blocked", "dependency_budget_exceeded")
+            # Read the canonical, *Artifact-level* provenance graph inside
+            # the same SQLite snapshot. Provenance cannot be attributed to
+            # the candidate or keeper path individually, and never authorizes
+            # an account right or destruction from SHA alone.
+            origins, linked_sources = db.execute(
+                "SELECT COUNT(o.origin_link_id),"
+                "COUNT(DISTINCT s.source_reference_id) "
+                "FROM origin_links o LEFT JOIN source_references s "
+                "ON s.source_reference_id=o.source_reference_id "
+                "AND s.identity_id=o.identity_id "
+                "WHERE o.identity_id=? AND o.artifact_id=?",
+                (candidate[1], candidate[2]),
+            ).fetchone()
+            if origins > 100_000 or linked_sources > 100_000:
+                return report("blocked", "dependency_budget_exceeded")
             active = candidate_has_active_dependencies_in_db(
                 db, placement_id=candidate_placement_id, path=candidate[0],
             )
@@ -143,9 +165,13 @@ def preview_canonical_duplicate(
             if active:
                 return report(
                     "blocked", "active_references", catalogue=catalogue,
-                    backup=backup, other=True,  # Other references cannot be excluded here.
+                    backup=backup, other=True, origins=origins,
+                    linked_sources=linked_sources, counted=True,
                 )
-            return report("unreferenced", "verified_no_active_references")
+            return report(
+                "unreferenced", "verified_no_active_references",
+                origins=origins, linked_sources=linked_sources, counted=True,
+            )
     except (OSError, ValueError, TypeError, RuntimeError, RecursionError):
         return report("blocked", "inspection_unavailable")
     except Exception:
