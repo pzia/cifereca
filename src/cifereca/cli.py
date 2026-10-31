@@ -101,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
     )
     generic_sub.choices["run"].add_argument(
+        "--report", type=Path, metavar="ZIP",
+        help="Rapport local expurgé de synchronisation (compteurs SQLite et phases CLI)"
+    )
+    generic_sub.choices["run"].add_argument(
         "--trace-export", type=Path, metavar="ZIP",
         help="Capture HTTP brute privée 0600 pendant la sync ciblée ; peut contenir des credentials"
     )
@@ -334,6 +338,13 @@ def main(argv: list[str] | None = None) -> int:
             preflight_code = "trace_export_confirmation_required"
         elif a.confirm_trace_export and a.trace_export is None:
             preflight_code = "trace_export_destination_required"
+        elif (a.report is not None and a.trace_export is not None
+              and os.path.abspath(a.report) == os.path.abspath(a.trace_export)):
+            # A sensitive raw HTTP archive must NEVER masquerade as the
+            # redacted acquisition report at the same selected destination.
+            preflight_code = "report_trace_destination_conflict"
+        elif a.report is not None and os.path.lexists(a.report):
+            preflight_code = "report_destination_exists"
         elif a.trace_export is not None and os.path.lexists(a.trace_export):
             # Refuse before any remote provider connection or acquisition.
             # Core export also checks O_EXCL against symlink/concurrent races.
@@ -397,6 +408,10 @@ def main(argv: list[str] | None = None) -> int:
             trace_requested = a.sync_cmd == "run" and a.trace_export is not None
             trace_started = False
             trace_outcome = "not_started"
+            report_account = None
+            report_before = None
+            report_ref = None
+            report_started_at = None
             try:
                 if a.username or a.account:
                     raise SyncSelectionError("legacy_account_selector_unsupported")
@@ -439,6 +454,19 @@ def main(argv: list[str] | None = None) -> int:
                         credential=resolved.credential_id,
                         account_id=resolved.unique_id,
                     )
+                    if a.report is not None:
+                        from datetime import datetime, timezone
+                        import secrets
+                        from .core.sync_report import audit_source_counts
+                        # Source selection is complete; record the run BEFORE
+                        # provider connection so connection failures are audited.
+                        report_account = resolved
+                        report_ref = secrets.token_hex(16)
+                        report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                        try:
+                            report_before = audit_source_counts(core.storage, resolved)
+                        except Exception:
+                            report_before = {"status": "unavailable", "reason": "audit_unavailable"}
                     service.connect_selected_source(
                         identity=resolved.identity_id,
                         provider=resolved.provider_id,
@@ -505,6 +533,22 @@ def main(argv: list[str] | None = None) -> int:
                         trace_outcome = "export_failed"
                     finally:
                         set_diagnostics_level(trace_previous_level)
+            if a.sync_cmd == "run" and a.report is not None and report_account is not None:
+                from .core.sync_report import audit_source_counts, write_sync_report
+                try:
+                    try:
+                        report_after = audit_source_counts(core.storage, report_account)
+                    except Exception:
+                        report_after = {"status": "unavailable", "reason": "audit_unavailable"}
+                    write_sync_report(
+                        a.report, account=report_account, run_ref=report_ref,
+                        before=report_before, after=report_after,
+                        result=result, started_at=report_started_at, exit_code=code,
+                    )
+                    result["report"] = "created"
+                except Exception:
+                    result["report"] = "export_failed"
+                    code = 2
             if trace_requested:
                 result["http_trace"] = trace_outcome
                 if trace_outcome == "export_failed":
