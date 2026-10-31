@@ -501,12 +501,16 @@ def _refresh_sync_page(self) -> None:
                 )
                 group.add(sync_action_row(row))
                 append_source_sync_consent_controls(self, broker, source, scope, group)
-                from cifereca.gui.source_inventory_schedule_controls import (
-                    append_source_inventory_schedule_controls,
-                )
-                append_source_inventory_schedule_controls(
-                    self, broker, source, scope, group,
-                )
+                declared = getattr(source, "sync_capabilities", ())
+                if (type(declared) in (tuple, list)
+                        and "remote_inventory" in declared
+                        and "scheduled_refresh" in declared):
+                    from cifereca.gui.source_inventory_schedule_controls import (
+                        append_source_inventory_schedule_controls,
+                    )
+                    append_source_inventory_schedule_controls(
+                        self, broker, source, scope, group,
+                    )
                 # The Core broker owns both independent decisions: remote
                 # notices/rights scheduling and automatic file acquisition.
                 # Legacy per-vendor widgets must not re-enter this pathway.
