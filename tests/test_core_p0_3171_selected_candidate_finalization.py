@@ -80,7 +80,8 @@ def test_exact_selected_candidate_becomes_core_receipt_once_then_no_second_get(r
     assert placement["artifact_id"] == "sha256:" + SHA
     path = Path(placement["path"])
     assert path.read_bytes() == BYTES
-    assert path.is_relative_to(root / "A" / ".canonical-delivery")
+    assert path.parent == root / "A" / "Acquisitions"
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
     immediate = db.catalog_entries()
     assert len(immediate) == 1
     assert immediate[0]["placement_id"] == placement["placement_id"]
@@ -365,7 +366,8 @@ def test_uncommitted_staging_is_invisible_until_atomic_provider_publication(rig)
     service.session.rights_selected_delivery_candidate = candidate
     synced = synchronize_account_source(service, service.account)
     assert synced["canonical_execution"]["downloaded"] == 1
-    assert len(staged) == 1 and staged[0].is_file()
+    assert len(staged) == 1 and not staged[0].exists()
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
     # Only after Core commits both the exact OriginLink and Placement may
     # the physical library scanner reveal the EPUB/PDF as a local catalogue.
     scanned = catalog.scan()
@@ -412,3 +414,89 @@ def test_candidate_after_commit_catalogue_failure_recovers_without_second_get(ri
     entries = db.catalog_entries()
     assert len(entries) == 1
     assert entries[0]["placement_id"] == db.placements()[0]["placement_id"]
+
+
+def test_post_staging_sql_failure_retains_receipt_then_promotes_without_second_get(
+    rig, monkeypatch,
+):
+    """#3909: a crashed B cannot strand valid bytes or require another HTTP GET."""
+    from cifereca.core import convergence_execution
+
+    service, db, root = rig
+    _prepare(service)
+    gets = []
+    staged = []
+
+    def candidate(*args, **kwargs):
+        gets.append(kwargs["delivery_offer_id"])
+        delivery = _native(*args, **kwargs)
+        staged.append(delivery[0])
+        return delivery
+
+    service.session.rights_selected_delivery_candidate = candidate
+    publisher = convergence_execution.publish_completed_acquisition
+
+    def unavailable(*_args, **_kwargs):
+        target = Path(_kwargs["path"])
+        assert target.parent == root / "A" / "Acquisitions"
+        assert target.read_bytes() == BYTES
+        # Even after the durable FS copy, a concurrent library scan must not
+        # mistake uncommitted bytes for a received provider acquisition.
+        catalog = LocalCatalog(db, root)
+        assert catalog.index_path(target)["reason"] == "canonical_staging_not_published"
+        assert catalog.scan().cataloged == 0
+        raise RuntimeError("private synthetic failure after verified promotion")
+
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", unavailable,
+    )
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["failed"] == 1
+    assert gets == ["signed-right-offer"]
+    assert len(staged) == 1 and staged[0].read_bytes() == BYTES
+    assert db.placements() == []
+
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", publisher,
+    )
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert db.placements()[0]["artifact_id"] == "sha256:" + SHA
+    final = Path(db.placements()[0]["path"])
+    assert final.parent == root / "A" / "Acquisitions"
+    assert final.read_bytes() == BYTES
+    assert not staged[0].exists()
+
+    third = synchronize_account_source(service, service.account)
+    assert third["canonical_execution"]["present_attested"] == 1
+    assert gets == ["signed-right-offer"]
+
+
+def test_symlinked_final_directory_refuses_promotion_then_recovers_without_get(
+    rig,
+):
+    """#3909: copied staging bytes must never escape the identity directory."""
+    service, db, root = rig
+    _prepare(service)
+    gets = []
+    outside = root.parent / "untrusted"
+    outside.mkdir()
+    (root / "A").mkdir(parents=True, exist_ok=True)
+    (root / "A" / "Acquisitions").symlink_to(outside, target_is_directory=True)
+
+    def candidate(*args, **kwargs):
+        gets.append(kwargs["delivery_offer_id"])
+        return _native(*args, **kwargs)
+
+    service.session.rights_selected_delivery_candidate = candidate
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["failed"] == 1
+    assert gets == ["signed-right-offer"]
+    assert db.placements() == [] and list(outside.iterdir()) == []
+
+    (root / "A" / "Acquisitions").unlink()
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"

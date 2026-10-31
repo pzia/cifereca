@@ -1,5 +1,6 @@
 """ABI v2-only providers use the existing locked Sync and Core publication."""
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -76,7 +77,10 @@ def test_v2_only_download_publishes_once_without_inventing_right(v2, right_state
     assert calls == ['offer', 'delivery']
     assert refs(db)[1] == 1 and len(db.placements()) == 1
     assert db.entitlements() == []
-    assert next((root / 'A').rglob('received.pdf')).read_bytes() == BYTES
+    placed = Path(db.placements()[0]['path'])
+    assert placed.parent == root / 'A' / 'Acquisitions'
+    assert placed.read_bytes() == BYTES
+    assert not list((root / 'A' / '.canonical-delivery').glob('run-*'))
     second = synchronize_account_source(service, service.account)
     assert second['canonical_execution']['present_attested'] == 1
     assert second['canonical_execution']['downloaded'] == 0

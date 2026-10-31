@@ -197,7 +197,18 @@ class LocalCatalog:
                 relative = path.relative_to(self.root.resolve())
         except ValueError:
             return False
-        if ".canonical-delivery" not in relative.parts:
+        # #3909: copied canonical final bytes stay invisible until their
+        # exact provider OriginLink and Placement have been committed.
+        # Reserved 64-hex file names distinguish Core-managed acquisitions
+        # from ordinary user files in an Acquisitions directory.
+        managed_final = (
+            len(relative.parts) >= 3
+            and relative.parts[1] == "Acquisitions"
+            and len(path.stem) == 64
+            and all(ch in "0123456789abcdef" for ch in path.stem)
+            and path.suffix.lower() in (".epub", ".pdf")
+        )
+        if ".canonical-delivery" not in relative.parts and not managed_final:
             return True
         # No global catalogue rescan or legacy backup lookup. The exact
         # committed physical path needs an OriginLink in the same profile.
