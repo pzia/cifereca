@@ -1178,3 +1178,65 @@ def test_clearing_required_option_of_active_account_is_rejected(editor):
     with pytest.raises(SettingsValidationError, match="Option obligatoire : Portail"):
         validate(editor, descriptors={"provider.future": desc})
     assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("invalid", [None, False, 42, "not-a-dict", ["account"], ("account",)])
+def test_stale_provider_account_row_is_a_validation_error_not_crash(editor, invalid):
+    config, values = editor
+    values["accounts"] = [invalid]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [False, 17, [], {}, None, " ", "\t"])
+def test_stale_provider_account_id_never_coerces_to_a_routable_id(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["id"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Identifiant de compte fournisseur vide ou dupliqué"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, False, 42, [], {}, {"provider": "provider.future"}, ""])
+def test_invalid_provider_selector_fails_closed_without_python_type_error(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["provider"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Fournisseur indisponible"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid", [None, False, 12, ["PRIVATE"], {"bad": "name"}])
+def test_invalid_provider_account_label_fails_closed(editor, invalid):
+    config, values = editor
+    item = account("provider.future")
+    item["label"] = invalid
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Libellé de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+def test_provider_account_valid_id_and_label_preserved_without_rebinding(editor):
+    config, values = editor
+    item = account("provider.future", account_id="source-012")
+    item["label"] = "Fournisseur fictif"
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    row, = draft.data["providers"]["accounts"]
+    assert row["id"] == "source-012"
+    assert row["provider"] == "provider.future"
+    assert row["label"] == "Fournisseur fictif"
+    assert row["identity_id"] == "alice"
+    assert config.data == before and not config.path.exists()
