@@ -96,7 +96,7 @@ def test_main_selector_scans_consumers_only_in_canonical_child(tmp_path):
     root, _initial = fixture(tmp_path)
     write(
         root, "tests/test_consumer.py",
-        '__import__("tests." + module_name)\\n'.replace("\\\\n", "\\n"),
+        '__import__("tests." + module_name)\\n',
     )
     before = commit(root, "unresolved test namespace consumer")
     write(root, "tests/test_storage.py", "def test_changed(): pass\n")
