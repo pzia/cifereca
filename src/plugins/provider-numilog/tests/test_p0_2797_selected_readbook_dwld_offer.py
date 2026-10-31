@@ -189,3 +189,60 @@ def test_readbook_structural_diagnostic_counts_only_selected_actions():
     assert diag["bound_links"] == 0
     assert diag["readbook_dwld_offers"] == 1
     assert "12" not in repr(diag) and "34" not in repr(diag)
+
+
+def test_selected_dwld_v2_real_mock_transport_stages_acsm_without_adopting_right(
+    tmp_path,
+):
+    """Authenticated synthetic MesLivres and real readBook → ACSM transport."""
+    import httpx
+    from tests.test_numilog_signed_acsm_transport_p0 import SIGNED, ACSM
+
+    session, broker, _ = rig(page(card()))
+    account, row, selected = chosen_offer(session)
+    chosen = session.downloadable_selected_offer_snapshot(
+        account, edition_id=row.edition_id, resource_id=row.right_id,
+        kind="purchase", branch="meslivres", explicit_user_action=True,
+    )
+    offer_id = chosen.resources[0].capability.offer_id
+    assert offer_id.startswith("numilog.readbook:")
+    assert offer_id == selected.delivery_offer_id
+
+    expected = "https://www.numilog.com/Pages/Compte/readBook.ashx?lid=12&m=dwld"
+    requests = []
+    def handler(request):
+        requests.append(str(request.url))
+        if str(request.url) == expected:
+            return httpx.Response(302, headers={"location": SIGNED})
+        if str(request.url) == SIGNED:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={"content-type": "application/vnd.adobe.adept+xml"},
+            )
+        raise AssertionError("unlisted download URL")
+
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=False, trust_env=False,
+    )
+    target_dir = tmp_path / "only-core-owned-staging"
+    target_dir.mkdir()
+    try:
+        candidate = session.downloadable_selected_delivery_candidate(
+            account, edition_id=row.edition_id, resource_id=row.right_id,
+            kind="purchase", branch="meslivres",
+            selected_offer_id=offer_id, target_dir=target_dir,
+            explicit_user_action=True,
+        )
+        assert requests == [expected, SIGNED]
+        assert candidate.path.is_file()
+        assert candidate.path.suffix == ".acsm"
+        assert candidate.path.read_bytes() == ACSM
+        assert candidate.path.parent == target_dir
+        assert candidate.source.scope.identity_id == "identity-A"
+        assert candidate.source.resource_id == row.right_id
+        assert candidate.authorizes_publication is False
+        assert session.acquisition_broker is None
+    finally:
+        session.close()
