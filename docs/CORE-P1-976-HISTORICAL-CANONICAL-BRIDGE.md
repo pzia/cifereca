@@ -20,7 +20,7 @@ clé de rapprochement. Aucun ancien reçu n'est migré en droit canonique.
 ## Commande CLI
 
 ```bash
-cifereca-cli paris-adept audit-transaction \\
+cifereca-cli paris-adept audit-transaction \
   --loan-id "<id-pret-paris>" --item-id "<id-item>"
 ```
 
