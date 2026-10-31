@@ -36,8 +36,8 @@ de revue** ; il n'apporte aucune permission nouvelle.
   branche ou de provenance observé. **Cela ne prouve pas** qu'il s'agit de
   la même transaction Adobe, et encore moins son profil d'activation.
 - `evidence_gap` : SourceReference absente, droit historique non disponible,
-  acquisition seulement, source canonique non active/état inconnu ou
-  OriginLink manquant. Une absence de droit historique ne révoque rien,
+  acquisition seulement, absence d'un ancien reçu ADEPT réussi,
+  source canonique non active/état inconnu ou OriginLink manquant. Une absence de droit historique ne révoque rien,
   et une source `inactive` n'est pas automatiquement une décision serveur.
 - `conflicting_records` : revendications ADEPT contradictoires, liens
   canoniques incompatibles ou plusieurs branches canoniques pour un même
