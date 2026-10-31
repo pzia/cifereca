@@ -43,7 +43,9 @@ def _count(rows, allowed: frozenset[str]) -> dict[str, int]:
     return data
 
 
-def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None) -> dict[str, object]:
+def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None,
+                        library_root: Path | None = None,
+                        verify_files: bool = False) -> dict[str, object]:
     """One exact persisted source scope; no network and no private rows."""
     coords = (
         account.identity_id, account.provider_id,
@@ -84,12 +86,13 @@ def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None)
         ).fetchall()
     from .acquisition_audit import inspect_exact_source
     per_resource = inspect_exact_source(
-        storage, account, verify_files=False, pseudonym_key=pseudonym_key,
+        storage, account, library_root=library_root,
+        verify_files=verify_files, pseudonym_key=pseudonym_key,
     )
     return {
         "schema_version": 1, "audit_scope": "exact_source",
         "resource_evidence": per_resource,
-        "physical_verification": "not_performed",
+        "physical_verification": "bounded_sha256_checked" if verify_files else "not_performed",
         "catalogue_projection_verification": "not_performed",
         "rights_by_kind": _count(rights, _KINDS),
         "rights_by_state": _count(states, _STATES),
@@ -160,7 +163,12 @@ def write_sync_report(
         "completed_at": ended,
         "status": safe_result["status"],
         "exit_code": exit_code,
-        "evidence_coverage": "canonical_sqlite_graph_without_filesystem",
+        "evidence_coverage": (
+            "canonical_sqlite_graph_with_bounded_sha256"
+            if before.get("physical_verification") == "bounded_sha256_checked"
+            and after.get("physical_verification") == "bounded_sha256_checked"
+            else "canonical_sqlite_graph_without_filesystem"
+        ),
         "event_coverage": "cli_milestones_only",
         "build_identity": identity,
     }
