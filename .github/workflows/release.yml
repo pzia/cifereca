@@ -127,7 +127,7 @@ jobs:
       - name: Smoke installed Core wheel
         env:
           CIFERECA_SMOKE_VENV: /tmp/cifereca-release-installed
-        run: bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
+        run: CIFERECA_EXPECTED_BUILD_SHA="$GITHUB_SHA" bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
 
       - name: Build plugin bundle
         run: python scripts/package-all-in-one.py
