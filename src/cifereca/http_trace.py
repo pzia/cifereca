@@ -439,6 +439,7 @@ class _HTTPXTransportService:
         self, *, producer: str, url: str, target: Path,
         admission_current, headers=None, timeout: float = 20,
         max_bytes: int = 512 * 1024 * 1024, max_redirects: int = 8,
+        max_duration: float = 900,
     ):
         """Transport only for an already-admitted, source-bound HTTPS GET.
 
@@ -451,7 +452,7 @@ class _HTTPXTransportService:
             producer=producer, url=url, target=target,
             admission_current=admission_current, headers=headers,
             timeout=timeout, max_bytes=max_bytes,
-            max_redirects=max_redirects,
+            max_redirects=max_redirects, max_duration=max_duration,
         )
 
     def async_client(self, *, producer: str, **options) -> httpx.AsyncClient:
