@@ -209,3 +209,17 @@ def test_legacy_provider_option_precedes_global_default_without_overwriting_save
     assert editor['option_fields']['base_url'].text == 'https://provider.example'
     saved, _, _, _ = _render('arbitrary', data={'options': {'base_url': 'https://saved.example'}}, **kwargs)
     assert saved['option_fields']['base_url'].text == 'https://saved.example'
+
+
+def test_new_unknown_provider_account_defaults_disabled_without_changing_existing(editor=None):
+    """#3731: adding an account must not enable it implicitly."""
+    created, _, _, _ = _render('synthetic-provider', data={})
+    assert created['enabled'].active is False
+    configured, _, _, _ = _render(
+        'synthetic-provider', data={'id': 'legacy', 'credentials': {}},
+    )
+    assert configured['enabled'].active is True  # legacy missing flag
+    disabled, _, _, _ = _render(
+        'synthetic-provider', data={'id': 'existing', 'enabled': False},
+    )
+    assert disabled['enabled'].active is False
