@@ -323,7 +323,7 @@ def test_global_deadline_applies_even_to_moving_slow_transfer(
 
 
 @pytest.mark.parametrize("max_duration", [None, 0, -1, True, float("nan"),
-                                          float("inf"), 3601])
+                                          float("inf"), 3601, 10**400])
 def test_invalid_global_timeout_never_opens_network(
     tmp_path, monkeypatch, max_duration,
 ):
