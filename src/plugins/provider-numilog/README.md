@@ -1814,6 +1814,14 @@ python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py \
   cifereca-journal-brut.zip --task-ref '<task_ref>'
 ```
 
+L'analyseur recense aussi `NUMILOG / startup_materialization` : code
+terminal du préflight, compteurs `attempted/downloaded/skipped/failed`,
+et décisions par **position dans les six achats de ce manifeste** (notamment
+`already_local_verified` et `needs_reconciliation`). Ces positions ne sont
+pas des identifiants stables entre deux synchronisations ; un
+`preflight_failed` avec zéro tentative est un blocage **avant HTTP**, pas un
+échec de téléchargement.
+
 L'analyseur regroupe les événements `NUMILOG / acquisition_delivery` par
 `action`, restitue chaque hop observé (`http_status`, catégories origine /
 chemin / MIME, redirection, présence de cookie) puis le code terminal. Une
