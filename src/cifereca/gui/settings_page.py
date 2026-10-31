@@ -10,7 +10,7 @@ from .settings_shell import build_settings_shell
 from .settings_editor_actions import build_settings_editors
 from .settings_library_downloads import build_library_download_section
 from .settings_application_interface import build_settings_application_interface
-from .settings_sync_section import build_kobo_sync_section
+from .settings_legacy_kobo_section import build_kobo_sync_section
 from .settings_sync_actions import bind_settings_sync_actions
 from .settings_action_bars import build_settings_action_bars
 from .settings_ai_section import build_ai_settings_section

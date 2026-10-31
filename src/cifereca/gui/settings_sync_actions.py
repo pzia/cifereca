@@ -1,7 +1,7 @@
 """Provider-neutral Settings → Synchronisation navigation; never acquire files."""
 from __future__ import annotations
 
-from .settings_sync_section import kobo_backup_action_state
+from .settings_legacy_kobo_section import kobo_backup_action_state
 
 
 def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_settings):
