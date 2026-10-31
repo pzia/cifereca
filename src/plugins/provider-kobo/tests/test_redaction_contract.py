@@ -59,6 +59,10 @@ def test_vault_http_errors_use_a_strict_public_vocabulary(
         assert url not in str(error)
         assert "private/account/path" not in str(error)
         assert provider_code == expected_code or provider_code not in str(error)
+        if expected_code == "archived_book":
+            assert "téléchargement ignoré" in str(error)
+            assert "restaur" not in str(error).casefold()
+            assert "réessayer" not in str(error).casefold()
     finally:
         client.close()
 
