@@ -110,6 +110,10 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             raise SettingsValidationError(
                 'Compte fournisseur invalide : recharger les paramètres.'
             )
+        if type(editor.get('deleted', False)) is not bool:
+            raise SettingsValidationError(
+                'Suppression du compte fournisseur invalide : recharger les paramètres.'
+            )
         if editor.get('deleted') is True:
             continue
         # Only exact editor strings are valid account and provider identities.
