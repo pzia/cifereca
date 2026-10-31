@@ -15,6 +15,7 @@ from cifereca.plugin_api.downloadable_resources import (
 from tests.test_core_p0_3171_atomic_publication_v14 import (
     BYTES, SHA, register,
 )
+from tests.test_core_p0_3171_canonical_sync_stage import rig
 from tests.test_core_p0_3719_v2_execution import v2
 
 
