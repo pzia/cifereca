@@ -566,7 +566,10 @@ def _opening_failed_configured_connections(self, identity_id: str) -> int:
             continue
         provider = str(row.get("provider") or "").strip().lower()
         credential = str(row.get("id") or "").strip()
-        if provider and credential and self._session_key(provider, credential) in errors:
+        if not provider or not credential:
+            continue
+        key = self._session_key(provider, credential)
+        if key in errors and getattr(self._sessions.get(key), "connected", False) is not True:
             count += 1
     return count
 
