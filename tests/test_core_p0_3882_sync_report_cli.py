@@ -97,3 +97,29 @@ def test_failed_business_sync_still_writes_report(monkeypatch, tmp_path, capsys)
         assert json.loads(z.read("manifest.json"))["status"] == "partial"
         assert b"PASSWORD_NOT_FOR_EXPORT" not in z.read("sync-result.json")
     assert json.loads(capsys.readouterr().out)["report"] == "created"
+
+
+
+def test_connection_failure_after_selection_still_exports_report(monkeypatch, tmp_path, capsys):
+    observed = make_cli_core(monkeypatch, [
+        ("profile-a", "numilog", "card-a", "account-a", True),
+    ])
+    core = cli.CiferecaCore.open()
+    def connection_failure(**_kwargs):
+        observed["connects"] += 1
+        raise RuntimeError("PRIVATE_AUTH_DETAILS")
+    core.library.connect_selected_source = connection_failure
+    target = tmp_path / "failed-before-provider-session.zip"
+    rc = cli.main([
+        "sync", "run", "--identity", "profile-a", "--provider", "numilog",
+        "--confirm", "--report", str(target),
+    ])
+    assert rc == 2
+    assert observed["connects"] == 1 and not observed["runs"]
+    assert target.is_file()
+    with zipfile.ZipFile(target) as z:
+        assert json.loads(z.read("manifest.json"))["status"] == "failed"
+        assert b"PRIVATE_AUTH_DETAILS" not in b"".join(
+            z.read(name) for name in z.namelist()
+        )
+    assert json.loads(capsys.readouterr().out)["report"] == "created"
