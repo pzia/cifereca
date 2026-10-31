@@ -11,6 +11,7 @@ import pytest
 import cifereca_numilog as provider
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
 from tests.test_p1_3252_selected_delivery_candidate import setup, selected
+from tests.pinned_public_https_fixture import mock_selected_public_client_from_session
 from tests.test_p1_3252_targeted_delivery_offer import rig
 from tests.test_p1_3252_rights_observation_snapshot import bound_account
 from tests.test_numilog_owned_js_delivery_p0 import _card, _page
@@ -82,6 +83,7 @@ def test_selected_direct_epub_is_staged_not_published(tmp_path, monkeypatch):
         provider, "publish_artifact_file",
         lambda *a, **kw: pytest.fail("selected candidate must not publish"),
     )
+    public_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         path, provenance = session.rights_selected_delivery_candidate(
             account, **selected(right, tmp_path),
@@ -99,7 +101,7 @@ def test_selected_direct_epub_is_staged_not_published(tmp_path, monkeypatch):
 
 
 def test_selected_direct_epub_rejects_acsm_response_without_legacy_adept(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     from tests.test_numilog_signed_acsm_transport_p0 import ACSM
     session, account, reads, right = _direct_epub_session()
@@ -117,6 +119,7 @@ def test_selected_direct_epub_rejects_acsm_response_without_legacy_adept(
         ),
         trust_env=False, follow_redirects=False,
     )
+    public_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         with pytest.raises(ProviderCapabilityError, match="format_changed"):
             session.rights_selected_delivery_candidate(
@@ -133,7 +136,7 @@ def test_selected_direct_epub_rejects_acsm_response_without_legacy_adept(
     "provider_changed", "credential_changed", "client_replaced",
 ])
 def test_selected_epub_post_get_session_rebind_withdraws_candidate(
-    tmp_path, rebind,
+    tmp_path, monkeypatch, rebind,
 ):
     from dataclasses import replace
     session, account, reads, right = _direct_epub_session()
@@ -162,6 +165,7 @@ def test_selected_epub_post_get_session_rebind_withdraws_candidate(
         transport=httpx.MockTransport(handler),
         trust_env=False, follow_redirects=False,
     )
+    public_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         with pytest.raises(ProviderCapabilityError):
             session.rights_selected_delivery_candidate(
@@ -179,7 +183,7 @@ def test_selected_epub_post_get_session_rebind_withdraws_candidate(
 
 
 def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     from cifereca.plugin_api import ProviderError
     session, account, reads, right = _direct_epub_session()
@@ -200,8 +204,9 @@ def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
         transport=httpx.MockTransport(handler),
         trust_env=False, follow_redirects=False,
     )
+    public_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
-        with pytest.raises(ProviderError) as failed:
+        with pytest.raises(ProviderCapabilityError) as failed:
             session.rights_selected_delivery_candidate(
                 account, **selected(right, tmp_path),
             )
@@ -247,6 +252,7 @@ def test_selected_acsm_rejects_valid_epub_without_legacy_publication(
         provider, "publish_artifact_file",
         lambda *a, **kw: pytest.fail("ACSM offer cannot publish fallback"),
     )
+    public_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         with pytest.raises(ProviderCapabilityError, match="format_changed"):
             session.rights_selected_delivery_candidate(
@@ -265,18 +271,18 @@ def test_selected_acsm_rejects_valid_epub_without_legacy_publication(
                 "https://127.0.0.1/fulfillment/another.acsm"
             )},
         ),
-        "redirection réseau inattendue",
+        "numilog_candidate_transport_refused",
     ),
     (
         httpx.Response(
             200, text="<html><a href='/other'>Login</a></html>",
             headers={"content-type": "text/html"},
         ),
-        "html_unexpected",
+        "numilog_candidate_transport_refused",
     ),
 ])
 def test_selected_numilog_signed_link_never_follows_unsafe_or_html_second_get(
-    tmp_path, response, reason,
+    tmp_path, monkeypatch, response, reason,
 ):
     from tests.test_numilog_owned_js_delivery_p0 import SIGNED
     session, account, broker, reads, right = setup()
@@ -290,6 +296,7 @@ def test_selected_numilog_signed_link_never_follows_unsafe_or_html_second_get(
         ),
         trust_env=False, follow_redirects=False,
     )
+    public_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         with pytest.raises((ProviderError, ProviderCapabilityError), match=reason):
             session.rights_selected_delivery_candidate(
