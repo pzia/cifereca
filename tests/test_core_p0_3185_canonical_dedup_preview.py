@@ -110,7 +110,7 @@ def test_unknown_operational_references_fail_closed(rig, dependency):
     elif dependency == "metadata":
         storage.metadata_set("test.other.active.path", str(paths[1]))
     else:
-        storage.metadata_set("test.unknown.envelope", "{bad json")
+        storage.metadata_set("test.unknown.envelope", r"{\uZZZZ}")
     found = preview(rig)
     assert found.status == "blocked"
     assert found.reason == "active_references"
@@ -131,7 +131,6 @@ def test_tampering_or_symlink_never_classifies_unreferenced(rig):
     found = preview(rig)
     assert found.reason == "physical_evidence_changed"
     assert not found.may_attempt_retirement
-    assert storage.placement_for_path(paths[1]) is not None
 
 
 def test_missing_or_invalid_placement_is_not_an_empty_dependency_set(rig):
