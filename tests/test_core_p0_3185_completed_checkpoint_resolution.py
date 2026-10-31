@@ -85,3 +85,41 @@ def test_unknown_checkpoint_is_not_deleted_as_part_of_safe_retirement(rig):
     assert retired.cleanup_pending is False
     assert storage.metadata_get(key) == '{"schema":"future-maintenance-format"}'
     assert paths[0].exists() and not paths[1].exists()
+
+
+def test_three_copy_checkpoint_remains_pending_after_one_retirement(
+    rig, tmp_path,
+):
+    from tests.test_core_p0_3171_atomic_publication_v14 import (
+        new_source, publish, register, target,
+    )
+
+    storage, root, paths, publications, _snapshot, _lock = rig
+    third_source, third_snapshot = new_source(
+        "A", provider="seller-d", credential="card-d", account="buyer-d",
+    )
+    register(storage, "A", "seller-d", "card-d", account="buyer-d")
+    extra = publish(
+        storage, root, target(tmp_path, "A", "third.pdf"),
+        third_source, third_snapshot,
+    )
+    matches = verified_post_placement_duplicates(
+        storage, library_root=root,
+        placement_id=publications[0].placement_id,
+    )
+    assert set(matches) == {
+        publications[1].placement_id, extra.placement_id,
+    }
+    key, changed = checkpoint_post_placement_duplicates_change(
+        storage, placement_id=publications[0].placement_id,
+        duplicate_placement_ids=matches,
+    )
+    assert changed
+    completed = _retire(rig)
+    assert completed.retired_placement and not completed.cleanup_pending
+    # The third same-profile copy is still present, so an advisory review
+    # of that remaining duplicate is required.
+    assert storage.metadata_get(key) is not None
+    assert storage.placement_get(extra.placement_id)["state"] == "present"
+    assert storage.placement_get(publications[0].placement_id)["state"] == "present"
+    assert not paths[1].exists()
