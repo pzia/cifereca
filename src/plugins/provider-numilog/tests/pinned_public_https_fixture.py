@@ -7,6 +7,7 @@ every external signed GET through the *Core* seam, not self.client.
 from __future__ import annotations
 
 import httpx
+from cifereca.http_trace import BROWSER_USER_AGENT
 
 
 def mock_selected_public_client(monkeypatch, provider, handler):
@@ -24,6 +25,7 @@ def mock_selected_public_client(monkeypatch, provider, handler):
 
         return httpx.Client(
             transport=httpx.MockTransport(traced),
+            headers={"User-Agent": BROWSER_USER_AGENT},
             follow_redirects=False, trust_env=False,
         )
 
