@@ -314,8 +314,11 @@ def audit_account(
                         observed_stage_placements.add(placement_id)
             if zone == "final" and state == "present" and observed == "verified":
                 receipt_final_verified = True
-        has_exact_origin = artifact_id in provider_origin_artifacts
-        if receipt_stage and not has_exact_origin:
+        # A shared Artifact SHA cannot prove that THIS receipt has the
+        # provider origin; attribution requires a source reference exact to
+        # the purchase, which the legacy ledger does not guarantee.
+        artifact_origin_possible = artifact_id in provider_origin_artifacts
+        if receipt_stage and not artifact_origin_possible:
             counts["unlinked_receipts_staged"] += 1
         safe_receipts.append({
             "receipt_ref": _opaque(salt, receipt_id),
@@ -331,9 +334,10 @@ def audit_account(
             ) else "unclassified",
             "physical_artifact_found": receipt_artifact_found,
             "staging_only": receipt_stage and not receipt_final_verified,
-            "published_final_placement": receipt_final_verified and has_exact_origin,
+            "published_final_placement": False,
+            "final_file_sha_verified": receipt_final_verified,
             "staged_visible_in_library": receipt_visible_stage,
-            "origin_link_present": has_exact_origin,
+            "origin_link_present": None if artifact_origin_possible else False,
         })
     return {
         "schema_version": 1, "scope": "exact_account",
