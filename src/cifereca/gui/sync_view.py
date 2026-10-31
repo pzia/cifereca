@@ -558,21 +558,20 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     activation = "Activée" if enabled else "Désactivée"
     connection = "Connectée" if connected else "Déconnectée"
 
-    # A provider error is an opaque diagnostic, not safe UI text: it may
-    # contain bearer URLs, filesystem paths, or private account identifiers.
-    error = bool(getattr(source, "error", ""))
+    # Use the same closed, phase-aware severity projection for the primary
+    # status text and its attention icon. A failed local GET/placement phase
+    # must never sit under a misleading "Dernier succès" headline.
+    alert = sync_source_attention(source) if capable else None
     status = str(getattr(source, "status", "") or "idle").strip().casefold()
     last_success = _timestamp_label(getattr(source, "last_success", ""))
     last_attempt = _timestamp_label(getattr(source, "last_attempt", ""))
 
     if not capable:
         sync_label = "Non prise en charge"
-    elif status in {"error", "failed"} or (
-        error and not (status == "partial" and getattr(source, "error", None) == "Synchronisation partielle")
-    ):
-        # A genuine broker error takes precedence over a stale partial/running
-        # label, consistent with sync_source_attention. The single closed Core
-        # partial-coverage marker is not an acquisition failure.
+    elif alert is not None and alert[0] == "error":
+        # Applies to source-wide failures AND failed/blocked phase projections.
+        # The fixed Core inventory-partial marker remains informational if the
+        # independent local phase has no observed failure.
         sync_label = "Échec"
     elif status == "running":
         sync_label = "En cours…"
