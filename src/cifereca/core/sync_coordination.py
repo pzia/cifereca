@@ -344,9 +344,9 @@ def _run_observed_canonical_convergence(
         ):
             consent = frozenset()
         if admitted_source_revision is not None:
-            # Explicit per-account ON authorizes eligible provider-attested
-            # offers; unlike legacy grants, it is not keyed per right.
-            from .source_convergence import SourceKey
+            # Compatibility projection for the old executor/preflight ABI.
+            # These keys are delivery candidates, never persistent per-right
+            # grants: the source revision is the sole acquisition policy.
             candidate = admitted_snapshots[0]
             consent = frozenset(
                 SourceKey(candidate.scope, row.edition_id, row.right_id,
@@ -373,7 +373,9 @@ def _run_observed_canonical_convergence(
                         or fresh_policy.revision != admitted_source_revision):
                     return False
             if admitted_source_revision is not None:
-                return key in consent and epoch_current(key)
+                # The source-wide ON grant is not an authorization per right.
+                # The offer/snapshot still independently gates availability.
+                return key.scope == admitted_snapshots[0].scope
             latest = consent_reader(account)
             return (type(latest) is frozenset
                     and key in latest
