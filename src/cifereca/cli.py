@@ -309,19 +309,37 @@ def main(argv: list[str] | None = None) -> int:
                 # has been requested yet.
                 if a.sync_cmd == "run" and not a.confirm:
                     raise SyncSelectionError("explicit_run_confirmation_required")
-                # Existing Core account discovery; never select a provider
-                # implicitly for a network run. No provider-specific dispatch.
-                service.connect_configured()
+                # list reads persisted bindings only: no connect, no
+                # provider session and no remote inventory request.
+                if a.sync_cmd == "run":
+                    service.connect_configured()
                 selectors = dict(
                     provider=a.provider, identity=a.identity,
                     credential=a.credential, account_id=a.account_id,
                 )
                 if a.sync_cmd == "list":
-                    selected = select_sync_accounts(list(service.accounts), **selectors)
+                    from types import SimpleNamespace
+                    connections = {
+                        (row["identity_id"], row["provider_id"], row["credential_id"]): row
+                        for row in core.storage.provider_connections()
+                        if row.get("enabled") is True
+                    }
+                    persisted = [
+                        SimpleNamespace(
+                            provider_id=row["provider_id"],
+                            identity_id=row["identity_id"],
+                            credential_id=row["credential_id"],
+                            unique_id=row["account_id"],
+                        )
+                        for row in core.storage.provider_accounts()
+                        if (row["identity_id"], row["provider_id"], row["credential_id"])
+                        in connections
+                    ]
+                    selected = select_sync_accounts(persisted, **selectors)
                     result = {"status": "success", "sources": [
                         {"provider": x.provider_id, "identity": x.identity_id,
                          "credential": x.credential_id, "account_id": x.unique_id,
-                         "enabled": bool(service.sync_source_enabled(x))}
+                         "connection_enabled": True}
                         for x in selected
                     ]}
                     code = 0
