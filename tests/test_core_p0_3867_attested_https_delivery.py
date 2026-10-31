@@ -283,3 +283,22 @@ def test_transport_service_exposes_same_bounded_core_download(
     )
     assert result.sha256 == delivery.hashlib.sha256(b"verified candidate").hexdigest()
     assert result.path.read_bytes() == b"verified candidate"
+
+
+def test_httpx_error_cannot_leak_signed_url_or_transport_diagnostic(
+    tmp_path, monkeypatch,
+):
+    def handler(request):
+        raise httpx.ConnectError(
+            "private-signed-url-and-account=DO-NOT-LOG", request=request,
+        )
+
+    _client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="^delivery_transport_unavailable$") as err:
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "failed.epub",
+            admission_current=lambda: True, timeout=5,
+        )
+    assert "DO-NOT-LOG" not in str(err.value)
+    assert not list(tmp_path.iterdir())
