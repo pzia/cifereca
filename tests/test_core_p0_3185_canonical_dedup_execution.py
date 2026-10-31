@@ -175,7 +175,7 @@ def test_staged_checkpoint_fails_closed_and_does_not_unlink(rig):
     attach_all_references(rig, staged=True)
     result = run(rig, retire=True)
     assert (result.status, result.reason) == (
-        "blocked", "reference_relink_failed",
+        "blocked", "canonical_receipt_relink_checkpoint_conflict",
     )
     # Preparation reports no partial counters on a late failure; the
     # independently committed safe relinks are checked in SQLite below.
