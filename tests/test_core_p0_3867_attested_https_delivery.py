@@ -60,7 +60,7 @@ def test_unlisted_https_origin_is_downloaded_and_sensitive_headers_do_not_cross(
             "Referer": "https://books.provider.example/private",
             "X-CSRF-Token": "private",
             "Accept": "application/epub+zip",
-        }, max_bytes=1024, timeout=5,
+        }, max_bytes=1024, timeout=5, admission_current=lambda: True,
     )
     assert calls == [1]
     assert result.path == target and result.size == len(b"synthetic epub")
@@ -96,7 +96,7 @@ def test_invalid_location_never_creates_second_request_or_file(
     with pytest.raises(ValueError):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST, target=target,
-            timeout=5,
+            timeout=5, admission_current=lambda: True,
         )
     assert visited == [FIRST]
     assert not target.exists()
@@ -115,13 +115,13 @@ def test_redirect_cycle_and_limit_are_bounded_without_writing(tmp_path, monkeypa
     with pytest.raises(ValueError, match="delivery_redirect_loop"):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST,
-            target=tmp_path / "none.epub", timeout=5,
+            target=tmp_path / "none.epub", timeout=5, admission_current=lambda: True,
         )
     assert seen == [FIRST, CDN]
     with pytest.raises(ValueError, match="delivery_redirect_limit"):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST,
-            target=tmp_path / "none.epub", max_redirects=0, timeout=5,
+            target=tmp_path / "none.epub", max_redirects=0, timeout=5, admission_current=lambda: True,
         )
     assert not (tmp_path / "none.epub").exists()
 
@@ -146,7 +146,7 @@ def test_failed_delivery_never_creates_final_file_or_leaves_partial(
     with pytest.raises(ValueError):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST, target=target,
-            max_bytes=10, timeout=5,
+            max_bytes=10, timeout=5, admission_current=lambda: True,
         )
     assert not target.exists()
     assert list(tmp_path.iterdir()) == []
@@ -168,7 +168,7 @@ def test_symlink_destination_and_symlinked_parent_are_not_writable(
     with pytest.raises(ValueError, match="delivery_target_exists"):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST,
-            target=target, timeout=5,
+            target=target, timeout=5, admission_current=lambda: True,
         )
     assert outside_file.read_bytes() == b"unchanged"
     target.unlink()
@@ -178,7 +178,7 @@ def test_symlink_destination_and_symlinked_parent_are_not_writable(
     with pytest.raises(ValueError, match="delivery_staging_unsafe"):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST,
-            target=linked / "received.epub", timeout=5,
+            target=linked / "received.epub", timeout=5, admission_current=lambda: True,
         )
     assert list(external.iterdir()) == [outside_file]
 
@@ -191,7 +191,7 @@ def test_existing_target_is_never_replaced(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="delivery_target_exists"):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=FIRST,
-            target=target, timeout=5,
+            target=target, timeout=5, admission_current=lambda: True,
         )
     assert target.read_bytes() == b"existing proof"
     assert calls == []
@@ -213,7 +213,54 @@ def test_untrusted_initial_url_denied_before_network(
     with pytest.raises(ValueError):
         delivery.download_attested_https(
             producer="core.selected.delivery", url=invalid,
-            target=tmp_path / "bad.epub", timeout=5,
+            target=tmp_path / "bad.epub", timeout=5, admission_current=lambda: True,
         )
     assert calls == []
     assert not (tmp_path / "bad.epub").exists()
+
+
+def test_admission_revoked_after_redirect_denies_followup_before_get(
+    tmp_path, monkeypatch,
+):
+    visited = []
+    checks = []
+
+    def handler(request):
+        visited.append(str(request.url))
+        return httpx.Response(302, headers={"location": CDN})
+
+    def current():
+        checks.append(1)
+        return len(checks) <= 2
+
+    _client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="delivery_admission_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "unauthorized.epub",
+            admission_current=current, timeout=5,
+        )
+    assert visited == [FIRST]
+    assert not (tmp_path / "unauthorized.epub").exists()
+
+
+def test_rejected_final_publish_after_stream_preserves_no_target(
+    tmp_path, monkeypatch,
+):
+    checks = []
+
+    def current():
+        checks.append(1)
+        # Preflight, first hop and the data chunk are admitted; the final
+        # byte-to-path transition must independently recheck consent.
+        return len(checks) <= 3
+
+    _client(monkeypatch, lambda request: httpx.Response(200, content=b"valid epub bytes"))
+    with pytest.raises(ValueError, match="delivery_admission_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "no-publication.epub",
+            admission_current=current, timeout=5,
+        )
+    assert len(checks) == 4
+    assert list(tmp_path.iterdir()) == []
