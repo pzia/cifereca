@@ -34,7 +34,7 @@ def test_sync_presentation_uses_capabilities_not_vendor_name():
         _source(vendor, "remote_inventory", "entitlements", "local_materialization")
         for vendor in ("numilog", "kobo", "paris", "fixture-vendor")
     ]
-    texts = [sync_source_presentation(source).summary.split("\\n", 1)[1] for source in examples]
+    texts = [" | ".join(sync_source_presentation(source).summary.splitlines()[1:]) for source in examples]
     assert len(set(texts)) == 1
     assert "inventaire distant" in texts[0]
     assert "observations de droits et prêts" in texts[0]
