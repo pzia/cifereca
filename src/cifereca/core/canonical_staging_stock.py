@@ -82,7 +82,9 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
         "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
         "WHERE identity_id=? AND provider_id=? AND credential_id=? "
         "AND account_id=? AND item_id=? "
-        "AND status='complete' AND artifact_id=? LIMIT 32",
+        "AND ((status='complete' AND artifact_id=?) OR "
+        "(status='canonical_receipt_staged' AND artifact_id IS NULL)) "
+        "LIMIT 32",
         (scope.identity_id, scope.provider_id, scope.credential_id,
          scope.account_id, source.edition_id, row[2]),
     ).fetchall()
@@ -107,6 +109,7 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
                 or not proof["receipt"].startswith("core-delivery:")
                 or any(ch in proof["receipt"] for ch in "\x00\r\n")
                 or type(proof.get("adept_receipt")) is not str
+                or any(ch in proof["adept_receipt"] for ch in "\x00\r\n")
                 or record_id != _stage_id(source, proof["offer_id"])
                 or sum(link[0] == proof["receipt"] for link in references) != 1):
             continue
@@ -269,8 +272,18 @@ def repair_exact_published_staging(
         if context_current() is not True:
             raise ValueError("canonical_stock_context_changed")
 
-    # B is now authoritative. A failure of descriptive index or cleanup must
-    # not revoke the provider OriginLink or convert success into another GET.
+    # B is now authoritative. The historical checkpoint may still say
+    # staged if the old postcommit status update failed. Bring it terminal
+    # without treating an operation journal as a provider ownership proof.
+    try:
+        from .canonical_recovery import mark_completed_delivery_published
+        mark_completed_delivery_published(
+            storage, source=source, offer_id=proof["offer_id"],
+            artifact_id=original[2], shared_lock=shared_lock,
+        )
+    except Exception:
+        _LOG.warning("TRACE convergence code=canonical_stock_checkpoint_deferred")
+    # A failure of descriptive index or cleanup cannot revoke OriginLink.
     try:
         result = LocalCatalog(storage, root).index_path(
             final, identity_id=source.scope.identity_id,
