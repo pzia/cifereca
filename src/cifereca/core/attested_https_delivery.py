@@ -49,7 +49,7 @@ def _destination(url: str) -> tuple[str, str, int]:
     try:
         parsed = urlsplit(url)
         host = parsed.hostname
-        port = parsed.port or 443
+        port = 443 if parsed.port is None else parsed.port
         if (parsed.scheme != "https" or not parsed.netloc or not host
                 or parsed.username is not None or parsed.password is not None
                 or "%" in parsed.netloc or host.endswith(".")
