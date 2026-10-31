@@ -64,7 +64,7 @@ def test_httpx_ast_gate_is_scoped_to_plugin_and_guard_changes():
     assert 'echo "httpx_boundary=true"' in source  # manual dispatch
     assert 'echo "httpx_boundary=$httpx_boundary"' in source
     scope = re.search(
-        r"(?m)^          if matches '([^']+)'; then\\n            httpx_boundary=true$",
+        r"(?m)^          if matches '([^']+)'; then\n            httpx_boundary=true$",
         source,
     )
     assert scope, "missing dedicated HTTPX selection"
