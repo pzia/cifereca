@@ -514,3 +514,26 @@ def test_generic_provider_descriptor_new_required_credential_fails_closed(editor
     with pytest.raises(SettingsValidationError, match='Schéma des identifiants modifié'):
         validate(editor, descriptors={'future-provider': future})
     assert config.data == before
+
+
+
+@pytest.mark.parametrize("invalid", [None, False, 0, "endpoint", ["endpoint"], [("endpoint", "injected")]])
+def test_generic_provider_rejects_untyped_saved_option_snapshots(editor, invalid):
+    """#3731: malformed GUI snapshots cannot coerce provider settings."""
+    config, values = editor
+    values["accounts"] = [account("future-provider")]
+    values["accounts"][0]["original_options"] = invalid
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Options du fournisseur invalides"):
+        validate(editor, descriptors={"future-provider": descriptor("future-provider")})
+    assert config.data == before
+
+
+def test_generic_provider_preserves_valid_empty_and_unknown_saved_options(editor):
+    config, values = editor
+    values["accounts"] = [account("future-provider")]
+    values["accounts"][0]["original_options"] = {"legacy": "unchanged"}
+    before = deepcopy(config.data)
+    result = validate(editor, descriptors={"future-provider": descriptor("future-provider")})
+    assert result.data["providers"]["accounts"][0]["options"] == {"legacy": "unchanged"}
+    assert config.data == before
