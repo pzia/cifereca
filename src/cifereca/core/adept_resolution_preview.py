@@ -120,13 +120,15 @@ def preview_paris_adept_resolution_candidate(
         return result("source_unverified", ["exact_paris_entitlement_unverified"],
                       selected=selected, canonical_source=source, strength=strength)
 
-    if (len(source["artifacts"]) != 1
+    if (canonical["link_resolution"] != "paired_links_unverified"
+            or len(source["artifacts"]) != 1
             or not source["artifacts"][0]["paired_source_artifact_links"]
             or source["cross_identity_link"]):
         return result("canonical_links_unverified", ["canonical_origin_pair_unverified"],
                       selected=selected, canonical_source=source, strength=strength)
 
-    if (strength != "inventory_attested"
+    if (historical["origin_resolution"] != "single_inventory_attested"
+            or strength != "inventory_attested"
             or not selected["recorded_adept_profile_id"]
             or not selected["recorded_adept_loan_ref"]):
         return result("historical_inventory_unverified",
