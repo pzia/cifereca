@@ -171,3 +171,52 @@ def test_local_exact_published_placement_still_blocks_repeat_download(case):
     with pytest.raises(OwnedDownloadRejected):
         case.service.obtain_owned_library_item(target)
     assert len(case.calls) == 1
+
+
+
+def test_legacy_mirrored_right_cannot_shadow_fresh_canonical_purchase(
+    case,
+):
+    # Genuine old API: backup_put creates an independent compatibility-only
+    # entitlement with another synthetic ID. This must NOT be mistaken for
+    # an independently attested second purchase or permission to GET.
+    case.service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "item_id": "book-1", "identity_id": "default",
+        "account_id": "account", "revision_id": "r1",
+        "title": "Historical backup", "status": "reconcile_required",
+        "local_path": str(case.root / "moved.epub"),
+    })
+    rights = [row for row in case.service.storage.entitlements(provider_id="kobo")
+              if row.get("identity_id") == "default" and row.get("item_id") == "book-1"]
+    assert len(rights) == 2
+    mirrored = next(row for row in rights
+                    if row["entitlement_id"] != case.right["entitlement_id"])
+    assert mirrored["metadata"]["compatibility_projection"] == "backup_items"
+    target = case.service.owned_library_download_target(case.entry)
+    assert target is not None
+    receipt = case.service.obtain_owned_library_item(target)
+    assert receipt.path.is_file() and len(case.calls) == 1
+    assert case.service.owned_library_download_target(case.entry) is None
+
+    # A stale Library row claiming the compatibility-only right cannot
+    # override the exact canonical possession, even with matching account.
+    case.entry["possessions"][0]["entitlement_id"] = mirrored["entitlement_id"]
+    assert case.service.owned_library_download_target(case.entry) is None
+
+
+def test_two_independent_rights_remain_ambiguous_even_with_backup_mirror(
+    case,
+):
+    case.service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "item_id": "book-1", "identity_id": "default",
+        "account_id": "account", "revision_id": "r1",
+        "title": "Old mirror", "status": "pending",
+    })
+    case.service.storage.entitlement_put({
+        **case.right, "entitlement_id": "independent-right-2",
+        "revision_id": "r2",
+    })
+    assert case.service.owned_library_download_target(case.entry) is None
+    assert case.calls == []

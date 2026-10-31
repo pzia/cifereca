@@ -44,7 +44,20 @@ def _resolve(service, entitlement_id, identity_id):
     duplicates = [row for row in service.storage.entitlements(provider_id="kobo", state="active")
                   if row.get("identity_id") == identity_id and row.get("item_id") == right["item_id"]
                   and row.get("entitlement_type") == "owned"]
-    _require(len(duplicates) == 1)
+    # A 0.7 backup_put compatibility mirror produces an additional active
+    # entitlement with a synthetic ID. It is NOT a second attested purchase
+    # when a canonical provider right exists for this exact identity/book.
+    # Prefer the independent provider-attested rows, but never auto-select a
+    # different right from the requested Library possession.
+    def projection_only(row):
+        metadata = row.get("metadata")
+        return (isinstance(metadata, dict)
+                and (metadata.get("compatibility_projection") == "backup_items"
+                     or metadata.get("imported_from") == "backup_items"))
+
+    independent = [row for row in duplicates if not projection_only(row)]
+    selected_pool = independent if independent else duplicates
+    _require(len(selected_pool) == 1 and selected_pool[0]["entitlement_id"] == entitlement_id)
     accounts = [a for a in service.accounts if a.provider_id == "kobo" and a.identity_id == identity_id
                 and a.credential_id == right["credential_id"] and a.unique_id == right["account_id"]]
     _require(len(accounts) == 1)
