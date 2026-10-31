@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
+import secrets
 from pathlib import Path
 import tempfile
 import zipfile
@@ -127,7 +129,8 @@ def write_sync_report(
         raise ValueError("sync_report_invalid_exit")
     target = Path(os.path.abspath(destination.expanduser()))
     parent = target.parent
-    if target.is_symlink() or os.path.lexists(target) or not parent.is_dir():
+    if (os.path.lexists(target) or not parent.is_dir()
+            or any(part.is_symlink() for part in (target, *target.parents))):
         raise FileExistsError("sync_report_destination_unavailable")
     from .startup_revision import build_identity
     identity = build_identity()
@@ -135,9 +138,12 @@ def write_sync_report(
     # cross-export stable matching of pseudonyms.
     coords = (account.identity_id, account.provider_id,
               account.credential_id, account.unique_id)
-    selection_ref = hashlib.sha256(
-        (run_ref + "\x00" + json.dumps(coords, separators=(",", ":"), ensure_ascii=True))
-        .encode("ascii")
+    # The HMAC key is ephemeral and never exported: even guessable local IDs
+    # cannot be recovered by brute-forcing the public report run_ref.
+    selection_ref = hmac.new(
+        secrets.token_bytes(32),
+        json.dumps(coords, separators=(",", ":"), ensure_ascii=True).encode("ascii"),
+        hashlib.sha256,
     ).hexdigest()
     safe_result = _safe_result(result)
     ended = _utc_now()
@@ -173,7 +179,6 @@ def write_sync_report(
         "summary.txt": summary,
     }
     temp: Path | None = None
-    published = False
     try:
         fd, name = tempfile.mkstemp(prefix=".cifereca-report-", suffix=".tmp", dir=parent)
         temp = Path(name)
@@ -186,7 +191,6 @@ def write_sync_report(
             os.fsync(stream.fileno())
         # Hard-link publish is O_EXCL: never replace even a symlink or race.
         os.link(temp, target, follow_symlinks=False)
-        published = True
     finally:
         if temp is not None:
             temp.unlink(missing_ok=True)
