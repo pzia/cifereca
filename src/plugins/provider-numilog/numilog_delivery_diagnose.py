@@ -142,6 +142,91 @@ def _classification(terminal, last_http):
     return "unclassified_failure"
 
 
+# Fixed vocabulary from the Core startup_materialization diagnostic contract.
+# Kept locally: this offline tool must work without importing an installed Core.
+_STARTUP_PHASE = frozenset({
+    "admission", "durable_claim", "manifest_fetch", "rights_mirror", "preflight",
+    "acquisition", "adept", "index", "receipt_finalization", "completed",
+})
+_STARTUP_STATUS = frozenset({"running", "complete", "partial", "failed", "blocked", "not_due"})
+_STARTUP_CODE = frozenset({
+    "started", "complete", "not_due", "consent_revoked", "admission_failed",
+    "claim_failed", "manifest_failed", "manifest_invalid", "rights_mirror_failed",
+    "preflight_failed", "rights_mirror_incomplete", "acquisition_failed", "adept_failed",
+    "index_failed", "receipt_finalize_failed", "interrupted", "adept_complete",
+    "acquisition_lock_busy", "acquisition_source_unavailable",
+    "acquisition_local_conflict", "acquisition_root_unavailable",
+    "acquisition_file_conflict", "acquisition_publication_guard",
+    "acquisition_admission_failed", "acquisition_delivery_failed",
+    "acquisition_post_delivery_failed", "acquisition_artifact_invalid",
+    "acquisition_receipt_failed",
+})
+_STARTUP_DECISION = frozenset({
+    "already_local_declared", "declared_needs_review", "already_local_verified",
+    "not_downloadable", "needs_reconciliation", "purchase_unproven",
+    "source_not_ready", "evidence_unavailable", "source_changed",
+    "invalid_source", "invalid_item_id", "preflight_failed", "consent_revoked",
+    "quota_reached", "acquired", "acquisition_failed", "recovery_scope_invalid",
+    "recovery_right_unproven", "recovery_receipts_ambiguous",
+    "recovery_foreign_receipt", "recovery_already_attempted",
+    "recovery_receipt_pending", "recovery_foreign_placement",
+    "recovery_evidence_unavailable",
+})
+
+
+def _startup_reports(events, *, task_ref=""):
+    """Summarize Core preflight evidence without exporting book IDs or paths."""
+    runs = {}
+    for event in events:
+        if (type(event) is not dict or event.get("module") != "NUMILOG"
+                or event.get("operation") != "startup_materialization"
+                or type(event.get("detail")) is not dict):
+            continue
+        detail = event["detail"]
+        token = detail.get("run_ref")
+        if type(token) is not str or _TOKEN.fullmatch(token) is None:
+            continue
+        scoped = event.get("task_ref", detail.get("task_ref"))
+        if task_ref and scoped != task_ref:
+            continue
+        if token not in runs and len(runs) >= _MAX_ACTIONS:
+            raise JournalFormatError("too_many_startup_runs")
+        ts = _timestamp(event)
+        run = runs.setdefault(token, {
+            "run_ref": token,
+            "task_ref": scoped if type(scoped) is str and len(scoped) <= 64 else None,
+            "started_at": ts, "last_at": ts, "terminal_code": None,
+            "status": "incomplete", "attempted": 0, "downloaded": 0,
+            "skipped": 0, "failed": 0, "item_decisions": [],
+        })
+        if ts and (not run["started_at"] or ts < run["started_at"]):
+            run["started_at"] = ts
+        if ts and (not run["last_at"] or ts > run["last_at"]):
+            run["last_at"] = ts
+        positions = detail.get("item_decisions")
+        if type(positions) is list and len(positions) <= 8:
+            selected = []
+            for item in positions:
+                if type(item) is not dict or set(item) != {"position", "decision"}:
+                    break
+                position, decision = item["position"], item["decision"]
+                if (type(position) is not int or not 1 <= position <= 2048
+                        or type(decision) is not str or decision not in _STARTUP_DECISION):
+                    break
+                selected.append({"position": position, "decision": decision})
+            else:
+                if len(selected) >= len(run["item_decisions"]):
+                    run["item_decisions"] = selected
+        for count in ("attempted", "downloaded", "skipped", "failed"):
+            value = detail.get(count)
+            if type(value) is int and 0 <= value <= 2048:
+                run[count] = value
+        if _closed(detail.get("phase"), _STARTUP_PHASE) == "completed":
+            run["terminal_code"] = _closed(detail.get("code"), _STARTUP_CODE)
+            run["status"] = _closed(detail.get("status"), _STARTUP_STATUS)
+    return sorted(runs.values(), key=lambda row: (row["started_at"], row["run_ref"]))
+
+
 def analyze(journal: dict, *, task_ref: str = "") -> dict:
     events = journal["events"]
     first = last = ""
@@ -205,15 +290,18 @@ def analyze(journal: dict, *, task_ref: str = "") -> dict:
             report["duplicate_terminal"] = True
         counts[classification] += 1
         reports.append(report)
+    startup_runs = _startup_reports(events, task_ref=task_ref)
     return {
         "schema_version": 1,
         "coverage": {
             "first_timestamp": first, "last_timestamp": last,
             "journal_events": len(events), "delivery_events": observations,
             "delivery_attempts": len(reports),
+            "startup_runs": len(startup_runs),
             "note": "No terminal event proves a placed EPUB; verify Core OriginLink/Placement/SHA separately.",
         },
         "counts": dict(sorted(counts.items())), "attempts": reports,
+        "startup_runs": startup_runs,
     }
 
 
@@ -243,6 +331,12 @@ def main(argv=None) -> int:
                 print(f"  hop={hop.get('hops', '?')} {hop.get('origin_kind', '?')}/"
                       f"{hop.get('path_kind', '?')} HTTP={hop.get('http_status', '?')} "
                       f"-> {hop.get('redirect_target_origin_kind', '-')}")
+        for run in report["startup_runs"]:
+            print(f"Preflight {run['started_at']} run={run['run_ref']} "
+                  f"code={run['terminal_code'] or 'absent'} status={run['status']} "
+                  f"attempted={run['attempted']} downloaded={run['downloaded']}")
+            for item in run["item_decisions"]:
+                print(f"  achat position={item['position']} decision={item['decision']}")
         print("Attention: acquisition HTTP != preuve d'un EPUB placé et rattaché au profil.")
     return 0
 
