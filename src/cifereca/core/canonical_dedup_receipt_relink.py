@@ -127,7 +127,7 @@ def relink_completed_delivery_checkpoints(
                     or type(value["adept_receipt"]) is not str
                     or len(value["adept_receipt"]) > 1024
                     or any(c in x for x in (value["offer_id"], value["receipt"],
-                                           value["adept_receipt"]) for c in "\\x00\\r\\n")
+                                           value["adept_receipt"]) for c in "\x00\r\n")
                     or type(value["source"]) is not list
                     or len(value["source"]) != 8):
                 raise ValueError("canonical_receipt_relink_checkpoint_conflict")
