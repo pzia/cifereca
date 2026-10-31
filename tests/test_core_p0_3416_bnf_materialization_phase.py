@@ -29,7 +29,7 @@ def test_bnf_real_session_advertises_distinct_capability_not_kobo_materializatio
     phase = next(x for x in source.phase_states if x.phase == "materialize")
     assert phase.status == "not_supported"  # Kobo generic action still unavailable
     rendered = _phase_text(source)
-    assert 'Téléchargement local : Voir « Télécharger automatiquement les prêts »' in rendered
+    assert "Téléchargement local : Téléchargement distinct de cette synchronisation" in rendered
     assert "Téléchargement local : Réussie" not in rendered
     assert "Téléchargement local : Non prise en charge" not in rendered
     assert broker.bnf_auto_download_enabled(source.source_id) is False
@@ -58,11 +58,11 @@ def test_generic_view_only_uses_declared_capability_and_does_not_overwrite_real_
     unavailable = source((SyncPhaseState("materialize", "not_supported"),))
     assert "Non prise en charge" in _phase_text(unavailable)
     separate = source((SyncPhaseState("materialize", "not_supported"),), marked)
-    assert "opération distincte" in _phase_text(separate)
+    assert "Téléchargement distinct" in _phase_text(separate)
     for real in ("failed", "partial", "attention_required", "success"):
         observed = source((SyncPhaseState("materialize", real),), marked)
         displayed = _phase_text(observed)
-        assert "opération distincte" not in displayed
+        assert "Téléchargement distinct" not in displayed
         assert "Non prise en charge" not in displayed
     # A made-up capability or hostile unbounded collection changes nothing.
     garbage = source((SyncPhaseState("materialize", "not_supported"),),
