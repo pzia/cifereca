@@ -180,6 +180,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     adept_bridge.add_argument("--loan-id", required=True, help="ID exact du prêt Paris")
     adept_bridge.add_argument("--item-id", required=True, help="ID exact de l'item")
+    adept_preview = adept_sub.add_parser(
+        "preview-resolution",
+        help="Prévisualisation sans mutation d'une origine ADEPT explicitement sélectionnée",
+    )
+    adept_preview.add_argument("--loan-id", required=True)
+    adept_preview.add_argument("--item-id", required=True)
+    adept_preview.add_argument("--source-reference-id", required=True)
+    adept_preview.add_argument("--acquisition-ref", required=True)
     adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
     adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
     adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
@@ -220,11 +228,22 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "paris-adept":
         if a.username or a.account:
             p.error("paris-adept exige --credential, pas --username ou --account")
-        if a.paris_adept_cmd in {"audit-origin", "audit-canonical", "audit-transaction"}:
+        if a.paris_adept_cmd in {
+            "audit-origin", "audit-canonical", "audit-transaction", "preview-resolution",
+        }:
             # Reject unusable transaction keys before Core can be opened.
             if (not a.loan_id.strip() or not a.item_id.strip()
                     or "\x00" in a.loan_id or "\x00" in a.item_id):
                 p.error("audit de transaction exige --loan-id et --item-id non vides et sans NUL")
+        if a.paris_adept_cmd == "preview-resolution":
+            if (not a.source_reference_id.strip()
+                    or a.source_reference_id != a.source_reference_id.strip()
+                    or "\x00" in a.source_reference_id
+                    or "\r" in a.source_reference_id or "\n" in a.source_reference_id
+                    or len(a.acquisition_ref) != 16
+                    or any(char not in "0123456789abcdef"
+                           for char in a.acquisition_ref)):
+                p.error("preview-resolution exige des références exactes et opaques")
         if a.paris_adept_cmd == "bind" and not a.confirm_ownership:
             p.error(
                 "paris-adept bind exige --confirm-ownership : "
@@ -326,6 +345,20 @@ def main(argv: list[str] | None = None) -> int:
                     result = review_paris_adept_transaction(
                         core.storage, loan_id=a.loan_id.strip(),
                         item_id=a.item_id.strip(),
+                        artifact_inspector=inspect_artifact,
+                    )
+                elif a.paris_adept_cmd == "preview-resolution":
+                    from .artifact_inspection import inspect_artifact
+                    from .core.adept_resolution_preview import (
+                        preview_paris_adept_resolution_candidate,
+                    )
+                    # Preview only: user-selected refs are not authorization
+                    # tokens. No ADEPT return or re-fulfillment is invoked.
+                    result = preview_paris_adept_resolution_candidate(
+                        core.storage, loan_id=a.loan_id.strip(),
+                        item_id=a.item_id.strip(),
+                        source_reference_id=a.source_reference_id,
+                        acquisition_ref=a.acquisition_ref,
                         artifact_inspector=inspect_artifact,
                     )
                 elif a.paris_adept_cmd == "list":
