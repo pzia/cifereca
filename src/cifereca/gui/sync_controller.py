@@ -443,10 +443,14 @@ def _refresh_sync_page(self) -> None:
             )
             row.set_subtitle_lines(2)
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
+        # Account availability and automatic file consent are independent.
+        # Never imply that enabling a source authorizes a new acquisition.
         toggle.set_tooltip_text(
-            "Activation de cette source (recherche éventuelle, sans synchronisation d’inventaire)"
-            if not source.sync_capable
-            else "Activation : inclure cette source dans les synchronisations"
+            "Activer cette source pour la recherche éventuelle ; "
+            "n’autorise aucun téléchargement automatique."
+            if not source.sync_capable else
+            "Activer la source et ses synchronisations ; "
+            "les téléchargements automatiques exigent une autorisation distincte."
         )
         def toggled(widget, _param, sid=source.source_id):
             if not sync_action_scope_current(self, scope):
