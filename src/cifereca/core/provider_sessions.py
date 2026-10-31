@@ -772,10 +772,13 @@ def connect_configured(self, *, logger, caller_category: str = "other",
             caller_category=caller_category,
         )
         logger.info("TRACE provider prepare kind=configured")
+        # All enabled configured sources share the same session-error key,
+        # including unavailable providers that never create a session.
+        key = self._session_key(provider_id, credential_id)
         plugin = self.registry.maybe_get(provider_id)
         if plugin is None:
             attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_missing")
-            errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
+            errors[key] = "Plugin inconnu"
             missing = public_connection_failure(
                 self.registry, provider_id, code=MISSING_PROVIDER_CODE,
             )
@@ -786,8 +789,16 @@ def connect_configured(self, *, logger, caller_category: str = "other",
             )
             continue
         if plugin.descriptor.state != "ready":
-            # Skeletons are visible to the GUI/docs but never perform I/O.
+            # Skeletons must never perform I/O, but an enabled configured
+            # connection is still unavailable to the opening-sync summary.
             attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_not_ready")
+            errors[key] = "Connexion à la source indisponible"
+            failure = public_connection_failure(self.registry, provider_id)
+            failures.append(failure)
+            _publish_connection_failure(
+                self.diagnostics, failure,
+                duration_ms=int((time.monotonic() - item_started) * 1000),
+            )
             continue
         if getattr(plugin.descriptor, "interactive_authentication", False):
             # A configured SSO provider cannot be opened, authenticated or
@@ -795,7 +806,6 @@ def connect_configured(self, *, logger, caller_category: str = "other",
             # Its explicit UI flow owns the consent and authenticated state.
             attempt.emit(self.diagnostics, "terminal", "skipped", "interactive_auth_required")
             continue
-        key = self._session_key(provider_id, credential_id)
         session = None
         invoked = False
         try:
