@@ -329,3 +329,42 @@ def test_cli_bridge_bad_transaction_keys_are_refused_before_core_open(
             "--loan-id", loan, "--item-id", item,
         ])
     assert exc.value.code == 2
+
+
+def test_canonical_pairs_without_old_adobe_acquisition_require_review(tmp_path):
+    db = Storage(tmp_path / "missing-adept-history.db")
+    try:
+        _artifact(db)
+        with db._lock, db._connect() as conn:
+            _canonical(conn)
+        result = _review(EvidenceStore(db, rights=[_historical_right()]))
+        assert result["status"] == "evidence_gap"
+        assert result["historical_origin_resolution"] == "unknown"
+        assert result["canonical_link_resolution"] == "paired_links_unverified"
+        assert result["review_reasons"] == ["historical_adept_acquisition_missing"]
+        assert result["sources"][0]["historical_entitlement_present"] is True
+        assert result["sources"][0]["historical_acquisition_count"] == 0
+        assert not result["return_authorized"]
+    finally:
+        db.close()
+
+
+def test_multiple_canonical_branches_without_historical_record_are_not_false_conflict(
+    tmp_path,
+):
+    db = Storage(tmp_path / "branches-only.db")
+    try:
+        _artifact(db)
+        with db._lock, db._connect() as conn:
+            _canonical(conn, "branch-one", branch="loans")
+            _canonical(conn, "branch-two", branch="linked")
+        result = _review(EvidenceStore(db))
+        assert result["status"] == "evidence_gap"
+        assert "historical_branch_unresolvable" not in result["review_reasons"]
+        assert "historical_entitlement_missing" in result["review_reasons"]
+        assert "historical_adept_acquisition_missing" in result["review_reasons"]
+        assert all(row["legacy_scope_overlap"] == "no_historical_scope"
+                   for row in result["sources"])
+        assert not result["return_authorized"]
+    finally:
+        db.close()
