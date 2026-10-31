@@ -47,6 +47,7 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             row = {key: editor[key] for key in ("id", "provider")}
             row.update({key: editor[key].get_text() for key in ("label", "identity")})
             row["enabled"] = editor["enabled"].get_active()
+            row["invalid_saved_snapshot"] = editor.get("invalid_saved_snapshot") is True
             row["original_options"] = settings_committer.stage(editor.get("original_options") or {})
             row["fields"] = {key: widget.get_text() for key, widget in editor["fields"].items()}
             row["option_fields"] = {
