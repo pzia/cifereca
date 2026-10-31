@@ -695,6 +695,19 @@ def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
 class LibraryMaintenanceBrokerImpl:
     service: Any
 
+    def pending_canonical_cleanups(self, *, identity_id: str | None = None):
+        """Read-only maintenance discovery; no recovery authorization.
+
+        The returned Core result is advisory. A confirmed recover request
+        must independently revalidate inode, keeper, origins and admission.
+        """
+        from .core.canonical_dedup_pending_review import (
+            review_pending_canonical_cleanups,
+        )
+        return review_pending_canonical_cleanups(
+            self.service.storage, identity_id=identity_id,
+        )
+
     def plan(self, request: LibraryMutationRequest) -> LibraryMutationPlan:
         op=request.operation
         if op == "normalize_filename":
