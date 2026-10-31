@@ -18,7 +18,7 @@ Référence: `main`, ABI `cifereca.downloadable-resource/2`. Tickets: #3848, #27
 2. `rights_selected_delivery_offer_snapshot` revalide l'identité/compte sous session et la carte MesLivres cible ; l'offre n'est `available` qu'après un identifiant opaque de livraison univoque. `canonical_selected_offers.py` fournit `explicit_user_action=True` sur le chemin automatique après contrôle Core : ce booléen n'est pas la cause autonome du refus.
 3. `rights_selected_delivery_candidate` et la passerelle v2 retournent un fichier staging Core, sans `OriginLink`, `Artifact`, reçu ni `Placement`. Cela respecte la frontière A/B ; une copie staging seule ne doit pas être considérée comme une publication.
 4. `_download` a encore une logique hybride : destinations navigables `checked_url` sous liste `ALLOWED`/origines ; redirections à partir d'un lien signé via `_checked_attested_network_url` à politique différente. Risque fonctionnel d'interruption des redirections Dilicom/Eden depuis une navigation `readBook` non qualifiée comme chaîne signée ; **ne pas ouvrir aveuglément toutes les redirections**. Le contrôle DNS préalable ne constitue pas une protection suffisante contre le rebinding pendant la connexion : aligner la migration sur le transport HTTP du Core (#3171/#3719).
-5. La projection CoreUI présentait le bouton « Télécharger » pour une ligne privée `downloadable=True`, alors que son offre v2 n'était pas nécessairement qualifiée. Cette PR dit « Vérifier et télécharger » et « offre à vérifier » sans ajouter de GET sur le rendu et en préservant l'action existante.
+5. La projection CoreUI présumait l'offre prête lorsque `can_direct_download()` autorisait simplement la visibilité du bouton. La présentation vérifie désormais la **présence des deux méthodes v2** (`downloadable_resource_snapshot` et `downloadable_selected_offer_snapshot`) sur la session enregistrée, sans les appeler ; tout fournisseur compatible, y compris fictif, reçoit « Vérifier et télécharger » et « Offre à vérifier avant acquisition » si Core autorise déjà l'action. Le nom Numilog n'est plus un critère de qualification ; Kobo conserve uniquement un libellé de sauvegarde adapté. Cela ne change ni le moteur de téléchargement manuel ni la validation transactionnelle Core.
 
 ### Critères de sortie non satisfaits (à valider par #3882)
 
@@ -31,10 +31,10 @@ Référence: `main`, ABI `cifereca.downloadable-resource/2`. Tickets: #3848, #27
 
 ### Suites CI ciblées
 
-- `pytest -q tests/test_core_ui_p1_1867_numilog_direct_download_scope.py`
+- `pytest -q tests/test_core_ui_p1_1867_numilog_direct_download_scope.py tests/test_core_ui_p0_3252_offer_presentation.py`
 - `pytest -q tests/test_core_p0_3719_v2_execution.py tests/test_core_p0_3719_six_v2_delivery_convergence.py`
 - `pytest -q src/plugins/provider-numilog/tests/test_p1_3252_downloadable_v2.py src/plugins/provider-numilog/tests/test_p0_2797_six_readbook_selected_candidates.py`
 - `pytest -q src/plugins/provider-kobo/tests/test_p1_3252_downloadable_v2.py src/plugins/provider-paris/tests/test_p0_3723_downloadable_v2.py src/plugins/provider-bnf-pret/tests/test_p0_3723_downloadable_v2.py`
 - `pytest -q src/plugins/provider-reference/tests/test_reference_v2_selected_candidate_3722.py`
 
-**Verdict :** ABI v2 présente chez les cinq adaptateurs examinés. Conformité d'exécution, redirections sécurisées, compteur achats attestés, rattachement visible et publication Numilog **non validés** par ce seul audit. Le journal ZIP reçu est antérieur au déploiement terrain 31/10 16h10.
+**Verdict :** ABI v2 présente chez les cinq adaptateurs examinés. Conformité d'exécution, redirections sécurisées, compteur achats attestés, rattachement visible et publication Numilog **non validés** par ce seul audit. **Journal terrain 31/10 16:36 :** une livraison Numilog atteint `200 EPUB`/`epub_candidate` à 16:18 sans certifier la publication ; trois Sync restent `partial` (couverture MesLivres intrinsèquement partielle). Le ledger comporte de nombreuses acquisitions Kobo `complete` dont le chemin persiste sous `.canonical-delivery/run-…`, ainsi qu'un cas BnF-Prêt. La publication physique et sa reprise appartiennent au Core (#3171/#3882).
