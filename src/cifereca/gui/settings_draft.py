@@ -107,7 +107,15 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         submitted_fields = editor.get('fields')
         if type(submitted_fields) is not dict:
             raise SettingsValidationError('Identifiants de compte indisponibles : recharger les paramètres.')
-        credentials: dict[str, str] = {}
+        original_credentials = editor.get('original_credentials', {})
+        if type(original_credentials) is not dict:
+            raise SettingsValidationError(
+                'Identifiants historiques invalides : recharger les paramètres.'
+            )
+        # A descriptor may stop exposing an old credential field. Preserve
+        # its stored value, even if the current editor does not render it.
+        # Current descriptor fields still receive the explicitly edited text.
+        credentials: dict[str, Any] = dict(original_credentials)
         for field in descriptor.credential_fields:
             if field.key not in submitted_fields or type(submitted_fields[field.key]) is not str:
                 raise SettingsValidationError(
