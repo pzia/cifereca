@@ -161,3 +161,26 @@ def test_stock_destination_symlink_cannot_redirect_files_to_other_directory(
     fixed = synchronize_account_source(service, service.account)
     assert fixed["canonical_execution"]["recovered"] == 1
     assert gets == ["signed-right-offer"]
+
+
+def test_stock_repairs_valid_B_even_if_postcommit_intake_flag_was_lost(
+    rig, monkeypatch,
+):
+    """OriginLink/Placement are authority, not an optional journal status."""
+    service, db, root, old, gets = _legacy_placement(rig, monkeypatch)
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE acquisition_ledger SET status='canonical_receipt_staged',"
+            "artifact_id=NULL WHERE acquisition_id LIKE 'canonical-intake:%'",
+        )
+    repaired = synchronize_account_source(service, service.account)
+    assert repaired["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert not old.exists()
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
+    with db._lock, db._connect() as sql:
+        status = sql.execute(
+            "SELECT status,artifact_id FROM acquisition_ledger "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'",
+        ).fetchone()
+    assert status == ("complete", "sha256:" + SHA)
