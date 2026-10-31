@@ -121,8 +121,44 @@ jobs:
           python scripts/verify-packaging.py
           python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
 
+      - name: Stamp verified Core source Git revision
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          sys.path.insert(0, "src")
+          from cifereca.startup_revision import stamp_source_git_commit
+          actual = subprocess.check_output(
+              ["git", "rev-parse", "--verify", "HEAD"], text=True, timeout=10,
+          ).strip().lower()
+          if actual != os.environ["RELEASE_COMMIT"].lower():
+              raise SystemExit("release_checkout_commit_mismatch")
+          stamp_source_git_commit(Path.cwd(), actual)
+          PY
+
       - name: Build Core wheel
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
+
+      - name: Verify Core wheel embeds the exact release SHA
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+          wheels = list(Path("dist").glob("cifereca-*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit("release_core_wheel_count_invalid")
+          with ZipFile(wheels[0]) as wheel:
+              revision = wheel.read("cifereca/_build_revision.txt").decode("ascii")
+          if revision != os.environ["RELEASE_COMMIT"].lower() + "\\n":
+              raise SystemExit("release_core_wheel_revision_mismatch")
+          PY
 
       - name: Smoke installed Core wheel
         env:
