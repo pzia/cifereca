@@ -67,3 +67,23 @@ Cette règle ne limite **ni la création directe de tickets par `backlog` sur de
 - Lors du triage, classer les preuves nécessaires à la livraison et les qualifications exploratoires différables. Ne pas déplacer silencieusement un critère indispensable ; expliciter les exceptions sécurité/intégrité et les arbitrages.
 
 Référence : [politique de livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md).
+
+
+## Aiguillage des diagnostics existants (31/10/2026 — #3913)
+
+Lors d'un triage, **proposer d'abord l'outil présent dans le dépôt**, avec la commande exacte, l'effet de bord (lecture seule / réseau / écriture), et le format de preuve attendu. Ne pas présenter une spécification de ticket comme une commande disponible sur `main`. Le rôle backlog **ne lance pas** ces commandes : il les recommande à l'utilisateur ou à l'agent propriétaire, puis analyse les sorties fournies.
+
+| Symptôme / besoin | Outil à recommander | Précaution |
+|---|---|---|
+| Santé technique générale | `cifereca-cli doctor --json` | Diagnostic sans synchronisation demandée |
+| Identifier une connexion exacte | `cifereca-cli sync list --provider numilog --json` | Lecture locale, sans GET fournisseur |
+| Synchronisation ciblée reproductible | `cifereca-cli sync run --provider numilog --identity ID --credential ID --account-id ID --confirm --json` | Réseau et mutations possibles ; sélectionner une identité/compte exacts. La suppression des sélecteurs obligatoires est à réaliser dans #3882 |
+| Capturer échanges HTTP d'une sync ciblée | Ajouter `--trace-export FICHIER.zip --confirm-trace-export` à `sync run` | ZIP HTTP brut potentiellement sensible ; confirmation explicite ; jamais d'export automatique |
+| Acquisition et stockage local | `cifereca-cli acquisition-ledger`, `cifereca-cli catalog-list`, `cifereca-cli statistics` | Ces sorties ne démontrent pas à elles seules une publication finale ou un OriginLink exact |
+| Audit Kobo sans téléchargement | `cifereca-cli kobo-audit --plan` et `cifereca-cli kobo-resume-preview --credential ID` | Ne pas confondre avec `kobo-resume` (peut télécharger) |
+| Livraisons Numilog, journal déjà exporté | `python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py JOURNAL.zip --json` | Lecture seule ; analyse livraison/staging, **pas** preuve de publication. Compatibilité des formats ZIP à rationaliser #3913 ; erreur `unexpected journal archive` connue |
+| Réconciliation d'acquisitions | `cifereca-cli acquisition-reconcile` | Potentiellement **modificatrice**, ne pas proposer comme audit lecture seule |
+| Tests de contrat plugins | `cifereca-plugin-test` | Validation technique, pas recette de compte réel |
+| Audit canonique staging → placement → origine / rapport en une commande | `acquisition-audit` et `sync run --report` | **Exigences #3882, non disponibles tant que leur livraison n'est pas vérifiée** |
+
+Pour Numilog et BnF-Prêt, appliquer le diagnostic post-staging #3909 : distinguer **HTTP 200 / candidat reçu / staging détecté / placement final / OriginLink / projection UI**. L'absence de GET en présence d'un fichier staging ne prouve pas un lien fournisseur correct. Préserver les fichiers temporaires et reçus lors du diagnostic, ne pas inférer une provenance par titre. Source des règles de journal : `docs/DIAGNOSTICS_CANONICAL_JOURNAL.md` et `docs/LOGGING-CONTRACT.md` ; spécification de rationalisation : #3913.
