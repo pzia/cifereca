@@ -78,6 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--scope", choices=["all", "physical", "digital", "unknown"], default="all")
     s.add_argument("--provider", default="all", help="Provider id (paris, gallica, kobo, ...)")
     s.add_argument("--field", choices=["all", "title", "author", "isbn", "subject"], default="all")
+    generic_sync = sub.add_parser("sync", help="Synchronisation ciblée par source, indépendante du fournisseur")
+    generic_sub = generic_sync.add_subparsers(dest="sync_cmd", required=True)
+    for command in ("list", "run"):
+        command_parser = generic_sub.add_parser(command)
+        command_parser.add_argument("--provider", default="")
+        command_parser.add_argument("--identity", default="")
+        command_parser.add_argument("--credential", default="")
+        command_parser.add_argument("--account-id", default=None)
+        command_parser.add_argument("--json", action="store_true")
+    generic_sub.choices["run"].add_argument(
+        "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
+    )
     ks_sync = sub.add_parser("kobo-sync", help="Synchronise localement les ebooks Kobo possédés")
     ks_sync.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
     kb = sub.add_parser("kobo-backup", help="Alias historique de kobo-sync")
@@ -281,9 +293,96 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
+    if a.cmd == "sync" and a.sync_cmd == "run":
+        from .core.sync_cli_contract import SyncSelectionError
+        # Reject unsafe/incomplete requests before opening Core, loading
+        # plugins or creating a provider session.
+        preflight_code = None
+        if a.username or a.account:
+            preflight_code = "legacy_account_selector_unsupported"
+        elif not a.confirm:
+            preflight_code = "explicit_run_confirmation_required"
+        elif not (a.provider and a.identity and a.credential
+                  and a.account_id is not None):
+            preflight_code = "source_scope_required"
+        if preflight_code is not None:
+            print(json.dumps({"status": "failed", "code": preflight_code},
+                             ensure_ascii=False))
+            return 2
+
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library
     try:
+        if a.cmd == "sync":
+            from .core.sync_cli_contract import (
+                SyncSelectionError, select_sync_accounts, require_exact_sync_account,
+                safe_sync_result,
+            )
+            try:
+                if a.username or a.account:
+                    raise SyncSelectionError("legacy_account_selector_unsupported")
+                # Fail before provider discovery: connect_configured may
+                # perform authentication/network I/O, even when no book sync
+                # has been requested yet.
+                if a.sync_cmd == "run" and not a.confirm:
+                    raise SyncSelectionError("explicit_run_confirmation_required")
+                # list reads persisted bindings only: no connect, no
+                # provider session and no remote inventory request.
+                if a.sync_cmd == "run":
+                    if not (a.provider and a.identity and a.credential
+                            and a.account_id is not None):
+                        raise SyncSelectionError("source_scope_required")
+                    service.connect_configured()
+                selectors = dict(
+                    provider=a.provider, identity=a.identity,
+                    credential=a.credential, account_id=a.account_id,
+                )
+                if a.sync_cmd == "list":
+                    from types import SimpleNamespace
+                    connections = {
+                        (row["identity_id"], row["provider_id"], row["credential_id"]): row
+                        for row in core.storage.provider_connections()
+                    }
+                    persisted = [
+                        SimpleNamespace(
+                            provider_id=row["provider_id"],
+                            identity_id=row["identity_id"],
+                            credential_id=row["credential_id"],
+                            unique_id=row["account_id"],
+                        )
+                        for row in core.storage.provider_accounts()
+                        if (row["identity_id"], row["provider_id"], row["credential_id"])
+                        in connections
+                    ]
+                    selected = select_sync_accounts(persisted, **selectors)
+                    from .core.source_sync_consent import read_policy, scope_for_account
+                    result = {"status": "success", "sources": [
+                        {"provider": x.provider_id, "identity": x.identity_id,
+                         "credential": x.credential_id, "account_id": x.unique_id,
+                         "connection_enabled": bool(connections[(x.identity_id, x.provider_id, x.credential_id)]["enabled"]),
+                         "acquisition_consent": read_policy(
+                             core.storage, scope_for_account(x)
+                         ).mode}
+                        for x in selected
+                    ]}
+                    code = 0
+                else:
+                    if not a.confirm:
+                        raise SyncSelectionError("explicit_run_confirmation_required")
+                    account = require_exact_sync_account(list(service.accounts), **selectors)
+                    raw = service.synchronize_account_source(account)
+                    result = {"provider": account.provider_id,
+                              "identity": account.identity_id,
+                              **safe_sync_result(raw)}
+                    code = 0 if result["status"] in ("success", "complete") else 2
+            except SyncSelectionError as exc:
+                result = {"status": "failed", "code": str(exc)}
+                code = 2
+            except Exception:
+                result = {"status": "failed", "code": "sync_unavailable"}
+                code = 2
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return code
         if a.cmd == "doctor":
             from .support_diagnostic import build_support_report, support_report_text
             if a.json:
