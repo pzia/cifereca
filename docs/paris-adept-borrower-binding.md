@@ -102,6 +102,12 @@ cifereca-cli paris-adept audit-origin \
   --loan-id "<id-pret-paris>" --item-id "<id-item>"
 ```
 
+Les identifiants de prêt, d'item et de droit historique doivent être de
+**véritables chaînes de caractères** : un nombre, booléen, liste ou objet
+JSON n'est jamais converti en texte pour fabriquer une égalité de
+transaction. Une métadonnée `provider_loan_id` présente mais malformée
+ne bénéficie pas du repli historique par `entitlement_id`.
+
 `audit-origin` reprend le résolveur Core `inspect_paris_adept_origins` :
 `sources` = visibilités issues des droits Paris persistés,
 `origins` = acquisitions ADEPT historiquement enregistrées (y compris dans

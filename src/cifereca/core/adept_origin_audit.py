@@ -62,9 +62,12 @@ def inspect_paris_adept_origins(
     Two source connections seeing one transaction are visibility, not proof of
     a double activation. A disagreement is never silently resolved here.
     """
-    provider_loan_id = str(loan_id or "").strip()
-    provider_item_id = str(item_id or "").strip()
-    if not provider_loan_id or not provider_item_id:
+    # Exact transaction keys are text, not stringifications of arbitrary
+    # historical JSON. An object, bool or number cannot attest a Paris loan.
+    provider_loan_id = loan_id.strip() if type(loan_id) is str else ""
+    provider_item_id = item_id.strip() if type(item_id) is str else ""
+    if (not provider_loan_id or not provider_item_id
+            or "\x00" in provider_loan_id or "\x00" in provider_item_id):
         return {
             "status": "unknown", "shared_visibility": False,
             "profile_disagreement": False, "origin_resolution": "unknown",
@@ -76,8 +79,10 @@ def inspect_paris_adept_origins(
     rights = [
         row for row in entitlements
         if str(row.get("provider_id") or "").casefold() == "paris"
-        and str(row.get("loan_id") or "") == provider_loan_id
-        and str(row.get("item_id") or "") == provider_item_id
+        and type(row.get("loan_id")) is str
+        and row["loan_id"] == provider_loan_id
+        and type(row.get("item_id")) is str
+        and row["item_id"] == provider_item_id
     ]
     # Historical entitlement identifiers may collide across two Paris
     # connections or library identities. A global id -> row dict silently
@@ -90,7 +95,8 @@ def inspect_paris_adept_origins(
             str(row.get("credential_id") or ""),
             str(row.get("account_id") or ""),
         )
-        for row in rights if row.get("entitlement_id")
+        for row in rights if type(row.get("entitlement_id")) is str
+        and row["entitlement_id"]
     }
     # Source visibility is supported only by persisted provider rights.
     # An ADEPT acquisition manually imported into another library identity
@@ -108,7 +114,8 @@ def inspect_paris_adept_origins(
     origins = []
     for row in acquisitions:
         if (str(row.get("provider_id") or "").casefold() != "paris"
-                or str(row.get("item_id") or "") != provider_item_id
+                or type(row.get("item_id")) is not str
+                or row["item_id"] != provider_item_id
                 or row.get("status") != "complete"
                 or row.get("executor") != "kobo-adept"
                 or row.get("strategy") != "loan_auto"):
@@ -116,7 +123,14 @@ def inspect_paris_adept_origins(
         metadata = row.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
-        recorded_loan = str(metadata.get("provider_loan_id") or "")
+        raw_loan_id = metadata.get("provider_loan_id")
+        # Malformed metadata must not be coerced to an apparently exact
+        # provider loan ID; nor may it fall back to a legacy entitlement.
+        if raw_loan_id is not None and type(raw_loan_id) is not str:
+            continue
+        recorded_loan = (raw_loan_id or "").strip()
+        if "\x00" in recorded_loan:
+            continue
         if recorded_loan:
             if recorded_loan != provider_loan_id:
                 continue
@@ -129,7 +143,8 @@ def inspect_paris_adept_origins(
                 str(row.get("credential_id") or ""),
                 str(row.get("account_id") or ""),
             )
-            if source_key not in rights_by_source:
+            if (type(row.get("entitlement_id")) is not str
+                    or source_key not in rights_by_source):
                 continue
 
         identity = str(row.get("identity_id") or "")

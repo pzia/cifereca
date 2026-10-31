@@ -508,3 +508,64 @@ def test_empty_audit_exposes_consistent_closed_disagreement_schema():
     assert report["origin_resolution"] == "unknown"
     assert report["adobe_loan_state_disagreement"] is False
     assert report["sources"] == report["origins"] == []
+
+
+def test_nontext_historical_provider_loan_id_never_attests_exact_transaction():
+    # The string representation of malformed JSON must not accidentally
+    # compare equal to a real Paris loan ID or create Adobe return evidence.
+    for raw in (42, True, {"loan": "PRIVATE-TOKEN"}, ["PRIVATE-LIST"]):
+        legacy = _acq("alice", "paris-a", "hb", loan="ignored", state="attested")
+        legacy["metadata"]["provider_loan_id"] = raw
+        before = deepcopy(legacy)
+        report = _audit([], [legacy], loan=str(raw))
+        assert report["origins"] == []
+        assert report["status"] == "unknown"
+        assert report["origin_resolution"] == "unknown"
+        assert "PRIVATE-" not in repr(report)
+        assert legacy == before
+    # A genuinely exact textual loan ID still remains valid evidence.
+    accepted = _acq("alice", "paris-a", "hb", loan="42", state="attested")
+    assert _audit([], [accepted], loan="42")["status"] == "inventory_attested"
+
+
+def test_nontext_item_or_entitlement_id_is_never_an_exact_paris_link():
+    bad_item = _acq("alice", "paris-a", "hb", state="attested")
+    bad_item["item_id"] = {"item": "PRIVATE-TOKEN"}
+    report = _audit([], [bad_item], item=str(bad_item["item_id"]))
+    assert report["origins"] == []
+    assert "PRIVATE-" not in repr(report)
+
+    entitlement = _right("alice", "paris-a", entitlement="legacy-right")
+    entitlement["loan_id"] = 42
+    assert _audit([entitlement], [], loan="42")["sources"] == []
+
+    legacy = _acq("alice", "paris-a", "hb", state="attested",
+                  entitlement="legacy-right")
+    legacy["metadata"].pop("provider_loan_id")
+    entitlement["loan_id"] = "shared"
+    entitlement["entitlement_id"] = 42
+    legacy["entitlement_id"] = 42
+    assert _audit([entitlement], [legacy])["origins"] == []
+    entitlement["entitlement_id"] = "42"
+    legacy["entitlement_id"] = "42"
+    assert _audit([entitlement], [legacy])["origin_resolution"] == (
+        "single_inventory_attested"
+    )
+
+
+def test_invalid_nontext_scope_cannot_call_artifact_inspector():
+    def forbidden(_):
+        raise AssertionError("invalid scope must not inspect files")
+
+    for loan, item in ((42, "book"), ("shared", {"id": "PRIVATE-TOKEN"}),
+                       ("shared", "\x00book")):
+        result = inspect_paris_adept_origins(
+            loan_id=loan, item_id=item,
+            entitlements=[_right("alice", "paris-a")],
+            acquisitions=[_acq("alice", "paris-a", "hb", state="attested")],
+            artifact_inspector=forbidden,
+        )
+        assert result["status"] == "unknown"
+        assert result["origins"] == result["sources"] == []
+        assert result["origin_resolution"] == "unknown"
+        assert "PRIVATE-TOKEN" not in repr(result)
