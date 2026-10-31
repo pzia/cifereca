@@ -68,7 +68,7 @@ def test_stale_right_cannot_download_a_new_revision_or_another_owners_book(case,
     assert not case.calls and not case.session.resolve_calls
 
 
-@pytest.mark.parametrize("mutation", ["selection", "disabled", "disconnected", "directory", "migration", "unlinked"])
+@pytest.mark.parametrize("mutation", ["selection", "disabled", "disconnected", "directory", "migration"])
 def test_source_context_changes_are_revalidated_before_acquisition(case, monkeypatch, mutation):
     target = case.service.owned_library_download_target(case.entry)
     if mutation == "selection":
@@ -81,9 +81,6 @@ def test_source_context_changes_are_revalidated_before_acquisition(case, monkeyp
         case.service.config.set("library.directory", str(case.root / "elsewhere"))
     elif mutation == "migration":
         case.service.storage.metadata_set("identity-directory-migration-v1", "pending")
-    else:
-        case.service.config.set("kobo_backup.allow_unlinked_acquisition", True)
-        monkeypatch.setattr(case.service, "kobo_unlinked_local_count", lambda identity: 1)
     with pytest.raises(OwnedDownloadRejected):
         case.service.obtain_owned_library_item(target)
     assert not case.calls and not case.session.resolve_calls
@@ -101,7 +98,7 @@ def test_admission_runs_inside_the_real_acquisition_lock(case, monkeypatch):
     assert not case.calls and not case.session.resolve_calls
 
 
-@pytest.mark.parametrize("mutation", ["absent", "two_possessions", "local", "unknown_owner", "duplicate_right", "blocked_backup"])
+@pytest.mark.parametrize("mutation", ["absent", "two_possessions", "local", "unknown_owner", "duplicate_right"])
 def test_ambiguous_missing_or_already_local_provenance_never_offers_a_target(case, mutation):
     if mutation == "absent":
         case.entry["possessions"] = []
@@ -113,9 +110,64 @@ def test_ambiguous_missing_or_already_local_provenance_never_offers_a_target(cas
         case.entry["possessions"][0]["identity_id"] = "another"
     elif mutation == "duplicate_right":
         case.service.storage.entitlement_put({**case.right, "entitlement_id": "right-2", "revision_id": "r2"})
-    else:
-        case.service.storage.backup_put({"provider_id": "kobo", "credential_id": "vault-1", "item_id": "book-1",
-            "identity_id": "default", "account_id": "account", "revision_id": "r1", "title": "Fictional",
-            "status": "reconcile_required", "local_path": str(case.root / "moved.epub")})
     assert case.service.owned_library_download_target(case.entry) is None
     assert not case.calls and not case.session.resolve_calls
+
+
+
+@pytest.mark.parametrize("status", [
+    "reconcile_required", "reconcile_conflict", "attention_required",
+    "complete", "acquiring", "downloading",
+])
+def test_historical_backup_status_without_exact_file_cannot_veto_explicit_get(
+    case, status,
+):
+    # A legacy receipt can be complete while its historical local_path has
+    # been moved/deleted. Only a verified current Core Placement could veto.
+    # Simulate a retained historical v0.7 row next to an independently
+    # observed canonical provider entitlement. Calling backup_put() would
+    # *also* create a second legacy-mirrored active entitlement, and that
+    # ambiguity is correctly a separate hard refusal.
+    with case.service.storage._lock, case.service.storage._connect() as sql:
+        sql.execute(
+            "INSERT INTO backup_items(provider_id,credential_id,item_id,"
+            "revision_id,title,local_path,status,updated_at,account_id,"
+            "identity_id,entitlement_type) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("kobo", "vault-1", "book-1", "r1", "Synthetic",
+             str(case.root / "vanished" / "old.epub"), status,
+             123, "account", "default", "owned"),
+        )
+    assert not (case.root / "vanished" / "old.epub").exists()
+    target = case.service.owned_library_download_target(case.entry)
+    assert target is not None
+    # The target still needs the fresh account/entitlement context at
+    # dispatch and inside the inter-process acquisition lock.
+    result = case.service.obtain_owned_library_item(target)
+    assert result.path.is_file()
+    assert len(case.calls) == 1
+
+
+def test_unlinked_different_book_in_profile_never_vetoes_this_exact_source(
+    case, monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        case.service, "kobo_unlinked_local_count",
+        lambda _identity: calls.append(True) or 99,
+    )
+    target = case.service.owned_library_download_target(case.entry)
+    assert target is not None
+    result = case.service.obtain_owned_library_item(target)
+    assert result.path.is_file() and len(case.calls) == 1
+    assert calls == []  # No unrelated global legacy presence probe.
+
+
+def test_local_exact_published_placement_still_blocks_repeat_download(case):
+    target = case.service.owned_library_download_target(case.entry)
+    assert target is not None
+    case.service.obtain_owned_library_item(target)
+    assert len(case.calls) == 1
+    assert case.service.owned_library_download_target(case.entry) is None
+    with pytest.raises(OwnedDownloadRejected):
+        case.service.obtain_owned_library_item(target)
+    assert len(case.calls) == 1
