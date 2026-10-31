@@ -121,3 +121,33 @@ def test_unwritable_report_does_not_publish_partial_zip(tmp_path, monkeypatch):
     assert not path.exists()
     assert not list(tmp_path.glob(".cifereca-report-*"))
     monkeypatch.setattr(sync_report.os, "link", original)
+
+
+
+def test_parent_directory_symlink_cannot_redirect_archive(tmp_path):
+    actual = tmp_path / "real"
+    actual.mkdir()
+    symlink = tmp_path / "alias"
+    symlink.symlink_to(actual, target_is_directory=True)
+    with pytest.raises(FileExistsError):
+        sync_report.write_sync_report(
+            symlink / "report.zip", account=ACCOUNT, run_ref="e" * 32,
+            before={}, after={}, result={"status": "failed"},
+            started_at="start", exit_code=2,
+        )
+    assert not (actual / "report.zip").exists()
+
+
+def test_report_pseudonym_uses_secret_ephemeral_key(tmp_path):
+    source_refs = []
+    for index in (1, 2):
+        path = tmp_path / f"report-{index}.zip"
+        sync_report.write_sync_report(
+            path, account=ACCOUNT, run_ref="f" * 32,
+            before={}, after={}, result={"status": "failed"},
+            started_at="start", exit_code=2,
+        )
+        with zipfile.ZipFile(path) as z:
+            source_refs.append(json.loads(z.read("manifest.json"))["source_ref"])
+    assert len(source_refs[0]) == len(source_refs[1]) == 64
+    assert source_refs[0] != source_refs[1]
