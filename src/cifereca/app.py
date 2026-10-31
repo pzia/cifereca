@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import sys
 import time
 
 from . import __version__
 from .logging_utils import configure_logging, set_diagnostics_level
+from .build_identity import build_identity
 from .startup_revision import startup_git_commit
 from .core import CiferecaCore
 
@@ -67,6 +69,13 @@ def main() -> int:
     logger = configure_logging(verbose=verbose)
     t0 = time.monotonic()
     logger.info("TRACE startup begin version=%s git_commit=%s verbose=%s no_plugins=%s forced_plugin_count=%s", __version__, startup_git_commit() or "unavailable", verbose, no_plugins, len(force_plugins))
+    identity = build_identity()
+    logger.info("DIAG_JSON %s", json.dumps({
+        "schema_version": 1, "category": "CORE",
+        "operation": "build_identity",
+        "status": "ok" if identity["availability"] == "known" else "unavailable",
+        "message": "build_identity", "detail": identity,
+    }, sort_keys=True, separators=(",", ":")))
     try:
         import gi
         gi.require_version("Gtk", "4.0")
