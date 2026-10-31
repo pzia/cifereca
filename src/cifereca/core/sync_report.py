@@ -132,7 +132,7 @@ def write_sync_report(
     if (os.path.lexists(target) or not parent.is_dir()
             or any(part.is_symlink() for part in (target, *target.parents))):
         raise FileExistsError("sync_report_destination_unavailable")
-    from .startup_revision import build_identity
+    from ..startup_revision import build_identity
     identity = build_identity()
     # A per-run salted fingerprint prevents account/credential disclosure and
     # cross-export stable matching of pseudonyms.
