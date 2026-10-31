@@ -176,7 +176,7 @@ def _render_search_results(self) -> int:
         shown = len(local_rows)
         self._update_search_count(shown)
         return shown
-    from .offer_actions import requires_selected_offer_check, download_action_label
+    from cifereca.gui.offer_actions import requires_selected_offer_check, download_action_label
 
     identity = self.service.current_identity
     linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
