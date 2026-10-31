@@ -649,3 +649,46 @@ def test_missing_legacy_source_coordinates_keep_compatible_blank_scope():
     assert result["origins"][0]["source_visibility_evidence"] == "persisted_entitlement"
     assert result["origin_resolution"] == "single_inventory_attested"
     assert result["origins"][0]["paris_borrower_ref"] is None
+
+
+@pytest.mark.parametrize("invalid_id", [
+    None, 42, True, ["PRIVATE"], {"ref": "PRIVATE"},
+    "", " ", " id", "id ", "id\\x00private", "id\\nprivate",
+])
+def test_malformed_completed_acquisition_id_remains_observable_but_unselectable(
+    invalid_id,
+):
+    entry = _acq("alice", "paris-a", "historical-adobe", state="attested")
+    entry["acquisition_id"] = invalid_id
+    before = deepcopy(entry)
+    report = _audit([_right("alice", "paris-a")], [entry])
+    assert report["status"] == "inventory_attested"
+    assert len(report["origins"]) == 1
+    assert report["origins"][0]["acquisition_ref"] is None
+    assert report["unselectable_historical_acquisition_count"] == 1
+    assert report["origin_resolution"] == "unknown"
+    assert "PRIVATE" not in repr(report)
+    assert entry == before
+
+
+def test_valid_completed_acquisition_id_has_stable_selector_and_resolution():
+    right = _right("alice", "paris-a")
+    entry = _acq("alice", "paris-a", "historical-adobe", state="attested")
+    first = _audit([right], [entry])
+    second = _audit([right], [entry])
+    assert first == second
+    assert first["unselectable_historical_acquisition_count"] == 0
+    assert len(first["origins"][0]["acquisition_ref"]) == 16
+    assert first["origin_resolution"] == "single_inventory_attested"
+
+
+def test_mixed_selectable_and_malformed_receipts_block_single_resolution():
+    right = _right("alice", "paris-a")
+    first = _acq("alice", "paris-a", "historical-adobe", state="attested")
+    other = _acq("alice", "paris-a", "historical-adobe", state="attested")
+    other["acquisition_id"] = {"bad": "PRIVATE"}
+    report = _audit([right], [first, other])
+    assert len(report["origins"]) == 2
+    assert report["unselectable_historical_acquisition_count"] == 1
+    assert report["origin_resolution"] == "unknown"
+    assert "PRIVATE" not in repr(report)
