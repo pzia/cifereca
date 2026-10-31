@@ -46,4 +46,4 @@ jobs:
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
 
       - name: Smoke installed package outside source tree
-        run: bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
+        run: CIFERECA_EXPECTED_BUILD_SHA="$GITHUB_SHA" bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
