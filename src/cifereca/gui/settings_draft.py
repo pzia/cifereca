@@ -189,7 +189,13 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     # The retired global bypass is likewise not a user setting.
     draft.set('kobo_backup.directory', values['backup_directory'].strip())
     draft.set('kobo_backup.interval_minutes', backup_interval)
-    selected_profile = int(values['vault_profile_index'])
+    try:
+        raw_profile = values['vault_profile_index']
+        if type(raw_profile) is not int:
+            raise ValueError('profile index must be an integer')
+        selected_profile = raw_profile
+    except (KeyError, ValueError, TypeError) as exc:
+        raise SettingsValidationError('Profil de sauvegarde historique invalide') from exc
     draft.set('kobo_backup.display_profile',
               values['vault_profiles'][selected_profile]
               if 0 <= selected_profile < len(values['vault_profiles']) else 'Android')
