@@ -393,3 +393,35 @@ def test_generic_provider_optional_empty_uses_declared_text_default(editor):
         "https://default.example/api"
     )
     assert config.provider_accounts() == []
+
+
+def test_unknown_provider_account_is_preserved_verbatim_without_implicit_activation(editor):
+    """#3731: absent descriptor must not delete or enable a stored account."""
+    config, values = editor
+    unknown = dict(
+        id="fixture-1", provider="provider.future", identity_id="alice",
+        enabled=False, credential_id="credential-opaque",
+        credentials={"token": "unchanged-test-secret"},
+        options={"future_switch": False, "nested": {"keep": 7}},
+    )
+    config.set("providers.accounts", [deepcopy(unknown)])
+    saved = validate(editor)
+    assert saved.data["providers"]["accounts"] == [unknown]
+    assert config.provider_accounts() == [unknown]
+    assert saved.data["providers"]["accounts"][0]["enabled"] is False
+
+
+def test_provider_declared_account_limit_is_not_hardcoded_to_known_supplier(editor):
+    """Unknown future providers get the same declarative cardinality contract."""
+    values = editor[1]
+    values["accounts"] = [
+        account("provider.future", account_id="one"),
+        account("provider.future", account_id="two"),
+    ]
+    plugin = descriptor("provider.future")
+    plugin.max_accounts_per_identity = 1
+    with pytest.raises(SettingsValidationError, match="au plus 1 compte"):
+        validate(editor, descriptors={"provider.future": plugin})
+    plugin.max_accounts_per_identity = 2
+    saved = validate(editor, descriptors={"provider.future": plugin})
+    assert len(saved.data["providers"]["accounts"]) == 2
