@@ -32,7 +32,9 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
             or set(state) != {'supported', 'configured', 'enabled', 'revision', 'valid'}
             or any(type(state[field]) is not bool for field in ('supported', 'configured', 'enabled', 'valid'))
             or (state['configured'] and (type(state['revision']) is not str or not 1 <= len(state['revision']) <= 128))
-            or (not state['configured'] and state['revision'] is not None)
+            or (not state['configured'] and (
+                state['revision'] is not None or state['enabled'] or not state['valid']))
+            or (not state['valid'] and state['enabled'])
             or not callable(write)):
         row.set_subtitle('Réglage indisponible. Aucun changement possible depuis cette page.')
         return
