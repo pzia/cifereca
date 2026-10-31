@@ -123,3 +123,20 @@ def test_connection_failure_after_selection_still_exports_report(monkeypatch, tm
             z.read(name) for name in z.namelist()
         )
     assert json.loads(capsys.readouterr().out)["report"] == "created"
+
+
+
+def test_raw_http_export_cannot_alias_redacted_report(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("No Core on conflicting exports")),
+    )
+    destination = tmp_path / "only-one.zip"
+    rc = cli.main([
+        "sync", "run", "--identity", "profile-a", "--confirm",
+        "--report", str(destination),
+        "--trace-export", str(destination), "--confirm-trace-export",
+    ])
+    assert rc == 2
+    assert json.loads(capsys.readouterr().out)["code"] == "report_trace_destination_conflict"
+    assert not destination.exists()
