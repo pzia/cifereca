@@ -333,12 +333,18 @@ def sync_source_phase_summary(source: object) -> str:
     )
     parts = []
     for phase, heading in captions:
-        row = next((
+        matches = [
             value for value in entries
             if getattr(value, "phase", None) == phase
-        ), None)
-        if row is None:
+        ]
+        if not matches:
             continue
+        if len(matches) != 1:
+            # A malformed Core projection may hold conflicting phase states.
+            # Never pick a first-success timestamp when another row failed.
+            parts.append(heading + " : État incohérent (plusieurs résultats)")
+            continue
+        row = matches[0]
         raw_status = getattr(row, "status", None)
         status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
         # An unsupported phase must not be rewritten based on a supplier ID.
