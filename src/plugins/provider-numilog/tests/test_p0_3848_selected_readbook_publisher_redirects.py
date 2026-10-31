@@ -76,6 +76,9 @@ def test_selected_readbook_follows_external_acsm_redirect_chain(
         # A preliminary socket.getaddrinfo monkeypatch is not proof of
         # TCP peer pinning; Core's transport has independent security tests.
         assert len(public_clients) == 1
+        assert public_clients[0][2] == (
+            [publisher, NEXT] if extra_redirect else [publisher]
+        )
     finally:
         session.close()
 
