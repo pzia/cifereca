@@ -588,7 +588,29 @@ def _publish_connection_success(
         pass
 
 
-def connect_configured(self, *, logger, caller_category: str = "other") -> dict[str, Any]:
+def _configured_rows_for_source(rows, *, source_scope, default_identity):
+    """Select one enabled configured credential without provider/network I/O."""
+    if source_scope is None:
+        return rows
+    if (type(source_scope) is not tuple or len(source_scope) != 3
+            or any(type(v) is not str or not v or len(v) > 256
+                   or any(c in v for c in "\\x00\\r\\n")
+                   for v in source_scope)):
+        raise ValueError("selected_source_invalid_scope")
+    identity, provider, credential = source_scope
+    matches = [
+        row for row in rows if isinstance(row, dict)
+        and str(row.get("identity_id") or default_identity).strip() == identity
+        and str(row.get("provider") or "").strip().lower() == provider
+        and str(row.get("id") or "").strip() == credential
+    ]
+    if len(matches) != 1:
+        raise ValueError("selected_source_not_unique")
+    return matches
+
+
+def connect_configured(self, *, logger, caller_category: str = "other",
+                       source_scope: tuple[str, str, str] | None = None) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
 
     Failures are isolated per provider account: one unavailable source does
@@ -605,12 +627,19 @@ def connect_configured(self, *, logger, caller_category: str = "other") -> dict[
     errors: dict[str, str] = {}
     failures: list[dict[str, str]] = []
 
-    rows = self.config.provider_accounts(enabled_only=True)
+    rows = _configured_rows_for_source(
+        self.config.provider_accounts(enabled_only=True),
+        source_scope=source_scope,
+        default_identity=(self.current_identity.identity_id
+                          if self.current_identity else "default"),
+    )
     configured_provider_ids = {str(row.get("provider") or "").strip().lower() for row in rows if isinstance(row, dict)}
     # Plugin API v1: a ready provider with no credential fields is a public
     # anonymous source.  Do not require a provider-specific config migration
     # or a fake account row merely to make it searchable.
     for plugin in self.registry.all():
+        if source_scope is not None:
+            continue
         descriptor = plugin.descriptor
         provider_id = str(descriptor.id or "").strip().lower()
         plugin_status = self._provider_plugin_status(provider_id)
@@ -637,6 +666,8 @@ def connect_configured(self, *, logger, caller_category: str = "other") -> dict[
     # credentials attached to the default Identity. One ephemeral session is
     # connected and per-Identity visibility is enforced at query time.
     for plugin in self.registry.all():
+        if source_scope is not None:
+            continue
         provider_id = str(plugin.descriptor.id or "").strip().lower()
         plugin_status = self._provider_plugin_status(provider_id)
         if (
