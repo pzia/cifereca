@@ -533,7 +533,7 @@ class LogicalBookArtifacts:
     possessions: tuple[ArtifactPossessionRef, ...] = ()
 
 
-LibraryMutationOperation = Literal["normalize_filename", "move_placement", "delete_duplicate", "replace_cover", "delete_variant", "set_preferred_variant"]
+LibraryMutationOperation = Literal["normalize_filename", "move_placement", "delete_duplicate", "canonical_dedup", "replace_cover", "delete_variant", "set_preferred_variant"]
 
 
 @dataclass(frozen=True, slots=True)
