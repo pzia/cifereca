@@ -418,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
             report_before = None
             report_ref = None
             report_secret = None
+            report_library_root = None
             report_started_at = None
             try:
                 if a.username or a.account:
@@ -470,7 +471,11 @@ def main(argv: list[str] | None = None) -> int:
                         report_account = resolved
                         report_ref = secrets.token_hex(16)
                         report_secret = secrets.token_bytes(32)
-                        report_library_root = service.library_dir() if a.verify_files else None
+                        if a.verify_files:
+                            try:
+                                report_library_root = service.library_dir()
+                            except Exception:
+                                report_library_root = None
                         report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                         try:
                             report_before = audit_source_counts(
