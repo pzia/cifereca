@@ -41,6 +41,7 @@ def append_source_inventory_schedule_controls(
         return
     if (type(policy) is not dict
             or set(policy) != {"mode", "interval_minutes"}
+            or type(policy["mode"]) is not str
             or policy["mode"] not in {"manual", "on_start", "periodic"}
             or type(policy["interval_minutes"]) is not int
             or not 15 <= policy["interval_minutes"] <= 10080):
