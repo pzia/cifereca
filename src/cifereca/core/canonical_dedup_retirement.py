@@ -296,6 +296,20 @@ def recover_canonical_duplicate_retirement(
             if (os.path.lexists(copy_path)
                     or not _same_file(keeper_path, keeper_stat)):
                 return CanonicalRetirementResult(True, removed, True)
+            # Filesystem durability is required BEFORE clearing the SQL
+            # tombstone. If a crash restores the removed directory entry,
+            # there must still be a recoverable record of the old pathname.
+            # Recovery also fsyncs after a prior run already unlinked it.
+            flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                     | getattr(os, "O_CLOEXEC", 0))
+            parent_fd = os.open(copy_path.parent, flags)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+            if (os.path.lexists(copy_path)
+                    or not _same_file(keeper_path, keeper_stat)):
+                return CanonicalRetirementResult(True, removed, True)
             changed = db.execute(
                 "DELETE FROM placements WHERE placement_id=? AND path=? "
                 "AND identity_id=? AND artifact_id=? AND state=?",
