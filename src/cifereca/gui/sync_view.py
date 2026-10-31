@@ -601,10 +601,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         connection_label=connection,
         sync_label=sync_label,
         summary=summary,
-        action_label=("Mettre à jour les notices Kobo en ligne" if kobo_notices_only
-                      else "Actualiser les livres achetés Numilog"
-                      if not canonical and getattr(source, "provider_id", "") == "numilog"
-                      else f"Synchroniser {label}"),
+        action_label=f"Synchroniser {label}",
         action_enabled=action_enabled,
         disabled_reason=disabled_reason,
     )
