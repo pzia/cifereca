@@ -17,6 +17,19 @@ références opaques de l'audit historique. Le SHA d'un Artifact, un titre,
 un ISBN, une URL ou une identité de rangement seule **ne sont jamais** une
 clé de rapprochement. Aucun ancien reçu n'est migré en droit canonique.
 
+## Commande CLI
+
+```bash
+cifereca-cli paris-adept audit-transaction \\
+  --loan-id "<id-pret-paris>" --item-id "<id-item>"
+```
+
+La commande exige les deux identifiants exacts, refuse les arguments vides
+ou contenant NUL **avant** d'ouvrir Core, et lit exclusivement les données
+locales persistées. Elle ne connecte aucun compte Paris ou Adobe et ne
+déclenche aucun traitement d'acquisition. Le JSON produit est un **rapport
+de revue** ; il n'apporte aucune permission nouvelle.
+
 ## Sémantique des résultats
 
 - `scope_overlap_only` : les scopes locaux se recoupent sans conflit de
@@ -51,6 +64,5 @@ contrôlée de l'**identifiant de prêt Paris + compte + branche** et de la
 par l'inventaire ADEPT et le reçu final, sans confondre OriginLink et licence
 server-side. Le contrôle de retour #984 est séparé et reste fail-closed.
 
-La sonde est actuellement un **service Core de diagnostic** ; son exposition
-CLI/GUI pourra être ajoutée après contrôle de la CI et du contrat, sans
-introduire de modification d'autorité.
+La sonde et la commande CLI sont des **diagnostics en lecture seule** ;
+aucun bouton GUI ou API de mutation n'est créé.
