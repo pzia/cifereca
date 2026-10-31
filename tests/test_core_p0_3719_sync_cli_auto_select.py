@@ -26,13 +26,16 @@ def make_cli_core(monkeypatch, accounts):
             for identity, provider, credential, account, enabled in accounts
         ],
     )
-    def connect():
+    def connect(*, identity, provider, credential):
         observed["connects"] += 1
+        observed["scope"] = (identity, provider, credential)
     def sync(account):
         observed["runs"].append(account)
         return {"status": "success", "downloaded": 1}
     service = SimpleNamespace(
-        accounts=candidates, connect_configured=connect,
+        accounts=candidates, connect_selected_source=connect,
+        connect_configured=lambda: (_ for _ in ()).throw(
+            AssertionError('global provider connection forbidden')),
         synchronize_account_source=sync,
     )
     core = SimpleNamespace(library=service, storage=storage, close=lambda: None)
@@ -48,6 +51,7 @@ def test_identity_only_unique_run(monkeypatch, capsys):
     assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 0
     assert len(observed["runs"]) == observed["connects"] == 1
     assert observed["runs"][0].credential_id == "credential-a"
+    assert observed["scope"] == ("profile-a", "provider-a", "credential-a")
     assert json.loads(capsys.readouterr().out)["status"] == "success"
 
 

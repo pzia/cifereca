@@ -166,8 +166,9 @@ Si le profil ne possède qu'une source activée, `--provider numilog` est
 facultatif. En présence de plusieurs comptes compatibles, la commande refuse
 de choisir et demande de préciser `--provider`, `--credential` ou
 `--account-id`. La sélection des comptes persistés est faite hors réseau
-avant toute tentative de connexion. `sync list` permet de trouver les
-sélecteurs utiles.
+avant toute tentative de connexion. La commande n'authentifie ensuite
+que le credential fournisseur retenu, sans lancer les connexions des autres
+sources configurées. `sync list` permet de trouver les sélecteurs utiles.
 
 La double confirmation est obligatoire : ce ZIP **brut** peut contenir URLs
 signées, cookies, clés, corps de réponse et informations d'authentification.

@@ -19,8 +19,13 @@ def setup_cli(monkeypatch, *, status="partial"):
 
     class Library:
         accounts = [account]
-        def connect_configured(self):
+        def connect_selected_source(self, *, identity, provider, credential):
+            assert (identity, provider, credential) == (
+                "profile-test", "numilog", "credential-test",
+            )
             activity.append(("connect", diagnostics_level()))
+        def connect_configured(self):
+            raise AssertionError("global provider connection forbidden")
         def synchronize_account_source(self, selected):
             assert selected is account
             activity.append(("run", diagnostics_level()))
