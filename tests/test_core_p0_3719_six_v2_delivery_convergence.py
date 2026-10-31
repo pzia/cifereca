@@ -130,9 +130,12 @@ def test_six_v2_resources_three_attested_three_get_then_no_second_get(v2):
     assert first["canonical_execution"]["failed"] == 0
     assert first["canonical_execution"]["blocked"] == 0
     assert first["canonical_execution"]["pending"] == 0
-    assert calls == [entry for index in range(3, 6)
-                    for entry in (("offer", f"edition-{index}"),
-                                  ("GET", f"edition-{index}"))]
+    # Core qualifies all selected offers first, then invokes the authorized
+    # deliveries under the same acquisition lock; no interleaving is required.
+    assert calls == (
+        [("offer", f"edition-{index}") for index in range(3, 6)]
+        + [("GET", f"edition-{index}") for index in range(3, 6)]
+    )
     with db._lock, db._connect() as sql:
         links = sql.execute(
             "SELECT source_reference_id,identity_id,artifact_id "
@@ -143,7 +146,7 @@ def test_six_v2_resources_three_attested_three_get_then_no_second_get(v2):
     assert len([p for p in db.placements() if p["identity_id"] == "A"]) == 6
     assert db.placement_get(foreign_placement)["identity_id"] == "B"
     assert foreign.read_bytes() == BYTES
-    assert all((root / "A").rglob("*.pdf"))
+    assert len(list((root / "A").rglob("*.pdf"))) == 6
     assert {row["acquisition_id"]: row
             for row in db.acquisitions()
             if row["acquisition_id"].startswith("historical-unverified-")} == before_legacy
