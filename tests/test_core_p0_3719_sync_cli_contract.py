@@ -83,7 +83,7 @@ def test_unique_source_selection_needs_only_identity_when_unambiguous():
 
 def test_identity_only_refuses_ambiguous_sources_without_guessing_ids():
     accounts = [_account(), _account(credential="c2"), _account(identity="p2")]
-    with pytest.raises(SyncSelectionError, match="ambiguous_source_selection"):
+    with pytest.raises(SyncSelectionError, match="account_ambiguous"):
         require_unique_sync_account(accounts, identity="p1")
     assert require_unique_sync_account(
         accounts, identity="p1", credential="c2",
