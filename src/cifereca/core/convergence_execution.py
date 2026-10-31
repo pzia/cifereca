@@ -24,6 +24,7 @@ from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsSnapshot,
 )
 from .canonical_publication import publish_completed_acquisition
+from .canonical_promotion import promote_completed_delivery, cleanup_published_staging
 from .canonical_recovery import (
     mark_completed_delivery_published,
     record_completed_delivery_for_recovery,
@@ -326,6 +327,7 @@ def execute_admitted_convergence(
             results.append(ConvergenceOutcome(key, "pending", "consent_unconfigured"))
             continue
 
+        phase = "recovery"
         try:
             completed = recover_completed_delivery(
                 initial_storage, source=key, offer_id=row.delivery_offer_id,
@@ -339,6 +341,7 @@ def execute_admitted_convergence(
                 completed = None
             was_recovered = completed is not None
             if completed is None:
+                phase = "delivery"
                 completed = deliver(key, row)
             if (type(completed) is not CompletedDelivery
                     or completed.source != key
@@ -366,6 +369,7 @@ def execute_admitted_convergence(
             # mutation. If publication crashes after this durable handoff,
             # retry the same authorized Sync without re-downloading.
             if not was_recovered:
+                phase = "receipt"
                 record_completed_delivery_for_recovery(
                     initial_storage, source=key,
                     offer_id=row.delivery_offer_id, completed=completed,
@@ -377,10 +381,25 @@ def execute_admitted_convergence(
             if not current() or not live_consent(key):
                 results.append(ConvergenceOutcome(key, "blocked", "scope_or_consent_after_receipt"))
                 break
+            # The durable receipt continues to point to original staging
+            # bytes. Copy and fsync a verified final path BEFORE committing
+            # B, so a crash can resume without a second GET.
+            phase = "promotion"
+            publication_path = promote_completed_delivery(
+                initial_storage, source=key, completed=completed,
+                library_root=library_root,
+            )
+            if cancelled():
+                results.append(ConvergenceOutcome(key, "cancelled", "cancelled_after_promotion"))
+                break
+            if not current() or not live_consent(key):
+                results.append(ConvergenceOutcome(key, "blocked", "scope_or_consent_after_promotion"))
+                break
+            phase = "publication"
             published = publish_completed_acquisition(
                 initial_storage,
                 library_root=library_root,
-                path=completed.path,
+                path=publication_path,
                 source=key,
                 snapshot=snapshot,
                 final_sha256=completed.final_sha256,
@@ -409,7 +428,7 @@ def execute_admitted_convergence(
             try:
                 from ..catalog import LocalCatalog
                 indexed = LocalCatalog(initial_storage, library_root).index_path(
-                    completed.path, identity_id=scope.identity_id,
+                    publication_path, identity_id=scope.identity_id,
                 )
                 if type(indexed) is not dict or indexed.get("status") != "indexed":
                     _LOG.warning(
@@ -417,6 +436,16 @@ def execute_admitted_convergence(
                     )
             except Exception:
                 _LOG.warning("TRACE convergence code=canonical_catalog_index_failed")
+            # The staged copy is no longer needed once the final Placement
+            # and provider OriginLink are committed. Cleanup is deliberately
+            # post-commit, advisory and cannot turn success into a new GET.
+            try:
+                cleanup_published_staging(
+                    initial_storage, source=key, completed=completed,
+                    library_root=library_root,
+                )
+            except Exception:
+                _LOG.warning("TRACE convergence code=canonical_staging_cleanup_deferred")
             # A completed B is authoritative regardless of maintenance.
             _check_post_placement_duplicates(
                 initial_storage, library_root=library_root,
@@ -438,6 +467,10 @@ def execute_admitted_convergence(
             # A transport/ACSM exception may contain signed URLs, tokens
             # or subscriber identifiers. Neither the message nor traceback
             # crosses the Core log boundary; the outcome stays fail-closed.
+            _LOG.warning("TRACE convergence code=canonical_%s_failed", phase)
             _LOG.warning("TRACE convergence code=canonical_delivery_or_commit_failed")
-            results.append(ConvergenceOutcome(key, "failed", "delivery_or_commit_failed"))
+            results.append(ConvergenceOutcome(
+                key, "failed", "canonical_promotion_failed"
+                if phase == "promotion" else "delivery_or_commit_failed",
+            ))
     return tuple(results)
