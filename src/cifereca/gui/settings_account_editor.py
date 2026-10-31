@@ -25,7 +25,16 @@ def build_provider_account_editor(
     label_row = Adw.EntryRow(); label_row.set_title("Libellé local"); label_row.set_text(str(data.get("label") or descriptor.display_name)); group.add(label_row)
     identity_row = Adw.EntryRow(); identity_row.set_title("Identité (ID)")
     default_identity_id = str((configured_identities[0].get("id") if configured_identities else "default") or "default")
-    identity_row.set_text(str(data.get("identity_id") or default_identity_id)); group.add(identity_row)
+    # A persisted account with no valid owner must not look like it belongs
+    # to the first profile. Require an explicit choice before any save.
+    # Newly created accounts retain the preselected default identity.
+    saved_owner = data.get("identity_id")
+    existing = type(data.get("id")) is str and bool(data["id"])
+    chosen_owner = (
+        saved_owner.strip() if type(saved_owner) is str
+        and saved_owner.strip() else ("" if existing else default_identity_id)
+    )
+    identity_row.set_text(chosen_owner); group.add(identity_row)
     raw_credentials = data.get("credentials", {})
     raw_options = data.get("options", {})
     invalid_saved_snapshot = (
