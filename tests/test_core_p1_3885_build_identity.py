@@ -93,6 +93,17 @@ def test_different_managed_and_wheel_commits_fail_closed(monkeypatch, tmp_path):
     assert result["origin"] == "provenance_conflict"
 
 
+def test_managed_ref_cannot_rescue_explicitly_unverified_wheel(monkeypatch, tmp_path):
+    _in_package(tmp_path, monkeypatch, manifest=_manifest(None), install={
+        "version": __version__,
+        "provenance": {"type": "github", "commit": "b" * 40},
+    })
+    result = revision.build_identity()
+    assert result["status"] == "unavailable"
+    assert result["commit_sha"] is None
+    assert result["origin"] == "wheel_provenance_unavailable"
+
+
 def test_source_archive_without_metadata_is_unavailable(monkeypatch, tmp_path):
     _in_package(tmp_path, monkeypatch, manifest=_manifest(None), install={
         "version": __version__,
