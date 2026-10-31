@@ -342,7 +342,7 @@ class DetailPanel(Gtk.Box):
             return 10
         if folded.startswith('emprunter'):
             return 11
-        if folded.startswith(('télécharger', 'sauvegarder')):
+        if folded.startswith(('télécharger', 'sauvegarder', 'vérifier et télécharger', 'vérifier et sauvegarder')):
             return 12
         if 'voir dans bibliothèque' in folded:
             return 20
@@ -536,6 +536,7 @@ class DetailPanel(Gtk.Box):
         self._actions(buttons)
 
     def _direct_download_action(self, item: SearchResult) -> None:
+        from cifereca.gui.offer_actions import requires_selected_offer_check, download_action_label
         # The GUI must never turn a public Numilog notice into a download
         # merely because a mocked/legacy provider reports direct_download.
         if (item.source_provider == "numilog-catalog"
@@ -546,9 +547,10 @@ class DetailPanel(Gtk.Box):
             return
         content_type = self.window.service.content_type_for(item)
         action_label = "le livre audio" if content_type == "audiobook" else (file_format(item.format).upper() or "le fichier")
-        label = ("Sauvegarder via kobo-adept" if item.source_provider == "kobo"
-                 else "Vérifier et télécharger" if item.source_provider == "numilog"
-                 else f"Télécharger {action_label}")
+        label = download_action_label(
+            item, check_required=requires_selected_offer_check(self.window.service, item),
+            detailed_format=action_label,
+        )
         direct = self.window.action_button(label, "document-save-symbolic", suggested=True)
         direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
         self._actions([direct])
