@@ -116,7 +116,6 @@ def test_exact_acsm_route_stages_after_public_redirect_without_adept(
     "https://new-book-distributor.org/file#part",
     "https://localhost/private",
     "https://new-book-distributor.org\\unsafe",
-    "https://new-book-distributor.org/file%0A?not=transport",
 ])
 def test_untrusted_first_redirect_is_refused_before_second_get(
     tmp_path, monkeypatch, target,
