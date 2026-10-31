@@ -80,7 +80,7 @@ def test_six_selected_readbooks_stage_six_distinct_acsm_candidates_no_cross_book
             assert len(result.resources) == 1
             selected = result.resources[0]
             assert selected.source == key
-            assert selected.capability.status == "available"
+            assert selected.capability.state == "available"
             offers.append(selected.capability.offer_id)
         assert len(set(offers)) == 6
         assert all(value.startswith("numilog.readbook:") for value in offers)
