@@ -71,6 +71,16 @@ def main(argv: list[str] | None = None) -> int:
     doctor = sub.add_parser("doctor", help="Diagnostic technique consolidé, expurgé et copiable")
     doctor.add_argument("--verbose", action="store_true")
     doctor.add_argument("--json", action="store_true")
+    acquisition_audit = sub.add_parser(
+        "acquisition-audit", help="Audit offline et lecture seule des acquisitions d'une source exacte"
+    )
+    acquisition_audit.add_argument("--provider", required=True)
+    acquisition_audit.add_argument("--identity", required=True)
+    acquisition_audit.add_argument("--credential", default="")
+    acquisition_audit.add_argument("--account-id", default=None)
+    acquisition_audit.add_argument("--verify-files", action="store_true")
+    acquisition_audit.add_argument("--output", type=Path, default=None)
+    acquisition_audit.add_argument("--json", action="store_true")
     sub.add_parser("loans")
     sub.add_parser("history")
     s = sub.add_parser("search")
@@ -89,6 +99,10 @@ def main(argv: list[str] | None = None) -> int:
         command_parser.add_argument("--json", action="store_true")
     generic_sub.choices["run"].add_argument(
         "--confirm", action="store_true", help="Autorise explicitement les opérations réseau de cette source"
+    )
+    generic_sub.choices["run"].add_argument(
+        "--report", type=Path, metavar="ZIP",
+        help="Rapport d'audit privé (sans trace HTTP brute), création exclusive 0600"
     )
     generic_sub.choices["run"].add_argument(
         "--trace-export", type=Path, metavar="ZIP",
@@ -301,6 +315,28 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
+    # Read-only SQLite mode=ro. Do not open Core, load providers, migrate
+    # SQLite, chmod configuration, trigger recovery or connect the network.
+    if a.cmd == "acquisition-audit":
+        from .core.acquisition_audit_cli import offline_acquisition_audit
+        try:
+            result = offline_acquisition_audit(
+                provider=a.provider, identity=a.identity,
+                credential=a.credential, account_id=a.account_id,
+                verify_files=a.verify_files, output=a.output,
+            )
+        except Exception as exc:
+            raw = str(exc)
+            code = raw if raw in {
+                "source_not_configured", "account_ambiguous",
+                "source_scope_required", "source_disabled",
+                "audit_output_exists", "audit_output_parent_missing",
+            } else "acquisition_audit_unavailable"
+            print(json.dumps({"status": "failed", "code": code}, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     if a.cmd == "sync" and a.sync_cmd == "run":
         from .core.sync_cli_contract import SyncSelectionError
         # Reject unsafe/incomplete requests before opening Core, loading
@@ -320,6 +356,14 @@ def main(argv: list[str] | None = None) -> int:
             # Refuse before any remote provider connection or acquisition.
             # Core export also checks O_EXCL against symlink/concurrent races.
             preflight_code = "trace_export_destination_exists"
+        elif a.report is not None and (a.report.suffix.lower() != ".zip"
+                or not a.report.parent.is_dir()):
+            preflight_code = "report_destination_invalid"
+        elif a.report is not None and os.path.lexists(a.report):
+            preflight_code = "report_destination_exists"
+        elif (a.report is not None and a.trace_export is not None
+              and os.path.abspath(a.report) == os.path.abspath(a.trace_export)):
+            preflight_code = "report_trace_destination_conflict"
         if preflight_code is not None:
             print(json.dumps({"status": "failed", "code": preflight_code},
                              ensure_ascii=False))
@@ -338,6 +382,13 @@ def main(argv: list[str] | None = None) -> int:
             trace_requested = a.sync_cmd == "run" and a.trace_export is not None
             trace_started = False
             trace_outcome = "not_started"
+            report_requested = a.sync_cmd == "run" and a.report is not None
+            report_before = None
+            report_selection = None
+            report_started = None
+            report_salt = None
+            report_run_ref = None
+            report_root = None
             try:
                 if a.username or a.account:
                     raise SyncSelectionError("legacy_account_selector_unsupported")
@@ -380,6 +431,24 @@ def main(argv: list[str] | None = None) -> int:
                         credential=resolved.credential_id,
                         account_id=resolved.unique_id,
                     )
+                    if report_requested:
+                        # Read-only evidence before provider connection or GET.
+                        from datetime import datetime, timezone
+                        from uuid import uuid4
+                        from .core.acquisition_audit import audit_account
+                        report_salt = os.urandom(16)
+                        report_run_ref = uuid4().hex[:24]
+                        report_started = datetime.now(timezone.utc)
+                        report_selection = resolved
+                        report_root = service.library_dir()
+                        report_before = audit_account(
+                            core.storage, identity_id=resolved.identity_id,
+                            provider_id=resolved.provider_id,
+                            credential_id=resolved.credential_id,
+                            account_id=resolved.unique_id, library_root=report_root,
+                            staging_roots=(core.storage.path.parent / "acquisition-work",),
+                            verify_files=True, opaque_salt=report_salt,
+                        )
                     service.connect_selected_source(
                         identity=resolved.identity_id,
                         provider=resolved.provider_id,
@@ -449,6 +518,55 @@ def main(argv: list[str] | None = None) -> int:
             if trace_requested:
                 result["http_trace"] = trace_outcome
                 if trace_outcome == "export_failed":
+                    code = 2
+            if report_requested and report_before is not None:
+                from datetime import datetime, timezone
+                from .core.acquisition_audit import audit_account
+                from .core.sync_report_zip import write_sync_report
+                try:
+                    report_after = audit_account(
+                        core.storage, identity_id=report_selection.identity_id,
+                        provider_id=report_selection.provider_id,
+                        credential_id=report_selection.credential_id,
+                        account_id=report_selection.unique_id,
+                        library_root=report_root,
+                        staging_roots=(core.storage.path.parent / "acquisition-work",),
+                        verify_files=True, opaque_salt=report_salt,
+                    )
+                except Exception:
+                    # Unknown observation is NOT zero sources or missing files.
+                    report_after = {
+                        "schema_version": 1, "scope_ref": report_before["scope_ref"],
+                        "snapshot_availability": "unavailable",
+                        "source_count": 0, "receipt_count": 0,
+                        "sources": [], "receipts": [], "counts": {}, "coverage": {},
+                    }
+                try:
+                    outcome = result.get("status", "failed")
+                    run_event = dict(
+                        scope_ref=report_before["scope_ref"], run_ref=report_run_ref,
+                    )
+                    closed_events = (
+                        {**run_event, "operation": "admission", "status": "success",
+                         "code": "unknown"},
+                        {**run_event, "operation": "sync_result",
+                         "status": outcome if outcome in (
+                             "success", "partial", "failed", "busy",
+                             "skipped", "cancelled",
+                         ) else "unknown",
+                         "code": result.get("code") or "unknown"},
+                    )
+                    write_sync_report(
+                        a.report, provider_id=report_selection.provider_id,
+                        run_ref=report_run_ref, started_at=report_started,
+                        finished_at=datetime.now(timezone.utc),
+                        exit_code=code, sync_result=result,
+                        before=report_before, after=report_after,
+                        events=closed_events,
+                    )
+                    result["report"] = "created"
+                except Exception:
+                    result["report"] = "export_failed"
                     code = 2
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return code
