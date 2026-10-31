@@ -103,9 +103,11 @@ def _safe_audit(value: Any) -> dict[str, Any]:
                                              or not 0 <= attempts <= 10_000)):
             raise ValueError("report_audit_receipt_invalid")
         flags = ("physical_artifact_found", "staging_only",
-                 "published_final_placement", "staged_visible_in_library",
-                 "origin_link_present")
-        if any(type(item.get(flag)) is not bool for flag in flags):
+                 "published_final_placement", "final_file_sha_verified",
+                 "staged_visible_in_library")
+        if (any(type(item.get(flag)) is not bool for flag in flags)
+                or item.get("origin_link_present") not in (None, False)):
+            # A receipt must never claim an exact provider link by SHA alone.
             raise ValueError("report_audit_receipt_invalid")
         code = item.get("error_code")
         safe_receipts.append({
@@ -113,6 +115,7 @@ def _safe_audit(value: Any) -> dict[str, Any]:
             "state": item["state"], "attempt_count": attempts,
             "artifact_recorded": item["artifact_recorded"],
             "error_code": code if type(code) is str and code in _EVENT_CODES else "unknown",
+            "origin_link_present": item.get("origin_link_present"),
             **{flag: item[flag] for flag in flags},
         })
     counts = value.get("counts")
