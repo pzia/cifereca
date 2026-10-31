@@ -537,3 +537,30 @@ def test_generic_provider_preserves_valid_empty_and_unknown_saved_options(editor
     result = validate(editor, descriptors={"future-provider": descriptor("future-provider")})
     assert result.data["providers"]["accounts"][0]["options"] == {"legacy": "unchanged"}
     assert config.data == before
+
+
+@pytest.mark.parametrize("invalid", [None, False, 0, "endpoint", ["endpoint"], [("endpoint", "malicious")]])
+def test_generic_provider_rejects_stale_option_fields_without_mutation(editor, invalid):
+    """#3731: a stale Settings widget must not coerce or crash on option fields."""
+    config, values = editor
+    values["accounts"] = [account("future-provider")]
+    values["accounts"][0]["option_fields"] = invalid
+    future = descriptor("future-provider")
+    future.account_options = (AccountOptionField("endpoint", "Endpoint"),)
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Schéma des options modifié"):
+        validate(editor, descriptors={"future-provider": future})
+    assert config.data == before
+
+
+def test_generic_provider_missing_option_fields_preserves_legacy_saved_options(editor):
+    """Existing editors without new descriptor options must not erase saved data."""
+    config, values = editor
+    values["accounts"] = [account("future-provider")]
+    values["accounts"][0]["original_options"] = {"endpoint": "saved", "unknown": "kept"}
+    future = descriptor("future-provider")
+    future.account_options = (AccountOptionField("endpoint", "Endpoint"),)
+    saved = validate(editor, descriptors={"future-provider": future})
+    assert saved.data["providers"]["accounts"][0]["options"] == {
+        "endpoint": "saved", "unknown": "kept",
+    }
