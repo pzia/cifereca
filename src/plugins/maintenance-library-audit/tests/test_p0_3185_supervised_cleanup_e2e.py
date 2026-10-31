@@ -20,7 +20,7 @@ from cifereca.storage import Storage
 from cifereca_library_audits import DuplicateCleanupTool
 
 
-BYTES = b"%PDF-1.7\\nSynthetic completed publication\\n"
+BYTES = b"%PDF-1.7\nSynthetic completed publication\n"
 SHA = hashlib.sha256(BYTES).hexdigest()
 STAMP = "2026-10-28T08:00:00+00:00"
 
