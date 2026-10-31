@@ -15,9 +15,15 @@ def mock_selected_public_client(monkeypatch, provider, handler):
     def factory(*, producer, timeout):
         assert producer == "provider.numilog.delivery"
         assert timeout == 25
-        calls.append((producer, timeout))
+        seen = []
+        calls.append((producer, timeout, seen))
+
+        def traced(request):
+            seen.append(str(request.url))
+            return handler(request)
+
         return httpx.Client(
-            transport=httpx.MockTransport(handler),
+            transport=httpx.MockTransport(traced),
             follow_redirects=False, trust_env=False,
         )
 
