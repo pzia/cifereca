@@ -124,13 +124,19 @@ def test_historical_backup_status_without_exact_file_cannot_veto_explicit_get(
 ):
     # A legacy receipt can be complete while its historical local_path has
     # been moved/deleted. Only a verified current Core Placement could veto.
-    case.service.storage.backup_put({
-        "provider_id": "kobo", "credential_id": "vault-1",
-        "item_id": "book-1", "identity_id": "default",
-        "account_id": "account", "revision_id": "r1",
-        "title": "Synthetic", "status": status,
-        "local_path": str(case.root / "vanished" / "old.epub"),
-    })
+    # Simulate a retained historical v0.7 row next to an independently
+    # observed canonical provider entitlement. Calling backup_put() would
+    # *also* create a second legacy-mirrored active entitlement, and that
+    # ambiguity is correctly a separate hard refusal.
+    with case.service.storage._lock, case.service.storage._connect() as sql:
+        sql.execute(
+            "INSERT INTO backup_items(provider_id,credential_id,item_id,"
+            "revision_id,title,local_path,status,updated_at,account_id,"
+            "identity_id,entitlement_type) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("kobo", "vault-1", "book-1", "r1", "Synthetic",
+             str(case.root / "vanished" / "old.epub"), status,
+             123, "account", "default", "owned"),
+        )
     assert not (case.root / "vanished" / "old.epub").exists()
     target = case.service.owned_library_download_target(case.entry)
     assert target is not None
