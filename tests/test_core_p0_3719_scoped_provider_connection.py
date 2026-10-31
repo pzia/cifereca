@@ -66,3 +66,21 @@ def test_public_facade_forwards_explicit_scope_without_global_connection(monkeyp
     )
     assert result == {"accounts": []}
     assert calls == [(sentinel, ("A", "numilog", "credential-one"))]
+
+
+def test_rejected_source_does_not_disconnect_live_sessions():
+    calls = []
+    service = SimpleNamespace(
+        config=SimpleNamespace(
+            provider_accounts=lambda *, enabled_only: ROWS,
+        ),
+        current_identity=SimpleNamespace(identity_id="A"),
+        disconnect_configured=lambda: calls.append("disconnected"),
+    )
+    logger = SimpleNamespace(info=lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="selected_source_not_unique"):
+        provider_sessions.connect_configured(
+            service, logger=logger,
+            source_scope=("A", "numilog", "wrong-credential"),
+        )
+    assert calls == []
