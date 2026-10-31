@@ -23,14 +23,27 @@ def _matches_changed_module(value: str, changed_modules: dict[str, str]) -> bool
     )
 
 
-def _contains_test_namespace(expression: ast.AST) -> bool:
-    """Recognize literal namespace fragments in f-strings and concatenations."""
-    return any(
-        isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and (node.value == "tests" or "tests." in node.value or "tests/" in node.value)
-        for node in ast.walk(expression)
-    )
+def _contains_test_namespace(
+    expression: ast.AST, changed_modules: dict[str, str]
+) -> bool:
+    """Only ambiguous prefixes of changed tests require a full run.
+
+    Fully named *other* modules (including plugin test paths) are not
+    dependencies on the changed Core test. Do not broaden on any "tests/"
+    substring: imported test modules can be deliberately unrelated.
+    """
+    for node in ast.walk(expression):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        part = node.value
+        if part == "tests":
+            return True
+        if not part.startswith(("tests.", "tests/")):
+            continue
+        if any(module.startswith(part) or path.startswith(part)
+               for module, path in changed_modules.items()):
+            return True
+    return False
 
 
 def _pytest_plugins_reuses_changed_test(value: ast.AST, changed_modules: dict[str, str]) -> bool:
@@ -112,7 +125,7 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             if _matches_changed_module(arg.value, changed_modules):
                                 return True
-                        elif _contains_test_namespace(arg):
+                        elif _contains_test_namespace(arg, changed_modules):
                             # Dynamic module expressions cannot be resolved
                             # without executing test code. Fail closed.
                             return True
