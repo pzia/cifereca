@@ -180,8 +180,6 @@ def test_postcheck_must_not_claim_success_on_unconfirmed_deletion(rig, monkeypat
 
 
 def test_sql_interruption_between_reference_relinks_is_safe_to_retry(rig):
-    import sqlite3
-
     storage, _root, paths, pubs, _ = rig
     _catalogue(rig)
     backup(rig)
