@@ -141,3 +141,9 @@ failure_tests = ["src/plugins/browser-recorder/tests/test_browser_recorder_http.
 gtk_scenarios = ["src/plugins/browser-recorder/tests/test_browser_recorder_gtk_e2e.py"]
 data = []
 gap = "Playwright/Chromium opt-in ; tests hors ligne sans navigateur réel ni validation de parcours authentifié live"
+
+[package.provider-reference]
+contract_tests = ["src/plugins/provider-reference/tests/test_reference_provider.py"]
+failure_tests = ["src/plugins/provider-reference/tests/test_reference_v2_selected_candidate_3722.py"]
+data = []
+gap = "Fournisseur fictif local et désactivé par défaut ; scénarios de droits, offres et candidats v2 synthétiques, aucune preuve de fournisseur réel ni recette GTK"
