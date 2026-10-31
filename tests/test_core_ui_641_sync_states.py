@@ -4,6 +4,8 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cifereca.gui.sync_view import sync_identity_action_label, sync_source_presentation
 
 
@@ -93,3 +95,34 @@ def test_non_kobo_sync_actions_stay_unchanged():
     paris = sync_source_presentation(_source(provider_id="paris"))
     assert paris.action_label == "Synchroniser Paris · Camille"
     assert "ne télécharge aucun ebook" not in paris.summary
+
+
+@pytest.mark.parametrize("field", ["enabled", "connected", "sync_capable"])
+@pytest.mark.parametrize("bad", [
+    None, 1, 0, "true", "false", [], {"value": True},
+])
+def test_untyped_source_state_flags_never_enable_sync_action(field, bad):
+    # A provider's malformed/stale broker projection is display-only, never
+    # sufficient evidence to expose a manual source-sync action.
+    state = _source(**{field: bad})
+    presented = sync_source_presentation(state)
+    assert presented.action_enabled is False
+    if field == "enabled":
+        assert presented.activation_label == "Désactivée"
+        assert presented.disabled_reason == "Activez cette source pour la synchroniser."
+    elif field == "connected":
+        assert presented.connection_label == "Déconnectée"
+        assert presented.disabled_reason == "Reconnectez ce compte avant de synchroniser."
+    else:
+        assert presented.sync_label == "Non prise en charge"
+        assert presented.disabled_reason == "Cette source ne fournit pas de synchronisation de données."
+
+
+def test_all_three_explicit_true_flags_still_enable_source_sync():
+    shown = sync_source_presentation(_source(
+        provider_id="unknown-future", enabled=True,
+        connected=True, sync_capable=True,
+    ))
+    assert shown.action_enabled is True
+    assert shown.activation_label == "Activée"
+    assert shown.connection_label == "Connectée"
