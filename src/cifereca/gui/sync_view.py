@@ -638,7 +638,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         )
     if canonical and capable:
         summary += "\nLes fichiers disponibles sont reçus selon l’autorisation de ce compte et les capacités de la source."
-    if status in {"partial", "error", "failed"} and last_success:
+    if (status in {"partial", "error", "failed"}
+            or alert is not None and alert[0] == "error") and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
         summary += f"\nAction indisponible : {disabled_reason}"
