@@ -7,6 +7,7 @@ holding the same acquisition lock. If any reference survives, fail closed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import time
 import os
@@ -47,6 +48,55 @@ class CanonicalRetirementResult:
     retired_placement: bool
     removed_file: bool
     cleanup_pending: bool
+
+
+def _resolve_exact_completed_checkpoint(
+    db: sqlite3.Connection, *, identity_id: str, artifact_id: str,
+    candidate_placement_id: str, keeper_placement_id: str,
+) -> bool:
+    """Clear an advisory *pair* only after durable physical cleanup.
+
+    This helper is called solely inside the same write transaction that has
+    just deleted the candidate tombstone, after unlink, directory fsync and
+    keeper re-verification. Once the row is deleted, the ordinary read-only
+    checkpoint scanner cannot establish the former candidate's pathname.
+    Do not clear markers for more than two copies, malformed records or a
+    remaining second Placement; none of those proves complete cleanup.
+    """
+    from .canonical_post_placement import _PENDING_PREFIX
+
+    key = _PENDING_PREFIX + hashlib.sha256(json.dumps(
+        [identity_id, artifact_id], separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")).hexdigest()
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (key,),
+    ).fetchone()
+    if row is None or type(row[0]) is not str:
+        return False
+    try:
+        record = json.loads(row[0], object_pairs_hook=_unique_json_keys)
+    except (ValueError, TypeError, RecursionError):
+        return False
+    if (type(record) is not dict or set(record) != {
+            "schema", "identity_id", "artifact_id", "placement_ids",
+        } or record["schema"] != "canonical.post-placement-dedup-pending.v1"
+            or record["identity_id"] != identity_id
+            or record["artifact_id"] != artifact_id
+            or type(record["placement_ids"]) is not list
+            or record["placement_ids"] != sorted([
+                candidate_placement_id, keeper_placement_id,
+            ])):
+        return False
+    present = db.execute(
+        "SELECT placement_id FROM placements WHERE identity_id=? "
+        "AND artifact_id=? AND state='present' LIMIT 2",
+        (identity_id, artifact_id),
+    ).fetchall()
+    if present != [(keeper_placement_id,)]:
+        return False
+    return db.execute(
+        "DELETE FROM metadata WHERE key=? AND value=?", (key, row[0]),
+    ).rowcount == 1
 
 
 def retire_verified_canonical_duplicate(
@@ -318,6 +368,15 @@ def recover_canonical_duplicate_retirement(
             )
             if changed.rowcount != 1:
                 return CanonicalRetirementResult(True, removed, True)
+            # A successfully retired exact pair has no live candidate row.
+            # Resolve its advisory checkpoint now, while the SQL transaction
+            # still attests the absence of any other same-profile Placement.
+            # Invalid/ambiguous queue entries remain for supervised review.
+            _resolve_exact_completed_checkpoint(
+                db, identity_id=candidate[1], artifact_id=candidate[2],
+                candidate_placement_id=candidate_placement_id,
+                keeper_placement_id=keeper_placement_id,
+            )
         return CanonicalRetirementResult(True, removed, False)
     except (OSError, sqlite3.Error, ValueError, TypeError, RuntimeError):
         # The SQLite tombstone already exists; an exception after unlink
