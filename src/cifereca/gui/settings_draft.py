@@ -76,6 +76,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if descriptor is None or descriptor.state != 'ready' or descriptor.id in public_ids:
             preserved.append(row)
     saved_accounts = list(preserved)
+    account_ids = {str(row.get('id') or '') for row in preserved}
     # A declared cardinality is a provider contract, never CoreUI provider policy.
     scoped_accounts: dict[tuple[str, str], list[str]] = {}
     for row in preserved:
@@ -86,7 +87,13 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     for editor in values['accounts']:
         if editor.get('deleted'):
             continue
-        descriptor = descriptors[editor['provider']]
+        account_id = str(editor.get('id') or '')
+        if not account_id or account_id in account_ids:
+            raise SettingsValidationError('Identifiant de compte fournisseur vide ou dupliqué.')
+        account_ids.add(account_id)
+        descriptor = descriptors.get(editor['provider'])
+        if descriptor is None or descriptor.state != 'ready':
+            raise SettingsValidationError('Fournisseur indisponible : recharger les paramètres avant de sauvegarder.')
         credentials: dict[str, str] = {}
         for field in descriptor.credential_fields:
             credentials[field.key] = editor['fields'][field.key]
