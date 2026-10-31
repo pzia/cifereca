@@ -75,6 +75,20 @@ API Core (lecture seule) : `review_canonical_dedup_advisories(storage, identity_
 
 Un checkpoint de **paire exacte** est acquitté seulement à la fin d'un retrait supervisé entièrement vérifié (#3976), dans la transaction de finalisation de la tombstone, après effacement, `fsync` et contrôle du keeper. En présence d'une troisième copie, d'un marqueur inconnu ou d'une interruption, le marqueur reste pour examen. Les changements d'origine et de droits sont interdits.
 
+## Plan historique des références avant suppression (Core #3185)
+
+`canonical_dedup_reference_plan.plan_verified_canonical_reference_migration`, exposé par `library.maintenance.canonical_reference_migration_plan(candidate_placement_id=..., keeper_placement_id=...)`, produit un **inventaire en lecture seule** après vérification physique des deux copies du même profil via le preview canonique. Il ne fait aucun unlink, GET, relink ou changement de droits et ne rend **jamais** une autorisation.
+
+Le plan distingue :
+
+- `catalogue_candidates` : entrées catalogue ciblant le Placement candidat, métadonnées vérifiables et portée Artifact/profil exactes ; comptage **préparatoire**, sans attestation du fournisseur ni autorisation d'adoption.
+- `backup_candidates` : anciennes lignes `backup_items` complètes, avec compte et connexion exacts et `OriginLink provider` déjà publié sur l'Artifact ; ce comptage n'autorise pas à transférer un droit.
+- `completed_receipt_candidates` : reçus terminés avec chemin local direct et enveloppe canonique apparente. **Le superviseur** valide encore intégralement SourceKey, reçus et OriginLinks à l'exécution.
+- `unverified_references` : références hors contrat, reçus en attente, compte fournisseur sans provenance exacte, métadonnées opaques, variantes, déclarations et autres pointeurs inconnus. Au moindre élément incertain, `status=blocked` ; aucun déplacement/suppression.
+- `artifact_origin_links` et `linked_source_references` : compteurs d'origines **au niveau Artifact+identité**, jamais liés intrinsèquement à un chemin. `physical_pair_verified_at_preview` décrit une observation passée, non un verrou ni une preuve encore fraîche.
+
+Même `status=review_required` **ne signifie pas prêt à effacer** : le seul pipeline exécutable est toujours `supervise_canonical_duplicate(action='commit', confirmed=True, shared_lock=...)`, qui re-vérifie octets, inode, dépendances, preuves de publication et exige un postcheck. Une réception réussie ne déclenche aucune maintenance destructive.
+
 ## Points de reprise et matrice de refus
 
 | Frontière | État conservé | Action autorisée |
