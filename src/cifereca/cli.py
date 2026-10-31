@@ -467,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
                         trace_outcome = "export_failed"
                     finally:
                         set_diagnostics_level(trace_previous_level)
-            if a.report is not None and report_account is not None:
+            if a.sync_cmd == "run" and a.report is not None and report_account is not None:
                 from .core.sync_report import audit_source_counts, write_sync_report
                 try:
                     try:
