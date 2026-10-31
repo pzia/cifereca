@@ -116,3 +116,29 @@ def test_unknown_partial_still_warns_and_source_error_still_wins_over_informatio
         "dialog-error-symbolic"
     )
     assert not window.runner.tasks
+
+
+@pytest.mark.parametrize("state", ["partial", "running", "failed", "error"])
+def test_actual_broker_error_precedes_partial_or_running_status_label(state):
+    item = source(status=state, error="PRIVATE_TOKEN_DO_NOT_SHOW")
+    presentation = sync_source_presentation(item)
+    assert presentation.sync_label == "Échec"
+    assert "PRIVATE_TOKEN_DO_NOT_SHOW" not in presentation.summary
+    alert = sync_source_attention(item)
+    assert alert is not None and alert[0] == "error"
+
+
+def test_closed_partial_marker_still_displays_partial_without_declaring_failure():
+    item = source(status="partial", error="Synchronisation partielle")
+    assert sync_source_presentation(item).sync_label == "Partielle"
+    assert sync_source_attention(item)[0] == "info"
+
+
+def test_error_label_and_header_attention_are_consistent_for_unknown_provider():
+    item = source(provider="provider.future", error="SECRET?token=PRIVATE")
+    window, broker, calls, _, _ = _fixture(sources=[item])
+    row = window._sync_sources_box.children[0].children[0]
+    assert "Synchronisation : Échec" in row.subtitle
+    assert row.prefixes[0].icon_name == "dialog-error-symbolic"
+    assert "PRIVATE" not in row.subtitle
+    assert window.runner.tasks == []
