@@ -112,7 +112,7 @@ def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> P
     safe = self.acquisition._safe_filename(stem or item.record_id)
     path = target_dir / f"{safe}{ext}"
     # Avoid an unrelated existing file blocking a different Kobo product.
-    if path.exists():
+    if path.exists() or path.is_symlink():
         current = self.storage.backup_get("kobo", item.source_credential, item.record_id)
         if not current or Path(str(current.get("local_path") or "")) != path:
             suffix = re.sub(r"[^A-Za-z0-9]", "", item.record_id)[-8:] or "kobo"
