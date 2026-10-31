@@ -1,4 +1,4 @@
-"""Safe Kobo settings navigation; never initiate an acquisition from this UI."""
+"""Provider-neutral Settings → Synchronisation navigation; never acquire files."""
 from __future__ import annotations
 
 from .settings_sync_section import kobo_backup_action_state
@@ -14,13 +14,15 @@ def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_sett
     def refresh_kobo_backup_status(*_args) -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
-        status, ready = kobo_backup_action_state(
+        status, _legacy_ready = kobo_backup_action_state(
             persisted_enabled=(self.config.get("kobo_backup.enabled", False) is True),
             draft_enabled=bool(backup_switch.get_active()),
             dirty=settings_state.dirty("sync"),
         )
         kobo_status.set_subtitle(status)
-        kobo_run_now.set_sensitive(ready)
+        # The obsolete Kobo flag is display-only, never a prerequisite for
+        # opening provider-neutral Synchronisation. Unsaved edits still block.
+        kobo_run_now.set_sensitive(not settings_state.dirty("sync"))
 
     def open_kobo_sync_page(_button) -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
@@ -29,11 +31,9 @@ def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_sett
         # scoped inventory refresh and per-source read-only local previews
         # live on Synchronisation; local materialization requires a separate
         # reviewed and explicitly authorized workflow (#1347).
-        _, ready = kobo_backup_action_state(
-            persisted_enabled=(self.config.get("kobo_backup.enabled", False) is True),
-            draft_enabled=bool(backup_switch.get_active()),
-            dirty=settings_state.dirty("sync"),
-        )
+        # Navigation is a CoreUI route, not a Kobo download authorization.
+        # No provider-specific flag may grant or deny access to Sync.
+        ready = not settings_state.dirty("sync")
         if ready and page_lifetime.alive and not getattr(self, "_closed", False):
             self.navigate("sync")
 

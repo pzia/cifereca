@@ -138,3 +138,23 @@ def test_navigation_readiness_cannot_be_reused_as_download_authorization():
         assert ready is allowed
         assert isinstance(label, str) and label
         assert "télécharger maintenant" not in label.lower()
+
+
+def test_sync_navigation_does_not_depend_on_obsolete_kobo_switch_value():
+    """#3731: provider-neutral Sync stays accessible without Kobo consent."""
+    host, ui, _, _, refresh = _case(True)
+    ui.backup_switch.active = False  # stale legacy display, no unsaved change
+    refresh()
+    assert ui.run_backup_now.sensitive is True
+    ui.run_backup_now.emit("clicked")
+    host.navigate.assert_called_once_with("sync")
+    host.run_kobo_backup.assert_not_called()
+    assert host.config["kobo_backup.enabled"] is True
+
+
+def test_sync_navigation_never_starts_download_for_unknown_provider():
+    host, ui, _, _, _ = _case(False)
+    host.config = {"providers.accounts": [{"id": "future", "provider": "future-v2", "enabled": False}]}
+    ui.run_backup_now.emit("clicked")
+    host.navigate.assert_called_once_with("sync")
+    host.run_kobo_backup.assert_not_called()
