@@ -90,3 +90,19 @@ def test_plain_placement_delete_cannot_erase_recovery_evidence(rig):
         ).fetchone() == ("dedup_cleanup_pending", raw)
     assert rows(storage) == before
     assert paths[1].read_bytes() == BYTES
+
+
+def test_missing_scan_must_not_turn_pending_tombstone_into_missing(rig):
+    storage, root, paths, pubs, _snapshot, _lock = rig
+    raw = _mark_pending(rig)
+    found = storage.placements_mark_missing(
+        root, {str(paths[0]), str(paths[2])},
+        candidate_placement_ids={pubs[1].placement_id},
+    )
+    assert found == 0
+    with storage._lock, storage._connect() as db:
+        assert db.execute(
+            "SELECT state,metadata_json FROM placements WHERE placement_id=?",
+            (pubs[1].placement_id,),
+        ).fetchone() == ("dedup_cleanup_pending", raw)
+    assert paths[1].read_bytes() == BYTES
