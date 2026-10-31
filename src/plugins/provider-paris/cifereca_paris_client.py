@@ -271,19 +271,18 @@ class ParisClient:
             return result
         except Exception as exc:
             if category=="PNB" and operation=="borrow digital":
-                # The existing canonical local TRACE event must retain the
-                # *original* provider exception and traceback. A type-only
-                # summary discards the reason a real PNB action failed.
-                # Diagnostics UI pseudonymization belongs to Core, not here.
+                # An exception from a signed loan action can embed the
+                # ACSM URL, account, cookie or full response body. Keep only
+                # a bounded phase, closed status, and exception class.
                 _TRACE_LOG.warning(
                     "TRACE paris pnb-loan failed error=%s duration_ms=%s",
                     type(exc).__name__, int((time.perf_counter()-start)*1000),
-                    exc_info=True,
+                    exc_info=False,
                 )
             detail = {"error": type(exc).__name__}
-            # Keep the historical policy of unrelated operations unchanged.
-            # ListLoans messages are actual provider facts and must not be
-            # suppressed by the privacy mask introduced by #3413 (#3423).
+            # Provider exception messages are untrusted; they may contain
+            # customer-specific signed URLs even when the API returns HTTP 200.
+            # Leave unrelated operation policies unchanged in this increment.
             private_operation = (
                 category == "AUTH"
                 or (category == "API" and operation.startswith("summary "))
@@ -306,10 +305,12 @@ class ParisClient:
                 elif isinstance(exc, httpx.RequestError):
                     detail["code"] = "paris_loans_transport_failed"
             if category == "API" and operation.startswith("loans "):
-                # The exact observed ListLoans exception text belongs to the
-                # raw journal and broker, including text beyond 240 chars.
-                # It complements the structured reason and HTTP status.
-                detail["message"] = str(exc)
+                # Closed transport/upstream code and HTTP status remain
+                # searchable without storing raw borrower/signed URLs.
+                detail["message"] = detail.get("code", "paris_loans_operation_failed")
+            elif category == "PNB":
+                detail["code"] = "paris_pnb_operation_failed"
+                detail["message"] = detail["code"]
             elif not private_operation:
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
