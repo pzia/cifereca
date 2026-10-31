@@ -406,6 +406,7 @@ def _run_observed_canonical_convergence(
             admitted_epoch=admitted_epoch, shared_lock=sync_lease,
             library_root=root, persisted_consent=(None if admitted_source_revision is not None else consent),
             consent_still_current=current_consent,
+            expected_source_policy_revision=admitted_source_revision,
             cancelled=cancelled_for_rights,
         )
         outcomes = execute_admitted_convergence(
