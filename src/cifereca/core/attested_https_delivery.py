@@ -10,10 +10,12 @@ from dataclasses import dataclass
 from functools import wraps
 import hashlib
 import ipaddress
+import math
 import os
 from pathlib import Path
 import secrets
 import stat
+from time import monotonic as _monotonic
 from typing import Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
@@ -144,6 +146,7 @@ def download_attested_https(
     admission_current: Callable[[], bool],
     headers: Mapping[str, str] | None = None, timeout: float = 20,
     max_bytes: int = _MAX_BYTES, max_redirects: int = _MAX_REDIRECTS,
+    max_duration: float = 900,
 ) -> PublicDelivery:
     """Stream an attested GET into a new staging file, with no URL in results.
 
@@ -157,10 +160,20 @@ def download_attested_https(
             or not isinstance(target, Path) or not callable(admission_current)
             or type(max_bytes) is not int or not 0 < max_bytes <= _MAX_BYTES
             or type(max_redirects) is not int
-            or not 0 <= max_redirects <= _MAX_REDIRECTS):
+            or not 0 <= max_redirects <= _MAX_REDIRECTS
+            or type(max_duration) not in (int, float)
+            or not math.isfinite(max_duration)
+            or not 0 < max_duration <= 3600):
         raise ValueError("delivery_parameters_invalid")
     origin = _destination(url)
-    _admitted(admission_current)
+    deadline = _monotonic() + max_duration
+
+    def check_current():
+        if _monotonic() > deadline:
+            raise ValueError("delivery_deadline")
+        _admitted(admission_current)
+
+    check_current()
     initial = origin
     request_headers = _headers(headers)
     physical = Path(os.path.abspath(target.expanduser()))
@@ -171,7 +184,7 @@ def download_attested_https(
     current = url
     with HTTPX_TRANSPORT.public_client(producer=producer, timeout=timeout) as client:
         while True:
-            _admitted(admission_current)
+            check_current()
             origin = _destination(current)
             if current in visited:
                 raise ValueError("delivery_redirect_loop")
@@ -227,7 +240,7 @@ def download_attested_https(
                         total = 0
                         with os.fdopen(handle, "wb") as writer:
                             for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                                _admitted(admission_current)
+                                check_current()
                                 total += len(chunk)
                                 if total > max_bytes:
                                     raise ValueError("delivery_size_exceeded")
@@ -237,7 +250,7 @@ def download_attested_https(
                             os.fsync(writer.fileno())
                         if not total:
                             raise ValueError("delivery_empty")
-                        _admitted(admission_current)
+                        check_current()
                         # Atomic no-replace publication within one pinned
                         # directory: a concurrent target can never be clobbered.
                         os.link(temporary, physical.name, src_dir_fd=descriptor,
