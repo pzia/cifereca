@@ -178,7 +178,7 @@ class KoboVaultClient:
                 message = "accès refusé : autorisations Kobo-Vault insuffisantes"
             elif status == 409 and provider_code == "archived_book":
                 code = "archived_book"
-                message = "livre archivé : restaurez-le dans votre bibliothèque Kobo avant de réessayer"
+                message = "livre archivé : téléchargement ignoré (HTTP 409)"
             elif status == 409:
                 code, message = "conflict", "conflit de ressource (HTTP 409)"
             elif status == 429:
