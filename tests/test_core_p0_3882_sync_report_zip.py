@@ -36,7 +36,8 @@ def _audit(ref="a" * 24):
             "error_code": "http_error", "raw": "Bearer BAD",
             "physical_artifact_found": True,
             "staging_only": True, "published_final_placement": False,
-            "staged_visible_in_library": True, "origin_link_present": True,
+            "final_file_sha_verified": False,
+            "staged_visible_in_library": True, "origin_link_present": None,
         }],
         "raw_log": "Cookie: BIG_SECRET",
     }
