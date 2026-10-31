@@ -50,12 +50,19 @@ def test_invalid_policy_becoming_valid_requires_new_refresh_for_on():
     on.click()
     assert not writes
     window._refresh_sync_page()
-    fresh_scope = type(scope)(
-        identity_id=scope.identity_id, page_token=scope.page_token,
-        preview_generation=window._sync_preview_generation,
-        identity_context_generation=scope.identity_context_generation,
-    ) if False else None
     assert not writes
+    from cifereca.gui.sync_action_scope import capture_sync_action_scope
+    from tests.test_core_ui_1347_sync_action_scope import Widget
+    fresh_scope = capture_sync_action_scope(
+        window, page_token=window._sync_page_token,
+        preview_generation=window._sync_preview_generation,
+    )
+    fresh_group = Widget()
+    fn(window, broker, source, fresh_scope, fresh_group)
+    toggle, = fresh_group.children[0].suffixes
+    assert toggle.sensitive
+    toggle.toggled(True)
+    assert writes == [(source.source_id, True, "repaired-revision")]
 
 
 def test_clean_unconfigured_consent_keeps_explicit_opt_in():
