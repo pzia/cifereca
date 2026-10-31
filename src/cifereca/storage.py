@@ -4443,9 +4443,17 @@ class Storage:
                 # checkpoint into a generic missing placement.
                 if (str(path) not in seen_paths
                         and state not in ("missing", "dedup_cleanup_pending")):
-                    db.execute(
-                        "UPDATE placements SET state='missing',updated_at=? WHERE placement_id=?", (now, placement_id)
+                    # The scan's SELECT may predate a concurrent SQLite
+                    # tombstone commit. Check state AND path atomically when
+                    # writing, and never rewrite a recovery tombstone.
+                    updated = db.execute(
+                        "UPDATE placements SET state='missing',updated_at=? "
+                        "WHERE placement_id=? AND path=? AND state=? "
+                        "AND state<>'dedup_cleanup_pending'",
+                        (now, placement_id, path_text, state),
                     )
+                    if updated.rowcount != 1:
+                        continue
                     db.execute(
                         "UPDATE catalog_entries SET local_state='missing',updated_at=? WHERE placement_id=?", (now, placement_id)
                     )
