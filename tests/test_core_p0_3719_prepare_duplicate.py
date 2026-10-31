@@ -3,6 +3,7 @@
 Synthetic supplier, SQLite v14 and PDF bytes. No unlink, GET, DRM or ADEPT.
 """
 import json
+import sqlite3
 
 import pytest
 
@@ -158,3 +159,77 @@ def test_common_lock_is_required_even_when_no_references(rig):
             shared_lock=InterProcessLock(lock_path),
         )
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_sql_failure_then_resume_completes_only_remaining_safe_relinks(rig):
+    storage, _root, paths, pubs, _lock = rig
+    _catalogue(rig)
+    backup(rig)
+    journal_id = _journal(rig)
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_prepare_backup BEFORE UPDATE OF local_path "
+            "ON backup_items BEGIN SELECT RAISE(ABORT,"
+            "'synthetic_backup_sql_interruption'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic_backup_sql_interruption"):
+        _prepare(rig)
+    assert storage.catalog_entry_get("catalogue:seller-b")["placement_id"] == pubs[0].placement_id
+    assert next(x for x in storage.backup_list()
+                if x["credential_id"] == "card-b")["local_path"] == str(paths[1])
+    with storage._lock, storage._connect() as db:
+        assert json.loads(db.execute(
+            "SELECT metadata_json FROM acquisition_ledger WHERE acquisition_id=?",
+            (journal_id,),
+        ).fetchone()[0])["path"] == str(paths[1])
+        db.execute("DROP TRIGGER reject_prepare_backup")
+    resumed = _prepare(rig)
+    assert (resumed.catalogue_relinked, resumed.backup_relinked,
+            resumed.receipt_relinked, resumed.remaining_dependencies) == (
+                0, 1, 1, False,
+            )
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_explicit_separate_retirement_preserves_two_origins_after_prepare(rig):
+    from cifereca.core.canonical_dedup_retirement import (
+        retire_verified_canonical_duplicate,
+    )
+    from cifereca.core.convergence_verified_presence import (
+        plan_existing_verified_presence,
+    )
+    storage, root, paths, pubs, lock_path = rig
+    _catalogue(rig)
+    backup(rig)
+    _journal(rig)
+    original = rows(storage)
+    prepared = _prepare(rig)
+    assert prepared.ready_for_separate_retirement_review
+    # Separate explicit action: the preparing function itself has NOT
+    # unlinked even one byte, including the other profile's matching file.
+    assert all(path.read_bytes() == BYTES for path in paths)
+    with InterProcessLock(lock_path) as lock:
+        result = retire_verified_canonical_duplicate(
+            storage, library_root=root,
+            candidate_placement_id=pubs[1].placement_id,
+            keeper_placement_id=pubs[0].placement_id,
+            shared_lock=lock,
+        )
+    assert result.retired_placement and result.removed_file
+    assert not result.cleanup_pending
+    assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
+    assert not paths[1].exists()
+    second_source, second_snapshot = new_source(
+        "A", provider="seller-b", credential="card-b",
+        account="buyer-b", edition="book",
+    )
+    plan = plan_existing_verified_presence(
+        storage, second_snapshot, library_root=root,
+    )
+    assert len(plan.decisions) == 1
+    assert plan.decisions[0].provider_satisfied
+    assert rows(storage) == (1, 2, 3, 3)
+    assert original == (1, 3, 3, 3)
+    assert storage.catalog_entry_get("catalogue:seller-b")["placement_id"] == pubs[0].placement_id
