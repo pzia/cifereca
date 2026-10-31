@@ -21,6 +21,26 @@ import zipfile
 import httpx
 
 
+# Browser-compatible HTTP identity shared by all Core-owned outbound clients.
+# Explicit protocol-specific User-Agent headers remain possible by contract.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+
+
+def _browser_headers(value):
+    """Add the Core browser identity without mutating caller-owned headers.
+
+    HTTPX Headers is case-insensitive and preserves other header values and
+    duplicates; an explicitly supplied User-Agent is a deliberate exception.
+    """
+    headers = httpx.Headers(value)
+    if "user-agent" not in headers:
+        headers["User-Agent"] = BROWSER_USER_AGENT
+    return headers
+
+
 def _trace_active() -> bool:
     from .logging_utils import diagnostics_level
     return diagnostics_level() == "trace"
@@ -360,6 +380,7 @@ class TraceHTTPClient(httpx.Client):
             raise ValueError("producer must be a bounded string")
         self._trace_producer = producer
         self._trace_capture = capture if capture is not None else HTTP_TRACE
+        options["headers"] = _browser_headers(options.get("headers"))
         super().__init__(**options)
 
     def _transport_for_url(self, url):
@@ -377,6 +398,7 @@ class TraceAsyncHTTPClient(httpx.AsyncClient):
             raise ValueError("producer must be a bounded string")
         self._trace_producer = producer
         self._trace_capture = capture if capture is not None else HTTP_TRACE
+        options["headers"] = _browser_headers(options.get("headers"))
         super().__init__(**options)
 
     def _transport_for_url(self, url):

@@ -29,6 +29,34 @@ Aucune autre exception n'est autorisée. Les chemins non encore migrés sont une
 dette suivie par #3315, pas de nouvelles exceptions implicites. BnF-Prêt est P0
 (#3316), les autres adaptations sont P1. La capture Trace #3203 reste P0.
 
+## User-Agent HTTP Core par défaut (#3838)
+
+Tous les clients créés par `HTTPX_TRANSPORT.client()`, `async_client()` ou
+`public_client()`, ainsi que les wrappers Core `TraceHTTPClient` et
+`TraceAsyncHTTPClient`, reçoivent par défaut le même
+`BROWSER_USER_AGENT` (défini dans `cifereca.http_trace`). Ce navigateur
+standard remplace l'identité générique HTTPX ; le Core n'impose aucun autre
+en-tête (Accept, Origin, Referer, cookies, authentification ou compression).
+Le profil est déterministe et n'est pas un mécanisme de contournement de
+contrôles anti-bot. Les appels `urllib.request` contrôlés du service LLM et
+de vérification PyPI utilisent la même constante, sans changement de leur
+politique de TLS, proxy, redirection ni de limites.
+
+Les `headers` fournis par l'appelant gardent leurs valeurs et leur casse
+logique HTTPX, y compris `User-Agent` lorsqu'il est **explicitement**
+nécessaire au contrat d'un service. Une requête peut également apporter son
+propre `User-Agent` si son protocole l'exige ; ce n'est pas le défaut du
+Core. Exception attestée : Project Gutenberg exige un identifiant avec
+contact configuré pour son accès OPDS et pour la livraison associée. Les
+scripts de développement/CI autonomes ne passent pas par le service HTTP
+applicatif. Les navigateurs réels du plugin Browser Recorder conservent
+leur propre identité. Toute nouvelle exception doit être documentée et testée.
+
+La politique ne modifie ni les domaines autorisés, ni les contrôles des
+redirections, ni l'isolation des cookies et credentials entre origines ;
+aucun monkeypatch global et aucun partage de session n'est ajouté. Les
+clients HTTP tiers qui ne sont pas créés par le Core restent inchangés.
+
 ## Adaptation d'un client HTTPX
 
 ```python

@@ -14,6 +14,8 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHandler, ProxyHandler
 import ssl
 
+from cifereca.http_trace import BROWSER_USER_AGENT
+
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
@@ -103,7 +105,7 @@ def _https_pypi_release(name: str, version: str) -> dict:
     )
     url = f"https://pypi.org/pypi/{quote(name, safe='')}/{quote(version, safe='')}/json"
     try:
-        with opener.open(Request(url, headers={"Accept": "application/json"}), timeout=8) as stream:
+        with opener.open(Request(url, headers={"Accept": "application/json", "User-Agent": BROWSER_USER_AGENT}), timeout=8) as stream:
             if urlsplit(stream.geturl()).netloc != "pypi.org":
                 _rejected("dependency_provenance_unavailable")
             data = stream.read(4 * 1024 * 1024 + 1)

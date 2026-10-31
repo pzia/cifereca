@@ -83,7 +83,6 @@ class CoverLoader:
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_workers = max(2, int(max_workers))
         headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
             # Evite AVIF : certaines piles GTK Linux ne savent pas le décoder.
             "Accept": "image/jpeg,image/png,image/webp,image/gif,image/svg+xml,*/*;q=0.1",
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
