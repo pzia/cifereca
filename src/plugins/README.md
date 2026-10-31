@@ -94,4 +94,6 @@ Les six packages spécifiques Jeunesse sont retirés et interdits de réinstalla
 
 Le filtre d'âge **générique** en Recherche est P2 [#2311](https://github.com/pzia/cifereca/issues/2311). Le module transversal `cifereca.plugin_api.youth_ages` reste disponible, indépendant du plugin retiré.
 
-Baen, Critique littéraire, CifericaOPDS, Dev Updater et Constellations sont opt-in par `enabled_by_default=false`; une activation volontaire préexistante n'est pas supprimée. Browser Recorder/Playwright est déjà opt-in.
+Baen, Critique littéraire, Dev Updater et Constellations sont opt-in par `enabled_by_default=false`. Browser Recorder/Playwright est déjà opt-in.
+
+Le plugin expérimental historique **CifericaOPDS** est retiré de la distribution (blueprint P3 [#3975](https://github.com/pzia/cifereca/issues/3975)). Une installation utilisateur ancienne n'est pas effacée automatiquement ; la distribution n'en assure plus la découverte ni les mises à jour.
