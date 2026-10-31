@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import sqlite3
 
 import pytest
 
@@ -10,17 +11,33 @@ from cifereca.core.adept_resolution_snapshot import (
     validate_paris_adept_local_snapshot,
 )
 from cifereca.storage import Storage
-from tests.test_core_p1_976_canonical_originlink_review import _artifact
+from tests.test_core_p1_976_canonical_originlink_review import (
+    _artifact, _link, _source,
+)
 from tests.test_core_p1_976_legacy_canonical_bridge import (
-    EvidenceStore, _canonical, _historical_acq, _historical_right,
+    EvidenceStore, _historical_acq, _historical_right,
 )
 
 
-def _fixture(tmp_path):
+def _fixture(tmp_path, *, adept_proof="SECRET-ADOBE-source-a"):
     db = Storage(tmp_path / "local-snapshot.db")
     _artifact(db)
     with db._lock, db._connect() as sql:
-        _canonical(sql, "source-a", identity="alice", credential="paris-a")
+        _source(sql, "source-a", identity="alice", credential="paris-a")
+        sql.execute(
+            "UPDATE source_references SET state='active' "
+            "WHERE source_reference_id='source-a'"
+        )
+        _link(sql, "source-a-provider", "provider", "source-a", "alice",
+              proof="SECRET-PROVIDER-source-a")
+        _link(sql, "source-a-adept", "adept", "source-a", "alice",
+              proof=adept_proof)
+        # Cross-database proof comparisons must not depend on the wall clock
+        # when the same Artifact was independently indexed.
+        sql.execute(
+            "UPDATE artifacts SET updated_at=1 WHERE artifact_id=?",
+            ("sha256:" + "a" * 64,),
+        )
     store = EvidenceStore(
         db, rights=[_historical_right()],
         acquisitions=[_historical_acq()],
@@ -75,7 +92,7 @@ def test_snapshot_has_stable_digest_and_never_exposes_credential_or_receipts(tmp
         db.close()
 
 
-@pytest.mark.parametrize("kind", ["change_receipt", "change_source_state", "add_origin", "change_artifact_size"])
+@pytest.mark.parametrize("kind", ["change_source_state", "add_origin", "change_artifact_size"])
 def test_canonical_provenance_change_invalidates_previous_local_snapshot(
     tmp_path, kind,
 ):
@@ -83,12 +100,7 @@ def test_canonical_provenance_change_invalidates_previous_local_snapshot(
     try:
         old = _snapshot(store)["fingerprint"]
         with db._lock, db._connect() as sql:
-            if kind == "change_receipt":
-                sql.execute(
-                    "UPDATE origin_links SET evidence_ref=? WHERE origin_link_id=?",
-                    ("DIFFERENT-SECRET-RECEIPT", "source-a-adept"),
-                )
-            elif kind == "change_source_state":
+            if kind == "change_source_state":
                 sql.execute(
                     "UPDATE source_references SET state='inactive' "
                     "WHERE source_reference_id='source-a'"
@@ -231,3 +243,43 @@ def test_invalid_snapshot_input_never_opens_storage():
     assert report["fingerprint"] is None
     _no_authority(report)
     assert "PRIVATE" not in repr(report)
+
+
+def test_origin_link_receipt_coordinates_are_immutable_by_v14_schema(tmp_path):
+    db, store = _fixture(tmp_path)
+    try:
+        before = _snapshot(store)["fingerprint"]
+        with db._lock, db._connect() as sql:
+            with pytest.raises(sqlite3.IntegrityError, match="origin_link_coords_immutable"):
+                sql.execute(
+                    "UPDATE origin_links SET evidence_ref=? WHERE origin_link_id=?",
+                    ("CHANGED-BY-LEGACY-WRITER", "source-a-adept"),
+                )
+        assert _snapshot(store)["fingerprint"] == before
+    finally:
+        db.close()
+
+
+def test_distinct_initial_adobe_receipts_change_digest_without_changing_link_count(
+    tmp_path,
+):
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first_db, first = _fixture(first_dir, adept_proof="FIRST-SYNTHETIC-RECEIPT")
+    second_db, second = _fixture(second_dir, adept_proof="SECOND-SYNTHETIC-RECEIPT")
+    try:
+        original = _snapshot(first)
+        altered = _snapshot(second)
+        assert original["status"] == altered["status"] == "local_snapshot"
+        assert original["historical_right_count"] == altered["historical_right_count"] == 1
+        assert original["historical_acquisition_count"] == altered["historical_acquisition_count"] == 1
+        assert original["canonical_evidence_row_count"] == altered["canonical_evidence_row_count"] == 2
+        assert original["fingerprint"] != altered["fingerprint"]
+        assert "SYNTHETIC-RECEIPT" not in repr(original) + repr(altered)
+        _no_authority(original)
+        _no_authority(altered)
+    finally:
+        first_db.close()
+        second_db.close()
