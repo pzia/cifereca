@@ -204,8 +204,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         # New accounts retain the historical first-identity default.
         original_for_identity = editor.get('original_account', {})
         if (not selected_identity and type(original_for_identity) is dict
-                and original_for_identity.get('id') == editor['id']
-                and 'identity_id' in original_for_identity):
+                and original_for_identity.get('id') == editor['id']):
             raise SettingsValidationError(
                 'Identité du compte fournisseur vide : sélectionnez explicitement une identité.'
             )
