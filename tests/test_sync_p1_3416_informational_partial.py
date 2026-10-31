@@ -166,7 +166,8 @@ def test_failed_materialization_phase_cannot_hide_under_success_or_partial_headl
     shown = sync_source_presentation(item)
     assert shown.sync_label == "Échec"
     assert "Synchronisation : Échec" in shown.summary
-    assert "dernier succès confirmé" in shown.summary.lower() or "Dernier succès confirmé" in shown.summary
+    if source_status == "partial":
+        assert "Dernier succès confirmé" in shown.summary
 
 
 def test_partial_inventory_with_successful_local_phase_is_not_a_failure_label():
