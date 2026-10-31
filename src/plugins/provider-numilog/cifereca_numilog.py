@@ -20,7 +20,7 @@ from cifereca.plugin_api import (HTTPX_TRANSPORT, Account, CredentialField, Item
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
 from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionError,
     OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
-    html_response_kind, _attested_public_https)
+    html_response_kind, _attested_public_https, _readbook_coordinates)
 from cifereca_numilog_filename import publish
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
@@ -176,6 +176,39 @@ def _numilog_card_offer_id(identity_id, credential_id, account_id, right_id, evi
         return ''
     return 'numilog.card:' + hashlib.sha256(
         '\x00'.join(coords).encode('utf-8')
+    ).hexdigest()
+
+
+def _numilog_selected_offer_id(identity_id, credential_id, account_id,
+                               right_id, row, library_url):
+    """A card JS offer or a strictly scoped, observed readBook dwld action.
+
+    A readBook URL is an authenticated first navigation, NOT a signed ACSM
+    receipt. It is never published. The actual GET is still independently
+    selected by Core and fully checked by the legacy audited transport.
+    """
+    if type(row) is not dict:
+        return ''
+    card = _numilog_card_offer_id(
+        identity_id, credential_id, account_id,
+        right_id, row.get('delivery'),
+    )
+    if card:
+        return card
+    if row.get('readbook_dwld_offer') is not True:
+        return ''
+    href = row.get('href')
+    if type(href) is not str or len(href) > 4096:
+        return ''
+    coords = _readbook_coordinates(href, library_url)
+    if (coords is None or coords[0] != row.get('lid')
+            or dict(coords[1]).get('m') != ('dwld',)):
+        return ''
+    pieces = (identity_id, credential_id, account_id, right_id, href)
+    if not all(type(x) is str and 0 < len(x) <= 4096 for x in pieces):
+        return ''
+    return 'numilog.readbook:' + hashlib.sha256(
+        ('readbook-dwld-v1' + chr(0) + chr(0).join(pieces)).encode('utf-8')
     ).hexdigest()
 
 
@@ -734,9 +767,9 @@ class NumilogSession(ProviderSession):
                 # A page failure or missing edition cannot revoke earlier
                 # ownership, but it cannot claim any executable offer.
                 return replace(base, rights=(original,))
-            offer_id = _numilog_card_offer_id(
+            offer_id = _numilog_selected_offer_id(
                 account.identity_id, account.credential_id, account.unique_id,
-                right_id, selected[0].get('delivery'),
+                right_id, selected[0], self.library_url,
             )
             qualified = replace(
                 original,
@@ -841,10 +874,13 @@ class NumilogSession(ProviderSession):
                 or type(edition_id) is not str or not edition_id
                 or type(right_id) is not str or edition_id != right_id
                 or type(delivery_offer_id) is not str
-                or not delivery_offer_id.startswith('numilog.card:')
-                or len(delivery_offer_id) != len('numilog.card:') + 64
-                or any(c not in '0123456789abcdef'
-                       for c in delivery_offer_id[len('numilog.card:'):])
+                or not any(
+                    delivery_offer_id.startswith(prefix)
+                    and len(delivery_offer_id) == len(prefix) + 64
+                    and all(char in '0123456789abcdef'
+                            for char in delivery_offer_id[len(prefix):])
+                    for prefix in ('numilog.card:', 'numilog.readbook:')
+                )
                 or account.provider_id != 'numilog'
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('numilog_selected_delivery_scope_mismatch')
@@ -1840,8 +1876,13 @@ class NumilogSession(ProviderSession):
             # explicit selection; it never grants an automatic acquisition.
             if expected_offer_id is not None and (
                 type(expected_offer_id) is not str
-                or not expected_offer_id.startswith('numilog.card:')
-                or len(expected_offer_id) != len('numilog.card:') + 64
+                or not any(
+                    expected_offer_id.startswith(prefix)
+                    and len(expected_offer_id) == len(prefix) + 64
+                    and all(c in '0123456789abcdef'
+                            for c in expected_offer_id[len(prefix):])
+                    for prefix in ('numilog.card:', 'numilog.readbook:')
+                )
                 or type(expected_identity_id) is not str
                 or not expected_identity_id
             ):
@@ -1868,10 +1909,10 @@ class NumilogSession(ProviderSession):
             if expected_offer_id is not None:
                 # No readBook fallback, confirmation navigation or signed GET
                 # may silently replace the exact action admitted by Core.
-                current_offer = _numilog_card_offer_id(
+                current_offer = _numilog_selected_offer_id(
                     expected_identity_id, self.credential_id,
                     'numilog:' + self.scope, item.record_id,
-                    row.get('delivery'),
+                    row, self.library_url,
                 )
                 if current_offer != expected_offer_id:
                     raise ProviderCapabilityError('numilog_offer_changed')

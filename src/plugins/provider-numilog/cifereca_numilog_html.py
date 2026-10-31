@@ -428,6 +428,34 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                         delivery_diagnostics['bound_links'] = min(
                             10000, delivery_diagnostics.get('bound_links', 0) + 1,
                         )
+                elif (confirmation_href is None
+                      and len(links) == 1 and len(title_nodes) == 1
+                      and not any(
+                          (n.tag == 'script' and (
+                              _js_delivery_shape_count(n)
+                              or 'ProductId' in n.text()
+                              or 'IndexExemplaire' in n.text()
+                          ))
+                          or ('ModalDownload' in str(n.attrs.get('onclick') or ''))
+                          for n in nodes
+                      )):
+                    # 31/10 #2797: real purchased Numilog cards can expose
+                    # readBook?lid=N&m=dwld with no inline signed JS object.
+                    # Record ONLY an exact observed, scoped and uniquely
+                    # owned download action; this is not a signed ACSM URL.
+                    # Never infer a selectable offer from m=stream, the
+                    # historical m=download, an orphan link or mixed JS.
+                    observed = _readbook_coordinates(row['href'], base_url)
+                    if (observed is not None
+                            and observed[0] == row['lid']
+                            and dict(observed[1]).get('m') == ('dwld',)):
+                        row['readbook_dwld_offer'] = True  # selected-only
+                        if delivery_diagnostics is not None:
+                            delivery_diagnostics['readbook_dwld_offers'] = min(
+                                10000, delivery_diagnostics.get(
+                                    'readbook_dwld_offers', 0,
+                                ) + 1,
+                            )
             items.append(row)
 
     next_links=[]
