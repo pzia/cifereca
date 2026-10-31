@@ -511,9 +511,18 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
             "partial": ("warning", "résultat partiel"),
         }
         for phase, label in phase_labels:
-            for row in entries:
-                if getattr(row, "phase", None) != phase:
-                    continue
+            matches = [
+                row for row in entries
+                if getattr(row, "phase", None) == phase
+            ]
+            if len(matches) > 1:
+                # A duplicate Core phase is an actionable projection issue,
+                # even if every conflicting row says success. Never claim a
+                # clean result from an arbitrary first row.
+                candidates.append((
+                    "warning", f"{label} : états incohérents — actualisation nécessaire"
+                ))
+            for row in matches:
                 raw = getattr(row, "status", None)
                 issue = words.get(raw) if type(raw) is str else None
                 if issue:
