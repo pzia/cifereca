@@ -181,7 +181,7 @@ def write_sync_report(
         "CIFERECA SOURCE SYNC REPORT\n"
         f"status: {safe_result['status']}\n"
         f"exit_code: {exit_code}\n"
-        "coverage: canonical SQLite counts; no filesystem/HTTP/correlated journal proof\n"
+        f"coverage: {manifest['evidence_coverage']}; no HTTP/correlated journal proof\n"
     ).encode("ascii")
     parts = {
         "manifest.json": _json_bytes(manifest),
