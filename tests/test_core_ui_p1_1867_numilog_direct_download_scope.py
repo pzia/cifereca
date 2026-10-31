@@ -136,9 +136,10 @@ def test_real_private_inventory_keeps_opt_in_search_button_but_not_local_file():
     host.service.can_direct_download = Mock(return_value=True)
     host._populate_search([book], announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
-    assert row.options["action_label"] == "Télécharger"
+    assert row.options["action_label"] == "Vérifier et télécharger"
     assert callable(row.options["action_callback"])
     assert "Mes achats Numilog" in row.meta
+    assert "offre à vérifier" in row.meta
     assert "Fichier local disponible" not in row.meta
     host.service.can_direct_download.assert_called_once_with(book)
     host.download_direct_item.assert_not_called()
@@ -182,6 +183,7 @@ def test_detail_retains_private_purchase_action_when_broker_positive():
     _direct_download_method()(panel, purchase)
     service.can_direct_download.assert_called_once_with(purchase)
     window.action_button.assert_called_once()
+    assert window.action_button.call_args.args[0] == "Vérifier et télécharger"
     button.connect.assert_called_once()
     panel._actions.assert_called_once_with([button])
     window.download_direct_item.assert_not_called()
