@@ -77,7 +77,7 @@ def test_new_report_has_only_closed_pseudonymized_evidence(tmp_path, monkeypatch
         assert manifest["status"] == "partial"
         assert manifest["exit_code"] == 2
         assert manifest["build_identity"]["commit_sha"] == "a" * 40
-        assert manifest["evidence_coverage"] == "canonical_sqlite_counts_only"
+        assert manifest["evidence_coverage"] == "canonical_sqlite_graph_without_filesystem"
         assert json.loads(z.read("sync-result.json")) == {
             "status": "partial", "downloaded": 1,
         }
