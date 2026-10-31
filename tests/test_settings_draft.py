@@ -1240,3 +1240,38 @@ def test_provider_account_valid_id_and_label_preserved_without_rebinding(editor)
     assert row["label"] == "Fournisseur fictif"
     assert row["identity_id"] == "alice"
     assert config.data == before and not config.path.exists()
+
+
+
+@pytest.mark.parametrize("malformed", ["false", "true", 1, 0, None, [], {}, ["delete"]])
+def test_provider_account_delete_flag_must_be_exact_bool(editor, malformed):
+    """A truthy string such as 'false' must never remove a saved account."""
+    config, values = editor
+    prior = dict(
+        id="original", provider="provider.future", identity_id="alice",
+        enabled=False, credentials={"username": "original-user"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(prior)])
+    item = account("provider.future", account_id="original")
+    item["deleted"] = malformed
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Suppression de compte fournisseur invalide"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
+def test_provider_account_deletion_requires_explicit_true_and_does_not_write(editor):
+    config, values = editor
+    prior = dict(
+        id="original", provider="provider.future", identity_id="alice",
+        enabled=False, credentials={"username": "original-user"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(prior)])
+    item = account("provider.future", account_id="original")
+    item["deleted"] = True
+    values["accounts"] = [item]
+    draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert draft.data["providers"]["accounts"] == []
+    assert config.provider_accounts() == [prior]
+    assert not config.path.exists()
