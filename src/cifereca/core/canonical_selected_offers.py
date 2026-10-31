@@ -29,7 +29,7 @@ _LOG = logging.getLogger("cifereca")
 def qualify_selected_offers(
     service, account: Account, session: object, snapshot: ProviderRightsSnapshot,
     *, admitted_epoch: int, shared_lock: InterProcessLock,
-    library_root: Path, persisted_consent: frozenset[SourceKey],
+    library_root: Path, persisted_consent: frozenset[SourceKey] | None,
     consent_still_current: Callable[[SourceKey], bool],
     cancelled: Callable[[], bool] = lambda: False,
 ) -> ProviderRightsSnapshot:
@@ -44,8 +44,8 @@ def qualify_selected_offers(
             or type(admitted_epoch) is not int
             or type(shared_lock) is not InterProcessLock
             or not isinstance(library_root, Path)
-            or type(persisted_consent) is not frozenset
-            or any(type(k) is not SourceKey for k in persisted_consent)
+            or (persisted_consent is not None and type(persisted_consent) is not frozenset)
+            or any(type(k) is not SourceKey for k in (persisted_consent or ()))
             or not callable(consent_still_current) or not callable(cancelled)):
         raise ValueError("canonical_offer_core_admission_required")
 
@@ -62,7 +62,7 @@ def qualify_selected_offers(
     # installed providers. Do not call any legacy download/loans/library
     # fallback, and never try this preflight without exact persisted consent.
     if not any(SourceKey(scope, row.edition_id, row.right_id,
-                         row.kind, snapshot.branch) in persisted_consent
+                         row.kind, snapshot.branch) in (persisted_consent or ())
                for row in snapshot.rights if row.provider_attested
                and row.delivery == "unknown"):
         return snapshot
@@ -158,7 +158,7 @@ def qualify_selected_offers(
         key = SourceKey(scope, row.edition_id, row.right_id, row.kind,
                         snapshot.branch)
         if (not row.provider_attested or row.delivery != "unknown"
-                or key not in persisted_consent or key in satisfied):
+                or (persisted_consent is not None and key not in persisted_consent) or key in satisfied):
             continue
         if cancelled():
             raise Cancelled("canonical_offer_preflight_cancelled")
