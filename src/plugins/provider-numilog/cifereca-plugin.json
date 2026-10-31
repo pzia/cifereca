@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.numilog",
-    "version": "0.1.89",
+    "version": "0.1.90",
     "name": "Numilog",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
@@ -44,7 +44,7 @@
         }
       },
       "help_text": "Configurez une connexion Numilog avec votre email et votre mot de passe pour vos achats. La recherche standard porte encore sur les titres possédés ; la recherche commerciale publique anonyme est accessible explicitement avec scope=catalog et field=all, sans cookies de compte ni achat ou téléchargement. Les recherches serveur auteur/ISBN, le transport public live et la fédération par défaut restent à qualifier. EPUB directs validés localement ; les ACSM sont détectés via l’inspection publique du Core puis confiés au broker public acquisition/import_acsm avec l’identité propriétaire du compte, puis au runtime ADEPT configuré. Un profil ADE prêt reste nécessaire. LCP, PDF, audio et achats intégrés ne sont pas pris en charge. Bibliothèque multipage via rel=next validé ; HTTP n’est accepté que sur loopback pour les jeux de données locaux. Les URL publiques de fiches sont validées séparément des liens privés de téléchargement. Seules les fiches Numilog attestées /id/titre.ebook et les formes historiques /livres/... ou /ebooks/... sont restituées aux autres pages ; refus des URL de compte, jetons, query strings inattendues, hôtes externes et chemins ambigus. Une URL conservée est une provenance de fiche, pas une preuve de correspondance bibliographique ni un lien d'acquisition. Aucune requête additionnelle vers les fiches publiques ni extraction automatique de l'ISBN ou de l'âge. Le propriétaire initial du compte est conservé pendant la livraison ; un rattachement modifié ou indisponible arrête les sauts suivants, l’import ACSM et la publication EPUB.",
-      "version": "0.1.89",
+      "version": "0.1.90",
       "capabilities": [
         "catalog.search",
         "catalog.personal",
@@ -82,7 +82,7 @@
         "properties": {}
       },
       "help_text": "Catalogue commercial public Numilog. À activer explicitement après vérification des conditions d'accès ; aucune connexion client, cookie ou compte Numilog n'est requis. La recherche fédérée l'interroge seulement lors d'une recherche utilisateur après activation. Champs serveur prouvés : texte libre (all) uniquement. Pages suivantes, robots/CGU et disponibilité HTTP anonyme restent à qualifier. Les livres commerciaux ne sont jamais considérés comme achetés ou téléchargeables.",
-      "version": "0.1.89",
+      "version": "0.1.90",
       "capabilities": [
         "catalog.search",
         "catalog.detail"
