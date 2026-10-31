@@ -29,6 +29,16 @@ def setup_cli(monkeypatch, *, status="partial"):
 
     class Core:
         library = Library()
+        storage = SimpleNamespace(
+            provider_connections=lambda: [{
+                "identity_id": "profile-test", "provider_id": "numilog",
+                "credential_id": "credential-test", "enabled": True,
+            }],
+            provider_accounts=lambda: [{
+                "identity_id": "profile-test", "provider_id": "numilog",
+                "credential_id": "credential-test", "account_id": "numilog:owned",
+            }],
+        )
         def close(self):
             activity.append(("close", diagnostics_level()))
 
