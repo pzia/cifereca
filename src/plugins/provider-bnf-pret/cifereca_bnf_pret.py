@@ -528,14 +528,25 @@ class BnfProviderSession(ProviderSession):
     ):
         """#3723 v2: stage the *existing* exact ACSM/EPUB path; Core owns SHA."""
         from cifereca.plugin_api import SourceReference, DeliveryCandidate
+        # Pin the caller scope *before* the underlying provider performs I/O.
+        # A rebind must not manufacture a candidate for the new owner.
+        scope = self._downloadable_scope(account)
         path, hint = self.rights_selected_delivery_candidate(
             account, edition_id=edition_id, right_id=resource_id,
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
         )
+        if self._downloadable_scope(account) != scope:
+            try:
+                staged = Path(path)
+                if staged.parent == Path(target_dir) and staged.is_file():
+                    staged.unlink(missing_ok=True)
+            except (OSError, TypeError, ValueError):
+                pass
+            raise ProviderCapabilityError("selected_delivery_scope_changed")
         return DeliveryCandidate(
             source=SourceReference(
-                self._downloadable_scope(account), branch,
+                scope, branch,
                 edition_id, resource_id, kind,
             ),
             selected_offer_id=selected_offer_id, path=Path(path),
