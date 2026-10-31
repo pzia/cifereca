@@ -98,6 +98,7 @@ def test_test_script_and_workflow_consumers_are_explicit():
         "e2e/youth_page_probe.py": {"core"},
         "environnements/openai-chat-debian/capture_app.py": {"core"},
         "scripts/ci-select-core-tests.py": {"core"},
+        "scripts/ci_test_dependency_guard.py": {"core"},
         "scripts/ci_select_core_push.py": {"core"},
         "scripts/ci_core_release_preflight.py": {"core"},
         "scripts/ci-install-gtk-e2e-runtime.sh": {"core"},
