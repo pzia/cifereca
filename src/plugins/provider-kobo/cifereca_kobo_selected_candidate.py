@@ -232,6 +232,9 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 "delivery_size_exceeded": "kobo_candidate_size_exceeded",
                 "delivery_html_instead_of_file": "kobo_candidate_not_a_file",
                 "delivery_http_status": "kobo_candidate_http_unavailable",
+                "delivery_staging_unsafe": "kobo_candidate_staging_rebound",
+                "delivery_staging_changed": "kobo_candidate_staging_rebound",
+                "delivery_staging_unavailable": "kobo_candidate_staging_rebound",
             }
             raise ProviderCapabilityError(
                 known.get(code, "kobo_candidate_transport_failed")
