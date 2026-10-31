@@ -490,6 +490,47 @@ def catalog_entries(self, *, state: str | None=None) -> list[dict[str, Any]]:
     return LocalCatalog(self.storage, self.library_dir()).entries(state=state)
 
 
+def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
+    """Read canonical provider provenance scoped to a *present* placement.
+
+    A shared Artifact SHA is not proof that a different profile or provider
+    owns a resource. Only an OriginLink to an exact SourceReference authorizes
+    a source facet; this projection performs no file or rights mutation.
+    """
+    from sqlite3 import Error as SqliteError
+
+    if not hasattr(storage, "_lock") or not callable(getattr(storage, "_connect", None)):
+        return ()
+    try:
+        with storage._lock, storage._connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT p.artifact_id,p.identity_id,s.provider_id,"
+                "s.credential_id,s.account_id,s.edition_id "
+                "FROM placements p "
+                "JOIN origin_links o ON o.artifact_id=p.artifact_id "
+                "AND o.identity_id=p.identity_id "
+                "JOIN source_references s "
+                "ON s.source_reference_id=o.source_reference_id "
+                "AND s.identity_id=o.identity_id "
+                "WHERE p.state='present' AND o.origin_kind='provider' "
+                + ("AND p.identity_id=? " if identity_id else "")
+                + "ORDER BY p.identity_id,p.artifact_id,s.provider_id,"
+                "s.credential_id,s.account_id,s.edition_id",
+                (identity_id,) if identity_id else (),
+            ).fetchall()
+    except (SqliteError, AttributeError):
+        # Legacy fixtures and earlier DB schemas cannot attest canonical
+        # provenance. Do not infer associations from a title or a shared SHA.
+        return ()
+    return tuple(
+        (artifact, owner, provider, credential, account, edition)
+        for artifact, owner, provider, credential, account, edition in rows
+        if all(type(field) is str and field for field in (
+            artifact, owner, provider, credential, edition,
+        )) and type(account) is str
+    )
+
+
 def library_entries(self, *, identity_id: str | None=None, scan: bool=False, logger) -> list[dict[str, Any]]:
     """Canonical Library projection.
 
@@ -505,6 +546,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     merged: dict[str, dict[str, Any]] = {}
     source_alias: dict[tuple[str, str], str] = {}
     local_keys = {}
+    local_artifact_keys: dict[tuple[str, str], str] = {}
     default_identity_id = self.identities[0].identity_id if self.identities else None
     artifacts = {str(row.get("artifact_id") or ""): row for row in self.storage.artifacts()}
     placements_by_artifact: dict[str, list[dict[str, Any]]] = {}
@@ -575,6 +617,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
         source_alias[(provider_id, item_id)] = key
         local_keys[(row.get('placement_id'), artifact_id)] = key
+        local_artifact_keys[(row_identity or default_identity_id, artifact_id)] = key
         metadata = dict(row.get("metadata") or {})
         all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
         current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
@@ -633,6 +676,34 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 existing["thumbnail_url"] = base_cover.url
             existing["metadata"] = {**metadata, **dict(existing.get("metadata") or {})}
 
+    # Canonical OriginLinks enrich the *existing* local Artifact card.
+    # Never use a title, mere SHA equality, or an unscoped provider/item ID to
+    # attribute a purchase to a credential. Unresolved sources stay distinct.
+    exact_aliases: dict[tuple[str, str, str, str, str], set[str]] = {}
+    linked_edition_scopes: set[tuple[str, str, str]] = set()
+    for artifact_id, owner, provider, credential, account, edition in (
+        _verified_provider_origin_coordinates(self.storage, identity_id=identity_id)
+    ):
+        local_key = local_artifact_keys.get((owner, artifact_id))
+        if local_key is None:
+            continue
+        entry = merged[local_key]
+        add_unique(entry.setdefault("providers", []), provider)
+        source_ref = {"provider_id": provider, "item_id": edition, "identity_id": owner}
+        if source_ref not in entry.setdefault("source_refs", []):
+            entry["source_refs"].append(source_ref)
+        exact_aliases.setdefault(
+            (owner, provider, credential, account, edition), set(),
+        ).add(local_key)
+        linked_edition_scopes.add((owner, provider, edition))
+
+    # Multiple Artifacts for the same exact source cannot be disambiguated by
+    # metadata alone. Only a *unique* canonical link can fold the remote card.
+    exact_source_alias = {
+        scope: next(iter(keys))
+        for scope, keys in exact_aliases.items() if len(keys) == 1
+    }
+
     # A v0.7 backup projection is not scoped by identity/borrower: even a
     # descriptive title/cover can leak a former owner's private metadata.
     # Present only catalogue, canonical entitlement and scoped loan facts.
@@ -656,7 +727,21 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         if identity_id and entitlement_identity != identity_id: continue
         provider_id = str(entitlement.get("provider_id") or ""); item_id = str(entitlement.get("item_id") or "")
         if not provider_id or not item_id: continue
-        source_key=(provider_id,item_id); canonical_key=source_alias.get(source_key, f"source:{provider_id}:{item_id}")
+        source_key = (provider_id, item_id)
+        exact_scope = (
+            entitlement_identity, provider_id,
+            str(entitlement.get("credential_id") or ""),
+            str(entitlement.get("account_id") or ""), item_id,
+        )
+        canonical_key = exact_source_alias.get(exact_scope)
+        if canonical_key is None:
+            # A proven origin for another account vetoes the legacy
+            # provider+item shortcut. This is not a veto to acquisition.
+            canonical_key = (
+                f"source:{provider_id}:{item_id}"
+                if (entitlement_identity, provider_id, item_id) in linked_edition_scopes
+                else source_alias.get(source_key, f"source:{provider_id}:{item_id}")
+            )
         if provider_id == 'bnf-pret' and entitlement_type == 'loan':
             canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
