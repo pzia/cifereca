@@ -64,3 +64,68 @@ def test_same_private_run_key_correlates_before_after_and_staging(tmp_path):
                 assert secret_raw not in data
     finally:
         storage.close()
+
+
+
+def test_explicit_physical_verification_reaches_zip_manifest(tmp_path, monkeypatch):
+    import hashlib
+    storage = Storage(tmp_path / "verified.sqlite")
+    root = tmp_path / "books"
+    directory = root / "Profile-A"
+    directory.mkdir(parents=True)
+    path = directory / "book.epub"
+    data = b"synthetic-valid-sha-evidence"
+    path.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    artifact_id = "sha256:" + digest
+    monkeypatch.setattr(
+        Storage, "identities",
+        lambda self: [{"identity_id": ACCOUNT.identity_id,
+                       "directory_name": "Profile-A"}],
+    )
+    try:
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "INSERT INTO source_references("
+                "source_reference_id,identity_id,provider_id,credential_id,account_id,"
+                "branch_id,edition_id,right_id,reference_kind,state,"
+                "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("SOURCE", ACCOUNT.identity_id, ACCOUNT.provider_id,
+                 ACCOUNT.credential_id, ACCOUNT.unique_id,
+                 "purchases", "EDITION", "right", "purchase", "active", 1, 1),
+            )
+        storage.artifact_put({
+            "artifact_id": artifact_id, "sha256": digest,
+            "size": len(data), "media_format": "epub",
+        })
+        storage.placement_put({
+            "placement_id": "placement-a", "artifact_id": artifact_id,
+            "path": str(path), "identity_id": ACCOUNT.identity_id,
+            "provider_id": ACCOUNT.provider_id, "state": "present",
+        })
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "INSERT INTO origin_links("
+                "origin_link_id,origin_kind,identity_id,artifact_id,"
+                "source_reference_id,evidence_ref,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                ("origin-a", "provider", ACCOUNT.identity_id,
+                 artifact_id, "SOURCE", "received", 1, 1),
+            )
+        audit = audit_source_counts(
+            storage, ACCOUNT, pseudonym_key=b"non-exported-per-run-hmac",
+            library_root=root, verify_files=True,
+        )
+        assert audit["physical_verification"] == "bounded_sha256_checked"
+        assert audit["resource_evidence"]["rights"][0]["file_verification"] == "verified_sha256"
+        target = tmp_path / "verified-report.zip"
+        write_sync_report(
+            target, account=ACCOUNT, run_ref="c" * 32,
+            before=audit, after=audit, result={"status": "success"},
+            started_at="start", exit_code=0,
+        )
+        with zipfile.ZipFile(target) as z:
+            manifest = json.loads(z.read("manifest.json"))
+            assert manifest["evidence_coverage"] == "canonical_sqlite_graph_with_bounded_sha256"
+    finally:
+        storage.close()
