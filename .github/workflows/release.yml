@@ -156,7 +156,7 @@ jobs:
               raise SystemExit("release_core_wheel_count_invalid")
           with ZipFile(wheels[0]) as wheel:
               revision = wheel.read("cifereca/_build_revision.txt").decode("ascii")
-          if revision != os.environ["RELEASE_COMMIT"].lower() + "\\n":
+          if revision != os.environ["RELEASE_COMMIT"].lower() + "\n":
               raise SystemExit("release_core_wheel_revision_mismatch")
           PY
 
