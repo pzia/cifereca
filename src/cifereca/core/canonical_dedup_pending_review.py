@@ -55,14 +55,14 @@ def review_pending_canonical_cleanups(
             return PendingCanonicalCleanupReview("unavailable")
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN")
-            args: tuple[str, ...] = (_PENDING,)
+            args: tuple[object, ...]
             query = (
                 "SELECT placement_id,path,identity_id,artifact_id,"
                 "provider_id,source_item_id,"
                 "CASE WHEN length(metadata_json)>? THEN NULL ELSE metadata_json END "
                 "FROM placements WHERE state=?"
             )
-            args = (str(_MAX_JSON_BYTES), _PENDING)
+            args = (_MAX_JSON_BYTES, _PENDING)
             # length() is evaluated inside SQLite; do not transfer a huge
             # opaque metadata payload merely to discover one pending task.
             if identity_id is not None:
@@ -94,6 +94,7 @@ def review_pending_canonical_cleanups(
                     and type(artifact_id) is str
                     and provider is None and item is None
                     and allowed.get(owner) in unique_dirs
+                    and sum(1 for known_owner, _ in profiles if known_owner == owner) == 1
                     and type(raw) is str and 0 < len(raw) <= _MAX_JSON_BYTES
                 )
                 if not valid:
