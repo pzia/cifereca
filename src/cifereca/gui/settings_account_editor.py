@@ -26,7 +26,14 @@ def build_provider_account_editor(
     identity_row = Adw.EntryRow(); identity_row.set_title("Identité (ID)")
     default_identity_id = str((configured_identities[0].get("id") if configured_identities else "default") or "default")
     identity_row.set_text(str(data.get("identity_id") or default_identity_id)); group.add(identity_row)
-    credentials = dict(data.get("credentials") or {})
+    raw_credentials = data.get("credentials", {})
+    raw_options = data.get("options", {})
+    invalid_saved_snapshot = (
+        type(raw_credentials) is not dict or type(raw_options) is not dict
+    )
+    # Display can recover from corrupt saved data. Do not mutate config and
+    # never allow a later unrelated Save to silently replace malformed fields.
+    credentials = dict(raw_credentials) if type(raw_credentials) is dict else {}
     fields: dict[str, Gtk.Widget] = {}
     for field in descriptor.credential_fields:
         # A malformed persisted value is not a valid credential. In
@@ -39,7 +46,7 @@ def build_provider_account_editor(
         else:
             entry = Adw.EntryRow(); entry.set_title(field.label); entry.set_text(credential_text)
         group.add(entry); fields[field.key] = entry
-    options = dict(data.get("options") or {})
+    options = dict(raw_options) if type(raw_options) is dict else {}
     option_fields: dict[str, Any] = {}
     for field in getattr(descriptor, "account_options", ()):
         entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
@@ -74,6 +81,7 @@ def build_provider_account_editor(
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields,
         "option_fields": option_fields,
-        "original_options": options, "deleted": False,
+        "original_options": options, "invalid_saved_snapshot": invalid_saved_snapshot,
+        "deleted": False,
     }
     return editor, delete_button
