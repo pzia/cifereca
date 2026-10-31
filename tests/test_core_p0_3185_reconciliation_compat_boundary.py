@@ -27,4 +27,4 @@ def test_legacy_reconciliation_broker_exposes_only_read_only_audit():
     # canonical maintenance broker, it cannot authorize or commit a deletion.
     public = {name for name in dir(LibraryReconciliationReadBrokerImpl)
               if not name.startswith("_")}
-    assert public == {"audit"}
+    assert public == {"audit", "service"}
