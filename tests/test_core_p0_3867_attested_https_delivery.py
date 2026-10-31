@@ -406,3 +406,55 @@ def test_temporary_name_replacement_cannot_change_published_sha(
         )
     assert swapped == [True]
     assert list(tmp_path.iterdir()) == []
+
+
+
+def test_same_inode_overwrite_before_link_never_publishes_stale_digest(
+    tmp_path, monkeypatch,
+):
+    """The final SHA must describe the bytes actually visible by the path."""
+    original_link = os.link
+    changed = []
+
+    def overwrite_in_place_before_link(source, destination, **options):
+        fd = options["src_dir_fd"]
+        with os.fdopen(
+            os.open(source, os.O_WRONLY | os.O_TRUNC, dir_fd=fd), "wb",
+        ) as forged:
+            forged.write(b"forged verified byte")
+            forged.flush()
+            os.fsync(forged.fileno())
+        changed.append(True)
+        return original_link(source, destination, **options)
+
+    intended = b"genuine expected byte"
+    # Both have equal length, so an inode-only or file-size check cannot
+    # detect this attack. The SHA digest needs a second physical read.
+    assert len(intended) == len(b"forged verified byte")
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=intended,
+    ))
+    monkeypatch.setattr(delivery.os, "link", overwrite_in_place_before_link)
+    with pytest.raises(ValueError, match="delivery_staging_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "invalid.epub",
+            admission_current=lambda: True, timeout=5,
+        )
+    assert changed == [True]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_untouched_candidate_receipt_matches_independent_file_sha(
+    tmp_path, monkeypatch,
+):
+    content = b"epub synthetic bytes" * 128
+    _client(monkeypatch, lambda request: httpx.Response(200, content=content))
+    result = delivery.download_attested_https(
+        producer="core.selected.delivery", url=FIRST,
+        target=tmp_path / "valid.epub",
+        admission_current=lambda: True, timeout=5,
+    )
+    assert result.sha256 == delivery.hashlib.sha256(
+        result.path.read_bytes(),
+    ).hexdigest()
