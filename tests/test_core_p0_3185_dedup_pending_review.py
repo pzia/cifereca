@@ -152,11 +152,12 @@ def test_pending_queue_over_budget_returns_no_unverified_pair_ids(pending_rig):
     with storage._lock, storage._connect() as db:
         db.executemany(
             "INSERT INTO placements(placement_id,artifact_id,path,identity_id,"
-            "state,metadata_json) VALUES(?,?,?,?,?,?)",
+            "state,metadata_json,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
             [
                 (f"synthetic-pending-{n}", pubs[1].artifact_id,
                  str(root / "A" / f"synthetic-extra-{n}.pdf"), "A",
-                 "dedup_cleanup_pending", "{}")
+                 "dedup_cleanup_pending", "{}", 1, 1)
                 for n in range(1000)
             ],
         )
