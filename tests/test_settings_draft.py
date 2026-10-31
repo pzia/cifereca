@@ -564,3 +564,20 @@ def test_generic_provider_missing_option_fields_preserves_legacy_saved_options(e
     assert saved.data["providers"]["accounts"][0]["options"] == {
         "endpoint": "saved", "unknown": "kept",
     }
+
+
+def test_invalid_stored_provider_containers_cannot_be_silently_repaired_on_save(editor):
+    config, values = editor
+    values["accounts"] = [account("future-provider")]
+    values["accounts"][0]["invalid_saved_snapshot"] = True
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Données du compte fournisseur invalides"):
+        validate(editor, descriptors={"future-provider": descriptor("future-provider")})
+    assert config.data == before
+
+
+def test_valid_provider_snapshot_without_guard_remains_compatible(editor):
+    values = editor[1]
+    values["accounts"] = [account("future-provider")]
+    result = validate(editor, descriptors={"future-provider": descriptor("future-provider")})
+    assert result.data["providers"]["accounts"][0]["enabled"] is True
