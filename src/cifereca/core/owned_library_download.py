@@ -53,14 +53,17 @@ def _resolve(service, entitlement_id, identity_id):
     _, _, scope, configuration = _source(broker, sid)
     _require(service.local_placement_for_source(provider_id="kobo", credential_id=right["credential_id"],
                                                item_id=right["item_id"], identity_id=identity_id) is None)
-    backup = service.storage.backup_get("kobo", right["credential_id"], right["item_id"])
-    if backup is not None:
-        _require(backup.get("identity_id") == identity_id and backup.get("account_id") == right["account_id"]
-                 and backup.get("revision_id") == right["revision_id"] and not backup.get("local_path")
-                 and backup.get("status") not in {"ok", "complete", "acquiring", "downloading", "attention_required",
-                                                   "reconcile_required", "reconcile_conflict"})
-    # The Library action cannot inherit the historical global bypass either.
-    _require(service.kobo_unlinked_local_count(identity_id) == 0)
+    # A 0.7 backup receipt is historical evidence, not authority that this
+    # exact current source has a physically usable Core Placement. The
+    # identity/account/edition are already pinned by the entitlement and
+    # selected broker account above; presence is checked by Core against a
+    # verified exact local placement. Do NOT veto a new explicit GET because
+    # backup_items still says complete, reconcile_required, acquiring, or
+    # points to a stale/moved local_path.
+    #
+    # Likewise, a different unlinked Kobo/local file elsewhere in the same
+    # identity is not proof about this owned resource. No global veto here;
+    # the provider and acquisition executor retain their exact-source guards.
     metadata = right.get("metadata") or {}
     _require(isinstance(metadata, dict))
     _require(metadata.get("downloadable") is not False and metadata.get("owned") is not False
