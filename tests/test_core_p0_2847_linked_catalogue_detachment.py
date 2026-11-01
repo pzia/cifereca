@@ -192,6 +192,16 @@ def test_stale_catalogue_projection_invalidates_prepared_plan(rig):
     assert storage.catalog_entry_get("catalogue:original")["placement_id"] == pid
 
 
+def test_missing_artifact_cannot_lose_its_only_historical_projection(rig):
+    storage, root, old, new, pid, artifact, payload, lockpath = rig
+    catalogue(rig)
+    with storage._lock, storage._connect() as db:
+        db.execute("DELETE FROM artifacts WHERE artifact_id=?", (artifact,))
+    assert plan(rig)["reason"] == "artifact_evidence_unavailable"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert storage.catalog_entry_get("catalogue:original")["placement_id"] == pid
+
+
 def test_only_orphan_path_does_not_use_linked_catalogue_route(rig):
     storage, root, old, new, pid, artifact, payload, lockpath = rig
     assert plan(rig)["reason"] == "no_linked_catalogue"
