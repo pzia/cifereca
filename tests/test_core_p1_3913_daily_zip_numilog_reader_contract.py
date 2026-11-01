@@ -63,6 +63,18 @@ def test_real_core_daily_export_is_consumable_offline(tmp_path, monkeypatch, cap
             zone_name="Europe/Paris",
         )
         reader = _consumer()
+        # Guard against silently using the legacy duplicate reader on a
+        # current Core: the actual public plugin API must be invoked.
+        import importlib
+        shared_api = importlib.import_module("cifereca.plugin_api.journal_zip")
+        delegated = []
+        real_shared_read = shared_api.read_raw_journal_zip
+
+        def record_shared_read(path, **limits):
+            delegated.append((path, limits))
+            return real_shared_read(path, **limits)
+
+        monkeypatch.setattr(shared_api, "read_raw_journal_zip", record_shared_read)
         with ZipFile(output) as archive:
             assert set(archive.namelist()) == {
                 "cifereca-journal-brut.json", "manifest.json", "README.txt",
@@ -71,6 +83,10 @@ def test_real_core_daily_export_is_consumable_offline(tmp_path, monkeypatch, cap
             assert manifest["format"] == "cifereca-journal-daily-zip"
             assert manifest["event_count"] == 1
         payload = reader.load_journal(output)
+        assert delegated == [(output, {
+            "max_json_bytes": reader._MAX_ARCHIVE_BYTES,
+            "max_events": reader._MAX_EVENTS,
+        })]
         assert len(payload["events"]) == 1
         assert payload["events"][0]["module"] == "NUMILOG"
         assert payload["events"][0]["operation"] == "acquisition_delivery"
@@ -84,6 +100,7 @@ def test_real_core_daily_export_is_consumable_offline(tmp_path, monkeypatch, cap
         assert "SYNTHETIC_CREDENTIAL_NOT_FOR_REPORT" not in json.dumps(report)
 
         assert reader.main([str(output), "--json"]) == 0
+        assert len(delegated) == 2
         output_report = json.loads(capsys.readouterr().out)
         assert output_report["counts"] == {"http_refusal_without_hop": 1}
         assert "SYNTHETIC_CREDENTIAL_NOT_FOR_REPORT" not in json.dumps(output_report)
