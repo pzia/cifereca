@@ -21,13 +21,17 @@ def _fields(account: Account, item: SearchResult):
         account.identity_id, account.provider_id, account.credential_id,
         account.unique_id, item.id, item.record_id, item.docbase, item.medium,
         item.source_provider, item.source_credential,
+        item.source_collection,
     )
 
 
 def _valid_fields(fields: tuple[object, ...]) -> bool:
-    return (len(fields) == 10
+    return (len(fields) == 11
             and all(type(x) is str and len(x) <= 1024 and "\x00" not in x
-                    for x in fields)
+                    for x in fields[:10])
+            and (fields[10] is None or (
+                type(fields[10]) is str and 0 < len(fields[10]) <= 1024
+                and "\x00" not in fields[10]))
             and all(fields[n] for n in (0, 1, 2, 4, 5, 6, 7, 8, 9))
             and fields[1] == fields[8]
             and fields[2] == fields[9]
