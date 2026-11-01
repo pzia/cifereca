@@ -34,7 +34,11 @@ def test_capture_failure_is_closed_and_archive_remains_available(
         log = archive.read("logs/journal.jsonl").decode("utf-8")
         assert manifest["app_exit_code"] == 1
         assert "capture_runtime_failed" in log
-        assert "PRIVATE_SIGNED_URL_SYNTHETIC" not in log
+        # --capture deliberately stores RAW local evidence, including the
+        # original traceback; it must never leak to the terminal.
+        assert "Traceback (most recent call last)" in log
+        assert "RuntimeError: PRIVATE_SIGNED_URL_SYNTHETIC_" + stage in log
     output = capsys.readouterr().err
     assert "capture_zip:" in output
     assert "PRIVATE_SIGNED_URL_SYNTHETIC" not in output
+    assert "Traceback (most recent call last)" not in output
