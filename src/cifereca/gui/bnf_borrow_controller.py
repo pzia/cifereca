@@ -77,10 +77,17 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
         except Exception:
             return False
 
+    # Show the selected account alias in the local dialog, never in logs.
+    # Collapse control/newline whitespace to avoid breaking native GTK labels.
+    account_name = (
+        " ".join(account.display_name.split())[:80]
+        if type(account.display_name) is str else ""
+    ) or "Compte BnF connecté"
     dialog = Adw.MessageDialog.new(
         window, "Emprunter ce livre à la BnF ?",
-        "Une demande de prêt sera envoyée à la BnF pour le compte connecté "
-        "à cette identité, après contrôle des droits et de la disponibilité "
+        f"Compte : {account_name}. "
+        "Une demande de prêt sera envoyée à la BnF après contrôle des "
+        "droits et de la disponibilité "
         "du livre. Cette opération ne sera envoyée qu'une seule fois. "
         "En cas de résultat incertain, consultez Mes emprunts avant toute "
         "nouvelle démarche. Le téléchargement ACSM reste une action distincte.",
