@@ -27,6 +27,9 @@ CLASSIFIED: dict[str, tuple[str, str]] = {
     "src/plugins/epub_optimizer/tests/benchmark_optimizer_cpu.py": (
         "T/M", "benchmark synthétique créant des fichiers et baselines",
     ),
+    "src/plugins/epub_optimizer/tests/gtk_cpu_responsiveness.py": (
+        "T/M", "recette GTK4 réelle sur EPUB/PDF synthétiques temporaires",
+    ),
 }
 
 
