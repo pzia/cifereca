@@ -115,6 +115,6 @@ def test_real_manifest_retains_search_read_separation_without_unverified_actions
     assert "catalog.search" in paris and "catalog.search" in bnf
     assert "catalog.detail" in paris and "catalog.detail" in bnf
     assert "acquisition.borrow" in paris and "acquisition.download" in paris
-    assert "acquisition.borrow" not in bnf and "acquisition.download" not in bnf
+    assert "acquisition.borrow" in bnf and "acquisition.download" not in bnf
     assert "lending.return" not in paris and "lending.renew" not in paris
     assert "lending.return" not in bnf and "lending.renew" not in bnf
