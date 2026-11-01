@@ -41,13 +41,31 @@ ADMISSION = LendingActionAdmission(
     "loan.borrow", "manual", "admitted", "admission_ready")
 CLAIM = {"schema": 1, "operation": "loan.borrow",
          "status": "request_sent", "operation_id": "op-once"}
+MEDIA = "synthetic-warehouse-publication-9780000000000-epub"
+MEDIA_CONFIRM = "/media/" + MEDIA + "/loans_confirmation"
+MEDIA_ACTIVATE = "/media/" + MEDIA + "/loans_activation"
+MEDIA_DETAIL = (
+    '<article itemscope itemtype="https://schema.org/Book">'
+    '<form method="get" action="' + MEDIA_CONFIRM + '">'
+    '<input type="hidden" name="_resource_id" value="' + RID + '">'
+    '<input type="hidden" name="notify" value="1">'
+    '<input type="hidden" name="email" value="synthetic@example.invalid">'
+    '<button type="submit" class="button-borrow button">Emprunter</button>'
+    '</form></article>')
+MEDIA_FORM = ('<a href="/resources/' + RID + '">Book</a>'
+              '<form method="post" action="' + MEDIA_ACTIVATE + '">'
+              '<input type="hidden" name="authenticity_token" value="synthetic-csrf">'
+              '<input type="hidden" name="resource_id" value="' + RID + '">'
+              '</form>')
 
 
 class BnfExplicitExecutionTests(unittest.TestCase):
     def make(self, *, existing=False, after_detail=None, after_post=None,
              post_status=200, post_body=RECEIPT, activity_after=AFTER,
-             post_failure=None, detail_html=DETAIL):
-        state = {"post_count": 0, "activity_reads": 0, "calls": []}
+             post_failure=None, detail_html=DETAIL, media=False,
+             media_get_mutates=False, media_get_fails=False):
+        state = {"post_count": 0, "activity_reads": 0, "calls": [],
+                 "media_get_count": 0, "media_loan_observed": False}
 
         def handler(request):
             path = request.url.path
@@ -57,7 +75,8 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                 state["activity_reads"] += 1
                 return httpx.Response(200, text=(
                     AFTER if existing else activity_after
-                    if state["post_count"] else BEFORE),
+                    if (state["post_count"] or state["media_loan_observed"])
+                    else BEFORE),
                     headers={"content-type": "text/html"})
             if request.method == "GET" and path == "/resources/" + RID:
                 if after_detail:
@@ -67,7 +86,19 @@ class BnfExplicitExecutionTests(unittest.TestCase):
             if request.method == "GET" and path == "/resources/" + RID + "/loans/new":
                 return httpx.Response(200, text=CONFIRM,
                                       headers={"content-type": "text/html"})
-            if request.method == "POST" and path == "/loans/activation":
+            if request.method == "GET" and path == MEDIA_CONFIRM:
+                self.assertTrue(media)
+                self.assertEqual(dict(request.url.params),
+                                 {"_resource_id": RID, "notify": "1",
+                                  "email": "synthetic@example.invalid"})
+                state["media_get_count"] += 1
+                if media_get_mutates:
+                    state["media_loan_observed"] = True
+                if media_get_fails:
+                    raise httpx.ReadTimeout("synthetic")
+                return httpx.Response(200, text=MEDIA_FORM,
+                                      headers={"content-type": "text/html"})
+            if request.method == "POST" and path in {"/loans/activation", MEDIA_ACTIVATE}:
                 state["post_count"] += 1
                 self.assertIn(b"authenticity_token=synthetic-csrf", request.content)
                 if after_post:
@@ -122,6 +153,61 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                     ProviderCapabilityError, "borrow_claim_spent"):
                 self.execute(session, account, item)
             self.assertEqual(state["post_count"], 1)
+        finally:
+            session.close()
+
+    def test_observed_media_get_confirmation_then_single_post(self):
+        session, account, item, state = self.make(
+            media=True, detail_html=MEDIA_DETAIL)
+        try:
+            loan = self.execute(session, account, item)
+            self.assertEqual((loan.id, loan.record_id), ("loan-synthetic", RID))
+            self.assertEqual(state["post_count"], 1)
+            self.assertEqual(state["media_get_count"], 1)
+            self.assertEqual(state["activity_reads"], 3)
+            self.assertEqual(state["calls"], [
+                ("GET", "/my_profile/activity"),
+                ("GET", "/resources/" + RID),
+                ("GET", MEDIA_CONFIRM),
+                ("GET", "/my_profile/activity"),
+                ("POST", MEDIA_ACTIVATE),
+                ("GET", "/my_profile/activity"),
+            ])
+            with self.assertRaisesRegex(
+                    ProviderCapabilityError, "borrow_claim_spent"):
+                self.execute(session, account, item)
+        finally:
+            session.close()
+
+    def test_media_get_possible_mutation_never_triggers_post(self):
+        session, account, item, state = self.make(
+            media=True, detail_html=MEDIA_DETAIL, media_get_mutates=True)
+        try:
+            with self.assertRaisesRegex(
+                    Exception, "borrow_confirmation_side_effect_unverified") as caught:
+                self.execute(session, account, item)
+            self.assertNotIsInstance(caught.exception, BorrowRequestNotSubmitted)
+            self.assertEqual(state["media_get_count"], 1)
+            self.assertEqual(state["post_count"], 0)
+            with self.assertRaisesRegex(
+                    ProviderCapabilityError, "borrow_claim_spent"):
+                self.execute(session, account, item)
+        finally:
+            session.close()
+
+    def test_media_get_timeout_keeps_claim_spent_without_post(self):
+        session, account, item, state = self.make(
+            media=True, detail_html=MEDIA_DETAIL, media_get_fails=True)
+        try:
+            with self.assertRaisesRegex(
+                    Exception, "transport_unavailable") as caught:
+                self.execute(session, account, item)
+            self.assertNotIsInstance(caught.exception, BorrowRequestNotSubmitted)
+            self.assertEqual(state["media_get_count"], 1)
+            self.assertEqual(state["post_count"], 0)
+            with self.assertRaisesRegex(
+                    ProviderCapabilityError, "borrow_claim_spent"):
+                self.execute(session, account, item)
         finally:
             session.close()
 
