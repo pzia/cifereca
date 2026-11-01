@@ -112,3 +112,20 @@ def test_validator_rejects_unrelated_zip_without_printing_its_contents(tmp_path)
     assert completed.returncode == 2
     assert json.loads(completed.stdout)["status"] == "invalid"
     assert "PRIVATE" not in completed.stdout + completed.stderr
+
+
+def test_malformed_arguments_never_echo_private_unexpected_text(tmp_path):
+    private_arg = str(tmp_path / "PRIVATE_COOKIE_IN_BAD_OPTION.zip")
+    for arguments in (
+        ("--validate", private_arg, "--unknown=PRIVATE_BEARER"),
+        ("--json", "--unexpected", private_arg),
+        ("--json",),
+    ):
+        completed = _run(*arguments)
+        assert completed.returncode == 2
+        assert completed.stdout == ""
+        assert completed.stderr == "capture_validator_invalid_arguments\\n".replace(
+            "\\n", "\n"
+        )
+        assert "PRIVATE" not in completed.stderr
+        assert private_arg not in completed.stderr
