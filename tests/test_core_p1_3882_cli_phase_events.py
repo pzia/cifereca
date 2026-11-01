@@ -50,7 +50,9 @@ def test_writer_rejects_untrusted_cli_event_fields_and_cross_run_refs(tmp_path):
     assert manifest["event_coverage"] == "cli_milestones_only"
     assert manifest["cli_events_truncated"] is True
     assert manifest["cli_last_phase"] == "connect"
+    assert manifest["cli_issue_phase"] == "connect"
     assert "last_cli_phase: connect" in summary
+    assert "issue_cli_phase: connect" in summary
     assert b"PRIVATE_" not in whole
 
 
@@ -94,6 +96,7 @@ def test_real_cli_sync_milestones_are_scoped_and_do_not_claim_core_phases(
     assert all(event["run_ref"] == manifest["run_ref"] for event in events)
     assert manifest["event_coverage"] == "cli_milestones_only"
     assert manifest["cli_last_phase"] == "audit_after"
+    assert manifest["cli_issue_phase"] == "none"
     assert "last_cli_phase: audit_after" in summary
     assert b"card-a" not in whole
     assert b"account-a" not in whole
@@ -128,5 +131,6 @@ def test_connection_exception_records_terminal_phase_without_fake_sync(
         ("audit_after", "unavailable"), ("run_finished", "failed"),
     ]
     assert manifest["cli_last_phase"] == "audit_after"
+    assert manifest["cli_issue_phase"] == "connect"
     assert events[3]["code"] == "sync_unavailable"
     assert b"PRIVATE_COOKIE_EXCEPTION" not in whole
