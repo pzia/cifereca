@@ -87,7 +87,7 @@ def real_session_service(tmp_path, *, post_status=200, after=AFTER,
     )
     session._accounts = [account]
     session.connected = True
-    item = session._search_result(CatalogRecord(RID, "Synthetic title"))
+    item = session._search_result(CatalogRecord(RID, "Synthetic book"))
     service._sessions[
         service._session_key("bnf-pret", account.credential_id)
     ] = session
