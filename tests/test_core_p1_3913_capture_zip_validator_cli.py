@@ -124,8 +124,6 @@ def test_malformed_arguments_never_echo_private_unexpected_text(tmp_path):
         completed = _run(*arguments)
         assert completed.returncode == 2
         assert completed.stdout == ""
-        assert completed.stderr == "capture_validator_invalid_arguments\\n".replace(
-            "\\n", "\n"
-        )
+        assert completed.stderr == "capture_validator_invalid_arguments\n"
         assert "PRIVATE" not in completed.stderr
         assert private_arg not in completed.stderr
