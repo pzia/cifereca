@@ -146,8 +146,13 @@ class CoreCompatibility(unittest.TestCase):
     def tearDown(self): self.core.close();self.tmp.cleanup()
     def test_schema9(self): self.assertEqual(self.core.storage.schema_version(),14)
     def test_builtin_plugins_activate_headless(self):
-        self.assertEqual({s.state for s in self.core.plugins.statuses()},{'ready'})
-        self.assertEqual(len(self.core.plugins.page_contributions()),12)
+        statuses = {row.descriptor.id: row for row in self.core.plugins.statuses()}
+        cache_tool = statuses.pop("core.maintenance.cache")
+        self.assertEqual(cache_tool.state, "disabled")
+        self.assertFalse(cache_tool.enabled)
+        self.assertEqual(cache_tool.reason_code, "maintenance_safety_hold")
+        self.assertEqual({row.state for row in statuses.values()}, {"ready"})
+        self.assertEqual(len(self.core.plugins.page_contributions()), 12)
     def test_titlebar_persistence(self):
         self.core.plugins.set_plugin_config('core.ui.titlebar',{'actions':['search.open']})
         self.assertEqual(self.core.plugins.service('core.ui.titlebar').selected_actions(),['search.open'])
