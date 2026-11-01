@@ -28,7 +28,9 @@ def test_interrupted_or_untrusted_current_state_is_visible_without_provider_disp
                   last_success="2026-10-31T08:00:00")
     assert sync_source_attention(src) == ("warning", expected)
     shown = sync_source_presentation(src)
-    assert expected not in shown.summary or "Dernier succès confirmé" in shown.summary
+    assert shown.sync_label in {"Interrompue", "État non confirmé"}
+    assert "Synchronisation : " + shown.sync_label in shown.summary
+    assert "Dernier succès " not in shown.sync_label
     assert "Dernier succès confirmé" in shown.summary
     assert shown.action_enabled is True
 
