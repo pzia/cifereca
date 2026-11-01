@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 
 import pytest
 
@@ -152,12 +153,16 @@ def test_old_path_checkpoint_kept_and_review_required(rig):
     assert store.metadata_get("synthetic.acquisition.pending") == str(old)
 
 
-def test_ambiguous_identity_directories_fail_closed(rig):
+def test_identity_directory_unique_constraint_blocks_ambiguous_owner(rig):
     store, root, old, new, placement, artifact, other, data = rig
-    store.identity_put({
-        "identity_id": "bob", "directory_name": "alice", "label": "Bob",
-    })
-    assert preview(rig)["reason"] == "ambiguous_identity_directory"
+    # SQLite schema prevents the ambiguous state *at the writer boundary*.
+    # Do not fabricate an invalid identity row through identity_put.
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint"):
+        store.identity_put({
+            "identity_id": "bob", "directory_name": "alice", "label": "Bob",
+        })
+    assert preview(rig)["status"] == "review_required"
+    assert store.identity_get("bob")["directory_name"] == "bob"
 
 
 def test_root_and_ownership_are_not_inferred_from_checksum(rig, tmp_path):
