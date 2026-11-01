@@ -60,7 +60,7 @@ _PUBLIC_CODES = frozenset({
     'borrow_form_unverified', 'borrow_csrf_unverified',
     'borrow_not_authorized', 'borrow_claim_spent',
     'borrow_existing_loan', 'borrow_receipt_unverified',
-    'borrow_activity_unverified',
+    'borrow_activity_unverified', 'borrow_confirmation_side_effect_unverified',
 })
 
 
@@ -1041,7 +1041,8 @@ class BnfProviderSession(ProviderSession):
         holdings, sync, startup or CoreUI. Future action admission must bind
         the user's explicit confirmation to this same live account/session.
         """
-        from cifereca_bnf_pret_borrow import confirmation_link, activation_form
+        from cifereca_bnf_pret_borrow import (confirmation_link, activation_form,
+                                             _is_media_confirmation)
         with self._lock:
             if (type(item) is not SearchResult or item.source_provider != self.provider_id
                     or item.source_credential != self.credential_id
@@ -1084,6 +1085,11 @@ class BnfProviderSession(ProviderSession):
                     raise ProviderConfigurationError('account_scope_mismatch')
                 link = confirmation_link(
                     html, page_url=actual, resource_id=item.record_id)
+                # The form GET is not assumed side-effect free. This
+                # read-only preflight may inspect it but never visit it.
+                if _is_media_confirmation(link):
+                    return {'status': 'unverified',
+                            'reason_code': 'borrow_confirmation_effect_unknown'}
                 actual, confirmation = self.client.borrow_confirmation(
                     link, resource_id=item.record_id)
                 if not current():
@@ -1115,6 +1121,7 @@ class BnfProviderSession(ProviderSession):
         from cifereca.plugin_api import LendingActionAdmission
         from cifereca_bnf_pret_borrow import (
             confirmation_link, activation_form, verify_borrow_activation,
+            _is_media_confirmation,
         )
         if (confirmed is not True
                 or type(admission) is not LendingActionAdmission
@@ -1195,12 +1202,30 @@ class BnfProviderSession(ProviderSession):
                     raise ProviderConfigurationError('account_scope_mismatch')
                 link = confirmation_link(
                     page_html, page_url=page_url, resource_id=reference[1])
+                media_get = _is_media_confirmation(link)
+                if media_get:
+                    # A GET with a form named loans_confirmation is not
+                    # necessarily read-only. From this point onward a
+                    # remote mutation MAY occur: retain durable claim on
+                    # transport error, timeout, or ambiguous response.
+                    post_started = True
+                    self._borrow_post_attempts.add(claimed_receipt['operation_id'])
                 confirm_url, confirm_html = self.client.borrow_confirmation(
                     link, resource_id=reference[1])
                 if not current():
                     raise ProviderConfigurationError('account_scope_mismatch')
                 form = activation_form(
                     confirm_html, page_url=confirm_url, resource_id=reference[1])
+                if media_get:
+                    # The GET could already have created a loan. A positive
+                    # observation forbids a second mutating action. A
+                    # partial absence never proves no loan was created.
+                    after_get = self._snapshot(self.client.activity())
+                    if not current():
+                        raise ProviderConfigurationError('account_scope_mismatch')
+                    if any(row.resource_id == reference[1]
+                           for row in after_get.loans):
+                        raise WebParseError('borrow_confirmation_side_effect_unverified')
                 if not current():
                     raise ProviderConfigurationError('account_scope_mismatch')
                 # The durable claim was already reserved by Core. Avoid
@@ -1208,7 +1233,7 @@ class BnfProviderSession(ProviderSession):
                 # internal caller mistakenly reuses the receipt. Core's
                 # SQLite claim remains authoritative across process restarts.
                 operation_id = claimed_receipt['operation_id']
-                if operation_id in self._borrow_post_attempts:
+                if operation_id in self._borrow_post_attempts and not media_get:
                     raise ProviderCapabilityError('borrow_claim_spent')
                 # From here onward the POST *may* have reached BnF. Any
                 # timeout, 4xx/5xx or parsing failure permanently spends the
