@@ -24,7 +24,9 @@ def _session(options, config):
     return KoboSession(
         descriptor=DESCRIPTOR,
         credential_id="synthetic-account", label="Synthetic",
-        credentials={}, options=options, config=config,
+        credentials={},
+        options={"base_url": "https://vault.example.invalid", **options},
+        config=config,
         storage={}, diagnostics=SimpleNamespace(add=lambda *_a, **_k: None),
     )
 
@@ -42,7 +44,7 @@ def test_kobo_old_profile_is_preserved_as_runtime_fallback_not_consent():
            "kobo_backup.enabled": False}
     session = _session({}, old)
     assert session.display_profile == "Desktop"
-    assert session.options == {}
+    assert session.options == {"base_url": "https://vault.example.invalid"}
     assert old["kobo_backup.enabled"] is False
 
 
