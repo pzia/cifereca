@@ -30,6 +30,23 @@ def _strings_from_parser_calls() -> tuple[set[str], set[str]]:
             commands.add(literals[0])
         if node.func.attr == "add_argument":
             options.update(value for value in literals if value.startswith("--"))
+    # The generic sync subcommands are registered by a literal loop:
+    # for command in ("list", "run"): generic_sub.add_parser(command).
+    # Resolve such static iterable registrations without executing the CLI.
+    for loop in ast.walk(tree):
+        if not isinstance(loop, ast.For) or not isinstance(loop.target, ast.Name):
+            continue
+        if not isinstance(loop.iter, (ast.Tuple, ast.List)):
+            continue
+        for call in ast.walk(loop):
+            if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "add_parser" and call.args
+                    and isinstance(call.args[0], ast.Name)
+                    and call.args[0].id == loop.target.id):
+                commands.update(item.value for item in loop.iter.elts
+                                if isinstance(item, ast.Constant)
+                                and isinstance(item.value, str))
+                break
     return commands, options
 
 
