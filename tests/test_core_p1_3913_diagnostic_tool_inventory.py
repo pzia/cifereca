@@ -135,3 +135,16 @@ def test_expert_offline_reconciliation_is_not_misidentified_as_mutating_sync():
     assert "enfant" in document
     assert "def _main():" in wal
     assert "python3 -m cifereca.core.library_reconciliation" in document
+
+
+def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
+    """Fail if a new direct scripts/ CLI bypasses the #3913 risk classification."""
+    document = DOC.read_text(encoding="utf-8")
+    candidates = 0
+    for path in sorted((ROOT / "scripts").glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "__main__" not in source and "ArgumentParser" not in source:
+            continue
+        candidates += 1
+        assert path.name in document, f"unclassified_scripts_entrypoint:{path.name}"
+    assert candidates >= 30
