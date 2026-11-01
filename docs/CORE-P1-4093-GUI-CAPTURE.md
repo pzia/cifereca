@@ -14,9 +14,14 @@ comportement : **aucun export automatique**.
 Sans `--capture-dir`, le dossier de destination est fourni par
 `src/cifereca/install_paths.py::downloads_dir()` (XDG user-dirs.dirs, y
 compris noms localisés et espaces ; repli `~/Downloads`). La destination doit
-**déjà exister**, être un répertoire et ne pas traverser de symlink. Aucun
-repli silencieux vers un autre dossier si elle est inutilisable. Une erreur
-`capture_directory_unavailable` est émise **avant l'ouverture Core**.
+**déjà exister**, être un répertoire et ne pas traverser de symlink.
+Un fichier de contrôle privé et exclusif est créé, écrit (un octet) puis
+immédiatement supprimé **avant l'ouverture Core**, afin de détecter une
+destination non inscriptible, y compris restrictions effectives et stockage
+plein. Le test n'accorde aucune garantie contre un changement de droits ou
+un disque plein **après** son exécution : l'export final conserve ses propres
+gardes atomiques et son erreur fermée. Aucun repli silencieux vers un autre
+dossier si elle est inutilisable ; erreur `capture_directory_unavailable`.
 
 Le ZIP `cifereca-capture-YYYYMMDD-HHMMSS-<aléa>.zip` est produit
 automatiquement après `app.run()`, sur fermeture normale ou interruption
