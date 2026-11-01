@@ -31,6 +31,11 @@ _OPENING_CANONICAL_LEASE: ContextVar[InterProcessLock | None] = ContextVar(
 _OPENING_SOURCE_INVENTORY_STACK: ContextVar[ExitStack | None] = ContextVar(
     'cifereca.opening.source_inventory.stack', default=None,
 )
+# Pin the Core source epoch at A, not just the provider's own session owner.
+# A generation change before the late mirror revokes ALL opening cache hits.
+_OPENING_SOURCE_INVENTORY_LEASES: ContextVar[list | None] = ContextVar(
+    'cifereca.opening.source_inventory.leases', default=None,
+)
 from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
@@ -589,9 +594,11 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
             try:
                 with ExitStack() as inventory_stack:
                     stack_token = _OPENING_SOURCE_INVENTORY_STACK.set(inventory_stack)
+                    leases_token = _OPENING_SOURCE_INVENTORY_LEASES.set([])
                     try:
                         result = self._opening_sync_locked(progress=progress, deep=deep)
                     finally:
+                        _OPENING_SOURCE_INVENTORY_LEASES.reset(leases_token)
                         _OPENING_SOURCE_INVENTORY_STACK.reset(stack_token)
             finally:
                 _OPENING_CANONICAL_LEASE.reset(lease_token)
@@ -1059,6 +1066,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                                 "source_inventory_batch_invalid"
                             )
                         inventory_stack.enter_context(batch(account))
+                        leases = _OPENING_SOURCE_INVENTORY_LEASES.get()
+                        if leases is not None:
+                            leases.append((
+                                account, session, (
+                                    account.identity_id, account.provider_id,
+                                    account.credential_id, account.unique_id,
+                                ), source_context_epoch(self),
+                            ))
 
                     # #3171: opening Sync consumes the same optional A
                     # reader and verifies B with the exact canonical Core
@@ -1308,6 +1323,23 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 # diagnostic strings. The persisted outcome remains failed.
                 logger.warning("TRACE sync source projection failed code=source_state_projection_failed")
         emit("identity_end", **summary)
+
+    # The personal mirror runs only *after* all opening A observations.
+    # An epoch/owner/session rebind since A cannot reuse a previous private
+    # snapshot. Drop the opening's entire optional batch before mirroring;
+    # mirror_personal_libraries will independently revalidate and do fresh
+    # requests for each still-authorized source. Never let a stale cache hit
+    # cross the Core epoch fence.
+    opening_leases = _OPENING_SOURCE_INVENTORY_LEASES.get()
+    opening_stack = _OPENING_SOURCE_INVENTORY_STACK.get()
+    if opening_leases and opening_stack is not None:
+        from .private_inventory_binding import private_inventory_binding_current
+        if any(not private_inventory_binding_current(
+            self, lease_account, lease_session, scope=lease_scope,
+            epoch=lease_epoch,
+        ) for lease_account, lease_session, lease_scope, lease_epoch in opening_leases):
+            opening_stack.close()
+            opening_leases.clear()
 
     # Personal store catalog mirroring is INVENTORY ONLY (#1862). Do not
     # report an automatic local acquisition merely because a provider advertises
