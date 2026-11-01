@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.16.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.17.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -72,6 +72,30 @@ binding ou deux bindings pour la même identité restent bloquants ; le
 contrôle de credential, l'epoch et les gardes après GET restent inchangés.
 La façade legacy sans broker reste en lecture positive seule, sans preuve
 négative. Les tests sont synthétiques, sans compte BnF réel.
+
+## POST d'activation isolé et inactif (#2055, 0.3.17)
+
+Le transport expose maintenant `ReaderHTTPClient.borrow_activation_once(...)`,
+**non raccordé à l'UI ni à `ProviderSession.borrow`**. Il exige strictement
+la confirmation explicite, une admission Core `loan.borrow/manual/admitted`,
+et un reçu de réservation durable `loan.borrow/request_sent`. Ces valeurs
+restent des prérequis **déclaratifs** : seul le futur appelant Core valide
+l'authenticité du claim, la permission réelle du livre, le consentement
+utilisateur et la portée de session/notice/compte. Le transport vérifie les
+champs du formulaire éphémère, le CSRF, la ressource choisie, l'action et
+l'origine `https://pret.bnf.fr`; il émet **un POST unique**, sans 30x suivi,
+sans retry automatique, sans mutation de catalogue ni publication de droits.
+Une réponse HTTP 200 est uniquement un reçu non vérifié. Après appel, le
+Core devra relire l'activité et corréler le prêt via
+`verify_borrow_activation`. Un timeout consomme le claim et ne permet que
+des vérifications, pas une deuxième tentative.
+
+**Ce n'est pas encore un emprunt fonctionnel** : la capacité publique
+`acquisition.borrow` reste absente et aucun composant n'invoque cette
+méthode. Les tests HTTPX synthétiques vérifient l'absence de requête avant
+admission, le POST unique, les refus 30x/4xx/5xx/binaire et les erreurs
+sans rejeu. Le garde Core de scope et de checkpoint est traité séparément
+dans la PR liée à #2055 ; son intégration applicative reste à réaliser.
 
 ## Préqualification d'un nouvel emprunt (#2055, 0.3.16 — tranche lecture seule)
 

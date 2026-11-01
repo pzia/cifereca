@@ -267,6 +267,97 @@ class ReaderHTTPClient:
         except (httpx.HTTPError, UnicodeError):
             raise ReaderHTTPError('transport_unavailable') from None
 
+    def borrow_activation_once(
+        self, form, *, confirmation_url: str, resource_id: str,
+        admission=None, claimed_receipt=None, confirmed=False,
+    ) -> str:
+        """Exactly ONE POST of a fresh portal form; never follow or retry it.
+
+        This is deliberately a lower-level *unpublished* provider transport,
+        NOT a public borrow capability. Core must independently attest actual
+        permission and manual user consent, reserve the persistent claim,
+        check its scope lease, call this once, and verify a positive loan in
+        a separate activity GET. A form/button/admission is NOT permission.
+        """
+        from cifereca.plugin_api import LendingActionAdmission
+        from cifereca_bnf_pret_borrow import (
+            BorrowForm, _transition_url, _resource_id, _FIELD,
+            _FORBIDDEN_FIELD,
+        )
+        from cifereca_bnf_pret_catalog import resource_url
+
+        # Fail before I/O: this provider publishes no loan.borrow capability.
+        # The transport is inert until the future explicit Core dispatcher
+        # supplies both its admission and a durable pre-POST claim receipt.
+        if (confirmed is not True
+                or type(admission) is not LendingActionAdmission
+                or admission.operation != "loan.borrow"
+                or admission.origin != "manual"
+                or admission.status != "admitted"
+                or type(claimed_receipt) is not dict
+                or claimed_receipt.get("schema") != 1
+                or claimed_receipt.get("operation") != "loan.borrow"
+                or claimed_receipt.get("status") != "request_sent"
+                or type(claimed_receipt.get("operation_id")) is not str
+                or not 0 < len(claimed_receipt["operation_id"]) <= 128
+                or type(form) is not BorrowForm):
+            raise ReaderHTTPError("borrow_not_authorized")
+        rid = _resource_id(resource_id)
+        _transition_url(resource_url(rid), confirmation_url, rid)
+        action = _transition_url(confirmation_url, form.action_url, rid)
+        if type(form.fields) is not tuple or not 1 <= len(form.fields) <= 32:
+            raise ReaderHTTPError("borrow_form_unverified")
+        fields = {}
+        for entry in form.fields:
+            if (type(entry) is not tuple or len(entry) != 2
+                    or type(entry[0]) is not str or type(entry[1]) is not str):
+                raise ReaderHTTPError("borrow_form_unverified")
+            name, value = entry
+            if (_FIELD.fullmatch(name) is None or name.lower() in _FORBIDDEN_FIELD
+                    or name in fields or len(value) > 4096
+                    or any(ord(c) < 32 for c in value)):
+                raise ReaderHTTPError("borrow_form_unverified")
+            fields[name] = value
+        if not fields.get("authenticity_token"):
+            raise ReaderHTTPError("borrow_csrf_unverified")
+        for key in ("resource_id", "resource", "book_id"):
+            if key in fields and fields[key] != rid:
+                raise ReaderHTTPError("borrow_scope_mismatch")
+
+        # One call, no request() retry loop, no 307/308 replay, no 302
+        # auto-follow, no POST from inventory/search/sync. On timeout the
+        # claim remains consumed; subsequent attempts are verification-only.
+        deadline = time.monotonic() + 30
+        try:
+            with self._stream(
+                "POST", action, data=fields,
+                headers={"Accept": "text/html"},
+                timeout=min(15, max(0.1, deadline - time.monotonic())),
+            ) as response:
+                if 300 <= response.status_code < 400:
+                    raise ReaderHTTPError("post_redirect_refused")
+                if response.status_code != 200:
+                    raise ReaderHTTPError(
+                        {401: "auth_required", 403: "access_denied",
+                         429: "rate_limited"}.get(
+                             response.status_code, "http_unavailable")
+                    )
+                if response.headers.get("content-type", "").split(";")[0].strip() not in {
+                        "text/html", "application/xhtml+xml"}:
+                    raise ReaderHTTPError("unexpected_content")
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    if time.monotonic() >= deadline:
+                        raise ReaderHTTPError("operation_timeout")
+                    if len(body) + len(chunk) > MAX_HTML_BYTES:
+                        raise ReaderHTTPError("html_limit")
+                    body.extend(chunk)
+                if str(response.url) != action:
+                    raise ReaderHTTPError("redirect_invalid")
+                return body.decode(response.encoding or "utf-8", errors="strict")
+        except (httpx.HTTPError, UnicodeError):
+            raise ReaderHTTPError("transport_unavailable") from None
+
     def loan_token(self, loan_id: str, signed_url: str) -> bytes:
         """One non-retried GET for a loan previously checked by its session.
 
