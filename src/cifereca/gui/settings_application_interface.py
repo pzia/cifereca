@@ -13,7 +13,6 @@ from typing import Any
 @dataclass(frozen=True)
 class ApplicationInterfaceWidgets:
     diagnostics_switch: Any | None
-    experimental_switch: Any
     level_dropdown: Any
     levels: list[str]
     plugins_button: Any
@@ -29,17 +28,6 @@ def build_settings_application_interface(
     config_group.set_title("Application")
     diagnostic_section.append(config_group)
 
-    exp_row = Adw.ActionRow()
-    exp_row.set_title("Actions expérimentales")
-    exp_row.set_subtitle("Prolongation et retour anticipé numérique")
-    exp_switch = Gtk.Switch()
-    exp_switch.set_active(bool(config.get("experimental_actions", False)))
-    exp_switch.set_valign(Gtk.Align.CENTER)
-    exp_row.add_suffix(exp_switch)
-    interface_group = Adw.PreferencesGroup()
-    interface_group.set_title("Interface et actions")
-    interface_group.add(exp_row)
-    interface_section.append(interface_group)
     interface_button = Gtk.Button(label="Configurer la barre de titre et les actions…")
     interface_section.append(interface_button)
 
@@ -64,7 +52,6 @@ def build_settings_application_interface(
 
     return ApplicationInterfaceWidgets(
         diagnostics_switch=None,
-        experimental_switch=exp_switch,
         level_dropdown=level_drop,
         levels=levels,
         plugins_button=interface_button,
