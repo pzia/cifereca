@@ -39,6 +39,8 @@ _DESCRIPTION = (
     "entierement observees. Les corps transport restent dans http/bodies/.\n"
     "manifest.json fournit les SHA-256 des autres membres. Les preuves HTTP "
     "n'attestent ni un emprunt ni une acquisition finalisee.\n"
+    "Verifier hors reseau : python3 -m cifereca.core.capture_session_export "
+    "--validate ARCHIVE.zip --json (verdict ferme, jamais le contenu).\n"
 )
 
 
