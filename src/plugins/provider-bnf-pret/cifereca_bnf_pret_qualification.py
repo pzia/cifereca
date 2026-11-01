@@ -68,7 +68,8 @@ def _walk(node: _Node, path: tuple[str, ...] = ()):
             or node.attrs.get("aria-hidden") == "true"):
         return
     tag = node.tag if node.tag in _SAFE_TAGS else "other"
-    current = (*path[-6:], tag)
+    # The synthetic parser root is not a real HTML element.
+    current = path if node.tag == "root" else (*path[-6:], tag)
     yield node, current
     for child in node.children:
         if isinstance(child, _Node):
