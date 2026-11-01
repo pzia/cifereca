@@ -1,5 +1,13 @@
 # #1120 — audit de clôture structurelle ACSM/ADEPT/prêts (21/10/2026)
 
+> **Audit historique du 21/10/2026.** Les preuves positives de restitution
+> ADEPT/PNB ci-dessous ne sont plus un objectif fonctionnel depuis #4048
+> (01/11/2026) : leurs appels doivent être neutralisés et leurs tests de
+> mutation remplacés par des tests de **refus sans I/O** (#4059, non fusionnée).
+> Conserver les garanties de lecture des inventaires, SQLite, provenance
+> ADEPT et non-destruction des fichiers. Voir
+> [contrat de retrait](../CORE-P1-4048-RETURN-RETIREMENT.md).
+
 ## Portée et décision
 
 **Périmètre P0 structurel uniquement**, conformément aux arbitrages de
