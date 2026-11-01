@@ -582,6 +582,43 @@ class LocalInspectionController:
         history_controls.append(show_history)
         history_controls.set_visible(overview.get('paths_historical_missing', 0) > 0)
         box.append(history_controls)
+        # Only files observed *inside this exact private inspection* may be
+        # selected as physical relocation targets. The Core re-hashes bytes.
+        missing_files = Gtk.Expander(
+            label='Choisir un fichier local observé pour relocaliser…',
+        )
+        missing_files.set_visible(False)
+        missing_files.set_expanded(False)
+        missing_files_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=5,
+        )
+        missing_files.set_child(missing_files_box)
+        missing_files_search = Gtk.SearchEntry()
+        missing_files_search.set_placeholder_text(
+            'Rechercher un EPUB/PDF déjà observé dans cette identité…',
+        )
+        missing_files_box.append(missing_files_search)
+        missing_files_list = Gtk.ListBox()
+        missing_files_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        missing_files_scroll = Gtk.ScrolledWindow()
+        missing_files_scroll.set_policy(
+            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC,
+        )
+        missing_files_scroll.set_min_content_height(100)
+        missing_files_scroll.set_max_content_height(170)
+        missing_files_scroll.set_child(missing_files_list)
+        missing_files_box.append(missing_files_scroll)
+        missing_files_footer = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+        )
+        missing_files_prev = Gtk.Button(label='◀ Fichiers')
+        missing_files_next = Gtk.Button(label='Fichiers ▶')
+        missing_files_number = Gtk.Label(label='Sélectionnez un fichier…', xalign=0)
+        missing_files_number.set_hexpand(True)
+        for item in (missing_files_prev, missing_files_number, missing_files_next):
+            missing_files_footer.append(item)
+        missing_files_box.append(missing_files_footer)
+        box.append(missing_files)
         # Open on demand: this private, revocable list reads only already
         # stored user declarations. It is never part of the attested counters.
         declaration_history = PrivateDeclarationHistory(
@@ -801,12 +838,23 @@ class LocalInspectionController:
         missing_apply = Gtk.Button(label='Confirmer le retrait SQL…')
         missing_apply.set_visible(False)
         missing_apply.set_sensitive(False)
+        missing_relocate_review = Gtk.Button(
+            label='Prévisualiser la relocalisation SQL…',
+        )
+        missing_relocate_review.set_sensitive(False)
+        missing_relocate_confirm = Gtk.Button(
+            label='Confirmer la relocalisation SQL…',
+        )
+        missing_relocate_confirm.set_visible(False)
+        missing_relocate_confirm.set_sensitive(False)
         missing_note = Gtk.Label(label='', xalign=0)
         missing_note.set_wrap(False)
         missing_note.set_max_width_chars(36)
         missing_note.set_ellipsize(Pango.EllipsizeMode.END)
         missing_actions.append(missing_review)
         missing_actions.append(missing_apply)
+        missing_actions.append(missing_relocate_review)
+        missing_actions.append(missing_relocate_confirm)
         missing_actions.append(missing_note)
         missing_actions_scroll = Gtk.ScrolledWindow()
         missing_actions_scroll.set_name('reconciliation-missing-placement-actions')
@@ -845,6 +893,11 @@ class LocalInspectionController:
         missing_version = [0]
         missing_preview_ready = [False]
         missing_busy = [False]
+        missing_file_key = [None]
+        missing_file_offset = [0]
+        missing_file_total = [0]
+        missing_files_rebuilding = [False]
+        missing_relocation_ready = [False]
         declarations = DeclarationActions(
             Gtk=Gtk, Adw=Adw, window=window, runner=self.parent.runner,
             session=session, selection=lambda: (selected_right[0], selected_file[0]),
@@ -872,6 +925,24 @@ class LocalInspectionController:
             missing_case[0] = None
             missing_preview_ready[0] = False
             missing_busy[0] = False
+            missing_file_key[0] = None
+            missing_file_offset[0] = 0
+            missing_relocation_ready[0] = False
+            missing_relocate_review.set_sensitive(False)
+            missing_relocate_confirm.set_visible(False)
+            missing_relocate_confirm.set_sensitive(False)
+            missing_files.set_visible(False)
+            missing_files.set_expanded(False)
+            missing_files_list.set_sensitive(True)
+            missing_files_search.set_sensitive(True)
+            missing_files_rebuilding[0] = True
+            try:
+                child = missing_files_list.get_first_child()
+                while child is not None:
+                    missing_files_list.remove(child)
+                    child = missing_files_list.get_first_child()
+            finally:
+                missing_files_rebuilding[0] = False
             missing_actions_scroll.set_visible(False)
             missing_review.set_sensitive(False)
             missing_apply.set_visible(False)
@@ -1534,7 +1605,10 @@ class LocalInspectionController:
                 if 'stored_path_missing_historical' in case.states:
                     missing_case[0] = case.key
                     missing_actions_scroll.set_visible(True)
+                    missing_files.set_visible(summary.get('status') == 'complete')
                     missing_review.set_sensitive(summary.get('status') == 'complete')
+                    if missing_files.get_visible():
+                        show_missing_files()
                     missing_note.set_text(
                         'Prévisualisation uniquement · aucune écriture automatique.'
                         if summary.get('status') == 'complete' else
@@ -1593,6 +1667,247 @@ class LocalInspectionController:
                 else:
                     candidate_items[0] = ()
                     candidate_box.set_visible(False)
+
+        def missing_file_controls(enabled):
+            # Selection must not visually advance beyond the file key frozen
+            # in the current asynchronous preview/commit. Otherwise a newly
+            # highlighted file could receive consent for the *old* selection.
+            missing_files_list.set_sensitive(enabled)
+            missing_files_search.set_sensitive(enabled)
+            missing_files_prev.set_sensitive(
+                enabled and missing_file_offset[0] > 0
+            )
+            missing_files_next.set_sensitive(
+                enabled and missing_file_offset[0] + 20 < missing_file_total[0]
+            )
+
+        def show_missing_files():
+            # The list is a view of already observed, unlinked FileObservations.
+            # No arbitrary file-chooser path can cross into the Core mutation.
+            if not valid() or missing_case[0] is None:
+                return
+            page = session.unconfirmed_files(
+                offset=missing_file_offset[0], limit=20,
+                query=missing_files_search.get_text()[:160],
+            )
+            missing_file_total[0] = page.total
+            missing_files_rebuilding[0] = True
+            try:
+                child = missing_files_list.get_first_child()
+                while child is not None:
+                    missing_files_list.remove(child)
+                    child = missing_files_list.get_first_child()
+                for item in page.cases:
+                    row = Gtk.ListBoxRow()
+                    row._missing_file_key = item.key
+                    label = Gtk.Label(label=item.label, xalign=0)
+                    label.set_wrap(True)
+                    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    row.set_child(label)
+                    missing_files_list.append(row)
+            finally:
+                missing_files_rebuilding[0] = False
+            missing_files_number.set_text(
+                f'{page.offset + 1 if page.cases else 0}–'
+                f'{page.offset + len(page.cases)} / {page.total}'
+                ' · aucun droit déduit des métadonnées'
+            )
+            missing_files_prev.set_sensitive(missing_file_offset[0] > 0)
+            missing_files_next.set_sensitive(
+                missing_file_offset[0] + len(page.cases) < page.total
+            )
+
+        def reset_missing_file_choice():
+            # A changed file, text filter or page invalidates a previously
+            # accepted preview token, including an orphan-retirement plan.
+            missing_version[0] += 1
+            session.cancel_missing_repair()
+            missing_preview_ready[0] = False
+            missing_relocation_ready[0] = False
+            missing_apply.set_visible(False)
+            missing_apply.set_sensitive(False)
+            missing_relocate_confirm.set_visible(False)
+            missing_relocate_confirm.set_sensitive(False)
+            missing_file_key[0] = None
+            missing_review.set_sensitive(not missing_busy[0])
+            missing_relocate_review.set_sensitive(False)
+            missing_note.set_text(
+                'Choisir puis vérifier un fichier observé · aucune permission inférée.'
+            )
+
+        def select_missing_file(_listing, row):
+            if (missing_files_rebuilding[0] or missing_case[0] is None
+                    or row is None or not valid() or missing_busy[0]):
+                return
+            reset_missing_file_choice()
+            missing_file_key[0] = row._missing_file_key
+            missing_relocate_review.set_sensitive(True)
+
+        def search_missing_files(*_args):
+            if missing_case[0] is None or not valid() or missing_busy[0]:
+                return
+            reset_missing_file_choice()
+            missing_file_offset[0] = 0
+            show_missing_files()
+
+        def page_missing_files(delta):
+            if missing_case[0] is None or not valid() or missing_busy[0]:
+                return
+            reset_missing_file_choice()
+            missing_file_offset[0] = max(
+                0, min(
+                    missing_file_offset[0] + 20 * delta,
+                    max(0, (missing_file_total[0] - 1) // 20 * 20),
+                ),
+            )
+            show_missing_files()
+
+        def preview_missing_relocation(*_args):
+            if (not valid() or missing_case[0] is None
+                    or missing_file_key[0] is None or missing_busy[0]
+                    or missing_relocation_ready[0] or missing_preview_ready[0]):
+                return
+            chosen = (missing_case[0], missing_file_key[0])
+            version = missing_version[0]
+            missing_busy[0] = True
+            missing_review.set_sensitive(False)
+            missing_relocate_review.set_sensitive(False)
+            missing_file_controls(False)
+            missing_note.set_text('Vérification SHA, identité et chemins…')
+
+            def read():
+                return session.preview_missing_relocation(*chosen)
+
+            def completed(result):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != (missing_case[0], missing_file_key[0])):
+                    return
+                missing_busy[0] = False
+                missing_file_controls(True)
+                ready = (type(result) is dict
+                         and result.get('status') == 'review_required'
+                         and result.get('read_only') is True
+                         and result.get('requires_explicit_confirmation') is True)
+                missing_relocation_ready[0] = ready
+                missing_relocate_confirm.set_visible(ready)
+                missing_relocate_confirm.set_sensitive(ready)
+                missing_review.set_sensitive(not ready)
+                missing_relocate_review.set_sensitive(not ready)
+                missing_note.set_text(
+                    'Octets et identité revérifiés · confirmer le changement SQL.'
+                    if ready else
+                    'Relocalisation bloquée : collision ou références non migrables.'
+                )
+
+            def failed(_error):
+                if (self.session is session and self.alive()
+                        and version == missing_version[0]):
+                    session.cancel_missing_repair()
+                    missing_busy[0] = False
+                    missing_file_controls(True)
+                    missing_relocation_ready[0] = False
+                    missing_review.set_sensitive(True)
+                    missing_relocate_review.set_sensitive(True)
+                    missing_note.set_text(
+                        'Vérification indisponible · aucun placement modifié.'
+                    )
+
+            self.parent.runner.submit(
+                'Prévisualisation de relocalisation SQL',
+                read, completed, failed,
+                priority=TaskPriority.MAINTENANCE,
+                kind='maintenance-inspection',
+            )
+
+        def confirm_missing_relocation(*_args):
+            if (not valid() or missing_busy[0] or not missing_relocation_ready[0]
+                    or not missing_relocate_confirm.get_visible()
+                    or missing_case[0] is None or missing_file_key[0] is None):
+                return
+            chosen = (missing_case[0], missing_file_key[0])
+            version = missing_version[0]
+            missing_relocate_confirm.set_sensitive(False)
+            missing_file_controls(False)
+            dialog = Adw.MessageDialog.new(
+                window, 'Relocaliser ce placement SQLite ?',
+                'Un fichier local déjà observé a été sélectionné. '
+                'Le Core revalidera son SHA, son appartenance au même profil, '
+                'les références et les collisions sous verrou. '
+                'Seul le chemin du placement sera réassocié en base ; '
+                'aucun fichier ne sera déplacé ni supprimé et '
+                'aucun droit ne sera attribué par le SHA.',
+            )
+            dialog.add_response('cancel', 'Annuler')
+            dialog.add_response('apply', 'Rattacher le chemin SQLite')
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+            dialog.set_response_appearance('apply', Adw.ResponseAppearance.DESTRUCTIVE)
+
+            def on_response(_dialog, response):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != (missing_case[0], missing_file_key[0])):
+                    session.cancel_missing_repair()
+                    return
+                if response != 'apply':
+                    session.cancel_missing_repair()
+                    missing_relocation_ready[0] = False
+                    missing_relocate_confirm.set_visible(False)
+                    missing_file_controls(True)
+                    missing_review.set_sensitive(True)
+                    missing_relocate_review.set_sensitive(True)
+                    missing_note.set_text('Annulé · aucune modification.')
+                    return
+                missing_busy[0] = True
+                missing_relocate_confirm.set_visible(False)
+                missing_note.set_text('Confirmation reçue · revalidation sous verrou…')
+
+                def commit():
+                    return session.confirm_missing_repair(
+                        chosen[0], file_key=chosen[1], user_confirmed=True,
+                    )
+
+                def completed(outcome):
+                    if (self.session is not session or not self.alive()
+                            or version != missing_version[0]):
+                        return
+                    if (type(outcome) is dict
+                            and outcome.get('status') == 'relocated'):
+                        self.clear()
+                        self.start()
+                        return
+                    missing_busy[0] = False
+                    missing_file_controls(True)
+                    missing_relocation_ready[0] = False
+                    missing_review.set_sensitive(True)
+                    missing_relocate_review.set_sensitive(True)
+                    missing_note.set_text(
+                        'Relocalisation non appliquée · prévisualiser à nouveau.'
+                    )
+
+                def failed(_error):
+                    if (self.session is session and self.alive()
+                            and version == missing_version[0]):
+                        session.cancel_missing_repair()
+                        missing_busy[0] = False
+                        missing_file_controls(True)
+                        missing_relocation_ready[0] = False
+                        missing_review.set_sensitive(True)
+                        missing_relocate_review.set_sensitive(True)
+                        missing_note.set_text(
+                            'Relocalisation indisponible · aucun commit confirmé.'
+                        )
+
+                self.parent.runner.submit(
+                    'Relocalisation transactionnelle du placement',
+                    commit, completed, failed,
+                    priority=TaskPriority.MAINTENANCE,
+                    kind='maintenance-inspection',
+                )
+
+            dialog.connect('response', on_response)
+            dialog.present()
 
         def preview_missing_retirement(*_args):
             if (not valid() or missing_case[0] is None
@@ -1768,6 +2083,12 @@ class LocalInspectionController:
 
         missing_review.connect('clicked', preview_missing_retirement)
         missing_apply.connect('clicked', confirm_missing_retirement)
+        missing_relocate_review.connect('clicked', preview_missing_relocation)
+        missing_relocate_confirm.connect('clicked', confirm_missing_relocation)
+        missing_files_list.connect('row-selected', select_missing_file)
+        missing_files_search.connect('search-changed', search_missing_files)
+        missing_files_prev.connect('clicked', lambda *_: page_missing_files(-1))
+        missing_files_next.connect('clicked', lambda *_: page_missing_files(1))
         listing.connect('row-selected', select)
         candidate_prev.connect('clicked', lambda *_: move_candidate(-1))
         candidate_next.connect('clicked', lambda *_: move_candidate(1))
