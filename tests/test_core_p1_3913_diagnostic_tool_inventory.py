@@ -115,3 +115,23 @@ def test_offline_analyzers_are_real_and_named_in_inventory():
     assert "lance rien" in BACKLOG.read_text(encoding="utf-8") or (
         "Le rôle backlog **ne lance pas**" in BACKLOG.read_text(encoding="utf-8")
     )
+
+
+def test_expert_offline_reconciliation_is_not_misidentified_as_mutating_sync():
+    source = (ROOT / "src/cifereca/core/library_reconciliation.py").read_text(
+        encoding="utf-8"
+    )
+    wal = (ROOT / "src/cifereca/core/library_wal_image.py").read_text(
+        encoding="utf-8"
+    )
+    document = DOC.read_text(encoding="utf-8")
+    for argument in ("--database", "--root", "--private-report"):
+        assert f"parser.add_argument('{argument}'" in source
+        assert argument in document
+    assert "def main(argv=None):" in source
+    assert "acquisition_authorized': False" in source
+    assert "os.O_EXCL" in source and "0o600" in source
+    assert "library_wal_image.py" in document
+    assert "enfant" in document
+    assert "def _main():" in wal
+    assert "python3 -m cifereca.core.library_reconciliation" in document
