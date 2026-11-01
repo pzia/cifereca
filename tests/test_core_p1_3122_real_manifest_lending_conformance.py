@@ -92,12 +92,14 @@ def test_real_paris_manifest_matches_lending_methods_but_legacy_return_renew_unm
     assert PARIS_DESCRIPTOR.capabilities.opening_loan_auto_acquisition is True
 
 
-def test_real_bnf_internal_acsm_does_not_become_public_download_or_mutation():
+def test_real_bnf_manual_borrow_does_not_publish_return_or_download():
     rows = publication("bnf-pret", BNF_DESCRIPTOR, BnfProviderSession)
     assert rows["loan.list"].publishable
-    for operation in (
-        "loan.borrow", "loan.return", "loan.renew", "loan.download_token",
-    ):
+    borrow = rows["loan.borrow"]
+    assert borrow.publication_status == "declared"
+    assert borrow.publishable and borrow.manifest_declared
+    assert borrow.descriptor_declared and borrow.method_implemented
+    for operation in ("loan.return", "loan.renew", "loan.download_token"):
         item = rows[operation]
         assert item.publication_status == "absent"
         assert not item.publishable and not item.manifest_declared
