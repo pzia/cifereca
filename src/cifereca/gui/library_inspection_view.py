@@ -871,6 +871,19 @@ class LocalInspectionController:
         missing_apply = Gtk.Button(label='Confirmer le retrait SQL…')
         missing_apply.set_visible(False)
         missing_apply.set_sensitive(False)
+        missing_linked_review = Gtk.Button(
+            label='Prévisualiser le détachement des notices SQL…',
+        )
+        missing_linked_review.set_sensitive(False)
+        missing_linked_review.set_tooltip_text(
+            'Détacher uniquement les notices locales exactes d’un '
+            'placement absent ; aucune permission ni fichier supprimé.'
+        )
+        missing_linked_apply = Gtk.Button(
+            label='Confirmer le détachement SQL…',
+        )
+        missing_linked_apply.set_visible(False)
+        missing_linked_apply.set_sensitive(False)
         missing_relocate_review = Gtk.Button(
             label='Prévisualiser la relocalisation SQL…',
         )
@@ -886,6 +899,8 @@ class LocalInspectionController:
         missing_note.set_ellipsize(Pango.EllipsizeMode.END)
         missing_actions.append(missing_review)
         missing_actions.append(missing_apply)
+        missing_actions.append(missing_linked_review)
+        missing_actions.append(missing_linked_apply)
         missing_actions.append(missing_relocate_review)
         missing_actions.append(missing_relocate_confirm)
         missing_actions.append(missing_note)
@@ -925,6 +940,7 @@ class LocalInspectionController:
         missing_case = [None]
         missing_version = [0]
         missing_preview_ready = [False]
+        missing_linked_ready = [False]
         missing_busy = [False]
         missing_file_key = [None]
         missing_file_offset = [0]
@@ -957,6 +973,7 @@ class LocalInspectionController:
             session.cancel_missing_repair()
             missing_case[0] = None
             missing_preview_ready[0] = False
+            missing_linked_ready[0] = False
             missing_busy[0] = False
             missing_file_key[0] = None
             missing_file_offset[0] = 0
@@ -980,6 +997,9 @@ class LocalInspectionController:
             missing_review.set_sensitive(False)
             missing_apply.set_visible(False)
             missing_apply.set_sensitive(False)
+            missing_linked_review.set_sensitive(False)
+            missing_linked_apply.set_visible(False)
+            missing_linked_apply.set_sensitive(False)
             missing_note.set_text('')
             missing_note.set_tooltip_text(None)
 
@@ -1641,6 +1661,7 @@ class LocalInspectionController:
                     missing_actions_scroll.set_visible(True)
                     missing_files.set_visible(summary.get('status') == 'complete')
                     missing_review.set_sensitive(summary.get('status') == 'complete')
+                    missing_linked_review.set_sensitive(summary.get('status') == 'complete')
                     if missing_files.get_visible():
                         show_missing_files()
                     missing_note.set_text(
@@ -1757,13 +1778,17 @@ class LocalInspectionController:
             missing_version[0] += 1
             session.cancel_missing_repair()
             missing_preview_ready[0] = False
+            missing_linked_ready[0] = False
             missing_relocation_ready[0] = False
             missing_apply.set_visible(False)
             missing_apply.set_sensitive(False)
+            missing_linked_apply.set_visible(False)
+            missing_linked_apply.set_sensitive(False)
             missing_relocate_confirm.set_visible(False)
             missing_relocate_confirm.set_sensitive(False)
             missing_file_key[0] = None
             missing_review.set_sensitive(not missing_busy[0])
+            missing_linked_review.set_sensitive(not missing_busy[0])
             missing_relocate_review.set_sensitive(False)
             missing_note.set_text(
                 'Choisir puis vérifier un fichier observé · aucune permission inférée.'
@@ -1935,6 +1960,163 @@ class LocalInspectionController:
 
                 self.parent.runner.submit(
                     'Relocalisation transactionnelle du placement',
+                    commit, completed, failed,
+                    priority=TaskPriority.MAINTENANCE,
+                    kind='maintenance-inspection',
+                )
+
+            dialog.connect('response', on_response)
+            dialog.present()
+
+        def preview_missing_linked_retirement(*_args):
+            # A blocked orphan retirement is NOT a detachment plan. This
+            # distinct human action consults the strict Core catalogue writer.
+            if (not valid() or missing_case[0] is None or missing_busy[0]
+                    or missing_linked_ready[0] or missing_preview_ready[0]
+                    or missing_relocation_ready[0]):
+                return
+            chosen = missing_case[0]
+            version = missing_version[0]
+            missing_busy[0] = True
+            missing_linked_review.set_sensitive(False)
+            missing_review.set_sensitive(False)
+            missing_relocate_review.set_sensitive(False)
+            missing_linked_apply.set_visible(False)
+            missing_note.set_text('Vérification des notices locales exactes…')
+
+            def read():
+                return session.preview_missing_linked_retirement(chosen)
+
+            def completed(result):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != missing_case[0]):
+                    return
+                missing_busy[0] = False
+                count = result.get('catalogue_rows') if type(result) is dict else None
+                ready = (type(result) is dict
+                         and result.get('status') == 'review_required'
+                         and result.get('reason')
+                         == 'catalogue_detachment_requires_confirmation'
+                         and result.get('read_only') is True
+                         and result.get('requires_explicit_confirmation') is True
+                         and type(count) is int and 1 <= count <= 128)
+                missing_linked_ready[0] = ready
+                missing_linked_apply.set_visible(ready)
+                missing_linked_apply.set_sensitive(ready)
+                missing_linked_review.set_sensitive(not ready)
+                missing_review.set_sensitive(not ready)
+                missing_relocate_review.set_sensitive(
+                    not ready and missing_file_key[0] is not None
+                )
+                message = (
+                    f'{count} notice(s) locale(s) à détacher après '
+                    'nouvelle vérification · confirmation requise.'
+                    if ready else
+                    'Détachement refusé : édition, provenance, fichier '
+                    'ou références complémentaires à examiner.'
+                )
+                missing_note.set_text(message)
+                missing_note.set_tooltip_text(message)
+
+            def failed(_error):
+                if (self.session is session and self.alive()
+                        and version == missing_version[0]):
+                    session.cancel_missing_repair()
+                    missing_busy[0] = False
+                    missing_linked_ready[0] = False
+                    missing_linked_review.set_sensitive(True)
+                    missing_review.set_sensitive(True)
+                    missing_note.set_text(
+                        'Vérification indisponible · aucune écriture SQL.'
+                    )
+
+            self.parent.runner.submit(
+                'Prévisualisation du détachement des notices locales',
+                read, completed, failed,
+                priority=TaskPriority.MAINTENANCE,
+                kind='maintenance-inspection',
+            )
+
+        def confirm_missing_linked_retirement(*_args):
+            if (not valid() or missing_busy[0] or not missing_linked_ready[0]
+                    or not missing_linked_apply.get_visible()
+                    or missing_case[0] is None):
+                return
+            chosen = missing_case[0]
+            version = missing_version[0]
+            missing_linked_apply.set_sensitive(False)
+            dialog = Adw.MessageDialog.new(
+                window, 'Détacher les notices et retirer ce placement SQL ?',
+                'Le fichier est déjà absent. Le Core vérifiera à nouveau '
+                'la même identité, édition, Artifact et toutes les références '
+                'sous verrou. Les notices de catalogue et la provenance '
+                'seront conservées : seul leur lien vers le placement manquant '
+                'et leur chemin local obsolète seront détachés. '
+                'Aucun EPUB ou droit ne sera supprimé. '
+                'Toute référence supplémentaire bloquera la transaction.',
+            )
+            dialog.add_response('cancel', 'Annuler')
+            dialog.add_response('apply', 'Détacher les notices locales')
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+            dialog.set_response_appearance('apply', Adw.ResponseAppearance.DESTRUCTIVE)
+
+            def on_response(_dialog, response):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != missing_case[0]):
+                    session.cancel_missing_repair()
+                    return
+                if response != 'apply':
+                    session.cancel_missing_repair()
+                    missing_linked_ready[0] = False
+                    missing_linked_apply.set_visible(False)
+                    missing_linked_review.set_sensitive(True)
+                    missing_review.set_sensitive(True)
+                    missing_note.set_text('Annulé · aucune écriture SQL.')
+                    return
+                missing_busy[0] = True
+                missing_linked_apply.set_visible(False)
+                missing_note.set_text('Revalidation des références sous verrou…')
+
+                def commit():
+                    return session.confirm_missing_repair(
+                        chosen, user_confirmed=True,
+                    )
+
+                def completed(outcome):
+                    if (self.session is not session or not self.alive()
+                            or version != missing_version[0]):
+                        return
+                    if (type(outcome) is dict
+                            and outcome.get('status') == 'retired'
+                            and outcome.get('reason') == 'catalogue_detached'):
+                        self.clear()
+                        self.start()
+                        return
+                    missing_busy[0] = False
+                    missing_linked_ready[0] = False
+                    missing_linked_review.set_sensitive(True)
+                    missing_review.set_sensitive(True)
+                    missing_note.set_text(
+                        'Détachement non appliqué · prévisualiser à nouveau.'
+                    )
+
+                def failed(_error):
+                    if (self.session is session and self.alive()
+                            and version == missing_version[0]):
+                        session.cancel_missing_repair()
+                        missing_busy[0] = False
+                        missing_linked_ready[0] = False
+                        missing_linked_review.set_sensitive(True)
+                        missing_review.set_sensitive(True)
+                        missing_note.set_text(
+                            'Détachement indisponible · aucune mutation confirmée.'
+                        )
+
+                self.parent.runner.submit(
+                    'Détachement contrôlé des notices de placement',
                     commit, completed, failed,
                     priority=TaskPriority.MAINTENANCE,
                     kind='maintenance-inspection',
@@ -2115,6 +2297,8 @@ class LocalInspectionController:
 
         missing_review.connect('clicked', preview_missing_retirement)
         missing_apply.connect('clicked', confirm_missing_retirement)
+        missing_linked_review.connect('clicked', preview_missing_linked_retirement)
+        missing_linked_apply.connect('clicked', confirm_missing_linked_retirement)
         missing_relocate_review.connect('clicked', preview_missing_relocation)
         missing_relocate_confirm.connect('clicked', confirm_missing_relocation)
         missing_files_list.connect('row-selected', select_missing_file)
