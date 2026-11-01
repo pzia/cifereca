@@ -18,6 +18,14 @@ statiquement tous les appels du logger concerné et provoque un
 `OSError` contenant un canari privé pendant le contrôle de reçu.
 Le journal ne doit contenir que le code de phase fermé.
 
+Le classificateur `diagnostic_acquisition_failure` reconnaît désormais
+les **six avertissements fermés** du worker et conserve des entrées
+`ACQUISITION/local_evidence_cause|loan_download_cause` avec phase et état,
+**sans** reconstituer identités/compte/prêt ni copier une exception.
+Les anciens templates de journal restent acceptés en lecture pour ne pas
+perdre la compatibilité des archives déjà enregistrées. Un log fermé hostile
+avec des arguments ou un `exc_info` injecté ne publie pas ces contenus.
+
 Cela **ne remplace pas** le chantier #3228 : le worker parallèle BnF
 reste à supprimer au profit du moteur Core unique une fois les preuves
 de livraison ADEPT et de migration du consentement établies. Une
