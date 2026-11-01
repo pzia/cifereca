@@ -422,3 +422,48 @@ def validate_capture_session(path: Path) -> dict[str, object]:
     except (OSError, zipfile.BadZipFile, json.JSONDecodeError, EOFError,
             RuntimeError, KeyError, TypeError) as exc:
         raise ValueError("capture_archive_invalid") from exc
+
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Verify a previously exported private ZIP without opening Cifereca Core.
+
+    Never include paths, event text, URLs, headers or exception details in
+    stdout/stderr. A verifier verdict is integrity-only, not acquisition proof.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Contrôle hors réseau d'un ZIP privé de session --capture."
+    )
+    parser.add_argument("--validate", required=True, type=Path, metavar="ZIP")
+    parser.add_argument("--json", action="store_true",
+                        help="Verdict fermé JSON, sans données du journal/HTTP.")
+    args = parser.parse_args(argv)
+    try:
+        result = validate_capture_session(args.validate)
+    except Exception:
+        # Corrupt/unreadable archives can carry untrusted metadata and paths.
+        # Never reveal exception repr or artifact bytes via the CLI.
+        result = {
+            "format": _FORMAT,
+            "status": "invalid",
+            "code": "capture_archive_invalid",
+        }
+        rc = 2
+    else:
+        rc = 0
+    if args.json:
+        print(_as_json(result).decode("utf-8").rstrip("\n"))
+    elif rc == 0:
+        print(
+            "capture_archive_valid "
+            f"coverage={result['coverage']} members={result['members']}"
+        )
+    else:
+        print("capture_archive_invalid")
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
