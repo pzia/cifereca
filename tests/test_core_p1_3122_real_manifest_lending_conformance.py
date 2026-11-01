@@ -78,13 +78,14 @@ def test_real_paris_manifest_matches_lending_methods_but_legacy_return_renew_unm
     rows = publication("paris", PARIS_DESCRIPTOR, ParisProviderSession)
     assert set(rows) == {
         "loan.list", "loan.borrow", "loan.download_token",
-        "loan.return", "loan.renew",
+        "loan.renew",
     }
     for operation in ("loan.list", "loan.borrow", "loan.download_token"):
         item = rows[operation]
         assert item.publication_status == "declared"
         assert item.publishable and item.method_implemented
-    for operation in ("loan.return", "loan.renew"):
+    assert "loan.return" not in rows
+    for operation in ("loan.renew",):
         item = rows[operation]
         assert item.publication_status == "legacy_unmapped"
         assert item.method_implemented and item.descriptor_declared
@@ -92,18 +93,21 @@ def test_real_paris_manifest_matches_lending_methods_but_legacy_return_renew_unm
     assert PARIS_DESCRIPTOR.capabilities.opening_loan_auto_acquisition is True
 
 
-def test_real_bnf_manual_borrow_does_not_publish_return_or_download():
+def test_real_bnf_internal_acsm_does_not_become_public_download_or_mutation():
     rows = publication("bnf-pret", BNF_DESCRIPTOR, BnfProviderSession)
     assert rows["loan.list"].publishable
-    borrow = rows["loan.borrow"]
-    assert borrow.publication_status == "declared"
-    assert borrow.publishable and borrow.manifest_declared
-    assert borrow.descriptor_declared and borrow.method_implemented
-    for operation in ("loan.return", "loan.renew", "loan.download_token"):
+    # BnF now declares manual acquisition.borrow (#2055), but its direct
+    # legacy borrow() entrypoint still refuses; positive borrower eligibility
+    # remains a separate Core/UI guard and cannot be inferred here.
+    borrowed = rows["loan.borrow"]
+    assert borrowed.publication_status == "declared"
+    assert borrowed.manifest_declared and borrowed.method_implemented
+    for operation in ("loan.renew", "loan.download_token"):
         item = rows[operation]
         assert item.publication_status == "absent"
         assert not item.publishable and not item.manifest_declared
         assert not item.descriptor_declared
+    assert "loan.return" not in rows
     # The BnF-specific method requires a private explicit staging policy.
     # Its existence is NOT a public loan.download_token capability.
     assert rows["loan.download_token"].method_implemented
@@ -117,6 +121,7 @@ def test_real_manifest_retains_search_read_separation_without_unverified_actions
     assert "catalog.search" in paris and "catalog.search" in bnf
     assert "catalog.detail" in paris and "catalog.detail" in bnf
     assert "acquisition.borrow" in paris and "acquisition.download" in paris
-    assert "acquisition.borrow" in bnf and "acquisition.download" not in bnf
+    assert "acquisition.borrow" in bnf  # explicit BnF manual Core dispatch only
+    assert "acquisition.download" not in bnf
     assert "lending.return" not in paris and "lending.renew" not in paris
     assert "lending.return" not in bnf and "lending.renew" not in bnf

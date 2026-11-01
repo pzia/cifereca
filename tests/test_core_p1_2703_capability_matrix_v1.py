@@ -35,7 +35,7 @@ def test_all_declared_families_are_read_only_and_preserve_implemented_vs_live():
     )
     assert CAPABILITY_MATRIX_CONTRACT == "capability-matrix/1"
     assert result.schema_version == 1
-    assert len(result.observations) == 8
+    assert len(result.observations) == 7
     found = {x.operation: x for x in result.observations}
     for name in ("catalog.search", "personal_inventory.list", "loan.inventory",
                  "loan.borrow", "acquisition.download"):
@@ -47,7 +47,8 @@ def test_all_declared_families_are_read_only_and_preserve_implemented_vs_live():
         assert item.connected is True
         assert item.mode == "unknown"
         assert item.authorizes_mutation is False
-    for name in ("loan.return", "loan.renew", "artifact.backup"):
+    assert result.exact("loan.return", "unknown") is None
+    for name in ("loan.renew", "artifact.backup"):
         item = found[name]
         assert item.status == "unsupported"
         assert item.implementation_state == "not_applicable"

@@ -21,7 +21,7 @@ LendingActionStatus = Literal[
 ]
 LendingActionEvidence = Literal["none", "provider_accepted", "provider_verified"]
 _SUPPORTED_ACTIONS = frozenset({
-    "loan.borrow", "loan.renew", "loan.return", "loan.download_token",
+    "loan.borrow", "loan.renew", "loan.download_token",
 })
 _REASON_CODES = frozenset({
     "not_declared", "capability_unavailable", "origin_not_permitted",
@@ -168,7 +168,7 @@ def assess_lending_action(
         return decision("blocked", "scope_unverified")
     if key != "loan.borrow" and target.state != "active":
         return decision("blocked", "loan_not_active")
-    if key in {"loan.return", "loan.download_token"} and target.medium != "digital":
+    if key == "loan.download_token" and target.medium != "digital":
         return decision("blocked", "loan_unverified")
     if permission_attested is not True:
         return decision("blocked", "permission_unverified")
