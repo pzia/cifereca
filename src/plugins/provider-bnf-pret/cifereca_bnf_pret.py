@@ -57,6 +57,8 @@ _PUBLIC_CODES = frozenset({
     'borrow_resource_invalid', 'borrow_url_refused', 'borrow_scope_mismatch',
     'borrow_detail_unrecognized', 'borrow_action_unverified',
     'borrow_form_unverified', 'borrow_csrf_unverified',
+    'borrow_existing_loan', 'borrow_receipt_unverified',
+    'borrow_activity_unverified',
 })
 
 
