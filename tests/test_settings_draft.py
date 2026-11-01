@@ -69,7 +69,6 @@ def test_draft_neither_mutates_config_nor_writes_and_preserves_missing_adept_pro
     ('outside_dir', 'sous-répertoire direct'), ('unknown_account', 'Identité inconnue'),
     ('bad_command', 'Commande de téléchargement invalide'),
     ('bad_provider_command', 'Commande de téléchargement invalide'),
-    ('bad_interval', 'Configuration Kobo invalide'),
 ])
 def test_invalid_values_raise_without_changing_config(editor, change, message):
     config, values = editor
@@ -86,7 +85,6 @@ def test_invalid_values_raise_without_changing_config(editor, change, message):
     if change == 'bad_command': values['download_command'] = 'unclosed "'
     if change == 'bad_provider_command':
         values['provider_downloads'] = {'paris': dict(command='unclosed "', post='')}
-    if change == 'bad_interval': values['backup_interval'] = 'invalid'
     with pytest.raises(SettingsValidationError, match=message):
         validate(editor, descriptors=descriptors)
     assert config.data == before and not config.path.exists()
@@ -128,7 +126,7 @@ def test_two_kobo_accounts_cannot_share_one_identity(editor):
     assert len(validate(editor, descriptors={'kobo': kobo}).data['providers']['accounts']) == 2
 
 
-def test_commands_remain_argument_lists_and_kobo_defaults_are_unchanged(editor):
+def test_commands_remain_argument_lists_and_legacy_kobo_config_is_opaque(editor):
     values = editor[1]
     values['download_command'] = 'downloader "{file}" --title "two words"'
     values['backup_interval'] = '1'
@@ -137,8 +135,7 @@ def test_commands_remain_argument_lists_and_kobo_defaults_are_unchanged(editor):
         audiobook='a', command='tool "two words"', post='')}
     draft = validate(editor)
     assert draft.data['downloads']['command'] == ['downloader', '{file}', '--title', 'two words']
-    assert draft.data['kobo_backup']['interval_minutes'] == 15
-    assert draft.data['kobo_backup']['display_profile'] == 'Android'
+    assert draft.data.get('kobo_backup') == editor[0].data.get('kobo_backup')
     assert draft.data['providers']['settings']['paris']['downloads']['command'] == ['tool', 'two words']
 
 
@@ -243,7 +240,7 @@ def test_only_dirty_ai_is_normalized_and_errors_keep_safe_title(editor):
     assert draft.ai_restart_required and draft.data['llm']['api_key_env'] == 'SYNTHETIC_KEY_NAME'
 
 
-def test_error_precedence_is_identity_then_command_then_ai_then_kobo(editor):
+def test_error_precedence_is_identity_then_command_then_ai_without_legacy_kobo(editor):
     values = editor[1]
     values['identities'][0]['id'] = '/'
     values['download_command'] = '"'
@@ -254,7 +251,7 @@ def test_error_precedence_is_identity_then_command_then_ai_then_kobo(editor):
     with pytest.raises(SettingsValidationError, match='Commande de téléchargement'): validate(editor, ai_dirty=True)
     values['download_command'] = ''
     with pytest.raises(SettingsValidationError, match='Indiquer l’adresse'): validate(editor, ai_dirty=True)
-    with pytest.raises(SettingsValidationError, match='Configuration Kobo'): validate(editor)
+    assert validate(editor).data.get('kobo_backup') == editor[0].data.get('kobo_backup')
 
 
 def test_revision_snapshot_is_independent_and_later_edits_remain_dirty():
@@ -364,8 +361,7 @@ def test_kobo_legacy_enabled_absent_stays_absent_after_unrelated_settings_save(e
     values["backup_directory"] = "KoboBooks"
     draft = validate(editor)
     assert "enabled" not in draft.data["kobo_backup"]
-    assert draft.data["kobo_backup"]["interval_minutes"] == 90
-    assert draft.data["kobo_backup"]["directory"] == "KoboBooks"
+    assert draft.data["kobo_backup"] == original["kobo_backup"]
     assert config.data == original
 
 
@@ -380,7 +376,7 @@ def test_settings_save_preserves_legacy_kobo_format_without_ui_control(
     values["identities"][0]["label"] = "Updated without changing Kobo format"
     draft = validate(editor)
     assert draft.data["kobo_backup"]["format"] == persisted
-    assert draft.data["kobo_backup"]["interval_minutes"] == 90
+    assert draft.data["kobo_backup"] == before["kobo_backup"]
     assert draft.data["identities"][0]["label"] == (
         "Updated without changing Kobo format"
     )
@@ -395,7 +391,7 @@ def test_settings_save_does_not_create_missing_obsolete_kobo_format(editor):
     values["backup_interval"] = "90"
     draft = validate(editor)
     assert "format" not in draft.data["kobo_backup"]
-    assert draft.data["kobo_backup"]["interval_minutes"] == 90
+    assert draft.data["kobo_backup"] == before["kobo_backup"]
     assert config.data == before
 
 
@@ -505,20 +501,20 @@ def test_provider_declared_account_limit_is_not_hardcoded_to_known_supplier(edit
 
 
 @pytest.mark.parametrize("invalid", ["1", 1.0, True, None, {}, -0.5])
-def test_legacy_backup_profile_index_rejects_untyped_widget_values(editor, invalid):
-    """#3731: a stale widget must not silently change legacy provider settings."""
+def test_legacy_backup_profile_index_is_not_consulted_by_generic_draft(editor, invalid):
+    """#3731: obsolete input values have no authority to update provider state."""
     config, values = editor
     before = deepcopy(config.data)
     values["vault_profile_index"] = invalid
-    with pytest.raises(SettingsValidationError, match="Profil de sauvegarde historique invalide"):
-        validate(editor)
+    draft = validate(editor)
+    assert draft.data["kobo_backup"] == before["kobo_backup"]
     assert config.data == before
 
 
-def test_legacy_backup_profile_index_out_of_range_preserves_default(editor):
-    values = editor[1]
+def test_legacy_backup_profile_index_out_of_range_is_ignored(editor):
+    config, values = editor
     values["vault_profile_index"] = 99
-    assert validate(editor).data["kobo_backup"]["display_profile"] == "Android"
+    assert validate(editor).data["kobo_backup"] == config.data["kobo_backup"]
 
 
 def test_generic_provider_duplicate_account_ids_rejected_before_save(editor):

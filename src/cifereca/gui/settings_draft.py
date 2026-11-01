@@ -10,7 +10,6 @@ from typing import Any
 
 from ..identities.directory_selection import directory_choice
 from .llm_settings import LLMSettingsError, normalize_llm_settings
-from .settings_legacy_kobo import apply_legacy_kobo_settings
 
 
 class SettingsValidationError(ValueError):
@@ -403,7 +402,10 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         ai_restart_required = new_ai_settings != config.get('llm', {})
         draft.set('llm', new_ai_settings)
     draft.set('library.directory', values['library_directory'].strip() or '~/EBooks')
-    apply_legacy_kobo_settings(draft, values, validation_error=SettingsValidationError)
+    # Generic Settings never translates retired supplier-specific widgets.
+    # Historical configuration is already preserved by the config deep copy.
+    # Compatibility-only translations live in settings_legacy_kobo, outside
+    # the active Settings draft and without acquisition consent side effects.
     directory_change = any(
         row['id'] in current_dirs and row['directory_name'] != current_dirs[row['id']]
         for row in saved_identities
