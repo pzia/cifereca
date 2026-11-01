@@ -973,6 +973,11 @@ class ParisProviderSession(ProviderSession):
         if (type(loan) is not Loan or type(account) is not Account
                 or self.provider_id != "paris"
                 or loan.medium != "physical"
+                or loan.provider != "SYRACUSE"
+                or loan.renewable is not True
+                or type(loan.raw) is not dict
+                or loan.raw.get("CanRenew") is not True
+                or (loan.raw.get("Id") or loan.raw.get("HoldingId")) != loan.id
                 or loan.source_provider != "paris"
                 or loan.source_credential != self.credential_id
                 or account.provider_id != self.provider_id
