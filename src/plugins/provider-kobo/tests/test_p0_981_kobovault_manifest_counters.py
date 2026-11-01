@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from cifereca.plugin_api import ProviderError
 from cifereca_kobo import DESCRIPTOR, KoboSession
 from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
 
@@ -93,3 +94,38 @@ def test_manifest_metrics_export_never_contains_raw_provider_secrets():
         assert sanitized["last_scan_pagination_complete"] is False
     finally:
         session.close()
+
+
+def test_owner_guard_stops_next_private_page_before_any_second_get():
+    calls = []
+    guard_calls = []
+
+    def transport(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json={
+            "items": [{"product_id": "PRIVATE_BOOK"}],
+            "next_cursor": "PRIVATE_CURSOR",
+        })
+
+    def guard():
+        guard_calls.append(True)
+        if len(guard_calls) > 1:
+            raise ProviderError("owner_scope_changed")
+
+    client = KoboVaultClient(
+        "https://vault.example", "PRIVATE_TOKEN",
+        transport=httpx.MockTransport(transport),
+    )
+    try:
+        with pytest.raises(ProviderError, match="owner_scope_changed"):
+            client.library_manifest(page_guard=guard)
+        assert calls == ["/api/v2/library/manifest"]
+        assert client.manifest_scans_started == 1
+        assert client.manifest_http_get_attempts == 1
+        assert client.last_manifest_page_attempts == 1
+        assert client.last_manifest_pagination_complete is False
+        # Counters never include private page cursor, book or authorization.
+        fields = client.manifest_scans_started, client.manifest_http_get_attempts
+        assert "PRIVATE" not in repr(fields)
+    finally:
+        client.close()
