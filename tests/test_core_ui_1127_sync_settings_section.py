@@ -80,7 +80,7 @@ def test_navigation_requires_live_page_and_never_runs_global_acquisition():
     state = SettingsRevisionState(["sync"])
     refresh = bind_settings_sync_actions(
         host, page_lifetime=lifetime,
-        settings_state=state, kobo_settings=controls,
+        settings_state=state, sync_settings=controls,
     )
     controls.run_backup_now.click()
     assert calls == ["sync"]
