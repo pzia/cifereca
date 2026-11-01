@@ -4,6 +4,7 @@ Uses the production TaskRunner class with the established headless GLib
 adapter; no provider, GTK session or network is involved.
 """
 import logging
+from types import MappingProxyType
 
 import pytest
 
@@ -14,12 +15,19 @@ from tests.test_core_p0_981_redacted_task_traces import _runner
 @pytest.mark.parametrize(("source_result", "message"), [
     (SyncResult(ok=False, facts={"reason": "operation_busy"}),
      "Synchronisation déjà en cours"),
+    (SyncResult(ok=False, facts=MappingProxyType({"reason": "operation_busy"})),
+     "Synchronisation déjà en cours"),
     (SyncResult(ok=False, facts={"status": "partial"}),
      "Synchronisation partielle"),
     (SyncResult(ok=False, facts={"status": "failed"}),
      "Échec de synchronisation"),
     (SyncResult(ok=False, facts={"sources": {"opaque": {"status": "operation_busy"}}}),
      "Synchronisation déjà en cours"),
+    (SyncResult(ok=False, facts=MappingProxyType({
+        "sources": MappingProxyType({
+            "opaque": MappingProxyType({"status": "operation_busy"}),
+        }),
+    })), "Synchronisation déjà en cours"),
     (SyncResult(ok=False, facts={"sources": {"opaque": {"status": "partial"}}}),
      "Synchronisation partielle"),
     (SyncResult(ok=False, facts={"sources": {"a": {"status": "partial"},
