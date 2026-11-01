@@ -9,6 +9,35 @@ phase. Le client `KoboVaultClient` n'offre actuellement **aucun endpoint
 d'invalidation / purge du cache du serveur KoboVault**. Réémettre un GET ne
 garantit donc pas que KoboVault a interrogé Kobo plutôt que son propre cache.
 
+### Contrat serveur vérifié (pzia/KVault v0.9.7)
+
+Référence : `pzia/KVault/src/worker.js` :
+
+- `GET /api/v2/catalog/search` consulte **systématiquement** la Cloudflare
+  Cache API, TTL configuré par `CATALOG_CACHE_TTL_SECONDS` (24 h par défaut).
+  Ce chemin Provider **n'accepte pas** de paramètre de forçage explicite ;
+  `search(force=True)` de Cifereca ne le contourne donc pas.
+- Le bouton navigateur « Actualiser Kobo » passe par un **autre chemin**,
+  `POST /api/kobo/catalog` avec le JSON `forceRefresh: true`, capable de
+  bypasser le cache public. Ne pas réutiliser cet endpoint navigateur en
+  Cifereca : il ne relève pas du contrat Provider.
+- `GET /api/v2/library/manifest` appelle
+  `ensureFreshLibraryProjection` **sur la première page seulement**.
+  La projection D1 est considérée fraîche pendant 24 h
+  (`LIBRARY_SYNC_FRESH_MS`), avec un verrou de rafraîchissement de
+  5 min et un backoff de 15 min en cas d'échec. Une nouvelle lecture Cifereca
+  pendant ce TTL ne provoque pas de re-synchronisation Kobo. Si la collecte
+  échoue, la dernière projection est conservée (stale), sans que le GET soit
+  une preuve de données nouvelles.
+- `GET /api/v2/library/search` et `GET /api/v2/library/{id}` réutilisent
+  la même admission de fraîcheur serveur. Aucun `forceRefresh` Provider
+  commun aux deux domaines n'est attesté.
+
+En conséquence, distinguer toujours **« GET effectivement envoyé »**
+et **« données effectivement revalidées chez Kobo »**. Un vrai forçage
+serveur nécessite un contrat explicite avec scope, singleflight, anti-abus
+et signal de fraîcheur/repli ; ne pas le simuler par plusieurs GET.
+
 ## Opérations et frais réseau
 
 | Déclencheur | Ce qu'il force | Ce qu'il ne force **pas** |
