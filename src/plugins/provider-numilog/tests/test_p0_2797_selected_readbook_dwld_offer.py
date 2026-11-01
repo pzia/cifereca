@@ -11,6 +11,7 @@ from cifereca.plugin_api import ProviderCapabilityError, ProviderError
 from tests.test_p1_3252_targeted_delivery_offer import rig
 from tests.test_p1_3252_rights_observation_snapshot import bound_account
 from cifereca_numilog_html import parse_library_page
+from tests.pinned_public_https_fixture import mock_selected_public_client_from_session
 
 LIBRARY = "https://www.numilog.com/Pages/Compte/MesLivres.aspx"
 
@@ -192,7 +193,7 @@ def test_readbook_structural_diagnostic_counts_only_selected_actions():
 
 
 def test_selected_dwld_v2_real_mock_transport_stages_acsm_without_adopting_right(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     """Authenticated synthetic MesLivres and real readBook → ACSM transport."""
     import httpx
@@ -228,6 +229,8 @@ def test_selected_dwld_v2_real_mock_transport_stages_acsm_without_adopting_right
     )
     target_dir = tmp_path / "only-core-owned-staging"
     target_dir.mkdir()
+    import cifereca_numilog as provider
+    core_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         candidate = session.downloadable_selected_delivery_candidate(
             account, edition_id=row.edition_id, resource_id=row.right_id,
@@ -236,6 +239,8 @@ def test_selected_dwld_v2_real_mock_transport_stages_acsm_without_adopting_right
             explicit_user_action=True,
         )
         assert requests == [expected, SIGNED]
+        assert len(core_clients) == 1
+        assert core_clients[0][2] == [SIGNED]
         assert candidate.path.is_file()
         assert candidate.path.suffix == ".acsm"
         assert candidate.path.read_bytes() == ACSM

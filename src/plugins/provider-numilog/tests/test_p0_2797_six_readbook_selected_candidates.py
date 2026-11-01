@@ -6,6 +6,8 @@ nor evidence of Core B publications or ADEPT rights.
 """
 import httpx
 import pytest
+import cifereca_numilog as provider
+from tests.pinned_public_https_fixture import mock_selected_public_client_from_session
 
 from cifereca.plugin_api import ProviderCapabilityError
 from tests.test_p0_2797_selected_readbook_dwld_offer import card, page, rig
@@ -33,7 +35,7 @@ def setup_six():
 
 
 def test_six_selected_readbooks_stage_six_distinct_acsm_candidates_no_cross_book_get(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     session, broker, private_reads, account, resources = setup_six()
     readbook = {
@@ -65,6 +67,7 @@ def test_six_selected_readbooks_stage_six_distinct_acsm_candidates_no_cross_book
         transport=httpx.MockTransport(handler),
         follow_redirects=False, trust_env=False,
     )
+    core_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     offers = []
     candidates = []
     try:
@@ -106,6 +109,10 @@ def test_six_selected_readbooks_stage_six_distinct_acsm_candidates_no_cross_book
             candidates.append(candidate.path)
 
         assert len(candidates) == 6
+        assert len(core_clients) == 6
+        assert [url for _producer, _timeout, urls in core_clients for url in urls] == [
+            signed[lid] for lid in LIDS
+        ]
         assert len({str(path) for path in candidates}) == 6
         assert received == [
             target

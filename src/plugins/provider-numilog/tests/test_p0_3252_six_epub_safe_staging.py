@@ -12,6 +12,8 @@ import zipfile
 
 import httpx
 import pytest
+import cifereca_numilog as provider
+from tests.pinned_public_https_fixture import mock_selected_public_client_from_session
 
 from cifereca.plugin_api import ProviderCapabilityError
 from tests.test_numilog_owned_js_delivery_p0 import _card, _page
@@ -82,6 +84,7 @@ def test_six_positive_purchases_produce_six_staged_epub_without_legacy_publicati
     monkeypatch.setattr(provider, "publish_artifact_file", lambda *a, **kw: pytest.fail(
         "Provider must not publish canonically"
     ))
+    core_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
         observed = session.rights_observation_snapshot(account)
         assert len(observed.rights) == 6
@@ -112,6 +115,8 @@ def test_six_positive_purchases_produce_six_staged_epub_without_legacy_publicati
             retrieved.append(delivered)
         assert len(retrieved) == 6
         assert visited == list(links)  # one signed content GET per purchase
+        assert len(core_clients) == 6
+        assert [url for _producer, _timeout, urls in core_clients for url in urls] == list(links)
         assert len(set(path.read_bytes() for path in retrieved)) == 6
         assert all(url == session.library_url for url in reads)
     finally:
@@ -120,7 +125,7 @@ def test_six_positive_purchases_produce_six_staged_epub_without_legacy_publicati
 
 @pytest.mark.parametrize("payload", ["epub", "acsm"])
 def test_selected_stage_inode_swap_during_signed_http_never_writes_external_file(
-    tmp_path, payload,
+    tmp_path, monkeypatch, payload,
 ):
     from tests.test_p1_3252_selected_delivery_candidate import setup, selected
     from tests.test_numilog_signed_acsm_transport_p0 import ACSM
@@ -150,12 +155,14 @@ def test_selected_stage_inode_swap_during_signed_http_never_writes_external_file
         transport=httpx.MockTransport(handler), trust_env=False,
         follow_redirects=False,
     )
+    core_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
-        with pytest.raises(ProviderCapabilityError, match="numilog_selected_staging_rebound"):
+        with pytest.raises(ProviderCapabilityError, match="numilog_candidate_transport_refused"):
             session.rights_selected_delivery_candidate(
                 account, **selected(right, stage),
             )
         assert len(signed_reads) == 1
+        assert len(core_clients) == 1
         assert list(outside.iterdir()) == []
         assert list(old_stage.iterdir()) == []
     finally:
