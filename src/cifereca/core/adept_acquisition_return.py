@@ -13,6 +13,12 @@ def return_adept_acquisition(
     DrmMutationRequest, time,
 ) -> dict[str, Any]:
     """Explicit return, exact origin/ID, fresh registry before and after CLI."""
+    # #4048: never touch an acquisition, ADEPT profile or historical receipt.
+    raise AttentionRequired(
+        "Restitution volontaire retirée de Cifereca.",
+        code="loan_return_removed",
+    )
+
     row = self.storage.acquisition_get(acquisition_id)
     if not row:
         raise AttentionRequired("Acquisition inconnue.", code="adept_acquisition_unknown")
