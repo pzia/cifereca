@@ -1612,67 +1612,19 @@ class LibraryService:
         )
 
     def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-            return self.return_digital(loan)
-        try:
-            with InterProcessLock(self._return_operation_lock_file(loan)):
-                return self._return_loan_prefer_adept_guarded(loan)
-        except LockBusyError:
-            return {
-                "status": "attention_required", "scope": "adobe_first_paris",
-                "code": "loan_return_busy", "retry": "verification_only",
-            }
-
-    def _return_loan_prefer_adept_guarded(self, loan: Loan) -> dict[str, Any]:
-        """Adobe-first, then Paris inventory; never automatically send PNB POST."""
-        import uuid
-        from .core.loan_return_guard import return_key, return_ref
-        from .core.return_adept_orchestrator import adept_return_key, public_state
-        return return_adept_orchestrator.return_loan_prefer_adept(
-            self, loan, uuid=uuid, return_ref=return_ref,
-            adept_return_key=adept_return_key, public_state=public_state,
-            AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG,
-        )
+        """Retired compatibility entry: no ADEPT, provider I/O or checkpoint."""
+        return {"status": "blocked", "code": "loan_return_removed",
+                "retry": "none"}
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Read-only first inspection; restart recovery never mutates ADEPT."""
-        from .core.return_adept_orchestrator import adept_return_key
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-            return {"status": "not_requested", "scope": "adobe_first_paris"}
-        try:
-            account, _session, _key = self._return_loan_identity(loan)
-        except AttentionRequired as exc:
-            return {
-                "status": "failed", "scope": "adobe_first_paris",
-                "code": return_adept_orchestrator.return_preflight_code(exc),
-            }
-        key = adept_return_key(
-            loan.source_provider, loan.source_credential,
-            str(account.unique_id or "primary"), str(loan.id),
-        )
-        if self.storage.loan_return_state(key) is None:
-            return {"status": "not_requested", "scope": "adobe_first_paris"}
-        return self.return_loan_prefer_adept(loan)
+        """Historical inspection only; never resume a legacy return attempt."""
+        return {"status": "verification_unavailable",
+                "code": "loan_return_removed", "retry": "none"}
 
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        if str(loan.source_provider).lower() != "paris":
-            return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
-        try:
-            with InterProcessLock(self._return_operation_lock_file(loan)):
-                return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
-        except LockBusyError:
-            return {
-                "status": "attention_required", "scope": "provider_pnb_only",
-                "code": "loan_return_busy", "retry": "verification_only",
-            }
-
-    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        """PNB provider return with an at-most-once POST until verified."""
-        return provider_loan_return.return_digital(
-            self, loan, explicit_retry=explicit_retry, _TRACE_LOG=_TRACE_LOG,
-        )
-
-
+        """Retired PNB/provider return entry; no mutation even on direct call."""
+        return {"status": "blocked", "code": "loan_return_removed",
+                "retry": "none"}
 
     def pnb_preferences(self) -> dict[str, Any]:
         return self._session_for_account().digital_preferences(self.current_account)
@@ -2002,18 +1954,10 @@ class LibraryService:
         return None
 
     def return_adept_acquisition(self, acquisition_id: str) -> dict[str, Any]:
-        try:
-            with InterProcessLock(acquisition_lock_file()):
-                return self._return_adept_acquisition(acquisition_id)
-        except LockBusyError as exc:
-            raise AttentionRequired("Une acquisition est déjà en cours.", code="acquisition_busy") from exc
-
-    def _return_adept_acquisition(self, acquisition_id: str) -> dict[str, Any]:
-        """Explicit return, exact origin/ID, fresh registry before and after CLI."""
-        return adept_acquisition_return.return_adept_acquisition(
-            self, acquisition_id, AttentionRequired=AttentionRequired,
-            ProviderConfigurationError=ProviderConfigurationError,
-            DrmMutationRequest=DrmMutationRequest, time=time,
+        """Retired: never dispatch an ADEPT return or mutate its origin."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
     def execute_drm_mutation(self, request: DrmMutationRequest) -> dict[str, Any]:
@@ -2023,6 +1967,12 @@ class LibraryService:
         and return in the following plugin release. Existing acquisition handlers
         remain source-compatible.
         """
+        operation = getattr(request, "operation", None)
+        if type(operation) is str and operation.casefold() == "return":
+            raise AttentionRequired(
+                "Restitution volontaire retirée de Cifereca.",
+                code="loan_return_removed",
+            )
         manager = self._plugin_manager
         if manager is None:
             raise AttentionRequired(

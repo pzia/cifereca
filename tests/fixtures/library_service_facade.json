@@ -367,19 +367,11 @@
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
   },
-  "_return_loan_prefer_adept_guarded": {
-    "kind": "method",
-    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
-  },
   "verify_loan_return": {
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
   },
   "return_digital": {
-    "kind": "method",
-    "signature": "(self, loan: 'Loan', *, explicit_retry: 'bool' = False) -> 'dict[str, Any]'"
-  },
-  "_return_digital_guarded": {
     "kind": "method",
     "signature": "(self, loan: 'Loan', *, explicit_retry: 'bool' = False) -> 'dict[str, Any]'"
   },
@@ -452,10 +444,6 @@
     "signature": "(self, artifact_id: 'str', identity_id: 'str') -> 'dict[str, Any] | None'"
   },
   "return_adept_acquisition": {
-    "kind": "method",
-    "signature": "(self, acquisition_id: 'str') -> 'dict[str, Any]'"
-  },
-  "_return_adept_acquisition": {
     "kind": "method",
     "signature": "(self, acquisition_id: 'str') -> 'dict[str, Any]'"
   },

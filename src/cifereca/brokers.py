@@ -1541,7 +1541,11 @@ class AdeptLoanBrokerImpl:
         )
 
     def return_acquisition(self, acquisition_id: str):
-        return self.service.return_adept_acquisition(str(acquisition_id))
+        # Obsolete protocol entry: never forward to an installed older runtime.
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
 
 @dataclass(slots=True)

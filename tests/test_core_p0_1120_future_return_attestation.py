@@ -87,7 +87,9 @@ def test_future_confirmed_pnb_checkpoint_is_read_only_rechecked_without_post(tmp
         assert refreshed["verification"] == "provider_absent"
         assert session.posts == []
         assert session.checks == ["linked-b"]
-        assert service.return_digital(loan)["provider_inventory_verified"] is True
+        assert service.return_digital(loan) == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert session.posts == []
     finally:
         service.close()
@@ -114,12 +116,14 @@ def test_future_confirmed_adobe_first_checkpoint_rechecks_paris_without_replayin
         assert display["retry"] == "verification_only"
         assert service.storage.loan_return_state(key) == row
 
+        before = service.storage.loan_return_state(key)
         fresh = service.return_loan_prefer_adept(loan)
-        assert fresh["status"] == "paris_return_confirmed"
-        assert fresh["provider_return_confirmed"] is True
-        assert fresh["paris_verification"] == "provider_absent"
-        assert calls["mutations"] == 0
+        assert fresh == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert service.storage.loan_return_state(key) == before
+        assert calls["mutations"] == calls["inventory"] == 0
         assert paris.posts == 0
-        assert paris.accounts_read == ["linked-123"]
+        assert paris.accounts_read == []
     finally:
         service.close()

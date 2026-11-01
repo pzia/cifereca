@@ -57,23 +57,13 @@ def test_adept_inventory_error_has_no_private_chain_in_exportable_traceback(
     try:
         with pytest.raises(AttentionRequired) as caught:
             service.return_adept_acquisition(acquisition_id)
-        assert caught.value.code == "adept_return_verification_required"
-        assert caught.value.__cause__ is None
-        assert caught.value.__suppress_context__ is True
-        assert str(caught.value) == (
-            "État ADEPT non confirmé. Vérifiez le prêt ; le fichier est conservé."
-        )
+        assert caught.value.code == "loan_return_removed"
         rendered = "".join(traceback.format_exception(caught.value))
         assert "SECRET_ADOBE_SESSION" not in rendered
         assert "/home/reader/" not in rendered
         assert "HostileInventoryError" not in rendered
-        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
-        assert binding["return_verification"] == "verification_failed"
-        assert binding["return_available"] is False
+        assert service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]["loan_state"] == "active"
         assert local.read_bytes() == before_bytes
-        assert seen == {
-            "inventory": 2 if after_return else 1,
-            "mutation": 1 if after_return else 0,
-        }
+        assert seen == {"inventory": 0, "mutation": 0}
     finally:
         service.close()

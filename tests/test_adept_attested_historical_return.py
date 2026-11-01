@@ -96,10 +96,11 @@ def test_explicit_historical_return_freshly_checks_origin_once_and_keeps_file(tm
         service.storage.acquisition_put({**tracked, 'metadata': metadata})
         calls = stub_adept(service)
         first = service.return_loan_prefer_adept(loan)
-        assert first['status'] == 'paris_return_confirmed'
         second = service.return_loan_prefer_adept(loan)
-        assert second['adobe_return_confirmed'] is True
-        assert calls['mutations'] == 1 and calls['inventory'] >= 2
+        assert first == second == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert calls['mutations'] == calls['inventory'] == 0
         assert paris.posts == 0 and artifact.read_bytes() == before
         binding = service.storage.acquisition_get('adept-01')['metadata']
         assert binding['path'] == str(artifact)
@@ -122,9 +123,12 @@ def test_stale_historical_proof_never_mutates_without_fresh_exact_inventory(tmp_
         inventory = [] if failure == 'inventory_missing' else ([row, row] if failure == 'inventory_duplicate' else [row])
         service._kobo_adapter = lambda: SimpleNamespace(loans=lambda profile: {'loans': inventory})
         service.execute_drm_mutation = lambda request: pytest.fail('fresh proof missing: no DRM mutation')
+        before = service.storage.acquisition_get('adept-01')
         result = service.return_loan_prefer_adept(loan)
-        assert result['adobe_return_confirmed'] is False
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert paris.posts == 0
-        assert service.storage.acquisition_get('adept-01')['status'] == 'complete'
+        assert service.storage.acquisition_get('adept-01') == before
     finally:
         service.close()

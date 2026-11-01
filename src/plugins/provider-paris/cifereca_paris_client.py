@@ -1169,21 +1169,5 @@ class ParisClient:
         return self._timed("ACTION", "renew loan", work)
 
     def return_digital_loan(self, loan: Loan, uid: str = "") -> dict[str, Any]:
-        if loan.provider != "DILICOM" or not loan.can_return:
-            raise ParisError("Ce prêt numérique n'est pas marqué comme restituable")
-        def work():
-            r = self.client.post(
-                f"{self.base_url}{ACCOUNT_SERVICE}/ReturnDigitalLoan",
-                headers={**self._api_headers(), "Content-Type": "application/json; charset=UTF-8"},
-                json={"serviceCode": "DILICOM", "id": loan.id, "userUniqueIdentifier": uid},
-            )
-            return self._json(r, "return digital loan")
-        token=_BORROW_TRACE.set(uuid.uuid4().hex[:12])
-        _TRACE_LOG.info("TRACE paris provider-return phase=dispatch loan_ref=%s delegated=%s",hashlib.sha256(str(loan.id).encode()).hexdigest()[:12],bool(uid))
-        try:
-            result=self._timed("ACTION", "return digital loan", work)
-            _TRACE_LOG.info("TRACE paris provider-return phase=response-accepted server_request_accepted=true provider_inventory_verified=false")
-            return result
-        except Exception as exc:
-            _TRACE_LOG.warning("TRACE paris provider-return phase=failed error=%s",type(exc).__name__);raise
-        finally:_BORROW_TRACE.reset(token)
+        """Retired: never send ReturnDigitalLoan, even on a direct client call."""
+        raise ParisError("loan_return_removed")

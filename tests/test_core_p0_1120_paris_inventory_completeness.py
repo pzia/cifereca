@@ -49,19 +49,15 @@ def test_pnb_return_verifier_requires_complete_digital_upstream(
     service = _library(tmp_path, session=session)
     loan = _loan()
     try:
+        before = service.loan_return_state(loan)
         first = service.return_digital(loan)
-        assert first["status"] == "verification_unavailable"
-        assert first["provider_inventory_verified"] is False
-        assert first["verification"] == "unavailable"
-        assert first["retry"] == "verification_first"
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b"]
+        assert first == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert session.posts == [] and session.checks == []
+        assert service.loan_return_state(loan) == before
         assert PRIVATE not in json.dumps(first)
-        # Recovery is read-only and may not re-send a previously accepted POST.
-        second = service.verify_return_digital(loan)
-        assert second["status"] == "verification_unavailable"
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b", "linked-b"]
+        # A retired return cannot even start a verification-retry cycle.
     finally:
         service.close()
 
@@ -97,11 +93,10 @@ def test_typed_dilicom_proof_is_independent_from_syracuse_failure(tmp_path):
     loan = _loan()
     try:
         result = service.return_digital(loan)
-        assert result["status"] == "provider_return_confirmed"
-        assert result["verification"] == "provider_absent"
-        assert result["provider_inventory_verified"] is True
-        assert len(session.posts) == 1
-        assert session.checks == ["linked-b"]
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert session.posts == [] and session.checks == []
         assert PRIVATE not in json.dumps(result)
     finally:
         service.close()
