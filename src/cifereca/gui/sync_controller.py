@@ -73,11 +73,13 @@ def _build_sync_page(self):
     add_sync_action(heading, all_now)
     root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
-        label="Les interrupteurs ont des effets distincts : activation de la source "
-        "(connexion et synchronisation disponibles), actualisation programmée des "
-        "notices et droits (si prise en charge), et téléchargement automatique "
-        "des achats/prêts (autorisation séparée par compte). "
-        "La recherche de catalogue seule n'est pas une synchronisation.",
+        label="Synchroniser actualise les inventaires des sources et peut recevoir "
+        "les fichiers selon le consentement de ce compte. Les interrupteurs ont "
+        "des effets distincts : activation de la source (connexion et synchronisation "
+        "disponibles), actualisation programmée des notices et droits (si prise en "
+        "charge), et téléchargement automatique des achats/prêts "
+        "(autorisation séparée par compte). La recherche de catalogue seule "
+        "n'est pas une synchronisation.",
         xalign=0,
     )
     scope_note.set_wrap(True)
@@ -479,7 +481,8 @@ def _refresh_sync_page(self) -> None:
             "n’autorise aucun téléchargement automatique."
             if source.sync_capable is not True else
             "Activer cette source pour la connexion et ses synchronisations disponibles. "
-            "N'autorise pas à elle seule la livraison automatique des achats et prêts."
+            "Les téléchargements automatiques exigent une autorisation distincte : "
+            "ce bouton n'autorise pas à lui seul la livraison des achats et prêts."
         )
         def toggled(widget, _param, sid=source.source_id):
             if not sync_action_scope_current(self, scope):
