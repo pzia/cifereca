@@ -348,6 +348,37 @@ def test_ui_future_capability_only_offers_dialog_not_permission(tmp_path):
         service.close()
 
 
+@pytest.mark.parametrize("raw", [
+    "corrupt-before-restart",
+    "",
+    '{"schema":1,"operation":"loan.borrow","status":"unknown"}',
+])
+def test_ui_hides_button_on_corrupt_spent_borrow_checkpoint(tmp_path, raw):
+    """The storage rejects re-POST on *presence* even if decoding fails."""
+    service, session, account, item = setup(tmp_path)
+    try:
+        key = borrow_claim_key(account, item)
+        assert key
+        assert manual_bnf_borrow_available(service, item) is True
+        service.storage.metadata_set(key, raw)
+        assert service.storage.metadata_get(key) is not None
+        assert service.storage.loan_borrow_state(key) is None
+        assert service.storage.loan_borrow_claim_once(key, "retry")[0] is False
+        assert manual_bnf_borrow_available(service, item) is False
+        assert service.can_borrow_bnf(item) is False
+        outcome = service.borrow_bnf_manual(
+            item, expected_identity_id="default",
+            confirmed=True, site_checked=True,
+            expected_context_epoch=service._account_context_epoch,
+            expected_account=account,
+        )
+        assert outcome["status"] == "verification_unavailable"
+        assert outcome["reason_code"] == "borrow_previous_attempt"
+        assert session.reads == session.dispatches == []
+    finally:
+        service.close()
+
+
 def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
