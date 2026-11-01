@@ -144,6 +144,9 @@ def return_loan_prefer_adept(
     restart only reads ADEPT/Paris inventories: Adobe is never re-mutated.
     """
 
+    # #4048: direct callers must not bypass the retired Core service method.
+    return {"status": "blocked", "code": "loan_return_removed", "retry": "none"}
+
     if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
         return self.return_digital(loan)
     try:
