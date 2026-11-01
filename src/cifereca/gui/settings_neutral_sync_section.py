@@ -14,8 +14,18 @@ from typing import Any
 @dataclass(frozen=True)
 class SyncSettingsControls:
     library_dir_row: Any
-    run_backup_now: Any  # Compatibility with the existing navigation binder.
-    backup_status: Any   # Compatibility with the existing status binder.
+    open_sync_button: Any
+    sync_navigation_status: Any
+
+    @property
+    def run_backup_now(self) -> Any:
+        """Old UI port, read-only alias; never invokes a backup."""
+        return self.open_sync_button
+
+    @property
+    def backup_status(self) -> Any:
+        """Old UI port, read-only alias; contains navigation text only."""
+        return self.sync_navigation_status
 
 
 def build_sync_settings_section(
@@ -42,5 +52,5 @@ def build_sync_settings_section(
     library.set_text(str(config.get("library.directory", "~/EBooks") or "~/EBooks"))
     download_group.add(library)
     return SyncSettingsControls(
-        library_dir_row=library, run_backup_now=navigate, backup_status=row,
+        library_dir_row=library, open_sync_button=navigate, sync_navigation_status=row,
     )
