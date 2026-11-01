@@ -84,6 +84,11 @@ class BnfBorrowPreflightTests(unittest.TestCase):
             "/loans/../logout",
             "/loans/%2e%2e/logout",
             "/loans/new#token",
+            "/loans/new?resource_id=different",
+            "/loans/new?resource_id=syntheticR1&resource_id=different",
+            "/loans/new?book_id=different",
+            "/loans/new?resource%5Fid=different",
+            "/loans/new?resource_id=%GG",
             "/loans/new\\evil",
             "",
         )
