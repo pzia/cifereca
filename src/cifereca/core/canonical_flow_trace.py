@@ -16,7 +16,7 @@ from .source_convergence import SourceKey
 
 _LOG = logging.getLogger("cifereca")
 _PHASES = frozenset({
-    "observed", "presence", "recovery", "delivery", "receipt",
+    "observed", "presence", "stock_recovery", "recovery", "delivery", "receipt",
     "promotion", "publication", "terminal",
 })
 _STEPS = frozenset({"start", "ok", "miss", "failed"})
