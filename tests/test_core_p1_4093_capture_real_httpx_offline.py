@@ -17,14 +17,20 @@ import httpx
 from cifereca import app, http_trace
 from cifereca.core.capture_session_export import validate_capture_session
 from cifereca.http_trace import HTTPTraceCapture, TraceHTTPTransport
+from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 
 
 def test_capture_gui_session_observes_only_real_mock_httpx_requests_and_html(
     monkeypatch, tmp_path, capsys,
 ):
-    monkeypatch.setattr(sys, "argv", [
-        "cifereca", "--capture", "--capture-dir", str(tmp_path),
-    ])
+    previous_level = diagnostics_level()
+    set_diagnostics_level("normal")
+    before_mirrors = {
+        handler for handler in logging.getLogger("cifereca").handlers
+        if getattr(handler, "_cifereca_trace_console", False)
+    }
+    input_argv = ["cifereca", "--capture", "--capture-dir", str(tmp_path)]
+    monkeypatch.setattr(sys, "argv", input_argv)
     monkeypatch.setattr(app, "build_identity", lambda: {"status": "unavailable"})
     # This process-local buffer represents exactly the newly started GUI.
     fresh = HTTPTraceCapture()
@@ -93,3 +99,11 @@ def test_capture_gui_session_observes_only_real_mock_httpx_requests_and_html(
     assert "PRIVATE_KEY" not in errors
     assert "PRIVATE_SYNTHETIC_LIVRE" not in errors
     assert requests == [("GET", "/catalog"), ("GET", "/book")]
+    assert diagnostics_level() == "normal"
+    assert sys.argv is input_argv
+    after_mirrors = {
+        handler for handler in logging.getLogger("cifereca").handlers
+        if getattr(handler, "_cifereca_trace_console", False)
+    }
+    assert after_mirrors == before_mirrors
+    set_diagnostics_level(previous_level)
