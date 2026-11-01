@@ -39,7 +39,8 @@ def test_compressed_html_with_trailing_bytes_is_not_claimed_complete(
         index = json.loads(archive.read("http/index.json"))
         assert archive.read("http/bodies/" + "a" * 32 + "-response.bin") == raw
         assert manifest["html_projected"] == 0
-        assert manifest["html_unavailable"] == [{
+        assert manifest["html_unavailable"] == 1
+        assert index["html_unavailable"] == [{
             "exchange_ref": "a" * 32, "reason": "encoding_unavailable",
         }]
         assert index["html_projections"] == []
@@ -68,5 +69,5 @@ def test_single_complete_compressed_html_still_projects(
         assert archive.read("html/" + "b" * 32 + ".html") == html
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["html_projected"] == 1
-        assert manifest["html_unavailable"] == []
+        assert manifest["html_unavailable"] == 0
     assert validate_capture_session(archive_path)["status"] == "valid"
