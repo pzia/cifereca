@@ -68,8 +68,9 @@ def test_actual_startup_decisions_have_identical_facts_and_task_reference(
         assert terminal["code"] == ("acquisition_failed" if failure else "complete")
         worker = next(r for r in report["events"] if "task correlation" in r["message"])
         assert worker["task_ref"] == terminal["task_ref"]
-        # A successful worker return can carry a failed business result.
-        assert "status=success" in worker["message"]
+        # #2888: the worker can return normally without the *business*
+        # operation succeeding. Preserve the same source task_ref and status.
+        assert ("status=failed" if failure else "status=success") in worker["message"]
         assert "PRIVATE" not in application_log.read_text()
         assert "PRIVATE" not in json.dumps(report)
         assert calls == []
