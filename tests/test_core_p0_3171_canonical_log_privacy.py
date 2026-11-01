@@ -97,9 +97,9 @@ def test_delivery_error_remains_failed_without_private_exception(
             service, account, snapshot, root, lock_path, {source}, _fail,
         )
     assert len(result) == 1 and result[0].status == "failed"
-    assert result[0].reason == "delivery_or_commit_failed"
+    assert result[0].reason == "canonical_delivery_failed"
     assert rows(service.storage) == (0, 0, 0, 0)
-    _logged_code(caplog, "canonical_delivery_or_commit_failed")
+    _logged_code(caplog, "canonical_delivery_failed")
 
 
 def test_postcommit_catalog_projection_failure_keeps_origin_and_hides_error(

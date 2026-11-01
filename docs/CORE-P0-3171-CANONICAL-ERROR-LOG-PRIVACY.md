@@ -20,7 +20,11 @@ ces chemins ; l'opération est observable par un **code fermé** stable.
 | Admission d'un compte non lié en v14 | `canonical_rights_core_binding_changed` | aucune SourceReference ajoutée |
 | Lecture initiale du consentement | `canonical_consent_read_failed` | consentement vide ; aucun GET |
 | Revalidation du consentement | `canonical_consent_lookup_failed` | pending ou blocked ; aucun nouveau droit |
-| Livraison ou commit en erreur | `canonical_delivery_or_commit_failed` | failed ; jamais de faux reçu |
+| Échec de lecture de reprise | `canonical_recovery_failed` | failed ; aucun GET supplémentaire déclenché par cette exception |
+| Livraison fournisseur/ADEPT en erreur | `canonical_delivery_failed` | failed ; pas de publication B |
+| Écriture du reçu de livraison en erreur | `canonical_receipt_failed` | failed ; aucun B, retry distinct du GET selon preuve existante |
+| Copie durable depuis le staging en erreur | `canonical_promotion_failed` | failed ; ancien staging/réception conservé pour reprise |
+| Commit canonique OriginLink/Placement en erreur | `canonical_publication_failed` | failed ; reçu canonique récupérable si déjà durable |
 | Marquage post-commit du reçu | `canonical_intake_state_update_failed` | OriginLink/Placement déjà publiés conservés |
 | Projection de catalogue post-commit refusée | `canonical_catalog_index_failed` | aucune révocation et pas de nouveau GET |
 | Projection de catalogue différée | `canonical_catalog_index_deferred` | reprise au scan normal |
