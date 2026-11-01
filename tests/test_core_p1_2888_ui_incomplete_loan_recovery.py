@@ -108,7 +108,9 @@ def test_incomplete_outcome_without_activity_reporter_opens_failure_not_success_
     window.toast.assert_not_called()
 
 
-def test_complete_loan_still_announces_success_without_false_failure():
+def test_complete_loan_announces_success_without_reintroducing_adept_return():
+    # Legacy receipts may still contain this obsolete capability bit. Its
+    # presence must not revive a voluntary return action or advertise one.
     result = {"status": "complete", "adept_return_available": True}
     window = window_with_outcome(result)
     _loan, work, completed = prepare_callback(window)
@@ -117,5 +119,6 @@ def test_complete_loan_still_announces_success_without_false_failure():
     args, kwargs = window._activity_result.call_args
     assert kwargs == {}
     assert "Livre récupéré" in args[0]
-    assert "restitution ADEPT disponible" in args[0]
+    assert "restitution ADEPT disponible" not in args[0]
+    assert "restitution" not in args[0].lower()
     window.show_error.assert_not_called()
