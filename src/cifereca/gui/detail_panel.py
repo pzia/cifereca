@@ -20,7 +20,7 @@ from .booking_view import booking_presentation
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
-from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation
+from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
 from .loan_view import loan_due_detail_value
@@ -890,8 +890,7 @@ class DetailPanel(Gtk.Box):
         )
         if direct_download:
             self._direct_download_action(item)
-        elif (item.medium == "digital" and availability == "Empruntable"
-              and item.source_provider not in {"numilog", "numilog-catalog", "kobo"}):
+        elif search_detail_borrow_action_candidate(item, availability):
             # Commercial store inventory/catalogues never become loan sources,
             # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
@@ -903,7 +902,13 @@ class DetailPanel(Gtk.Box):
             else:
                 row = Adw.ActionRow()
                 row.set_title("Emprunt requis avant téléchargement")
-                row.set_subtitle("Emprunt indisponible pour l’identité et le compte actifs, ou non pris en charge par cette source.")
+                row.set_subtitle(
+                    "Une demande BnF existe déjà pour ce livre, ou le compte "
+                    "actif n’est pas admissible. Consultez Mes emprunts."
+                    if item.source_provider == "bnf-pret"
+                    else "Emprunt indisponible pour l’identité et le compte "
+                         "actifs, ou non pris en charge par cette source."
+                )
                 action.add(row)
                 self._append_content(action)
         elif item.source_provider == "kobo" and item.owned:
