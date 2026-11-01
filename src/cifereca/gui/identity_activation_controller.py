@@ -37,8 +37,15 @@ def activate_identity(window, identity_id: str) -> None:
         )
     window._identity_context_generation += 1
     window._dispose_maintenance_lines()
-    if window.view_stack.get_visible_child_name() == "tools":
+    visible_route = window.view_stack.get_visible_child_name()
+    if visible_route == "tools":
         window._refresh_tools_page()
+    elif visible_route == "sync":
+        # Reproject the newly selected identity before the async loan load.
+        # _refresh_sync_page resets the old cards/actions synchronously and
+        # advances the preview generation: late A callbacks cannot repaint B.
+        # No sync/network or consent change is started by this local refresh.
+        window._refresh_sync_page()
     window._account_context_generation += 1
     window._cached_book_request_generation += 1
     window._cached_book_context = None
