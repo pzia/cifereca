@@ -127,3 +127,29 @@ def test_malformed_arguments_never_echo_private_unexpected_text(tmp_path):
         assert completed.stderr == "capture_validator_invalid_arguments\n"
         assert "PRIVATE" not in completed.stderr
         assert private_arg not in completed.stderr
+
+
+def test_resigned_manifest_cannot_inject_private_text_into_verdict(tmp_path):
+    source = _archive(tmp_path)
+    with zipfile.ZipFile(source) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    assert manifest["coverage"] == "instrumented_only"
+    # The manifest has no separate signing digest. This malicious change
+    # leaves every member SHA and the HTTP index internally consistent.
+    manifest["coverage"] = "PRIVATE_CREDENTIAL_FROM_UNTRUSTED_ARCHIVE"
+    members["manifest.json"] = json.dumps(manifest).encode("utf-8")
+    tampered = tmp_path / "PRIVATE_FORGED_MANIFEST.zip"
+    with zipfile.ZipFile(tampered, "w") as archive:
+        for name, body in members.items():
+            archive.writestr(name, body)
+
+    for output_mode in (("--json",), ()):
+        completed = _run("--validate", str(tampered), *output_mode)
+        assert completed.returncode == 2
+        assert "PRIVATE" not in completed.stdout + completed.stderr
+        assert completed.stderr == ""
+        if output_mode:
+            assert json.loads(completed.stdout)["code"] == "capture_archive_invalid"
+        else:
+            assert completed.stdout == "capture_archive_invalid\n"
