@@ -35,7 +35,7 @@ def test_interrupted_or_untrusted_current_state_is_visible_without_provider_disp
     assert shown.action_enabled is True
 
 
-@pytest.mark.parametrize("status", ["idle", "success", "running", "cancelled"])
+@pytest.mark.parametrize("status", ["idle", "success", "ok", "running", "cancelled"])
 def test_normal_or_explicitly_cancelled_source_is_not_an_actionable_warning(status):
     src = _source(provider_id="future", status=status)
     assert sync_source_attention(src) is None
@@ -73,3 +73,27 @@ def test_gtk_summary_exposes_interruptions_without_network_or_downloads():
     assert window._sync_attention_row.visible is True
     assert not window.runner.tasks
     assert all(call[0] == "sources" for call in calls)
+
+
+@pytest.mark.parametrize(("status", "expected_label", "expected_alert"), [
+    ("ok", "Dernier succès 31/10/2026 08:00", None),
+    ("skipped", "Non exécutée", ("warning", "Synchronisation : non exécutée")),
+])
+def test_real_broker_success_and_revoked_skip_are_not_misclassified(
+    status, expected_label, expected_alert,
+):
+    # SourceSyncBroker writes status=ok on committed success and status=skipped
+    # when source admission has been revoked before the provider inventory.
+    src = _source(
+        provider_id="fictional.future", status=status, error="",
+        last_attempt="2026-11-01T09:00:00",
+        last_success="2026-10-31T08:00:00",
+    )
+    assert sync_source_attention(src) == expected_alert
+    shown = sync_source_presentation(src)
+    assert shown.sync_label == expected_label
+    if status == "skipped":
+        assert "Dernier succès confirmé : 31/10/2026 08:00" in shown.summary
+    else:
+        assert "État non confirmé" not in shown.summary
+        assert "Dernier succès confirmé :" not in shown.summary
