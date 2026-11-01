@@ -11,7 +11,9 @@ import json
 
 import pytest
 
-from cifereca.core.manual_bnf_borrow import manual_bnf_borrow
+from cifereca.core.manual_bnf_borrow import (
+    manual_bnf_borrow, manual_bnf_borrow_available,
+)
 from cifereca.core.borrow_action_scope import borrow_claim_key
 from cifereca.models import Account, Loan, SearchResult
 from cifereca.providers.base import (
@@ -277,6 +279,78 @@ def test_legacy_gtk_borrow_never_dispatches_bnf_even_if_capability_changes():
         )
         assert isinstance(guard.body[-1], ast.Return)
         if name == "can_borrow_item":
-            assert guard.body[-1].value.value is False
+            assert ast.unparse(guard.body[-1].value) == (
+                "self.service.can_borrow_bnf(item)"
+            )
         else:
             assert guard.body[-1].value is None
+            assert any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "present_bnf_borrow"
+                for call in ast.walk(guard)
+            )
+    # Generic session.borrow remains only in the non-BnF branch.
+    source = ast.unparse(next(n for n in main.body
+                             if isinstance(n, ast.FunctionDef)
+                             and n.name == "borrow_search_item"))
+    assert source.index("present_bnf_borrow(") < source.index("session.borrow(")
+
+
+def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_path):
+    service, session, account, item = setup(tmp_path, declared=False)
+    try:
+        assert manual_bnf_borrow_available(service, item) is False
+        assert service.can_borrow_bnf(item) is False
+        assert session.reads == session.dispatches == []
+        assert not service.storage.acquisitions()
+    finally:
+        service.close()
+
+
+def test_ui_future_capability_only_offers_dialog_not_permission(tmp_path):
+    service, session, account, item = setup(tmp_path)
+    try:
+        assert manual_bnf_borrow_available(service, item) is True
+        assert service.can_borrow_bnf(item) is True
+        session._evidence = evidence(account, item, permission="unknown")
+        assert manual_bnf_borrow_available(service, item) is True
+        assert session.reads == session.dispatches == []
+        result = service.borrow_bnf_manual(
+            item, expected_identity_id="default", confirmed=True,
+            expected_context_epoch=service._account_context_epoch,
+            expected_account=account,
+        )
+        assert result["status"] == "blocked"
+        assert session.dispatches == []
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item)) is None
+    finally:
+        service.close()
+
+
+def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
+    service, session, account, item = setup(tmp_path)
+    try:
+        prior = service._account_context_epoch
+        for kw in (
+            {"expected_context_epoch": prior + 1},
+            {"expected_context_epoch": "0"},
+            {"expected_account": replace(account)},
+        ):
+            result = service.borrow_bnf_manual(
+                item, expected_identity_id="default", confirmed=True, **kw)
+            assert result["status"] == "blocked"
+        assert session.reads == session.dispatches == []
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item)) is None
+        # A -> B -> A must not replay consent even when the same account
+        # instance and selected source have been restored.
+        service._account_context_epoch += 2
+        result = service.borrow_bnf_manual(
+            item, expected_identity_id="default", confirmed=True,
+            expected_context_epoch=prior, expected_account=account)
+        assert result["status"] == "blocked"
+        assert session.dispatches == []
+    finally:
+        service.close()
