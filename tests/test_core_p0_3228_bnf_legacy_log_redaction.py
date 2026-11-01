@@ -12,6 +12,9 @@ import re
 from types import SimpleNamespace
 
 from cifereca.core.bnf_auto_materialization import _receipt_local_file_verified
+from cifereca.core.diagnostic_acquisition_failure import (
+    failure_payload, is_acquisition_failure,
+)
 from cifereca.models import Account
 
 
@@ -70,3 +73,55 @@ def test_os_error_never_echoes_path_account_credential_or_traceback(caplog):
     assert private not in caplog.text
     assert "https://" not in caplog.text
     assert "Traceback" not in caplog.text
+
+
+def test_new_closed_bnf_failures_preserve_diagnostic_classification():
+    codes = [
+        ("receipt_file_check_failed", None, "unknown",
+         "local_evidence_cause"),
+        ("acquisition_failed stage=delivery_or_import", "delivery_or_import",
+         "failed", "loan_download_cause"),
+    ]
+    codes.extend((
+        "local_evidence_unavailable stage=" + stage, stage,
+        "unknown", "local_evidence_cause",
+    ) for stage in (
+        "declared_lookup", "declared_revalidation",
+        "indexed_candidates", "physical_candidates",
+    ))
+    for code, expected_phase, status, operation in codes:
+        msg = "TRACE bnf_auto code=" + code
+        record = logging.LogRecord(
+            "cifereca", logging.WARNING, __file__, 1, msg, (), None,
+        )
+        assert is_acquisition_failure(record)
+        payload = failure_payload(record)
+        assert payload is not None
+        assert payload["category"] == "ACQUISITION"
+        assert payload["status"] == status
+        assert payload["operation"] == operation
+        assert payload["detail"].get("phase") == expected_phase
+        assert "identity_id" not in str(payload)
+        assert "credential_id" not in str(payload)
+        assert "loan_id" not in str(payload)
+
+
+def test_closed_failure_drops_forged_arguments_and_sensitive_exception():
+    private = "SECRET-CHILD-PRIVATE-URL-DO-NOT-EXPORT"
+    try:
+        raise OSError("https://pret.bnf.fr/token?csrf=" + private)
+    except OSError:
+        import sys
+        private_exc = sys.exc_info()
+    record = logging.LogRecord(
+        "cifereca", logging.WARNING, __file__, 1,
+        "TRACE bnf_auto code=acquisition_failed stage=delivery_or_import",
+        (private,), private_exc,
+    )
+    assert is_acquisition_failure(record)
+    payload = failure_payload(record)
+    assert payload["status"] == "failed"
+    assert payload["detail"]["phase"] == "delivery_or_import"
+    assert "cause" not in payload["detail"]
+    assert private not in str(payload)
+    assert "https://" not in str(payload)
