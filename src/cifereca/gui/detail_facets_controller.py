@@ -1,12 +1,10 @@
 """Explicit GTK-bound detail facet adapter (#1129).
 
-MainWindow owns the widgets, filter callbacks and ADEPT capability. The
-facade injects GTK/Adwaita and task priority; imports remain Core/headless.
+MainWindow owns the widgets and read-only filter callbacks. The facade
+injects GTK/Adwaita; no ADEPT return action is presented (#4048).
 No new facet extraction/lookup engine is introduced.
 """
 from __future__ import annotations
-
-from ..plugin_api import UserFacingError
 
 
 def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
@@ -103,49 +101,3 @@ def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
                 parent.append(author_box)
                 subtitle._cifereca_author_facets = author_box
 
-    identity = window.service.current_identity
-    binding = window.service.adept_return_for_artifact(
-        str(item.get("artifact_id") or ""),
-        identity.identity_id if identity else "",
-    )
-    if binding:
-        button = Gtk.Button(label="Restituer le prêt ADEPT")
-        button.set_tooltip_text(
-            "Restituer avec le profil d’origine ; conserver le fichier local. "
-            "Le retour fournisseur reste une action distincte."
-        )
-        def return_loan(_button):
-            if getattr(window, "_closed", False):
-                return
-            identity_generation = getattr(window, "_identity_context_generation", None)
-            account_generation = getattr(window, "_account_context_generation", None)
-
-            def report_failure(exc):
-                # An async ADEPT error is not automatically safe for GTK.
-                if (getattr(window, "_closed", False)
-                        or getattr(window, "_identity_context_generation", None) != identity_generation
-                        or getattr(window, "_account_context_generation", None) != account_generation):
-                    return
-                message = (exc.user_message if isinstance(exc, UserFacingError)
-                           else "Restitution ADEPT indisponible")
-                window.show_error(message, "Restitution ADEPT impossible")
-            window.runner.submit(
-                "Restitution du prêt ADEPT…",
-                lambda: window.service.return_adept_acquisition(binding["acquisition_id"]),
-                lambda _result: (
-                    button.set_sensitive(False),
-                    window._activity_result(
-                        "Retour enregistré, jeton absent · fichier conservé"
-                        + (
-                            " · état local vérifié"
-                            if _result.get("verification") == "confirmed"
-                            else " · vérification locale non confirmée"
-                        )
-                    ),
-                ),
-                report_failure,
-                control=button,
-                priority=TaskPriority.USER_ACTION,
-            )
-        button.connect("clicked", return_loan)
-        detail.add_actions([button])

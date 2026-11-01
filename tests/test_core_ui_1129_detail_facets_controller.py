@@ -1,4 +1,4 @@
-"""P0 #1129: real facet binding, GTK boundary and ADEPT action preserved."""
+"""P0 #1129: real facet binding and GTK boundary, without voluntary ADEPT return."""
 from __future__ import annotations
 
 import ast
@@ -176,81 +176,36 @@ def test_unprojected_publisher_uses_preserved_original_subtitle_after_refresh():
     assert len(row.suffix) == 1
 
 
-def test_adept_return_is_explicit_and_keeps_user_action_priority():
+def test_adept_return_cannot_be_invoked_from_any_detail_facet():
+    """#4048: no facet API, button, task or ADEPT return when an origin exists."""
     binding = {"acquisition_id": "acq-7"}
     host, groups = _host([], adept=binding)
-    requests = []
-    events = []
-    host.service.return_adept_acquisition = lambda key: events.append(("return", key)) or {
-        "verification": "confirmed"
-    }
-    host._activity_result = lambda value: events.append(("feedback", value))
-    host.show_error = lambda *_a: events.append(("error",))
-    host.runner.submit = lambda *args, **kw: requests.append((args, kw))
-    added = []
+    events, requested, added = [], [], []
+    host.service.adept_return_for_artifact = lambda *args: (
+        events.append(("legacy-lookup", args)) or binding
+    )
+    host.service.return_adept_acquisition = lambda *_a: (
+        events.append(("FORBIDDEN RETURN",)) or {}
+    )
+    host.runner.submit = lambda *args, **kw: requested.append((args, kw))
     detail = NS(content=Widget(), _subtitle_label=None,
                 add_actions=lambda actions: added.extend(actions))
     _execute(host, detail, {"artifact_id": "artifact-7"})
-    assert len(added) == 1
-    button = added[0]
-    assert button.label == "Restituer le prêt ADEPT"
-    assert requests == []
-    button.click()
-    assert len(requests) == 1
-    args, kw = requests[0]
-    assert kw["priority"] == 1
-    assert kw["control"] is button
-    assert args[1]() == {"verification": "confirmed"}
-    args[2]({"verification": "confirmed"})
-    assert button.enabled is False
-    assert events == [
-        ("return", "acq-7"),
-        ("feedback", "Retour enregistré, jeton absent · fichier conservé · état local vérifié"),
-    ]
-
-
-def _return_error_task():
-    binding = {"acquisition_id": "acq-7"}
-    host, _groups = _host([], adept=binding)
-    host._closed = False
-    host._identity_context_generation = 4
-    host._account_context_generation = 8
-    events, requests, added = [], [], []
-    host.show_error = lambda *args: events.append(args)
-    host.runner.submit = lambda *args, **kwargs: requests.append((args, kwargs))
-    detail = NS(content=Widget(), _subtitle_label=None,
-                add_actions=lambda actions: added.extend(actions))
+    assert added == []
+    assert requested == []
+    assert events == []
+    # Rebinding is read-only, including after an identity context switch.
+    host.service.current_identity = NS(identity_id="other")
     _execute(host, detail, {"artifact_id": "artifact-7"})
-    added[0].click()
-    assert len(requests) == 1
-    return host, requests[0][0][3], events
+    assert added == requested == events == []
 
 
-def test_adept_return_error_is_constant_and_does_not_stringify_provider_failure():
-    class HostileError(RuntimeError):
-        def __str__(self):
-            raise AssertionError("Cannot serialize private ADEPT error")
-
-    host, failure, events = _return_error_task()
-    failure(HostileError("PRIVATE_TOKEN"))
-    assert events == [("Restitution ADEPT indisponible", "Restitution ADEPT impossible")]
-
-
-def test_adept_return_preserves_explicit_safe_message_not_technical_detail():
-    from cifereca.plugin_api import UserFacingError
-    host, failure, events = _return_error_task()
-    failure(UserFacingError("Profil Adobe absent", code="profile_missing",
-                            technical_detail="https://private.invalid/?token=PRIVATE"))
-    assert events == [("Profil Adobe absent", "Restitution ADEPT impossible")]
-    assert "PRIVATE" not in repr(events)
-
-
-def test_late_adept_return_failure_does_not_alert_after_context_change():
-    for attr in ("_closed", "_identity_context_generation", "_account_context_generation"):
-        host, failure, events = _return_error_task()
-        if attr == "_closed":
-            host._closed = True
-        else:
-            setattr(host, attr, getattr(host, attr) + 1)
-        failure(RuntimeError("PRIVATE_TOKEN"))
-        assert events == []
+def test_facets_module_has_no_return_dispatch_or_adept_lookup():
+    tree = ast.parse(OWNER.read_text(encoding="utf-8"))
+    names = {getattr(node, "attr", "") for node in ast.walk(tree)}
+    assert "return_adept_acquisition" not in names
+    assert "adept_return_for_artifact" not in names
+    assert "submit" not in names
+    assert not any(isinstance(node, ast.Constant)
+                   and node.value == "Restituer le prêt ADEPT"
+                   for node in ast.walk(tree))

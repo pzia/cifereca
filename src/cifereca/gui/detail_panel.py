@@ -626,7 +626,7 @@ class DetailPanel(Gtk.Box):
         if loan.medium == "digital":
             binding = self.window.service.adept_return_status_for_loan(loan)
             labels = {"ready": "Liaison enregistrée", "loan_id_missing": "Identifiant ADEPT absent du résultat d’acquisition", "profile_missing": "Profil d’origine non identifié", "no_acquisition": "Aucune acquisition liée à ce prêt", "returned": "Retour enregistré dans ADEPT, jeton absent", "returned_unverified": "Ancien état restitué à vérifier dans ADEPT", "provider_conflict": "Retour local enregistré, mais prêt fournisseur encore présent · rattachement possible", "verification_failed": "Confirmation ADEPT indisponible : vérifier le prêt", "expired": "Prêt ADEPT expiré", "token_missing": "Jeton de retour absent", "unresolved": "Fichier absent de l’inventaire ADEPT", "ambiguous": "Plusieurs prêts correspondent au fichier", "inventory_error": "Inventaire ADEPT incomplet", "binding_conflict": "Identifiant ADEPT différent de la liaison enregistrée"}
-            self._group("Restitution ADEPT", [("Liaison", labels.get(binding["status"], "Indisponible")),
+            self._group("État du prêt ADEPT (lecture seule)", [("Liaison", labels.get(binding["status"], "Indisponible")),
                 ("Identifiant ADEPT", binding.get("adept_loan_id") or "—"), ("Profil d’origine", binding.get("profile_name") or "—")])
             if binding.get("acquisition_id") and hasattr(self.window.service, "reconcile_adept_acquisition"):
                 check = self.window.action_button("Vérifier le prêt ADEPT", "view-refresh-symbolic")
@@ -638,11 +638,6 @@ class DetailPanel(Gtk.Box):
                 attach.set_tooltip_text("Choisir un prêt par titre et profil, puis confirmer le rattachement. Aucun téléchargement ni retour.")
                 attach.connect("clicked", lambda _b: self.window.choose_adept_loan(binding["acquisition_id"], loan, attach))
                 buttons.append(attach)
-            if binding.get("return_available"):
-                ret_adept = self.window.action_button("Restituer le prêt ADEPT", "edit-undo-symbolic")
-                ret_adept.set_tooltip_text("Utilise la liaison ADEPT et le profil d’origine ; conserve les fichiers locaux.")
-                ret_adept.connect("clicked", lambda _b: self.window.return_adept_from_detail(binding["acquisition_id"], ret_adept))
-                buttons.append(ret_adept)
         # #4047: only physical Paris renewal is offered; no experimental
         # toggle can grant a digital or cross-provider mutation.
         # Local import also keeps the historical isolated show_loan adapter safe.
@@ -651,12 +646,6 @@ class DetailPanel(Gtk.Box):
             renew = Gtk.Button(label="Prolonger")
             renew.connect("clicked", lambda _b: self.window.confirm_renew(loan, renew))
             buttons.append(renew)
-        experimental = bool(self.window.config.get("experimental_actions", False))
-        if experimental and loan.can_return:
-            ret = Gtk.Button(label="Rendre maintenant")
-            ret.add_css_class("destructive-action")
-            ret.connect("clicked", lambda _b: self.window.confirm_return(loan, ret))
-            buttons.append(ret)
         self._actions(buttons)
         if loan.cannot_renew_reason:
             note = Gtk.Label(label=loan.cannot_renew_reason, xalign=0)
