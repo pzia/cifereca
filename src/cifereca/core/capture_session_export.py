@@ -439,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         def error(self, message: str) -> None:
             # argparse otherwise echoes unknown raw arguments/paths to stderr.
             # This tool must keep even *malformed* invocations confidential.
-            self.exit(2, "capture_validator_invalid_arguments\\n".replace("\\n", "\n"))
+            self.exit(2, "capture_validator_invalid_arguments\n")
 
     parser = _ClosedArgumentParser(
         description="Contrôle hors réseau d'un ZIP privé de session --capture."
