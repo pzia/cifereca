@@ -488,7 +488,9 @@ def write_sync_report(
         raise ValueError("sync_report_invalid_destination")
     if type(run_ref) is not str or len(run_ref) != 32 or any(c not in "0123456789abcdef" for c in run_ref):
         raise ValueError("sync_report_invalid_reference")
-    if type(exit_code) is not int or exit_code not in (0, 2):
+    # An admitted CLI run interrupted by SIGINT reports shell exit 130.
+    # It is a cancelled run, not a failed report write or success.
+    if type(exit_code) is not int or exit_code not in (0, 2, 130):
         raise ValueError("sync_report_invalid_exit")
     target = Path(os.path.abspath(destination.expanduser()))
     parent = target.parent
