@@ -65,7 +65,8 @@ class BnfExplicitExecutionTests(unittest.TestCase):
     def make(self, *, existing=False, after_detail=None, after_post=None,
              post_status=200, post_body=RECEIPT, activity_after=AFTER,
              post_failure=None, detail_html=DETAIL, media=False,
-             media_get_mutates=False, media_get_fails=False):
+             media_get_mutates=False, media_get_fails=False,
+             media_form_html=MEDIA_FORM):
         state = {"post_count": 0, "activity_reads": 0, "calls": [],
                  "media_get_count": 0, "media_loan_observed": False}
 
@@ -98,7 +99,7 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                     state["media_loan_observed"] = True
                 if media_get_fails:
                     raise httpx.ReadTimeout("synthetic")
-                return httpx.Response(200, text=MEDIA_FORM,
+                return httpx.Response(200, text=media_form_html,
                                       headers={"content-type": "text/html"})
             if request.method == "POST" and path in {"/loans/activation", MEDIA_ACTIVATE}:
                 state["post_count"] += 1
@@ -208,6 +209,26 @@ class BnfExplicitExecutionTests(unittest.TestCase):
         try:
             with self.assertRaisesRegex(
                     Exception, "transport_unavailable") as caught:
+                self.execute(session, account, item)
+            self.assertNotIsInstance(caught.exception, BorrowRequestNotSubmitted)
+            self.assertEqual(state["media_get_count"], 1)
+            self.assertEqual(state["post_count"], 0)
+            with self.assertRaisesRegex(
+                    ProviderCapabilityError, "borrow_claim_spent"):
+                self.execute(session, account, item)
+        finally:
+            session.close()
+
+    def test_media_get_invalid_post_action_never_releases_claim(self):
+        # 01/11 capture reached GET confirmation 200 but rejected the
+        # following POST action before sending it. GET is potentially
+        # mutating: a parser refusal must not re-arm this edition.
+        mismatched = MEDIA_FORM.replace("notify=1", "notify=0")
+        session, account, item, state = self.make(
+            media=True, detail_html=MEDIA_DETAIL,
+            media_form_html=mismatched)
+        try:
+            with self.assertRaisesRegex(Exception, "borrow_url_refused") as caught:
                 self.execute(session, account, item)
             self.assertNotIsInstance(caught.exception, BorrowRequestNotSubmitted)
             self.assertEqual(state["media_get_count"], 1)
