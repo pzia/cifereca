@@ -15,6 +15,7 @@ from cifereca.core.acquisition_audit import inspect_exact_source, safe_acquisiti
 from cifereca.core.sync_report import audit_source_counts
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3909_atomic_promotion import rig, _drive
+from tests.test_core_p0_3171_selected_candidate_finalization import _isolate_delivery_lock
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
 
 
