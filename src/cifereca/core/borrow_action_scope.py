@@ -47,8 +47,21 @@ def borrow_claim_key(account: Account, item: SearchResult) -> str | None:
     values = _fields(account, item)
     if not _valid_fields(values):
         return None
+    # SearchResult.id may be a temporary UI/list key. Two catalogue rows
+    # pointing to the *same* edition of the same borrower must share one
+    # atomic claim. source_collection partitions independent subcatalogues.
+    collection = item.source_collection
+    if collection is not None and (
+            type(collection) is not str or not collection
+            or len(collection) > 1024 or "\x00" in collection):
+        return None
+    stable = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, item.docbase, item.medium, item.record_id,
+        collection,
+    )
     digest = sha256(json.dumps(
-        values, ensure_ascii=False, separators=(",", ":"),
+        stable, ensure_ascii=False, separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
     return "loan.borrow.v1:" + digest
 
