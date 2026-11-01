@@ -5,6 +5,7 @@ All event content is synthetic; raw secrets deliberately remain in RAM.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -38,6 +39,10 @@ def test_session_contains_only_events_between_attach_and_finish(canonical_logger
     assert out["omitted_records"] == 0
     assert out["process_id"] == os.getpid()
     assert len(out["session_ref"]) == 32
+    records = [json.loads(line) for line in raw.splitlines()]
+    assert len(records) == 3
+    assert {row["session_ref"] for row in records} == {out["session_ref"]}
+    assert all(row["process_id"] == os.getpid() for row in records)
     assert out["started_at_utc"] <= out["finished_at_utc"]
     assert "PRIVATE_STARTUP" in raw and "PRIVATE_SHUTDOWN" in raw
     assert "PRIVATE_PROVIDER_ERROR" in raw
@@ -65,6 +70,10 @@ def test_overlapping_sessions_still_have_separate_physical_capture_windows(
     assert "PRIVATE_BOTH" in a and "PRIVATE_BOTH" in b
     assert "PRIVATE_ONLY_SECOND" not in a and "PRIVATE_ONLY_SECOND" in b
     assert first.session_ref != second.session_ref
+    first_rows = [json.loads(line) for line in a.splitlines()]
+    second_rows = [json.loads(line) for line in b.splitlines()]
+    assert {line["session_ref"] for line in first_rows} == {first.session_ref}
+    assert {line["session_ref"] for line in second_rows} == {second.session_ref}
 
 
 def test_foreign_process_record_and_forked_process_are_ignored(
