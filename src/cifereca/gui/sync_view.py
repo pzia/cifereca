@@ -628,9 +628,6 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         sync_label = "Annulée"
     elif status == "interrupted":
         sync_label = "Interrompue"
-    elif alert is not None and alert[0] == "warning":
-        # A maintenance/phase warning cannot be advertised as clean success.
-        sync_label = "Attention nécessaire"
     elif status not in {"success", "idle"}:
         # Never convert an unknown/invalid terminal state into an old success.
         sync_label = "État non confirmé"
@@ -698,7 +695,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     # Previous success is historical context, not the current run's state.
     if (status in {"partial", "error", "failed", "blocked",
                    "attention_required", "cancelled", "interrupted"}
-            or (alert is not None and alert[0] in {"error", "warning"})
+            or (alert is not None and alert[0] == "error")
             or status not in {"success", "idle"}) and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
