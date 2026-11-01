@@ -16,6 +16,9 @@ from cifereca.plugin_api import ProviderRightsScope
 from tests.test_core_p0_3909_atomic_promotion import (
     rig, _isolate_delivery_lock, _drive,
 )
+from tests.test_core_p0_3909_historical_staging_stock import (
+    _legacy_placement, _stock_shared_acquisition_lock,
+)
 
 
 TRACE = re.compile(
@@ -118,6 +121,32 @@ def test_failed_promotion_is_phase_identifiable_and_recovered_without_second_get
     assert second[-1]["code"] == "recovered"
     assert second[-1]["reason"] == "canonical_delivery_recovered"
     assert "SENSITIVE-synthetic" not in "\n".join(lines)
+
+
+
+def test_historical_staging_stock_relocation_has_distinct_recovery_phase(
+    rig, monkeypatch, caplog,
+):
+    service, db, root, old, gets = _legacy_placement(rig, monkeypatch)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        repaired = synchronize_account_source(service, service.account)
+    assert repaired["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert not old.exists()
+    assert len(db.placements()) == 1
+
+    rows, _ = _events(caplog)
+    assert len({r["run"] for r in rows}) == 1
+    assert len({r["item"] for r in rows}) == 1
+    steps = {(r["phase"], r["code"]) for r in rows}
+    assert ("presence", "start") in steps
+    assert ("stock_recovery", "start") in steps
+    assert ("stock_recovery", "ok") in steps
+    assert ("presence", "ok") in steps
+    assert ("terminal", "recovered") in steps
+    assert not any(r["phase"] == "delivery" for r in rows)
+
 
 
 def test_trace_ref_is_salted_closed_and_never_logs_provider_payload(caplog):
