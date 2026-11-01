@@ -12,7 +12,7 @@ from cifereca.core.canonical_legacy_scope_review import (
 from tests.test_core_p0_3185_canonical_backup_relink import rig
 from tests.test_core_p0_3185_legacy_scope_review import _mark_legacy, _review
 from tests.test_core_p0_3719_prepare_duplicate import _journal
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows
+from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
 
 
 def _ledger(storage, record_id):
