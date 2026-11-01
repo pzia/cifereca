@@ -335,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["ok"] else 2
 
     if a.cmd == "acquisition-audit":
-        if a.username or a.account or not a.identity:
+        if a.username or a.account or not a.identity or not a.provider:
             print(json.dumps({"status": "failed", "code": "source_scope_required"}))
             return 2
         if a.output is not None and os.path.lexists(a.output):
@@ -351,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
             preflight_code = "legacy_account_selector_unsupported"
         elif not a.confirm:
             preflight_code = "explicit_run_confirmation_required"
-        elif not a.identity:
+        elif not a.identity or not a.provider:
             preflight_code = "source_scope_required"
         elif a.trace_export is not None and not a.confirm_trace_export:
             preflight_code = "trace_export_confirmation_required"
