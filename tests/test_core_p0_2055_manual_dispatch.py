@@ -1,7 +1,7 @@
 """P0 #2055: canonical manual BnF admission, without a real provider POST.
 
-Fixtures explicitly simulate a *future* BnF with declared borrow capability
-and four exact positive upstream permission facts. The production BnF
+Fixtures simulate a future BnF with declared borrow capability and explicit
+user-site verification. Optional quota/Pass flags are NOT mandatory P0 gates. The production BnF
 manifest/method remain disabled, so none of these tests enable borrowing.
 """
 from dataclasses import replace
@@ -134,18 +134,18 @@ def test_success_requires_real_admission_claim_and_positive_result(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "confirmed" and result["provider_verified"] is True
-        assert session.reads == [("book-1", "reader")]
+        assert session.reads == []  # no quota/Pass probe is required
         assert session.dispatches == [("book-1", "reader")]
         row = service.storage.loan_borrow_state(borrow_claim_key(account, item))
         assert row["status"] == "confirmed"
         assert row["verified_loan_id"] == "loan-synthetic"
         assert "Synthetic" not in json.dumps(result)
         repeat = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert repeat["status"] == "verification_unavailable"
-        assert len(session.dispatches) == len(session.reads) == 1
+        assert len(session.dispatches) == 1 and session.reads == []
         assert service.storage.entitlements(provider_id="bnf-pret") == []
         assert not service.storage.acquisitions()
     finally:
@@ -165,11 +165,30 @@ def test_consent_must_be_exact_true_before_any_source_read_or_claim(tmp_path, co
         service.close()
 
 
+@pytest.mark.parametrize("site_checked", [False, None, "yes", 1])
+def test_visual_site_check_must_be_exact_true_before_any_borrow(
+    tmp_path, site_checked,
+):
+    service, session, account, item = setup(tmp_path)
+    try:
+        r = manual_bnf_borrow(
+            service, item, expected_identity_id="default",
+            confirmed=True, site_checked=site_checked,
+        )
+        assert r["status"] == "blocked"
+        assert r["reason_code"] == "borrow_site_check_required"
+        assert session.reads == session.dispatches == []
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item)) is None
+    finally:
+        service.close()
+
+
 def test_real_bnf_has_unpublished_borrow_capability_and_cannot_dispatch(tmp_path):
     service, session, account, item = setup(tmp_path, declared=False)
     try:
         r = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert r["status"] == "unsupported"
         assert session.reads == session.dispatches == []
         assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
@@ -187,27 +206,36 @@ def test_real_bnf_has_unpublished_borrow_capability_and_cannot_dispatch(tmp_path
     {"borrower_id": "foreign-account"},
     {"identity_id": "foreign-identity"},
 ])
-def test_positive_four_way_permission_is_mandatory(tmp_path, denial):
+def test_optional_p2_markers_do_not_veto_manual_prechecked_p0(tmp_path, denial):
     service, session, account, item = setup(tmp_path)
     try:
         session._evidence = evidence(account, item, **denial)
         r = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
-        assert r["status"] == "blocked"
-        assert len(session.reads) == 1 and session.dispatches == []
-        assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
+            service, item, expected_identity_id="default",
+            confirmed=True, site_checked=True,
+        )
+        assert r["status"] == "confirmed"
+        assert session.reads == []  # never run optional P2 preflight
+        assert session.dispatches == [("book-1", "reader")]
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item))["status"] == "confirmed"
     finally:
         service.close()
 
 
-def test_rebind_during_permission_read_never_claims_or_posts(tmp_path):
+def test_optional_borrower_evidence_reader_is_never_required(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
-        session.on_read = lambda: setattr(account, "identity_id", "another")
+        session.borrower_eligibility_for = lambda *_: pytest.fail(
+            "P2 quota/Pass preflight must not run on P0 manual borrow"
+        )
         r = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
-        assert r["status"] == "blocked"
-        assert session.dispatches == []
+            service, item, expected_identity_id="default",
+            confirmed=True, site_checked=True,
+        )
+        assert r["status"] == "confirmed"
+        assert session.reads == []
+        assert len(session.dispatches) == 1
     finally:
         service.close()
 
@@ -217,16 +245,16 @@ def test_timeout_or_unknown_post_state_is_not_replayed(tmp_path):
     try:
         session.failure = TimeoutError("PRIVATE-URL-synthetic")
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "verification_unavailable"
         assert "PRIVATE" not in json.dumps(result)
         assert len(session.dispatches) == 1
         assert service.storage.loan_borrow_state(
             borrow_claim_key(account, item))["status"] == "verification_unavailable"
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "verification_unavailable"
-        assert len(session.dispatches) == 1 and len(session.reads) == 1
+        assert len(session.dispatches) == 1 and session.reads == []
     finally:
         service.close()
 
@@ -236,7 +264,7 @@ def test_scope_revocation_during_post_cannot_publish_right_or_confirm(tmp_path):
     try:
         session.on_execute = lambda: setattr(session, "_epoch", "new-epoch")
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "verification_unavailable"
         assert len(session.dispatches) == 1
         assert not service.storage.acquisitions()
@@ -256,7 +284,7 @@ def test_wrong_source_or_identity_never_touches_account_or_claim(tmp_path):
         ]:
             assert manual_bnf_borrow(
                 service, candidate, expected_identity_id=identity,
-                confirmed=True)["status"] == "blocked"
+                confirmed=True, site_checked=True)["status"] == "blocked"
         assert session.reads == session.dispatches == []
     finally:
         service.close()
@@ -308,7 +336,7 @@ def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_pat
         service.close()
 
 
-def test_ui_future_capability_only_offers_dialog_not_permission(tmp_path):
+def test_ui_future_capability_offers_manual_prechecked_action(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         assert manual_bnf_borrow_available(service, item) is True
@@ -317,14 +345,15 @@ def test_ui_future_capability_only_offers_dialog_not_permission(tmp_path):
         assert manual_bnf_borrow_available(service, item) is True
         assert session.reads == session.dispatches == []
         result = service.borrow_bnf_manual(
-            item, expected_identity_id="default", confirmed=True,
+            item, expected_identity_id="default", confirmed=True, site_checked=True,
             expected_context_epoch=service._account_context_epoch,
             expected_account=account,
         )
-        assert result["status"] == "blocked"
-        assert session.dispatches == []
+        assert result["status"] == "confirmed"
+        assert session.dispatches == [("book-1", "reader")]
+        assert session.reads == []
         assert service.storage.loan_borrow_state(
-            borrow_claim_key(account, item)) is None
+            borrow_claim_key(account, item))["status"] == "confirmed"
     finally:
         service.close()
 
@@ -339,7 +368,7 @@ def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
             {"expected_account": replace(account)},
         ):
             result = service.borrow_bnf_manual(
-                item, expected_identity_id="default", confirmed=True, **kw)
+                item, expected_identity_id="default", confirmed=True, site_checked=True, **kw)
             assert result["status"] == "blocked"
         assert session.reads == session.dispatches == []
         assert service.storage.loan_borrow_state(
@@ -348,7 +377,7 @@ def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
         # instance and selected source have been restored.
         service._account_context_epoch += 2
         result = service.borrow_bnf_manual(
-            item, expected_identity_id="default", confirmed=True,
+            item, expected_identity_id="default", confirmed=True, site_checked=True,
             expected_context_epoch=prior, expected_account=account)
         assert result["status"] == "blocked"
         assert session.dispatches == []
