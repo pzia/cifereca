@@ -14,7 +14,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parents[1]))
 
 from cifereca.models import Account, Loan
-from cifereca.plugin_api import LendingActionAdmission, ProviderCapabilityError
+from cifereca.plugin_api import (
+    LendingActionAdmission, ProviderCapabilityError, ProviderConfigurationError,
+)
 from cifereca_bnf_pret import BnfProviderSession
 from cifereca_bnf_pret_http import ReaderHTTPClient
 from cifereca_bnf_pret_web import CatalogRecord
@@ -137,7 +139,7 @@ class BnfExplicitExecutionTests(unittest.TestCase):
             )
             for kw in tests:
                 with self.subTest(kwargs=list(kw)):
-                    with self.assertRaises((ProviderCapabilityError, Exception)):
+                    with self.assertRaises((ProviderCapabilityError, ProviderConfigurationError)):
                         self.execute(session, account, item, **kw)
             self.assertEqual(state["calls"], [])
         finally:
@@ -193,6 +195,22 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                     ProviderCapabilityError, "borrow_claim_spent"):
                 self.execute(session, account, item)
             self.assertEqual(state["post_count"], 1)
+        finally:
+            session.close()
+
+    def test_reconnect_reissues_epoch_and_cannot_reuse_prior_scope(self):
+        session, account, item, state = self.make()
+        try:
+            original_epoch = session._epoch
+            session.credentials = {
+                "username": "synthetic-user", "password": "synthetic-password"}
+            session.client.login = lambda _u, _p: BEFORE
+            replacement, = session.connect()
+            self.assertNotEqual(session._epoch, original_epoch)
+            self.assertIsNot(replacement, account)
+            self.assertEqual(replacement.credential_id, account.credential_id)
+            self.assertFalse(session._borrow_post_attempts)
+            self.assertEqual(state["calls"], [])
         finally:
             session.close()
 
