@@ -108,8 +108,9 @@ def test_incomplete_outcome_without_activity_reporter_opens_failure_not_success_
     window.toast.assert_not_called()
 
 
-def test_complete_loan_still_announces_success_without_false_failure():
-    result = {"status": "complete", "adept_return_available": True}
+@pytest.mark.parametrize("adept_return_available", [True, False])
+def test_complete_loan_still_announces_success_without_false_failure(adept_return_available):
+    result = {"status": "complete", "adept_return_available": adept_return_available}
     window = window_with_outcome(result)
     _loan, work, completed = prepare_callback(window)
     completed(work())
@@ -117,6 +118,9 @@ def test_complete_loan_still_announces_success_without_false_failure():
     args, kwargs = window._activity_result.call_args
     assert kwargs == {}
     assert "Livre récupéré" in args[0]
-    # P1 #4048: no voluntary restitution control or wording remains.
+    # The successful acquisition remains visible, but voluntary return was
+    # removed by #4048 / #4077 even when a legacy result advertises it.
     assert "restitution" not in args[0].lower()
+    if adept_return_available:
+        assert args[0] == "Livre récupéré"
     window.show_error.assert_not_called()
