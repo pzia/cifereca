@@ -1,9 +1,9 @@
 """P0 #2055: Core-owned admission for a *manual* BnF new loan.
 
-This dispatcher is intentionally dormant with the currently published BnF
-plugin: acquisition.borrow is absent and provider permissions are not attested.
-No browse/search/sync caller may invoke it. Core alone owns consent, the
-inert scope lease, capability/borrower checks and durable at-most-once claim.
+The reader verifies the selected edition visually on pret.bnf.fr before
+confirming a manual attempt. Remote BnF decides quota and account permission;
+their informational indicators are deferred to P2 #4063, not a P0 veto.
+Core still enforces account/edition scope, at-most-once and remote verification.
 """
 from __future__ import annotations
 
@@ -11,10 +11,7 @@ from inspect import getattr_static
 from uuid import uuid4
 
 from ..models import Account, Loan, SearchResult
-from ..plugin_api import (
-    BorrowerOperationEvidence, assess_borrower_eligibility,
-    assess_lending_action,
-)
+from ..plugin_api import LendingActionAdmission
 from ..plugin_api.lending_capabilities import assess_lending_operation
 from ..providers.base import ProviderSession
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
@@ -35,10 +32,9 @@ def _result(status: str, reason: str, *, verified: bool = False):
 def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
     """Inert CoreUI availability, never borrower permission or a provider GET.
 
-    The currently installed BnF manifest has no acquisition.borrow, so this
-    always returns False in production until that capability is qualified.
-    A future published action still needs fresh positive entitlement, consent,
-    scope and durable claim at the moment the user confirms.
+    Availability is an inert check, NOT proof of Pass/quota/permission.
+    The reader must separately confirm checking the book on pret.bnf.fr.
+    An exact live account and unused claim remain prerequisites.
     """
     if (type(item) is not SearchResult or item.source_provider != "bnf-pret"
             or item.docbase != "BNF_PRET" or item.medium != "digital"):
@@ -69,7 +65,7 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
         if len(candidates) != 1:
             return False
         claim_key = borrow_claim_key(candidates[0], item)
-        if claim_key is None or service.storage.metadata_get(claim_key) is not None:
+        if claim_key is None or service.storage.loan_borrow_state(claim_key) is not None:
             # Even a corrupt or uncertain attempt is spent. Never invite
             # a user to repeat a mutating request on the same edition.
             return False
@@ -86,8 +82,6 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
         return (
             fact.usable
             and callable(getattr_static(
-                type(session), "borrower_eligibility_for", None))
-            and callable(getattr_static(
                 type(session), "borrow_explicit_with_claim", None))
         )
     except Exception:
@@ -96,19 +90,21 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
 
 def manual_bnf_borrow(
     service, item: SearchResult, *, expected_identity_id: str,
-    confirmed: bool = False, expected_context_epoch: int | None = None,
+    confirmed: bool = False, site_checked: bool = False,
+    expected_context_epoch: int | None = None,
     expected_account: Account | None = None,
 ) -> dict[str, object]:
     """Select the exact live BnF account and admit at most one future POST.
 
-    The provider must separately supply a fresh `BorrowerOperationEvidence`
-    scoped to the exact account+resource; a catalogue button, successful
-    login, syntactically valid form, empty inventory, client-side callback or
-    arbitrary Loan DTO is never positive permission. As of 0.3.18 this
-    provider evidence API does not exist, so the action remains blocked.
+    Two separate requirements: reader states that this exact book looked
+    borrowable on the official BnF site, then confirms this CoreUI action.
+    Provider rereads activity/detail/CSRF, sends one POST and verifies the
+    exact active loan. UI buttons and HTTP 200 alone never prove success.
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
+    if site_checked is not True:
+        return _result("blocked", "borrow_site_check_required")
     if (expected_context_epoch is not None
             and (type(expected_context_epoch) is not int
                  or type(getattr(service, "_account_context_epoch", None)) is not int
@@ -139,7 +135,7 @@ def manual_bnf_borrow(
             return _result("blocked", "borrow_scope_unverified")
         candidates = [
             account for account in service.accounts
-            if (type(account) is Account
+            if (type(account) is Account and account.is_primary is True
                 and account.identity_id == expected_identity_id
                 and account.provider_id == "bnf-pret"
                 and account.credential_id == item.source_credential
@@ -169,8 +165,6 @@ def manual_bnf_borrow(
         )
         if not fact.usable:
             return _result("unsupported", "borrow_capability_unavailable")
-        if not callable(getattr_static(type(session), "borrower_eligibility_for", None)):
-            return _result("blocked", "borrow_permission_unverified")
         if not callable(getattr_static(type(session), "borrow_explicit_with_claim", None)):
             return _result("unsupported", "borrow_execution_unavailable")
         prior = service.storage.loan_borrow_state(key)
@@ -179,24 +173,16 @@ def manual_bnf_borrow(
     except Exception:
         return _result("blocked", "borrow_scope_unverified")
 
-    try:
-        # Provider supplies an *observed* scoped borrower/edition entitlement,
-        # never a cached UI hint. No Core POST or claim on unknown evidence.
-        evidence = session.borrower_eligibility_for(item, account)
-    except Exception:
-        return _result("blocked", "borrow_permission_unverified")
+    # #2055: explicitly bounded BnF-only human-initiated attempt.
+    # Do NOT call assess_lending_action(permission_attested=True):
+    # that shared API requires machine-attested rights, which a reader's
+    # visual check cannot supply. This admission only permits the *attempt*.
+    # BnF still decides eligibility on its fresh POST; no HTTP 200 is success
+    # without an independently observed active loan in the same account.
     if not current():
         return _result("blocked", "borrow_scope_changed")
-    if type(evidence) is not BorrowerOperationEvidence:
-        return _result("blocked", "borrow_permission_unverified")
-    eligibility = assess_borrower_eligibility(
-        capability=fact, account=account, notice=item, evidence=evidence,
-    )
-    if eligibility.status != "eligible":
-        return _result("blocked", "borrow_permission_unverified")
-    admission = assess_lending_action(
-        "loan.borrow", fact=fact, account=account, target=item,
-        origin="manual", confirmed=True, permission_attested=True,
+    admission = LendingActionAdmission(
+        "loan.borrow", "manual", "admitted", "admission_ready",
     )
     if not admission.admitted or not current():
         return _result("blocked", "borrow_scope_changed")

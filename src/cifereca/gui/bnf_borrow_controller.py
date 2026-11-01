@@ -13,8 +13,8 @@ from ..models import Account, SearchResult
 def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     """Offer consent only for a published, Core-admissible BnF action.
 
-    The current BnF plugin intentionally does not publish acquisition.borrow.
-    Therefore this is dormant in production and opens no confirmation yet.
+    A confirmed borrow request represents the reader's site-checked
+    intention to attempt a transaction; the lender decides quota and rights.
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
@@ -42,6 +42,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     notice_scope = (
         item.id, item.record_id, item.docbase, item.medium,
         item.source_provider, item.source_credential, item.source_collection,
+        item.title,
     )
     account_scope = (
         account.identity_id, account.provider_id, account.credential_id,
@@ -72,7 +73,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                      account.is_primary) == account_scope
                 and (item.id, item.record_id, item.docbase, item.medium,
                      item.source_provider, item.source_credential,
-                     item.source_collection) == notice_scope
+                     item.source_collection, item.title) == notice_scope
             )
         except Exception:
             return False
@@ -86,14 +87,16 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     dialog = Adw.MessageDialog.new(
         window, "Emprunter ce livre à la BnF ?",
         f"Compte : {account_name}. "
-        "Une demande de prêt sera envoyée à la BnF après contrôle des "
-        "droits et de la disponibilité "
-        "du livre. Cette opération ne sera envoyée qu'une seule fois. "
+        f"Livre : {' '.join(item.title.split())[:140] if type(item.title) is str else 'notice sélectionnée'}. "
+        "Vérifiez sur pret.bnf.fr que ce livre est indiqué comme empruntable "
+        "pour votre compte avant de confirmer. La BnF peut refuser "
+        "la transaction selon le quota ou les droits. "
+        "Un seul envoi sera effectué. "
         "En cas de résultat incertain, consultez Mes emprunts avant toute "
         "nouvelle démarche. Le téléchargement ACSM reste une action distincte.",
     )
     dialog.add_response("cancel", "Annuler")
-    dialog.add_response("borrow", "Confirmer l’emprunt")
+    dialog.add_response("borrow", "J’ai vérifié sur BnF et je confirme")
     submitted = False
 
     def on_response(_dialog, response):
@@ -113,7 +116,8 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                 return {"status": "blocked", "reason_code": "borrow_scope_changed"}
             return window.service.borrow_bnf_manual(
                 selected, expected_identity_id=identity_id,
-                confirmed=True, expected_context_epoch=core_epoch,
+                confirmed=True, site_checked=True,
+                expected_context_epoch=core_epoch,
                 expected_account=account,
             )
 
@@ -131,8 +135,8 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                 )
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error(
-                    "L’autorisation de prêt n’est pas attestée pour ce "
-                    "compte et ce livre. Aucun nouvel emprunt n’est confirmé.",
+                    "La demande BnF n’a pas été admise dans ce contexte. "
+                    "Aucun nouvel emprunt n’est confirmé.",
                     "Emprunt BnF",
                 )
             else:

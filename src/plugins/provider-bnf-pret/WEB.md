@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.20.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.21.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -19,6 +19,40 @@ Dans Configuration, ajouter une connexion **BnF Prêt** au bon profil Cifereca,
 saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
+
+## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.21)
+
+**Arbitrage du 01/11/2026 :** l'utilisateur vérifie sur **pret.bnf.fr**
+que le titre numérique exact semble empruntable pour son compte avant de
+confirmer le même titre/compte dans Cifereca. La BnF peut refuser la
+transaction selon le Pass, le quota ou la disponibilité. La lecture
+machine des marqueurs de quota n'est **pas un prérequis P0** :
+elle est suivie dans **[#4063 P2](https://github.com/pzia/cifereca/issues/4063)**.
+
+Le manifeste publie `acquisition.borrow` et le descripteur
+`ProviderCapabilities.borrow=True`, pour la **seule confirmation
+manuelle CoreUI dédiée**. La méthode générique
+`ProviderSession.borrow` demeure verrouillée
+(`bnf_borrow_requires_core_dispatch`) et refuse AVANT I/O.
+Le parcours Core peut uniquement être appelé après
+`confirmed=True` **et** `site_checked=True`, sur la notice/identité
+exactes avec bail valide et un reçu SQLite de tentative durable.
+
+Transaction : lecture fraîche activité → fiche exacte → lien unique non
+désactivé → GET confirmation/formulaire/CSRF → un POST d'activation sans
+redirect/retry → relecture d'activité et corrélation du prêt actif.
+`HTTP 200` seul n'est pas une confirmation. Toute issue inconnue
+consomme la réservation et ne génère aucun deuxième POST ; l'utilisateur
+vérifie son compte BnF. Aucun téléchargement ACSM/ADEPT implicite et
+aucune création de prêt depuis la synchronisation.
+
+La qualification de la permission pré-POST en quatre signaux a été
+abandonnée comme **verrou P0** (voir décision produit #2055). La méthode
+read-only `borrower_eligibility_for` n'est conservée que pour
+l'information et les futures améliorations P2 ; son résultat `unknown`
+ne bloque pas la demande utilisateur. Les tests de prêt de bout en bout
+restent synthétiques ; **aucune nouvelle recette d'emprunt réel** n'est
+revendiquée avant déploiement et action utilisateur consentie.
 
 ## Diagnostic des miniatures observées (#3104, 0.3.15)
 

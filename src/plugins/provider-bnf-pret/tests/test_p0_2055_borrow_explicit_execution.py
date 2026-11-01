@@ -45,7 +45,7 @@ CLAIM = {"schema": 1, "operation": "loan.borrow",
 class BnfExplicitExecutionTests(unittest.TestCase):
     def make(self, *, existing=False, after_detail=None, after_post=None,
              post_status=200, post_body=RECEIPT, activity_after=AFTER,
-             post_failure=None):
+             post_failure=None, detail_html=DETAIL):
         state = {"post_count": 0, "activity_reads": 0, "calls": []}
 
         def handler(request):
@@ -61,7 +61,7 @@ class BnfExplicitExecutionTests(unittest.TestCase):
             if request.method == "GET" and path == "/resources/" + RID:
                 if after_detail:
                     after_detail()
-                return httpx.Response(200, text=DETAIL,
+                return httpx.Response(200, text=detail_html,
                                       headers={"content-type": "text/html"})
             if request.method == "GET" and path == "/resources/" + RID + "/loans/new":
                 return httpx.Response(200, text=CONFIRM,
@@ -115,7 +115,7 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                 ("POST", "/loans/activation"),
                 ("GET", "/my_profile/activity"),
             ])
-            self.assertFalse(session.capabilities.borrow)
+            self.assertTrue(session.capabilities.borrow)
             self.assertEqual(session._observed_loans, {"loan-synthetic": RID})
             with self.assertRaisesRegex(
                     ProviderCapabilityError, "borrow_claim_spent"):
@@ -195,6 +195,38 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                     ProviderCapabilityError, "borrow_claim_spent"):
                 self.execute(session, account, item)
             self.assertEqual(state["post_count"], 1)
+        finally:
+            session.close()
+
+    def test_last_second_unavailable_marker_refuses_before_post(self):
+        unavailable = DETAIL.replace(
+            "</article>",
+            '<span class="lb_unavailable">Indisponible</span></article>',
+        )
+        session, account, item, state = self.make(detail_html=unavailable)
+        try:
+            with self.assertRaisesRegex(Exception, "borrow_action_unverified"):
+                self.execute(session, account, item)
+            self.assertEqual(state["post_count"], 0)
+            self.assertEqual(state["calls"], [
+                ("GET", "/my_profile/activity"),
+                ("GET", "/resources/" + RID),
+            ])
+            self.assertEqual(session._observed_loans, {})
+        finally:
+            session.close()
+
+    def test_bnf_quota_refusal_one_post_and_no_second_attempt(self):
+        session, account, item, state = self.make(post_status=403)
+        try:
+            with self.assertRaisesRegex(Exception, "access_denied"):
+                self.execute(session, account, item)
+            self.assertEqual(state["post_count"], 1)
+            with self.assertRaisesRegex(
+                    ProviderCapabilityError, "borrow_claim_spent"):
+                self.execute(session, account, item)
+            self.assertEqual(state["post_count"], 1)
+            self.assertEqual(session._observed_loans, {})
         finally:
             session.close()
 

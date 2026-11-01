@@ -1,8 +1,8 @@
 """P0 #2055: GUI consent is one user gesture, never a generic BnF borrow.
 
-Headless controller tests use the real Core/SQLite and a synthetic future BnF.
-The production plugin does not publish this action, so this test cannot
-trigger live HTTP, account mutation or a real lender's loan.
+Headless controller tests use real Core/SQLite and an offline synthetic BnF.
+An installed production plugin may advertise manual borrowing; no test
+here makes live HTTP calls or real lender mutations.
 """
 from dataclasses import replace
 from types import SimpleNamespace as NS
@@ -38,7 +38,8 @@ class DialogApi:
     class MessageDialog:
         @staticmethod
         def new(window, title, body):
-            assert "BnF" in title and "qu'une seule fois" in body
+            assert "BnF" in title and "Un seul envoi" in body
+            assert "pret.bnf.fr" in body and "Synthetic book" in body
             dialog = Dialog()
             DialogApi.instance = dialog
             return dialog
@@ -106,6 +107,7 @@ def test_future_positive_bnf_requires_dialog_confirm_one_time_only(tmp_path):
         dialog = request(window, item)
         assert dialog is not None and dialog.present_count == 1
         assert len(dialog.responses) == 2
+        assert dialog.responses["borrow"] == "J’ai vérifié sur BnF et je confirme"
         assert session.dispatches == session.reads == []
         dialog.respond("cancel")
         assert not window.runner.tasks
@@ -148,6 +150,20 @@ def test_notice_refresh_before_confirm_blocks_even_with_same_catalogue_row(tmp_p
         dialog.respond("borrow")
         assert not window.runner.tasks and not session.dispatches
         assert len(errors) == 1
+    finally:
+        service.close()
+
+
+def test_title_changed_after_site_checked_dialog_blocks_before_claim(tmp_path):
+    service, session, account, item = setup(tmp_path)
+    try:
+        window, errors, results, refreshes = view(service, session, account, item)
+        dialog = request(window, item)
+        assert dialog is not None
+        item.title = "Another edition with same resource id"
+        dialog.respond("borrow")
+        assert not window.runner.tasks and not session.dispatches
+        assert errors and "a changé" in errors[0][0]
     finally:
         service.close()
 

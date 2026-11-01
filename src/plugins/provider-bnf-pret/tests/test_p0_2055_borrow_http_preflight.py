@@ -81,7 +81,7 @@ class BorrowReadOnlyHTTPTests(unittest.TestCase):
                 ("GET", "/resources/" + RID),
                 ("GET", "/resources/" + RID + "/loans/new"),
             ])
-            self.assertFalse(session.capabilities.borrow)
+            self.assertTrue(session.capabilities.borrow)
             self.assertNotIn("DO_NOT_LOG", str(result))
             self.assertNotIn("authenticity_token", str(result))
         finally:

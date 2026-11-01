@@ -1,60 +1,99 @@
-# Core P0 #2055 — dispatch manuel BnF sous preuves positives
+# BnF Prêt P0 #2055 — emprunt manuel après vérification visuelle
 
-Cette tranche ajoute `cifereca.core.manual_bnf_borrow.manual_bnf_borrow(service, item, *, expected_identity_id, confirmed)` sans brancher encore le bouton GTK ni déclarer `acquisition.borrow`.
+## Décision produit du 01/11/2026
 
-## Admission Core (en ordre)
+L'utilisateur **vérifie sur https://pret.bnf.fr** que le livre numérique
+**exact** paraît empruntable pour son compte, puis retourne dans Cifereca,
+sélectionne la même notice et confirme dans un dialogue dédié :
+« J’ai vérifié sur BnF et je confirme ».
 
-1. Exiger `confirmed is True`, l'origine manuelle, une notice BnF numérique et l'identité attendue.
-2. Résoudre depuis le **PluginManager réel** la capability `acquisition.borrow` et la confronter au descripteur et à la méthode `ProviderSession.borrow` par le contrat `assess_lending_operation`. Le manifeste BnF actuel n'en dispose pas : résultat **`unsupported`** avant tout GET.
-3. Sélectionner un seul compte enregistré de l'identité exacte et capturer le bail `BorrowActionScopeLease`, y compris le compte objet, la notice, le credential, le binding persisté et l'époque Core/provider.
-4. Exiger un adaptateur fournisseur `borrower_eligibility_for(item, account)` produisant une **preuve fraîche** `BorrowerOperationEvidence` : souscription active, quota disponible, offre ouvrage disponible et permission explicite. Elle doit correspondre exactement à l'identité, au compte, au catalogue et à la notice. **Cet adaptateur n'est pas encore fourni par BnF** ; un bouton ou un formulaire CSRF ne constitue pas la preuve.
-5. Faire l'admission canonique `assess_borrower_eligibility` puis `assess_lending_action`, revalider le bail, et réserver `Storage.loan_borrow_claim_once` atomiquement avant le POST (une édition et un emprunteur, aucun rejeu ou remise à zéro sur un inventaire partiel).
-6. Appeler l'exécuteur BnF dormant `borrow_explicit_with_claim` avec le reçu du vrai stockage et un callback de revalidation Core ; cette méthode réalise un seul POST et vérifie indépendamment l'activité positive. Vérifier à nouveau le DTO de prêt exact, puis clore le reçu SQLite par CAS.
-7. Un timeout, un changement d'identité/époque, une réponse ambiguë ou une panne après claim renvoie seulement un code fermé `verification_unavailable` ; la répétition du geste utilisateur ne reposte pas. Une réponse positive ne déclenche **aucune acquisition automatique de jeton ACSM/ADEPT** ni écriture implicite de droit.
+Cifereca n'impose **pas** un veto sur quatre marqueurs non qualifiés :
+Pass actif, quota restant, exemplaires positifs, permission générale.
+La BnF est l'autorité métier qui peut refuser la transaction.
+L'affichage informatif de ces marqueurs relève désormais de
+[**#4063 P2**](https://github.com/pzia/cifereca/issues/4063).
+Le champ `BorrowerOperationEvidence` et `assess_borrower_eligibility`
+restent disponibles pour d'autres sources et pour l'observation BnF
+read-only ; ils ne sont PAS utilisés comme admission de ce parcours précis.
 
-Le résultat public est un petit dictionnaire `status/reason_code/provider_verified/retry`, sans jeton, lien, nom de compte, notice ou exception fournisseur.
+## Chemin d'exécution réservé à BnF Prêt
 
-## Verrou CoreUI sur la voie générique
+1. `MainWindow.can_borrow_item` consulte
+   `service.can_borrow_bnf(item)` : plugin installé/activé, capacité
+   `acquisition.borrow` effectivement publiée, session connectée,
+   compte primaire unique de l'identité exacte, notice numérique BNF_PRET,
+   bail Core valide et aucune tentative antérieure enregistrée.
+   **Aucune requête HTTP pour afficher le bouton**. L'état d'un
+   livre pris sur le portail n'est pas déduit du résultat catalogue.
+2. `gui/bnf_borrow_controller.py` montre le titre et le compte
+   sélectionnés, rappelle de vérifier **visuellement** l'empruntabilité sur
+   le portail officiel avant toute demande, et indique la possibilité
+   de refus pour quota/droits. Un seul choix positif atteste
+   `site_checked=True` **et** `confirmed=True` pour ce geste concret.
+   Annuler ou fermer = aucune tâche. La confirmation reste attachée
+   à l'instance de compte, à la notice, aux générations d'identité,
+   de sélection, à la session et aux epochs. Toute mutation révoque.
+3. `service.borrow_bnf_manual` appelle **uniquement**
+   `core.manual_bnf_borrow`. Les deux booléens sont obligatoirement
+   du type `True` et la demande est limitée à
+   `source_provider=bnf-pret` / `docbase=BNF_PRET` / `medium=digital`
+   / même compte primaire. Le Core recontrôle l'identité, la
+   capability réelle du PluginManager et de la session et le
+   `BorrowActionScopeLease`.
+4. L'admission `LendingActionAdmission(loan.borrow, manual, admitted)`
+   est **spécifique à une tentative demandée par l'utilisateur sur BnF**,
+   pas une déclaration de droit positif. Ne pas appeler
+   `assess_lending_action(permission_attested=True)` : ce contrat
+   générique exige une preuve d'entitlement *machine*, que la simple
+   vérification visuelle ne fournit pas. Aucune ouverture ni
+   synchronisation planifiée ne peut obtenir cette admission.
+5. Le Core réserve atomiquement **un seul**
+   `Storage.loan_borrow_claim_once` par identité/compte/édition.
+   Toute réservation existante (même résultat incertain/corrompu)
+   interdit un nouveau POST automatique ; un bail devenu obsolète
+   avant POST consomme le claim mais ne contacte pas le prêteur.
+6. Sous le verrou du provider, `borrow_explicit_with_claim` lit
+   l'activité fraîche et refuse un prêt exact déjà positif ; GET
+   fiche du livre sélectionné ; vérifie un lien d'emprunt unique non
+   désactivé et sans marqueur de refus ; GET de confirmation puis
+   extraction du formulaire POST et CSRF liés à la même édition.
+   **Un seul POST**, sans redirection ni retry. La BnF peut répondre
+   par refus, erreur ou succès non prouvé.
+7. L'activité BnF est relue **indépendamment** et le prêt actif
+   exact est corrélé au reçu ; le Core revalide toutes les coordonnées
+   du `Loan` puis clôt le claim SQLite. `confirmed` exige
+   `provider_verified=True` ; HTTP 200 et présence du formulaire
+   ne suffisent jamais.
+8. Timeout, 4xx/5xx, activation ambiguë, contexte modifié ou
+   lecture d'activité non concluante : message sans données privées,
+   `verification_unavailable`, **aucun retry du POST**.
+   L'utilisateur vérifie Mes emprunts / le portail BnF.
+   Le téléchargement ACSM/ADEPT est une opération distincte ; aucune
+   licence ni acquisition implicite pendant le nouvel emprunt.
 
-Le chemin historique `MainWindow.borrow_search_item()` invoque directement
-`ProviderSession.borrow(item, account)`, sans bail, admission ou claim Core.
-Pour BnF uniquement, `can_borrow_item` cache donc le bouton générique et
-`borrow_search_item` refuse explicitement tout appel direct, **même si**
-un manifeste/descripteur BnF publiait accidentellement `borrow=True`.
-Ce garde doit rester jusqu'à l'ajout d'une vraie confirmation GTK BnF
-aboutissant exclusivement au dispatcher Core vérifié. Les autres sources
-conservent leur comportement historique.
+## Protection de la voie générique
 
-## Raccordement CoreUI sous confirmation dédiée (tranche suivante)
+La capability BnF `ProviderCapabilities.borrow=True` et le manifeste
+`acquisition.borrow` rendent **la confirmation dédiée** visible
+pour une session admissible. La méthode legacy `BnfProviderSession.borrow`
+refuse toujours par `bnf_borrow_requires_core_dispatch` sans aucun I/O.
+`MainWindow.borrow_search_item` intercepte BnF AVANT l'ancien
+`session.borrow` et ne le rejoint jamais.
 
-Le `LibraryService` expose `can_borrow_bnf` et `borrow_bnf_manual`
-uniquement via le Core. La disponibilité UI vérifie sans I/O fournisseur :
-capability réelle du PluginManager, descripteur, session et compte primaire
-exact, bail et présence d'une méthode fournisseur de preuve positive.
-**Elle n'est pas l'éligibilité** : le contrôleur délègue toujours l'admission
-réelle à `manual_bnf_borrow` après consentement.
+Les autres fournisseurs ne sont pas concernés par cette exception produit
+manuelle ; leurs preuves de droits et leurs contrats d'admission ne sont
+pas assouplis.
 
-`gui/bnf_borrow_controller.py` construit un dialogue explicite distinct de
-l'ancien `session.borrow()`. Son geste « Confirmer l'emprunt » est lié
-à l'instance de compte, aux coordonnées de notice et aux générations
-identité/compte/recherche ainsi qu'à l'epoch Core. Le worker revérifie
-ces scellés au démarrage, puis passe `expected_account` et
-`expected_context_epoch` au dispatcher Core ; toute mutation ou ABA est
-refusée, sans préemption d'un claim. Une seule réponse du dialogue peut
-enregistrer une tâche. Résultat positif uniquement si Core renvoie
-`confirmed + provider_verified`, suivi de l'actualisation des emprunts.
-Résultat inconnu : message demandant de vérifier le portail et précisant
-l'absence de rejeu automatique ; aucune exception privée n'est rendue.
+## Recette & limites
 
-La visibilité du bouton générique BnF demeure **fausse** avec le manifeste
-actuel. Le contrôleur BnF remplace seulement son ancien rejet lorsque le
-Core validera la capability et les faits de permission ; le chemin direct
-`session.borrow` demeure interdit.
+Les tests du parcours utilisent des données entièrement synthétiques,
+`httpx.MockTransport`, SQLite réelle Core, garde GTK headless et les
+contrats PR CI / installation rollback. Les PR précédentes #4037, #4039,
+#4042, #4044, #4052, #4057, #4061 apportent les briques de sécurité.
 
-## Non-activation explicite
-
-Ce code n'est **pas** une nouvelle API d'emprunt disponible : le manifeste BnF et `capabilities.borrow` restent négatifs, `borrower_eligibility_for` manque, et aucun composant UI/sync ne l'invoque. Les tests utilisent un faux fournisseur ayant *fictivement* publié la capability et les quatre preuves métier pour tester l'orchestration ; ils ne simulent pas une autorisation BnF réelle.
-
-Pour activer : qualification privée des signaux de souscription/quota/permission, projection fournisseur documentée et testée, décision d'exposition de `acquisition.borrow` et de `ProviderSession.borrow`, confirmation GTK explicitement liée au compte, puis recette réelle consentie. P0 #2055 reste ouvert. Aucun Chromium ni parcours automatique.
-
-Références : #2055, #4035, #4037, #4039, #4042, #3120, #3121.
+**La publication dans main ne vaut pas une recette réelle :** après
+déploiement, une tentative volontaire sur une notice effectivement
+empruntable devra vérifier le comportement terrain de la BnF, le résultat
+dans Mes emprunts et, séparément, la livraison ACSM/ADEPT. N'inclure
+aucun cookie, nom de compte, HTML privé, URL signée ou licence dans GitHub.
+#2055 reste ouvert jusqu'à recette ; #4063 traite les marqueurs de quota.

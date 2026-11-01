@@ -25,7 +25,7 @@ DESCRIPTOR = ProviderDescriptor(
     id='bnf-pret', display_name='BnF Prêt', state='ready',
     description='Catalogue, fiches et prêts du portail lecteur BnF, par HTTPX.',
     capabilities=ProviderCapabilities(authentication=True, multiple_credentials=True, loans=True,
-                                      search=True, holdings=True),
+                                      search=True, holdings=True, borrow=True),
     search_capabilities=ProviderSearchCapabilities(
         fields=('all',), scopes=('all', 'digital'), pagination='next-link',
         max_pages=MAX_SEARCH_PAGES,
@@ -927,6 +927,14 @@ class BnfProviderSession(ProviderSession):
                 source_provider=self.provider_id, source_credential=self.credential_id,
             )
 
+    def borrow(self, item: SearchResult, account: Account) -> Loan:
+        """Legacy entrypoint MUST NOT bypass Core BnF's user-checked claim.
+
+        The declared acquisition.borrow means a *dedicated manual CoreUI
+        action* is available, never that arbitrary callers may POST here.
+        """
+        raise ProviderCapabilityError('bnf_borrow_requires_core_dispatch')
+
     def borrower_eligibility_for(self, item: SearchResult, account: Account):
         """Fresh read-only *partial* borrower evidence for #2055.
 
@@ -1094,13 +1102,14 @@ class BnfProviderSession(ProviderSession):
         admission, claimed_receipt, confirmed=False,
         core_scope_current=None,
     ) -> Loan:
-        """Dormant BnF manual transaction; requires a *Core-owned* claim.
+        """BnF-only confirmed manual attempt, under a Core-owned claim.
 
-        This is NOT ProviderSession.borrow(), nor a published acquisition.
-        The caller MUST prove independent borrower permission, true human
-        consent and the durable claim before invoking this method. A passed
-        admission/claim shape is not a capability or a trusted permission.
-        No retry is allowed after the claimed POST, even if verification fails.
+        The reader visually checked the edition on pret.bnf.fr and then
+        confirmed this same target in CoreUI. The BnF server, not Cifereca
+        quota markers, decides eligibility after the one POST. The provider
+        validates exact activity, fresh detail/form/CSRF, and a resulting
+        active loan. Never call this through legacy ProviderSession.borrow().
+        No retry follows a claimed POST even when verification fails.
         """
         from cifereca.plugin_api import LendingActionAdmission
         from cifereca_bnf_pret_borrow import (

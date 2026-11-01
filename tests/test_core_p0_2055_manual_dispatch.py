@@ -1,8 +1,7 @@
 """P0 #2055: canonical manual BnF admission, without a real provider POST.
 
-Fixtures explicitly simulate a *future* BnF with declared borrow capability
-and four exact positive upstream permission facts. The production BnF
-manifest/method remain disabled, so none of these tests enable borrowing.
+Synthetic Core contracts exercise reader site-check and manual consent,
+with durable at-most-once and no real network or lender interaction.
 """
 from dataclasses import replace
 from pathlib import Path
@@ -134,18 +133,18 @@ def test_success_requires_real_admission_claim_and_positive_result(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "confirmed" and result["provider_verified"] is True
-        assert session.reads == [("book-1", "reader")]
+        assert session.reads == []
         assert session.dispatches == [("book-1", "reader")]
         row = service.storage.loan_borrow_state(borrow_claim_key(account, item))
         assert row["status"] == "confirmed"
         assert row["verified_loan_id"] == "loan-synthetic"
         assert "Synthetic" not in json.dumps(result)
         repeat = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert repeat["status"] == "verification_unavailable"
-        assert len(session.dispatches) == len(session.reads) == 1
+        assert len(session.dispatches) == 1 and session.reads == []
         assert service.storage.entitlements(provider_id="bnf-pret") == []
         assert not service.storage.acquisitions()
     finally:
@@ -169,7 +168,7 @@ def test_real_bnf_has_unpublished_borrow_capability_and_cannot_dispatch(tmp_path
     service, session, account, item = setup(tmp_path, declared=False)
     try:
         r = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert r["status"] == "unsupported"
         assert session.reads == session.dispatches == []
         assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
@@ -177,35 +176,55 @@ def test_real_bnf_has_unpublished_borrow_capability_and_cannot_dispatch(tmp_path
         service.close()
 
 
-@pytest.mark.parametrize("denial", [
+@pytest.mark.parametrize("unverified", [
     {"permission": "unknown"},
     {"quota_state": "unknown"},
+    {"account_state": "unknown"},
+    {"item_offer": "unknown"},
     {"quota_state": "exhausted"},
-    {"item_offer": "unavailable"},
     {"account_state": "inactive"},
     {"record_id": "different-book"},
-    {"borrower_id": "foreign-account"},
-    {"identity_id": "foreign-identity"},
 ])
-def test_positive_four_way_permission_is_mandatory(tmp_path, denial):
+def test_automated_quota_and_entitlement_markers_do_not_gate_manual_attempt(
+        tmp_path, unverified):
     service, session, account, item = setup(tmp_path)
     try:
-        session._evidence = evidence(account, item, **denial)
+        # An optional informational evidence snapshot is not read by the
+        # Core's manual BnF path. The actual BnF server can refuse the POST.
+        session._evidence = evidence(account, item, **unverified)
         r = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
-        assert r["status"] == "blocked"
-        assert len(session.reads) == 1 and session.dispatches == []
-        assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
+            service, item, expected_identity_id="default",
+            confirmed=True, site_checked=True)
+        assert r["status"] == "confirmed"
+        assert session.reads == []
+        assert session.dispatches == [("book-1", "reader")]
     finally:
         service.close()
 
 
-def test_rebind_during_permission_read_never_claims_or_posts(tmp_path):
+@pytest.mark.parametrize("checked", [False, None, "yes", 1])
+def test_visual_site_check_is_required_without_read_or_checkpoint(tmp_path, checked):
     service, session, account, item = setup(tmp_path)
     try:
-        session.on_read = lambda: setattr(account, "identity_id", "another")
         r = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default",
+            confirmed=True, site_checked=checked)
+        assert r["status"] == "blocked"
+        assert r["reason_code"] == "borrow_site_check_required"
+        assert session.reads == session.dispatches == []
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item)) is None
+    finally:
+        service.close()
+
+
+def test_non_primary_account_cannot_issue_manual_loan(tmp_path):
+    service, session, account, item = setup(tmp_path)
+    try:
+        account.is_primary = False
+        r = manual_bnf_borrow(
+            service, item, expected_identity_id="default",
+            confirmed=True, site_checked=True)
         assert r["status"] == "blocked"
         assert session.dispatches == []
     finally:
@@ -217,16 +236,16 @@ def test_timeout_or_unknown_post_state_is_not_replayed(tmp_path):
     try:
         session.failure = TimeoutError("PRIVATE-URL-synthetic")
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "verification_unavailable"
         assert "PRIVATE" not in json.dumps(result)
         assert len(session.dispatches) == 1
         assert service.storage.loan_borrow_state(
             borrow_claim_key(account, item))["status"] == "verification_unavailable"
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "verification_unavailable"
-        assert len(session.dispatches) == 1 and len(session.reads) == 1
+        assert len(session.dispatches) == 1 and session.reads == []
     finally:
         service.close()
 
@@ -236,7 +255,7 @@ def test_scope_revocation_during_post_cannot_publish_right_or_confirm(tmp_path):
     try:
         session.on_execute = lambda: setattr(session, "_epoch", "new-epoch")
         result = manual_bnf_borrow(
-            service, item, expected_identity_id="default", confirmed=True)
+            service, item, expected_identity_id="default", confirmed=True, site_checked=True)
         assert result["status"] == "verification_unavailable"
         assert len(session.dispatches) == 1
         assert not service.storage.acquisitions()
@@ -256,7 +275,7 @@ def test_wrong_source_or_identity_never_touches_account_or_claim(tmp_path):
         ]:
             assert manual_bnf_borrow(
                 service, candidate, expected_identity_id=identity,
-                confirmed=True)["status"] == "blocked"
+                confirmed=True, site_checked=True)["status"] == "blocked"
         assert session.reads == session.dispatches == []
     finally:
         service.close()
@@ -317,14 +336,14 @@ def test_ui_future_capability_only_offers_dialog_not_permission(tmp_path):
         assert manual_bnf_borrow_available(service, item) is True
         assert session.reads == session.dispatches == []
         result = service.borrow_bnf_manual(
-            item, expected_identity_id="default", confirmed=True,
+            item, expected_identity_id="default", confirmed=True, site_checked=True,
             expected_context_epoch=service._account_context_epoch,
             expected_account=account,
         )
-        assert result["status"] == "blocked"
-        assert session.dispatches == []
+        assert result["status"] == "confirmed"
+        assert session.dispatches == [("book-1", "reader")]
         assert service.storage.loan_borrow_state(
-            borrow_claim_key(account, item)) is None
+            borrow_claim_key(account, item))["status"] == "confirmed"
     finally:
         service.close()
 
@@ -339,7 +358,7 @@ def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
             {"expected_account": replace(account)},
         ):
             result = service.borrow_bnf_manual(
-                item, expected_identity_id="default", confirmed=True, **kw)
+                item, expected_identity_id="default", confirmed=True, site_checked=True, **kw)
             assert result["status"] == "blocked"
         assert session.reads == session.dispatches == []
         assert service.storage.loan_borrow_state(
@@ -348,7 +367,7 @@ def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
         # instance and selected source have been restored.
         service._account_context_epoch += 2
         result = service.borrow_bnf_manual(
-            item, expected_identity_id="default", confirmed=True,
+            item, expected_identity_id="default", confirmed=True, site_checked=True,
             expected_context_epoch=prior, expected_account=account)
         assert result["status"] == "blocked"
         assert session.dispatches == []
