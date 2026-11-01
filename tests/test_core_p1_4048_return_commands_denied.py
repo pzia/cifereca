@@ -44,11 +44,12 @@ def test_adept_return_is_denied_before_lock_or_acquisition_lookup(tmp_path):
         service.close()
 
 
-def test_direct_legacy_drm_return_request_is_denied_without_plugin(tmp_path):
+@pytest.mark.parametrize("operation", ["return", "Return", "RETURN"])
+def test_direct_legacy_drm_return_request_is_denied_without_plugin(tmp_path, operation):
     service, _account, _loan, session = setup(tmp_path)
     try:
         request = DrmMutationRequest(
-            operation="return", identity_id="default", provider_id="paris",
+            operation=operation, identity_id="default", provider_id="paris",
             loan_id="adept-synthetic",
         )
         with pytest.raises(AttentionRequired) as err:
