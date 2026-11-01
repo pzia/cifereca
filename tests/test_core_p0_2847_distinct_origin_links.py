@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.core.acquisition_audit import inspect_exact_source, safe_acquisition_audit
+from tests.test_core_p0_3171_atomic_publication_v14 import store
 from tests.test_core_p0_2847_audit_multiple_placements import pair
 
 
