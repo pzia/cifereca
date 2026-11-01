@@ -120,7 +120,7 @@ def setup(tmp_path, *, declared=True):
     caps = ("acquisition.borrow", "sync.loans") if declared else ("sync.loans",)
     service._plugin_manager = NS(
         status=lambda _id: NS(
-            state="ready",
+            state="ready", enabled=True,
             descriptor=NS(id="provider.bnf-pret", type="provider.library",
                           capabilities=caps),
         )
