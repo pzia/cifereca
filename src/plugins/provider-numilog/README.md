@@ -1839,3 +1839,29 @@ doit être suivi de la vérification du fichier réel dans le profil et de son
 lien d'origine. La recette P0 reste **six achats, six EPUB vérifiés**, dont les
 deux précédemment reçus sont idempotents. Un refus HTTP est un fait, pas une
 preuve que le User-Agent en est la cause.
+
+
+## P1 #3913 — analyse hors réseau des ZIP du journal canonique
+
+Commande : `python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py CHEMIN.zip --json`
+(option `--task-ref REF` pour une tâche exacte). Le script reste en lecture
+seule, n'ouvre aucune session ni réseau, et ne modifie ni le ZIP ni la bibliothèque.
+
+Il accepte deux formats : les anciens ZIP à **un seul membre JSON** et les
+exports Diagnostics du jour générés par Core, composés exactement de
+`cifereca-journal-brut.json`, `manifest.json` et `README.txt`. Il valide
+le schéma du manifeste, le membre JSON attendu, la taille des octets,
+le SHA-256 et le nombre d'événements ; les membres inconnus, doublons, chemins
+internes, archives corrompues et dépassements de taille sont refusés.
+Aucun fichier ZIP n'est extrait. Une erreur de format rend le code de sortie 2,
+avec une raison stable (`invalid_journal_manifest`, `journal_size_mismatch`,
+`journal_digest_mismatch`, `journal_event_count_mismatch` ou
+`unexpected_journal_archive`).
+
+Le rapport n'expose que des catégories et preuves de tentative Numilog,
+**pas** les corps ou secrets du journal brut. Un téléchargement observé ne
+prouve pas un fichier EPUB publié : contrôler séparément SHA-256, OriginLink,
+Placement et résultat ADEPT dans le profil exact. La couverture du journal
+(export du jour et rotations) reste bornée ; l'absence d'événement ne prouve
+pas l'absence de tentative. Les ZIP bruts peuvent contenir des credentials,
+cookies ou URL signées : ne pas les publier automatiquement.
