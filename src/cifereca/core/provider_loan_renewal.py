@@ -65,6 +65,8 @@ def _same_positive_loan(candidate: Any, selected: Loan, account: Any) -> bool:
             or candidate.id != selected.id
             or candidate.record_id != selected.record_id
             or candidate.provider != selected.provider
+            or candidate.medium != "physical"
+            or selected.medium != "physical"
             or candidate.medium != selected.medium
             or candidate.source_provider != selected.source_provider
             or candidate.source_credential != selected.source_credential
@@ -127,8 +129,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
     if (key is None
             or type(loan.identity_id) is not str or not loan.identity_id
             or type(loan.record_id) is not str or not loan.record_id
-            or type(loan.medium) is not str
-            or loan.medium not in {"digital", "physical"}
+            or loan.medium != "physical"
             or (loan.state is not None and
                 (type(loan.state) is not str
                  or loan.state.casefold() in {
