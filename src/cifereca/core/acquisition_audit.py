@@ -196,6 +196,24 @@ def inspect_exact_source(
 
 
 
+
+def safe_acquisition_audit(value: object) -> dict[str, object]:
+    """Closed export DTO shared by CLI stdout and the standalone audit JSON.
+
+    Inspecting a source is deliberately provider-neutral. Any unexpected
+    diagnostic/credential field introduced by a provider or future adapter
+    must not make the shareable output less restrictive than the Sync ZIP.
+    """
+    if (type(value) is not dict or type(value.get("schema_version")) is not int
+            or value.get("schema_version") != 1
+            or value.get("scope") != "exact_source"):
+        raise ValueError("acquisition_audit_invalid_result")
+    # Keep the same bounded, canonical resource/receipt vocabulary used for
+    # the matching before/after members of the #3882 Sync ZIP.
+    from .sync_report import _safe_resource_evidence
+    return _safe_resource_evidence(value)
+
+
 def write_acquisition_audit(destination: Path, data: dict[str, object]) -> None:
     """Atomic O_EXCL 0600 JSON publication, never replace an existing file."""
     if not isinstance(destination, Path):
@@ -205,8 +223,8 @@ def write_acquisition_audit(destination: Path, data: dict[str, object]) -> None:
     if (os.path.lexists(target) or not parent.is_dir()
             or any(p.is_symlink() for p in (target, *target.parents))):
         raise FileExistsError("acquisition_audit_destination_exists")
-    payload = (json.dumps(data, ensure_ascii=True, sort_keys=True,
-                          separators=(",", ":")) + "\n").encode("ascii")
+    payload = (json.dumps(safe_acquisition_audit(data), ensure_ascii=True,
+                          sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     if len(payload) > 512 * 1024:
         raise ValueError("acquisition_audit_size_limit")
     temp = None
