@@ -91,3 +91,48 @@ def test_source_sync_exception_still_dispatches_error_callback():
         assert [args[3] for name, args in displayed if name == "finished"] == [False]
     finally:
         runner.close()
+
+
+def test_real_executor_correlates_typed_business_refusal_without_exception(caplog):
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.task_queue import PriorityExecutor
+    diag = Diagnostics()
+    pool = PriorityExecutor(max_workers=1)
+    expected = SyncResult(ok=False, facts={"reason": "operation_busy"})
+
+    def refused():
+        diag.add("NUMILOG", "acquisition_delivery", "error", detail={
+            "phase": "completed", "code": "operation_busy",
+        })
+        return expected
+
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            assert pool.submit(0, refused).result(timeout=3) is expected
+        ref = diag.snapshot()[0]["task_ref"]
+        assert f"task_ref={ref} status=failed" in caplog.text
+        assert f"task_ref={ref} status=success" not in caplog.text
+    finally:
+        pool.shutdown(wait=True)
+
+
+def test_real_executor_keeps_typed_positive_as_success_and_no_phantom_ref(caplog):
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.task_queue import PriorityExecutor
+    diag = Diagnostics()
+    pool = PriorityExecutor(max_workers=1)
+    try:
+        def success():
+            diag.add("NUMILOG", "acquisition_delivery", "ok", detail={
+                "phase": "completed", "code": "complete",
+            })
+            return SyncResult(ok=True)
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            assert pool.submit(0, success).result(timeout=3).ok is True
+        ref = diag.snapshot()[0]["task_ref"]
+        assert f"task_ref={ref} status=success" in caplog.text
+        caplog.clear()
+        assert pool.submit(0, lambda: SyncResult(ok=False)).result(timeout=3).ok is False
+        assert "TRACE task correlation" not in caplog.text
+    finally:
+        pool.shutdown(wait=True)
