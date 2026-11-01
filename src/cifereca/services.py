@@ -1521,7 +1521,10 @@ class LibraryService:
                 "provider_request_accepted": False, "provider_verified": False,
                 "retry": "explicit_only",
             }
+        # Reject non-Paris/digital renewals before taking a mutation lock.
         if (type(loan) is not Loan
+                or loan.source_provider != "paris"
+                or loan.medium != "physical"
                 or type(loan.source_provider) is not str
                 or type(loan.id) is not str or not loan.id
                 or type(loan.source_credential) is not str
