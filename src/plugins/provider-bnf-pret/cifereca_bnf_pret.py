@@ -175,6 +175,10 @@ class BnfProviderSession(ProviderSession):
 
     def connect(self):
         with self._lock:
+            # Reauthentication is a new generation even with the same
+            # Account/credential: revoke leases from before a reconnect.
+            # This is independent of Core's identity context epoch.
+            self._epoch = uuid4().hex
             self.connected = False
             self._accounts = []
             self._observed_loans = {}
