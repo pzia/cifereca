@@ -1065,6 +1065,9 @@ class BnfProviderSession(ProviderSession):
 
             if not current():
                 raise ProviderConfigurationError('account_scope_mismatch')
+            # Reusing a consumed operation must not even trigger new GETs.
+            if claimed_receipt['operation_id'] in self._borrow_post_attempts:
+                raise ProviderCapabilityError('borrow_claim_spent')
             try:
                 before = self._snapshot(self.client.activity())
                 if not current():
