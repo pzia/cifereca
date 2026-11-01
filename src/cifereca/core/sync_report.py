@@ -134,6 +134,94 @@ def _json_bytes(value: object) -> bytes:
     return payload
 
 
+
+# Closed summary vocabulary: never interpolate provider data, filesystem paths,
+# HTTP diagnostics or arbitrary exception messages into the shareable report.
+_SUMMARY_COUNTS = ("scanned", "downloaded", "completed", "unchanged", "pending", "errors")
+_SUMMARY_SNAPSHOT_COUNTS = (
+    "origin_link_count", "placement_reference_count",
+    "staged_sha_verified_count", "staged_visible_in_library_count",
+)
+_SUMMARY_RIGHT_CLASSES = (
+    "source_unlinked", "source_linked_unplaced", "missing_file",
+    "ambiguous_match", "local_unverified", "complete_local",
+)
+_SUMMARY_RECEIPT_CLASSES = ("staged_unpublished", "receipt_recorded")
+
+
+def _safe_summary_count(value: object) -> int | None:
+    return value if type(value) is int and 0 <= value <= 1_000_000 else None
+
+
+def _summary_audit(phase: str, audit: object) -> list[str]:
+    """Describe exact-source snapshots; never attribute their deltas to a run."""
+    if type(audit) is not dict or audit.get("status") == "unavailable":
+        return [f"audit_{phase}: unavailable"]
+    lines = [f"audit_{phase}: available"]
+    for field in _SUMMARY_SNAPSHOT_COUNTS:
+        value = _safe_summary_count(audit.get(field))
+        if value is not None:
+            lines.append(f"snapshot_{phase}_{field}: {value}")
+    evidence = audit.get("resource_evidence")
+    if type(evidence) is not dict:
+        return lines
+    if evidence.get("truncated") is True:
+        lines.append(f"snapshot_{phase}_resources_truncated: true")
+    if phase != "after":
+        return lines
+    # These are classifications, not necessarily failures. In particular a
+    # catalogue-only reference may legitimately have no local OriginLink.
+    for group, classes in (
+        ("rights", _SUMMARY_RIGHT_CLASSES),
+        ("receipts", _SUMMARY_RECEIPT_CLASSES),
+    ):
+        records = evidence.get(group)
+        if type(records) is not list:
+            continue
+        for category in classes:
+            count = sum(
+                type(item) is dict and item.get("classification") == category
+                for item in records[:512]
+            )
+            if count:
+                lines.append(f"observed_{group}_{category}: {count}")
+    return lines
+
+
+def _report_summary(
+    *, outcome: dict[str, object], exit_code: int, before: object,
+    after: object, evidence_coverage: str,
+) -> bytes:
+    """Bounded human-readable overview of evidence already in the ZIP.
+
+    This output is intentionally NOT a synthesis of the provider's raw result:
+    it only copies closed status/counters and canonical, local snapshots.
+    """
+    lines = [
+        "CIFERECA SOURCE SYNC REPORT",
+        f"status: {outcome['status']}",
+        f"exit_code: {exit_code}",
+        f"coverage: {evidence_coverage}; no HTTP/correlated journal proof",
+    ]
+    if "code" in outcome:
+        lines.append(f"reason_code: {outcome['code']}")
+    for field in _SUMMARY_COUNTS:
+        count = _safe_summary_count(outcome.get(field))
+        if count is not None:
+            lines.append(f"reported_{field}: {count}")
+    lines.extend(_summary_audit("before", before))
+    lines.extend(_summary_audit("after", after))
+    lines.append(
+        "note: snapshots describe one source at two instants, not per-run "
+        "causality or proof of final Placement/OriginLink."
+    )
+    lines.append(
+        "note: omitted classes are unobserved in the bounded sample; "
+        "absence is not an exhaustive negative proof."
+    )
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
 def write_sync_report(
     destination: Path, *, account, run_ref: str,
     before: dict[str, object], after: dict[str, object],
@@ -188,12 +276,10 @@ def write_sync_report(
         {"run_ref": run_ref, "phase": "sync_finished", "status": safe_result["status"],
          **({"code": safe_result["code"]} if "code" in safe_result else {})},
     ]
-    summary = (
-        "CIFERECA SOURCE SYNC REPORT\n"
-        f"status: {safe_result['status']}\n"
-        f"exit_code: {exit_code}\n"
-        f"coverage: {manifest['evidence_coverage']}; no HTTP/correlated journal proof\n"
-    ).encode("ascii")
+    summary = _report_summary(
+        outcome=safe_result, exit_code=exit_code, before=before, after=after,
+        evidence_coverage=manifest["evidence_coverage"],
+    )
     parts = {
         "manifest.json": _json_bytes(manifest),
         "sync-result.json": _json_bytes(safe_result),
