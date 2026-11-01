@@ -113,3 +113,22 @@ def test_summary_rejects_unknown_strings_and_unbounded_counts():
     for forbidden in ("PRIVATE", "reported_scanned", "reported_downloaded",
                       "observed_rights", "snapshot_after_origin_link_count"):
         assert forbidden not in summary
+
+
+
+def test_unavailable_before_or_after_is_explicit_in_zip_coverage(tmp_path):
+    target = tmp_path / "incomplete-evidence.zip"
+    sync_report.write_sync_report(
+        target, account=_ACCOUNT, run_ref="f" * 32,
+        before={"status": "unavailable", "reason": "audit_unavailable"},
+        after={"rights_by_kind": {"purchase": 1}},
+        result={"status": "failed", "code": "sync_unavailable"},
+        started_at="2026-11-01T00:00:00+00:00", exit_code=2,
+    )
+    with zipfile.ZipFile(target) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        summary = archive.read("summary.txt").decode("ascii")
+    assert manifest["evidence_coverage"] == "local_audit_unavailable"
+    assert "coverage: local_audit_unavailable" in summary
+    assert "audit_before: unavailable" in summary
+    assert "audit_after: available" in summary
