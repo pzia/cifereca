@@ -218,6 +218,54 @@ def promote_completed_delivery(
         os.close(dir_fd)
 
 
+def _metadata_staging_dependency(db, *, table: str, marker: str,
+                                 current_operation: str = "") -> bool:
+    """Protect staging references even when JSON escapes Unicode or separators.
+
+    SQLite instr(raw, absolute_path) misses normal ensure_ascii JSON on a
+    non-ASCII library path. Read only rows mentioning a staging namespace
+    (plain or escaped dot), decode JSON with duplicate keys preserved, and
+    compare decoded strings. Invalid/oversized metadata fails closed.
+    """
+    if table not in ("catalog_entries", "acquisition_ledger"):
+        raise ValueError("canonical_cleanup_invalid_dependency_table")
+    exclusion = " AND acquisition_id<>?" if table == "acquisition_ledger" else ""
+    cursor = db.execute(
+        f"SELECT metadata_json FROM {table} WHERE ("
+        "instr(metadata_json,?)>0 OR instr(metadata_json,?)>0 "
+        "OR instr(metadata_json,?)>0 OR instr(metadata_json,?)>0)"
+        + exclusion,
+        (marker, ".canonical-delivery", "\\u002e", "\\u002E")
+        + ((current_operation,) if exclusion else ()),
+    )
+    for index, (raw,) in enumerate(cursor):
+        # The scanner is a safety guard, not a reason to delete on an
+        # incomplete inventory. Cap parsed input and total candidate rows.
+        if index >= 100_000 or type(raw) is not str or len(raw) > 65536:
+            return True
+        if marker in raw:
+            return True
+        try:
+            # A dict constructor discards duplicate keys, possibly including
+            # the only path dependency. Retain every field and nested value.
+            decoded = json.loads(raw, object_pairs_hook=lambda pairs: pairs)
+        except (ValueError, TypeError, RecursionError):
+            return True
+        pending = [decoded]
+        scanned = 0
+        while pending:
+            node = pending.pop()
+            scanned += 1
+            if scanned > 65536:
+                return True
+            if type(node) is str:
+                if marker in node:
+                    return True
+            elif type(node) in (list, tuple):
+                pending.extend(node)
+    return False
+
+
 def cleanup_published_staging(
     storage, *, source: SourceKey, completed: CompletedDelivery, library_root: Path,
 ) -> bool:
@@ -261,21 +309,18 @@ def cleanup_published_staging(
                 (marker, len(prefix), prefix),
             ).fetchone():
                 return False
-        # Path references in catalogue or other operation checkpoints are
-        # operational until reconciled. No JSON structure is trusted here:
-        # searching the serialized text also catches nested path fields.
-        if db.execute(
-            "SELECT 1 FROM catalog_entries "
-            "WHERE instr(metadata_json,?)>0 LIMIT 1",
-            (marker,),
-        ).fetchone():
+        # JSON text can escape non-ASCII path components or separators.
+        # Decode only staging-looking records and preserve duplicate fields:
+        # an escaped operational dependency must prevent unlink as well.
+        if _metadata_staging_dependency(
+            db, table="catalog_entries", marker=marker,
+        ):
             return False
         current_operation = _stage_id(source, completed.delivery_offer_id)
-        if db.execute(
-            "SELECT 1 FROM acquisition_ledger "
-            "WHERE acquisition_id<>? AND instr(metadata_json,?)>0 LIMIT 1",
-            (current_operation, marker),
-        ).fetchone():
+        if _metadata_staging_dependency(
+            db, table="acquisition_ledger", marker=marker,
+            current_operation=current_operation,
+        ):
             return False
         # Preserve the original receipt until B is already committed (caller
         # contract), but only remove a private run with no other registered
