@@ -5,7 +5,11 @@ Static contract only: never launch Core, plugins or a networked CLI here.
 from __future__ import annotations
 
 import ast
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 
 
@@ -201,6 +205,58 @@ def test_plugin_entrypoint_inventory_flags_unknown_command_and_removed_classifie
     )
     report = inventory(tmp_path)
     assert report["status"] == "needs_review"
+
+
+def test_plugin_entrypoint_inspector_cli_is_offline_and_has_two_output_modes(
+    tmp_path,
+):
+    """Run only the safe inspector; never invoke an executable plugin."""
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + (
+        environment.get("PYTHONPATH") or ""
+    )
+
+    def run(*options):
+        return subprocess.run(
+            [
+                sys.executable, "-m",
+                "cifereca.core.plugin_entrypoint_inventory",
+                "--root", str(ROOT), *options,
+            ],
+            cwd=tmp_path, env=environment,
+            text=True, capture_output=True, timeout=15, check=False,
+        )
+
+    structured = run("--json")
+    assert structured.returncode == 0
+    assert structured.stderr == ""
+    payload = json.loads(structured.stdout)
+    assert payload["status"] == "complete"
+    assert len(payload["entries"]) == 4
+    assert payload["unclassified"] == []
+    assert payload["removed"] == []
+    assert all(not entry["path"].startswith("/") for entry in payload["entries"])
+
+    human = run()
+    assert human.returncode == 0
+    assert human.stderr == ""
+    assert human.stdout == (
+        "plugin_entrypoints_complete count=4 unclassified=0 removed=0\\n"
+    ).replace("\\n", "\n")
+    assert str(ROOT) not in human.stdout
+
+    absent = subprocess.run(
+        [
+            sys.executable, "-m",
+            "cifereca.core.plugin_entrypoint_inventory",
+            "--root", str(tmp_path), "--json",
+        ],
+        cwd=tmp_path, env=environment,
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+    assert absent.returncode == 2
+    assert json.loads(absent.stdout)["status"] == "unavailable"
+    assert absent.stderr == ""
 
 
 def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
