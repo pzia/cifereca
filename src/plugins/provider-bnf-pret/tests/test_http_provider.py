@@ -352,10 +352,10 @@ class HTTPCatalogTests(unittest.TestCase):
         state.update(pages={'1':search_html()}, detail=DETAIL, statuses={}, redirects={})
         requests = []
         def handler(request):
-            if request.url.host=='pret.bnf.fr' and request.url.path in {'/results','/resources/book-a'}:
+            if request.url.host=='pret.bnf.fr' and request.url.path in {'/resources','/resources/book-a'}:
                 calls.append((request.method,request.url.host,request.url.path))
                 requests.append(request)
-                if request.url.path=='/results':
+                if request.url.path=='/resources':
                     page=request.url.params.get('page','1')
                     if page in state['redirects']:
                         return httpx.Response(302,headers={'location':state['redirects'].pop(page)})
@@ -395,7 +395,7 @@ class HTTPCatalogTests(unittest.TestCase):
     def test_only_observed_next_link_is_followed_and_duplicate_is_deduplicated(self):
         session,calls,state,requests=self.make()
         state['pages']['1']=search_html(('book-a','homonym-a'),
-                '<nav class="pagination"><a rel="next" href="/results?q=fiction&amp;page=2">Suite</a></nav>')
+                '<nav class="pagination"><a rel="next" href="/resources?q=fiction&amp;page=2">Suite</a></nav>')
         state['pages']['2']=search_html(('book-a','homonym-b'))
         rows=session.search('fiction')
         self.assertEqual({r.record_id for r in rows},{'book-a','homonym-a','homonym-b'})
@@ -403,7 +403,7 @@ class HTTPCatalogTests(unittest.TestCase):
 
     def test_later_403_preserves_observed_records_and_warns(self):
         session,calls,state,requests=self.make()
-        state['pages']['1']=search_html(following='<a rel="next" href="/results?q=fiction&amp;page=2">Suite</a>')
+        state['pages']['1']=search_html(following='<a rel="next" href="/resources?q=fiction&amp;page=2">Suite</a>')
         state['statuses']['2']=403
         rows=session.search('fiction')
         self.assertEqual(len(rows),1)
@@ -422,9 +422,10 @@ class HTTPCatalogTests(unittest.TestCase):
             self.assertEqual(len(requests),1)
 
     def test_invalid_next_link_never_fetches_foreign_mutator_or_changed_query(self):
-        for link in ['https://evil.test/results?q=fiction&amp;page=2',
-                     '/loans/loan-a','/v1/resources','/results?q=other&amp;page=2',
-                     '/results?q=fiction&amp;page=8', '/results?q=fiction&amp;page=2&amp;token=PRIVATE']:
+        for link in ['https://evil.test/resources?q=fiction&amp;page=2',
+                     '/loans/loan-a','/v1/resources','/results?q=fiction&amp;page=2',
+                     '/resources?q=other&amp;page=2',
+                     '/resources?q=fiction&amp;page=8', '/resources?q=fiction&amp;page=2&amp;token=PRIVATE']:
             session,calls,state,requests=self.make()
             state['pages']['1']=search_html(following=f'<a rel="next" href="{link}">Suite</a>')
             self.assertEqual(len(session.search('fiction')),1)
@@ -435,7 +436,7 @@ class HTTPCatalogTests(unittest.TestCase):
         session,calls,state,requests=self.make()
         for n in range(1,6):
             state['pages'][str(n)]=search_html((f'book-{n}',),
-                f'<a rel="next" href="/results?q=fiction&amp;page={n+1}">Suite</a>')
+                f'<a rel="next" href="/resources?q=fiction&amp;page={n+1}">Suite</a>')
         self.assertEqual(len(session.search('fiction')),5)
         self.assertEqual(len(requests),5)
         self.assertIn('search_page_limit',session.last_search_warnings)
@@ -472,7 +473,7 @@ class HTTPCatalogTests(unittest.TestCase):
         for item in [replace(row,source_provider='paris'),replace(row,source_credential='other'),replace(row,record_id='../loans/a')]:
             with self.assertRaises((ProviderConfigurationError,ProviderError)):session.holdings(item)
         self.assertEqual(len(requests),1)
-        state['redirects']['1']='https://pret.bnf.fr/results?q=other'
+        state['redirects']['1']='https://pret.bnf.fr/resources?q=other'
         with self.assertRaisesRegex(ProviderError,'search_redirect_mismatch'):session.search('fiction')
 
     def test_explicit_unavailability_is_separate_from_borrow_button(self):

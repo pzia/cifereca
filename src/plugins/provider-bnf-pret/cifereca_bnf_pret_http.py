@@ -66,7 +66,7 @@ def allowed_url(url: str, *, authenticating: bool = False) -> str:
         if u.hostname == 'pret.bnf.fr':
             allowed = (not u.query and (u.path == '/my_profile/activity'
                        or bool(re.fullmatch(r'/resources/[A-Za-z0-9_-]{1,128}', u.path))))
-            if u.path == '/results':
+            if u.path == '/resources':
                 try:
                     params = _params(url)
                     allowed = ('q' in params and 2 <= len(params['q'].strip()) <= 128)
@@ -200,7 +200,7 @@ class ReaderHTTPClient:
                                           'activity' if url == ACTIVITY and not authenticating
                                           else 'search' if method == 'GET' and not authenticating
                                           and urlsplit(url).hostname == 'pret.bnf.fr'
-                                          and urlsplit(url).path == '/results'
+                                          and urlsplit(url).path == '/resources'
                                           else None),
                                       headers={'Accept': 'text/html'},
                                       timeout=min(15, max(0.1, deadline-time.monotonic()))) as r:

@@ -18,7 +18,7 @@ def query_url(query):
     if (type(query) is not str or not 2 <= len(query.strip()) <= 128
             or any(ord(c) < 32 or ord(c) == 127 for c in query)):
         raise WebParseError('invalid_query')
-    return ORIGIN + '/results?' + urlencode({'q': query.strip()})
+    return ORIGIN + '/resources?' + urlencode({'q': query.strip()})
 
 
 def resource_url(resource_id):
