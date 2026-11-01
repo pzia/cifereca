@@ -11,7 +11,7 @@
     {
       "id": "provider.bnf-pret",
       "type": "provider.library",
-      "version": "0.3.18",
+      "version": "0.3.19",
       "entrypoint": "cifereca_bnf_pret:PLUGIN",
       "display_name": "BnF Prêt",
       "description": "Catalogue HTML, fiches et synchronisation non destructive des prêts via HTTPX.",
