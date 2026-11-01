@@ -110,6 +110,10 @@ class CaptureSessionJournal:
                         record.created, timezone.utc,
                     ).isoformat(timespec="milliseconds"),
                     "process_id": self.process_id,
+                    # Carry the same opaque session key as manifest.json so
+                    # individual JSONL records cannot be misattributed when
+                    # multiple GUI captures share a PID or civil date.
+                    "session_ref": self.session_ref,
                     "level": record.levelname,
                     "logger": record.name,
                     "raw": formatter(record),

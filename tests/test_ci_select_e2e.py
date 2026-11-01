@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 33)
+        self.assertEqual(len(mod.ALL), 34)
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertIn("maintenance-tools-1728", mod.ALL)
@@ -25,6 +25,19 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("book-detail-1300", mod.ALL)
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
+
+    def test_4093_capture_gtk_smoke_is_selected_for_gui_entry_and_probe(self):
+        self.assertEqual(
+            mod.select(["e2e/capture_session_gtk_probe.py"]),
+            mod.CAPTURE_GTK,
+        )
+        self.assertEqual(
+            mod.CAPTURE_GTK, ("capture-session-gtk-1366",),
+        )
+        self.assertIn(
+            "capture-session-gtk-1366",
+            mod.select(["src/cifereca/app.py"]),
+        )
 
     def test_2800_optimizer_native_handoff_selected_for_real_plugin_changes(self):
         self.assertEqual(
@@ -186,6 +199,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         entrypoints = {
+            "gtk-capture-session": "capture_session_gtk_probe.py",
             "gtk-probe": "search_filter_probe.py",
             "gtk-detail": "book_detail_probe.py",
             "gtk-llm-settings": "llm_settings_probe.py",
