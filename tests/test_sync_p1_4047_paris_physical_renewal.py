@@ -108,10 +108,9 @@ def test_gui_button_guard_is_independent_of_experimental_switch():
     text = path.read_text(encoding="utf-8")
     section = text.split("def show_loan(", 1)[1].split("def _decorate(", 1)[0]
     assert "if paris_physical_renewal_visible(loan):" in section
-    assert section.index("if paris_physical_renewal_visible(loan):") < section.index(
-        'config.get("experimental_actions", False)'
-    )
+    # The retired global toggle is no longer read by any loan detail path.
+    assert "experimental_actions" not in section
+    assert "confirm_return(" not in section
     guarded = section.split("if paris_physical_renewal_visible(loan):", 1)[1]
-    guarded = guarded.split("experimental =", 1)[0]
     assert 'label="Prolonger"' in guarded
     assert "self.window.confirm_renew(loan, renew)" in guarded
