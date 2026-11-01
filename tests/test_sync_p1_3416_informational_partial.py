@@ -43,7 +43,7 @@ def test_inventory_coverage_partial_is_informational_with_explicit_local_phase(
         "info", "Notices et droits : couverture partielle (information)"
     )
     presented = sync_source_presentation(item)
-    assert presented.sync_label == "Partielle"
+    assert presented.sync_label == "Couverture partielle (information)"
     assert "aucun échec de téléchargement local déclaré" in presented.summary
     assert "publication des fichiers restent distinctes" in presented.summary
 
@@ -130,7 +130,7 @@ def test_actual_broker_error_precedes_partial_or_running_status_label(state):
 
 def test_closed_partial_marker_still_displays_partial_without_declaring_failure():
     item = source(status="partial", error="Synchronisation partielle")
-    assert sync_source_presentation(item).sync_label == "Partielle"
+    assert sync_source_presentation(item).sync_label == "Couverture partielle (information)"
     assert sync_source_attention(item)[0] == "info"
 
 
@@ -172,10 +172,34 @@ def test_failed_materialization_phase_cannot_hide_under_success_or_partial_headl
 def test_partial_inventory_with_successful_local_phase_is_not_a_failure_label():
     item = source(materialize="success")
     assert sync_source_attention(item)[0] == "info"
-    assert sync_source_presentation(item).sync_label == "Partielle"
+    assert sync_source_presentation(item).sync_label == "Couverture partielle (information)"
 
 
 def test_non_sync_capable_source_does_not_display_failed_phase_as_download_error():
     item = source(sync_capable=False, materialize="failed")
     assert sync_source_attention(item) is None
     assert sync_source_presentation(item).sync_label == "Non prise en charge"
+
+
+
+@pytest.mark.parametrize(("status", "error", "local", "expected_prefix"), [
+    ("partial", "Synchronisation partielle", "success",
+     "Couverture partielle (information)"),
+    ("partial", "Synchronisation partielle", "not_supported",
+     "Couverture partielle (information)"),
+    ("partial", "Synchronisation partielle", "partial", "Partielle"),
+    ("partial", "Synchronisation partielle", "interrupted", "Partielle"),
+    ("partial", "PRIVATE_TOKEN_NOT_FOR_UI", "success", "Échec"),
+])
+def test_primary_partial_label_matches_attested_severity_without_leaking_errors(
+    status, error, local, expected_prefix,
+):
+    item = source(
+        provider="provider.future", materialize=local, status=status,
+        error=error, last_attempt="2026-10-31T14:00:00+00:00",
+    )
+    label = sync_source_presentation(item).sync_label
+    assert label.startswith(expected_prefix)
+    assert "PRIVATE_TOKEN_NOT_FOR_UI" not in label
+    if expected_prefix == "Couverture partielle (information)":
+        assert " · " in label  # preserves a real Core-attributed attempt date
