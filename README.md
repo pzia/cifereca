@@ -13,6 +13,24 @@ Repères du dépôt :
 - Tests : [docs/TEST-ORGANIZATION.md](docs/TEST-ORGANIZATION.md) ; simulation fonctionnelle **déjà existante** : simulation/ ; environnements/ pour les runtimes.
 - Rationalisation et statuts : [docs/RATIONALIZATION-STATUS.md](docs/RATIONALIZATION-STATUS.md).
 
+## Diagnostiquer une source sans modifier la bibliothèque
+
+Le [registre des outils P1 #3913](docs/CORE-P1-3913-DIAGNOSTIC-TOOLS.md)
+distingue commandes de lecture locale, accès fournisseur, opérations
+modificatrices, rapports ciblés et exports de journaux/traces bruts.
+
+```sh
+cifereca-cli doctor --json
+cifereca-cli sync list --provider numilog --identity ID --json
+cifereca-cli acquisition-audit --provider numilog --identity ID --verify-files --json
+```
+
+Ces commandes ne déclenchent pas de synchronisation fournisseur ;
+l'initialisation technique du Core peut toutefois créer ou actualiser
+des fichiers de configuration/journal. **Ne pas utiliser `sync run` comme
+simple sonde** : `--confirm` autorise la synchronisation et les mutations.
+Le ZIP `--report` n'est pas une trace HTTP. Les traces et journaux bruts
+peuvent contenir des credentials ; aucune publication automatique.
 > Les sections de versions ci-dessous sont **historiques**, ne priment pas sur le contrat #3171 et n'attestent pas les fonctionnalités non fusionnées.
 
 ---
