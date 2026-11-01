@@ -14,14 +14,15 @@ def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_sett
     def refresh_kobo_backup_status(*_args) -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
-        status, _legacy_ready = kobo_backup_action_state(
-            persisted_enabled=(self.config.get("kobo_backup.enabled", False) is True),
-            draft_enabled=bool(backup_switch.get_active()),
-            dirty=settings_state.dirty("sync"),
+        # Source consent is managed by the Sync broker, never by the
+        # obsolete global kobo_backup.enabled bit. This Settings row is
+        # navigation only and must not present the old flag as active.
+        dirty = settings_state.dirty("sync")
+        kobo_status.set_subtitle(
+            "Modifications à enregistrer avant d'ouvrir Synchronisation."
+            if dirty else
+            "Activation, révocation et suivi des synchronisations par source."
         )
-        kobo_status.set_subtitle(status)
-        # The obsolete Kobo flag is display-only, never a prerequisite for
-        # opening provider-neutral Synchronisation. Unsaved edits still block.
         kobo_run_now.set_sensitive(not settings_state.dirty("sync"))
 
     def open_kobo_sync_page(_button) -> None:

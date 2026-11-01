@@ -56,11 +56,10 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     controls, section, downloads = _build()
     assert len(section.children) == 1
     group = section.children[0]
-    assert group.title == "Kobo — acquisition locale des fichiers"
-    assert len(group.children) == 5
+    assert group.title == "Kobo — paramètres techniques existants"
+    assert len(group.children) == 4
     assert [row.title for row in group.children] == [
-        "Ancien réglage global Kobo (compatibilité)",
-        "Synchronisation Kobo — comptes et aperçus",
+        "Synchronisation — sources et autorisations",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
         "Délai entre tentatives au démarrage (minutes, minimum 15)",
         "DisplayProfile Kobo-Vault",
@@ -69,9 +68,9 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
     assert controls.backup_switch.sensitive is False
-    assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
+    assert controls.run_backup_now.label == "Ouvrir Synchronisation…"
     assert controls.run_backup_now.sensitive is True
-    assert "Ancien réglage global désactivé" in controls.backup_status.subtitle
+    assert "Aucun consentement" in controls.backup_status.subtitle
     assert controls.library_dir_row.text == "~/EBooks"
     assert controls.backup_interval_row.text == "60"
     assert controls.vault_profiles == ["Android", "Desktop"]
@@ -92,7 +91,7 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     assert controls.backup_switch.active is True
     assert controls.backup_switch.sensitive is False
     assert controls.run_backup_now.sensitive is True
-    assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
+    assert "Aucun consentement" in controls.backup_status.subtitle
     assert controls.backup_dir_row.text == "Kobo"
     assert controls.backup_interval_row.text == "90"
     assert controls.library_dir_row.text == "/tmp/ebooks"
@@ -144,7 +143,7 @@ def test_malformed_backup_opt_in_does_not_activate_automatic_acquisition():
         controls, _, _ = _build({"kobo_backup.enabled": invalid})
         assert controls.backup_switch.active is False
         assert controls.run_backup_now.sensitive is True
-        assert "Ancien réglage global désactivé" in controls.backup_status.subtitle
+        assert "Aucun consentement" in controls.backup_status.subtitle
         assert kobo_backup_action_state(
             persisted_enabled=invalid,
             draft_enabled=invalid,
@@ -173,34 +172,36 @@ def test_navigation_callback_is_provider_neutral_and_cannot_authorize_download()
     assert "settings_state.dirty('sync')" in nav_source
     assert "self.navigate('sync')" in nav_source
     assert "run_kobo_backup" not in nav_source
-    assert "self.config.get('kobo_backup.enabled', False) is True" in ast.unparse(refresh)
+    assert "kobo_backup.enabled" not in ast.unparse(refresh)
 
 
 def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refresh():
-    _, section, _ = _build({"kobo_backup.enabled": True})
+    controls, section, _ = _build({"kobo_backup.enabled": True})
     group = section.children[0]
-    automatic, manual = group.children[:2]
-    assert "Ancien réglage global Kobo" in automatic.title
-    assert "ne lance plus de téléchargements" in automatic.subtitle
-    assert "par compte dans Synchronisation" in automatic.subtitle
-    assert "comptes et aperçus" in manual.title
-    assert "sans effet sur l’acquisition" in manual.subtitle
-    assert "Seule l’autorisation explicite" in manual.subtitle
-    assert "dans Synchronisation" in manual.subtitle
+    manual = group.children[0]
+    assert "sources et autorisations" in manual.title
+    assert "acquisition autorisée par compte" in manual.subtitle
+    assert "Aucun consentement" in manual.subtitle
+    assert all("Ancien réglage global" not in row.title for row in group.children)
+    # The obsolete widget is instantiated only for compatibility; it must
+    # have no GTK parent and cannot appear in the saved Settings surface.
+    assert all(controls.backup_switch is not row
+               and controls.backup_switch not in row.suffixes
+               for row in group.children)
 
 
 def test_opening_interval_is_not_described_as_periodic_timer():
     _, section, _ = _build()
     group = section.children[0]
-    interval = group.children[3]
+    interval = group.children[2]
     assert "au démarrage" in interval.title
-    assert "minuterie périodique" in group.children[0].subtitle
+    assert "cadence" in group.children[0].subtitle
 
 
 def test_obsolete_global_bypass_is_not_rendered_even_when_saved():
     _, section, _ = _build({"kobo_backup.allow_unlinked_acquisition": True})
     titles = [row.title for row in section.children[0].children]
-    assert len(titles) == 5
+    assert len(titles) == 4
     assert all("dérogation" not in title.lower() for title in titles)
 
 
@@ -211,7 +212,7 @@ def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
     assert values == before
     assert controls.backup_switch.active is True
     assert controls.run_backup_now.sensitive is True
-    assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
+    assert controls.run_backup_now.label == "Ouvrir Synchronisation…"
 
 
 def test_unlinked_legacy_values_are_ignored_by_widgets():
@@ -221,15 +222,15 @@ def test_unlinked_legacy_values_are_ignored_by_widgets():
             "kobo_backup.allow_unlinked_acquisition": saved,
         })
         assert not hasattr(controls, "unlinked_switch")
-        assert len(section.children[0].children) == 5
+        assert len(section.children[0].children) == 4
 
 
 def test_legacy_global_switch_does_not_claim_download_consent():
     controls, section, _ = _build({"kobo_backup.enabled": True})
     group = section.children[0]
-    assert "ne lance plus" in group.children[0].subtitle
+    assert "sources et autorisations" in group.children[0].title
     assert "compte" in group.children[0].subtitle
-    assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
+    assert "Aucun consentement" in controls.backup_status.subtitle
     assert all("dérogation" not in row.title.lower() for row in group.children)
 
 
@@ -244,6 +245,6 @@ def test_only_legacy_global_kobo_switch_remains_inert():
     assert controls.backup_switch.active is True
     assert controls.backup_switch.sensitive is False
     assert not hasattr(controls, "unlinked_switch")
-    assert "lecture seule" in section.children[0].children[0].subtitle
+    assert "Aucun consentement" in section.children[0].children[0].subtitle
     assert controls.run_backup_now.sensitive is True
 
