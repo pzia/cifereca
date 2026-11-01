@@ -220,6 +220,17 @@ def _refresh_sync_page(self) -> None:
     unavailable_paris = unavailable_paris_connections(self.service, scope.identity_id)
     if not sync_action_scope_current(self, scope):
         return
+    # A configured but disconnected credential is intentionally NOT a
+    # SyncSourceRef and cannot be synchronized. Its existing notice must still
+    # contribute to the fixed, identity-scoped attention banner. Voluntarily
+    # disabled accounts/plugins are not actionable errors.
+    unavailable_connection_warnings = sum(
+        getattr(notice, "state", None) in {
+            "not_connected", "plugin_missing", "plugin_unavailable",
+            "invalid_configuration",
+        }
+        for notice in unavailable_paris
+    )
     presentations = [sync_source_presentation(source) for source in rows]
     # Keep a user's open account tools across passive refreshes, but never
     # carry that disclosure state into another identity or retain stale rows.
@@ -249,7 +260,10 @@ def _refresh_sync_page(self) -> None:
         # the individual per-account indicators.
         alerts = [sync_source_attention(source) for source in rows]
         errors = sum(alert is not None and alert[0] == "error" for alert in alerts)
-        warnings = sum(alert is not None and alert[0] == "warning" for alert in alerts)
+        warnings = (
+            sum(alert is not None and alert[0] == "warning" for alert in alerts)
+            + unavailable_connection_warnings
+        )
         infos = sum(alert is not None and alert[0] == "info" for alert in alerts)
         if errors or warnings:
             self._sync_attention_icon.set_from_icon_name(
