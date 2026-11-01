@@ -152,6 +152,22 @@ Scripts autonomes identifiés par recherche du code (`__main__` /
 Le scan des `src/plugins/**/*.py` repère les vrais points d'entrée par garde
 AST `if __name__ == "__main__"` et/ou construction d'un parseur
 `argparse.ArgumentParser`, **sans importer ni exécuter les plugins**.
+
+Pour vérifier un **checkout source** (agent backlog ou développeur) :
+
+```sh
+python3 -m cifereca.core.plugin_entrypoint_inventory --root /chemin/vers/cifereca --json
+```
+
+**Classe O/T** : parcourt et analyse uniquement les sources Python présentes sur
+disque ; ne déclenche aucune commande provider, requête réseau, opération SQLite,
+optimisation EPUB ou plugin runtime. Le rapport comporte uniquement les chemins
+**relatifs**, la classe de risque et la raison connue : `status=complete`
+(code 0) lorsque tous les points d'entrée sont classés ; `needs_review`
+(code 2) avec `unclassified` ou `removed` si un nouvel exécutable est apparu
+ou qu'un précédent a disparu. L'absence de checkout donne `unavailable`
+(code 2). **Ce rapport ne prouve pas les effets d'une future implémentation** :
+un humain doit examiner le code et réviser le registre.
 Les modules `tests/test_*.py` n'établissent pas à eux seuls une commande
 opérateur. Les quatre exécutables ci-dessous sont classés par leurs effets,
 indépendamment de leur présence dans une installation donnée :
