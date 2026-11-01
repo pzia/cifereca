@@ -137,7 +137,11 @@ def receipt_staging_evidence(
     core, core_truncated = core_staging_receipt_observations(
         db, coords=coords, library_root=canonical_root,
         verify_files=verify_files, reference=reference,
-        limit=max(0, _MAX_ROWS - len(rows)),
+        # Core receipt rows are ALREADY included in the LEFT JOIN above,
+        # even when artifact_id IS NULL. Subtracting len(rows) counts each
+        # unplaced receipt twice and falsely declares truncation at scale.
+        # Use the full bound for both reads, then verify the union below.
+        limit=_MAX_ROWS,
     )
     if core_truncated:
         return {"coverage": "truncated", "staged_visible_in_library": 0,
@@ -148,6 +152,12 @@ def receipt_staging_evidence(
         # Only the exact private operation ID (never exported) is a key.
         output[operation_id] = entry
     observations = list(output.values())
+    # The two SQL reads can project overlapping operation IDs. The result
+    # budget applies to the distinct, exact operation IDs, not the sum of
+    # both result-set lengths.
+    if len(observations) > _MAX_ROWS:
+        return {"coverage": "truncated", "staged_visible_in_library": 0,
+                "staged_verified": 0, "observations": []}
     return {
         "coverage": ("indexed_and_core_receipts" if core else
                      "indexed_account_receipts_only" if root is not None

@@ -44,3 +44,20 @@ n'accorde pas de droit : seule une nouvelle Sync avec offre fournisseur
 positive, contexte actif, ON et garde d'identité peut réutiliser les octets
 via `recover_completed_delivery`. En cas de contradiction, conserver les
 octets et demander une preuve réelle, sans adoption par titre ou SHA seul.
+
+## Bornage des observations de staging (P0 #3909)
+
+Le SELECT initial de `acquisition_ledger` comprend également les reçus Core
+dont `artifact_id IS NULL`. Le second lecteur du journal Core doit donc
+respecter **son propre plafond** de 512, puis vérifier la taille de l'union
+dédupliquée par l'identifiant exact d'opération avant export. Retrancher le
+nombre de lignes du premier SELECT au budget du second décomptait les reçus
+Core **deux fois** et provoquait un faux `truncated` lorsque l'inventaire
+comportait plusieurs centaines de reçus.
+
+Limite : 512 lignes par lecture bornée et au plus 512 observations distinctes
+en sortie. Dépassement réel : `truncated` et compteurs remis à zéro (aucune
+fausse preuve d'exhaustivité). Les reçus distincts demeurent séparés même
+quand le rapport agrégé remplace tous les IDs par un placeholder privé.
+Tests de budget serré : 1/2/3 reçus Core, mélange de reçus historiques,
+franchissement du seuil, export DTO et compteurs avec SHA réellement relu.
