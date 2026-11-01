@@ -229,11 +229,11 @@ def reconcile_committed_staging(
             source, proof["offer_id"], staged, proof["sha256"],
             proof["receipt"], proof["adept_receipt"],
         )
-        cleanup_published_staging(
+        if cleanup_published_staging(
             storage, source=source, completed=completed,
             library_root=root,
-        )
-        changed = True
+        ):
+            changed = True
     return changed
 
 
