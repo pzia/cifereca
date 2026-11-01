@@ -82,7 +82,7 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
                                "confirm", "confirmation"}):
             raise ValueError
         if (segments[0] == "resources" and
-                (len(segments) < 3 or segments[1] != resource_id.casefold())):
+                (len(segments) < 3 or target.path.split('/')[2] != resource_id)):
             raise ValueError
         # A path naming a *different* resource must never authorize a loan.
         resource_path = re.search(r"(?:^|/)resources/([^/]+)", target.path)
