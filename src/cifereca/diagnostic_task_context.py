@@ -13,6 +13,7 @@ _LOG = logging.getLogger('cifereca')
 @dataclass
 class _Scope:
     reference: str | None = None
+    business_failed: bool = False
 
 
 _CURRENT: ContextVar[_Scope | None] = ContextVar('diagnostic_task', default=None)
@@ -29,6 +30,22 @@ def diagnostic_task_reference() -> str | None:
         except Exception:
             return None  # optional diagnostics cannot break a provider action
     return scope.reference
+
+
+def diagnostic_task_business_result(result: object) -> None:
+    """Mark an attested typed SyncResult refusal without raising an exception.
+
+    The Future still returns the original result, which consumers require to
+    refresh UI/broker state. A business refusal must not emit a worker
+    correlation `status=success` merely because no Python error was thrown.
+    No task reference is allocated unless a real event already requested it.
+    """
+    scope = _CURRENT.get()
+    if scope is None:
+        return
+    from .plugin_api import SyncResult
+    if isinstance(result, SyncResult) and result.ok is False:
+        scope.business_failed = True
 
 
 def numilog_task_reference() -> str | None:
@@ -52,6 +69,8 @@ def diagnostic_task_scope():
         # broken log handler must not change the result of an operation.
         _CURRENT.reset(token)
         if scope.reference is not None:
+            if outcome == 'success' and scope.business_failed:
+                outcome = 'failed'
             try:
                 level = (logging.ERROR if outcome == 'failed' else
                          logging.WARNING if outcome == 'cancelled' else logging.INFO)
