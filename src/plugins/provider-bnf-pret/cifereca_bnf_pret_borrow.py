@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from cifereca_bnf_pret_web import ORIGIN, WebParseError, _dom, _id
 
@@ -70,7 +70,19 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
         resource_path = re.search(r"(?:^|/)resources/([^/]+)", target.path)
         if resource_path and resource_path.group(1) != resource_id:
             raise ValueError
-    except (ValueError, TypeError):
+        # Query coordinates can carry the selected resource. An action
+        # pointing at a different book must never be admitted just because
+        # the visible button lives inside the selected Book card.
+        pairs = parse_qsl(
+            target.query, keep_blank_values=True, strict_parsing=True,
+            encoding="utf-8", errors="strict", max_num_fields=32,
+        ) if target.query else []
+        selected = [v for k, v in pairs if k in {
+            "resource_id", "resource", "book_id",
+        }]
+        if (len(selected) > 1 or any(v != resource_id for v in selected)):
+            raise ValueError
+    except (ValueError, TypeError, UnicodeError):
         raise WebParseError("borrow_url_refused") from None
     return url
 
