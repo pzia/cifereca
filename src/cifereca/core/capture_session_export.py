@@ -117,7 +117,11 @@ def _decode_html_body(data: bytes, response: object, representation: object) -> 
         return None
     try:
         codecs.lookup(charset)
-        return data.decode(charset, errors="strict").encode("utf-8")
+        projected = data.decode(charset, errors="strict").encode("utf-8")
+        # Latin-1 / UTF-16 and other supported source encodings can expand
+        # when transcoded. Apply the same bound to the ACTUAL file exported
+        # into html/, not just to compressed or source-encoded transport.
+        return projected if len(projected) <= _MAX_HTML_BYTES else None
     except (LookupError, UnicodeError, ValueError):
         return None
 
