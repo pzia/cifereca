@@ -169,7 +169,7 @@ ou qu'un précédent a disparu. L'absence de checkout donne `unavailable`
 (code 2). **Ce rapport ne prouve pas les effets d'une future implémentation** :
 un humain doit examiner le code et réviser le registre.
 Les modules `tests/test_*.py` n'établissent pas à eux seuls une commande
-opérateur. Les quatre exécutables ci-dessous sont classés par leurs effets,
+opérateur. Les cinq exécutables ci-dessous sont classés par leurs effets,
 indépendamment de leur présence dans une installation donnée :
 
 | Chemin effectif | Commande / paramètres | Effet attestable et précautions |
@@ -178,6 +178,7 @@ indépendamment de leur présence dans une installation donnée :
 | `src/plugins/recommendations/trace_report.py` | `python3 src/plugins/recommendations/trace_report.py [LOG|-]` | **F** : lecture de logs de performance (stdin `-` par défaut), statistiques ; **ne pas publier les lignes brutes**. |
 | `src/plugins/epub_optimizer/cifereca_epub_optimizer/cli.py` | `python3 -m cifereca_epub_optimizer.cli INPUT [-o OUTPUT] [--profile ID] [--max-uncompressed-mb N] [--json]` (dans le venv où **cette distribution plugin** est installée) | **M** : lit l'ouvrage d'entrée et écrit un EPUB transformé, avec capacité de consommation CPU/mémoire ; `--json` ne rend **pas** l'opération passive. Aucun prêt/sync déclenché. |
 | `src/plugins/epub_optimizer/tests/benchmark_optimizer_cpu.py` | `python3 src/plugins/epub_optimizer/tests/benchmark_optimizer_cpu.py [--repetitions N] [--heavy-images N] [--width N] [--height N] [--baseline-root DIR] [--baseline-ref REF]` | **T/M** : génère des EPUB/PDF synthétiques, lance des transformations et peut écrire un baseline ; dépendances `Pillow`/`PyMuPDF`. Benchmark destructeur **sur son espace de travail jetable**, pas un audit d'une bibliothèque réelle. `--sample`/`--workers` sont des paramètres internes de processus enfant. |
+| `src/plugins/epub_optimizer/tests/gtk_cpu_responsiveness.py` | `python3 src/plugins/epub_optimizer/tests/gtk_cpu_responsiveness.py` sous le harnais GTK4/Xvfb déjà installé (`CIFERECA_GTK_PACKAGE_ROOT`, `CIFERECA_GTK_BASELINE` optionnels) | **T/M** : démarre une **vraie fenêtre GTK** et un TaskBroker ; crée/transforme des EPUB/PDF **synthétiques** en répertoire temporaire, teste 1/2/4 workers et la réactivité. Pas de compte, pas de preuve de prêt/Sync ; **ne pas lancer depuis le rôle backlog** ni sur une session graphique utilisateur non isolée. |
 
 **Garde de dérive :** `tests/test_core_p1_3913_diagnostic_tool_inventory.py`
 compare les points d'entrée réellement détectés dans les plugins à ce
