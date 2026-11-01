@@ -78,7 +78,26 @@ def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
             db, placement_id=placement_id, path=path)
             or candidate_has_active_dependencies_in_db(
                 db, placement_id=placement_id, path=placement_id)):
-        return _blocked("dependent_references"), None
+        # Diagnostic only: show *counts* of direct catalogue/backup links.
+        # Other checkpoints, declarations, receipts and metadata may still
+        # block even if both counts are zero. Never disclose a private path,
+        # title, account, provider or identifier, or issue a deletion token.
+        # The fail-closed dependency guard above remains authoritative.
+        catalogue_rows = db.execute(
+            "SELECT COUNT(*) FROM catalog_entries WHERE placement_id=?",
+            (placement_id,),
+        ).fetchone()[0]
+        backup_rows = db.execute(
+            "SELECT COUNT(*) FROM backup_items WHERE local_path=?", (path,),
+        ).fetchone()[0]
+        if (type(catalogue_rows) is not int or catalogue_rows > 128
+                or type(backup_rows) is not int or backup_rows > 128):
+            return _blocked("dependency_budget"), None
+        return {
+            **_blocked("dependent_references"),
+            "catalogue_rows": catalogue_rows,
+            "backup_rows": backup_rows,
+        }, None
 
     envelope = json.dumps(
         [str(root), root_stat.st_dev, root_stat.st_ino, directory, row],
