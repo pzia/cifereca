@@ -72,6 +72,12 @@ def _evidence(db, *, root: Path, root_stat: os.stat_result,
         return _blocked("source_coordinates_unavailable"), None
     if _physical_absence(root / directory, old_path) != "absent":
         return _blocked("old_path_not_verified_absent"), None
+    # The detached catalogue must retain a real, already known Artifact.
+    # Never treat a dangling Artifact ID as adequate historical evidence.
+    if db.execute(
+        "SELECT 1 FROM artifacts WHERE artifact_id=? LIMIT 1", (artifact,),
+    ).fetchone() is None:
+        return _blocked("artifact_evidence_unavailable"), None
     # A Placement with unclassified metadata may carry historical evidence
     # independently of its linked catalogue. Don't discard that evidence.
     if type(raw_meta) is not str or len(raw_meta) > 65536:
@@ -83,7 +89,8 @@ def _evidence(db, *, root: Path, root_stat: os.stat_result,
     linked = db.execute(
         "SELECT catalog_entry_id,artifact_id,placement_id,identity_id,"
         "provider_id,item_id,local_state,metadata_json,updated_at "
-        "FROM catalog_entries WHERE placement_id=? LIMIT 129",
+        "FROM catalog_entries WHERE placement_id=? "
+        "ORDER BY catalog_entry_id LIMIT 129",
         (pid,),
     ).fetchall()
     if not linked:
