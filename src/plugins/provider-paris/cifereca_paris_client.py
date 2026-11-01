@@ -1145,8 +1145,20 @@ class ParisClient:
             return data.get("d") if isinstance(data.get("d"), list) else []
         return self._timed("CATALOG", "check availability batch", work)
     def renew_loan(self, loan: Loan, uid: str = "") -> dict[str, Any]:
-        if not loan.renewable:
-            raise ParisError(loan.cannot_renew_reason or "Ce prêt n'est pas renouvelable")
+        # #4047: direct ParisClient callers must not bypass the physical-only
+        # admission performed by the Core and by ParisProviderSession.
+        if (type(loan) is not Loan or loan.source_provider != "paris"
+                or loan.medium != "physical" or loan.provider != "SYRACUSE"
+                or loan.renewable is not True or type(loan.raw) is not dict
+                or loan.raw.get("CanRenew") is not True
+                or (loan.raw.get("Id") or loan.raw.get("HoldingId")) != loan.id
+                or type(loan.id) is not str or not loan.id
+                or (loan.state is not None and (
+                    type(loan.state) is not str or loan.state.casefold() in {
+                        "returned", "closed", "expired", "cancelled", "canceled",
+                    }
+                ))):
+            raise ParisError("Prolongation réservée aux prêts physiques Paris éligibles")
         def work():
             r = self.client.post(
                 f"{self.base_url}{ACCOUNT_SERVICE}/RenewLoans",
