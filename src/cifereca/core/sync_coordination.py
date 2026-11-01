@@ -456,6 +456,21 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                     InterProcessLock(acquisition_lock_file())
                 )
             with measure("locked_work_ms"):
+                # The optional provider scope is strictly one source Sync,
+                # including its legacy library mirror and typed A observation.
+                # Providers without this contract retain their original path.
+                # Never use a TTL cache of personal rights across Sync runs.
+                if self.sync_source_enabled(account):
+                    source_session = self._sessions.get(
+                        self._session_key(account.provider_id, account.credential_id),
+                    )
+                    if (source_session is not None and getattr_static(
+                            source_session, "source_sync_inventory", None,
+                    ) is not None):
+                        source_batch = getattr(source_session, "source_sync_inventory")
+                        if not callable(source_batch):
+                            raise ProviderConfigurationError("source_inventory_batch_invalid")
+                        locks.enter_context(source_batch(account))
                 result = self._synchronize_account_source_impl(account, deep=deep, control=control)
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
