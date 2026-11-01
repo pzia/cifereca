@@ -64,7 +64,9 @@ def test_active_settings_sync_page_is_vendor_neutral_even_with_old_consent_on():
     assert group.title == "Synchronisation par source"
     assert row.title == "Synchronisation — sources et autorisations"
     assert "Aucun consentement" in row.subtitle
-    assert controls.run_backup_now in row.suffixes
+    assert controls.open_sync_button in row.suffixes
+    assert controls.run_backup_now is controls.open_sync_button
+    assert controls.backup_status is controls.sync_navigation_status
     assert controls.library_dir_row in downloads.children
     assert controls.library_dir_row.text == "/tmp/books"
     assert not any("Kobo" in child.title for child in group.children)
