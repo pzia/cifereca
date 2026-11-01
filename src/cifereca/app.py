@@ -198,6 +198,7 @@ def main() -> int:
     from pathlib import Path
     from .core.capture_session_export import _safe_destination, export_capture_session
     from .core.capture_session_journal import CaptureSessionJournal
+    from .core.capture_http_window import capture_http_window
     from .http_trace import HTTP_TRACE
     from .install_paths import downloads_dir
     from .logging_utils import diagnostics_level, trace_disable_generation, set_diagnostics_level
@@ -235,6 +236,10 @@ def main() -> int:
     ]
     for handler in mirrors:
         handler.addFilter(mute)
+    # HTTP_TRACE is process-global and can contain a previous --capture run
+    # (notably when a GUI is embedded/restarted in the same interpreter).
+    # Its append-only cursor isolates THIS run without mutating Diagnostics.
+    trace_start = HTTP_TRACE.status()
     journal = CaptureSessionJournal()
     journal.start(logger)
     sys.argv = cleaned
@@ -257,7 +262,9 @@ def main() -> int:
             journal.finish()
             published = export_capture_session(
                 directory, journal=journal.snapshot(),
-                http_snapshot=HTTP_TRACE.snapshot(), app_exit_code=rc,
+                http_snapshot=capture_http_window(
+                    HTTP_TRACE.snapshot(), trace_start,
+                ), app_exit_code=rc,
                 build_identity=build_identity(),
                 trace_active_at_finish=(diagnostics_level() == "trace"),
                 trace_uninterrupted=(
