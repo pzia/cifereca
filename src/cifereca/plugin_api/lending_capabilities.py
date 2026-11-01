@@ -23,9 +23,8 @@ _OPERATION_REQUIREMENTS = {
     "loan.borrow": ("acquisition.borrow", "borrow", "borrow"),
     "loan.download_token": ("acquisition.download", "digital_download", "download_digital"),
     "loan.renew": ("lending.renew", "renew_loan", "renew"),
-    "loan.return": ("lending.return", "return_loan", "return_digital"),
 }
-_MUTATING = frozenset({"loan.borrow", "loan.renew", "loan.return", "loan.download_token"})
+_MUTATING = frozenset({"loan.borrow", "loan.renew", "loan.download_token"})
 
 
 @dataclass(frozen=True, slots=True)
