@@ -12,8 +12,8 @@ from urllib.parse import urljoin, urlsplit
 
 from cifereca_bnf_pret_web import ORIGIN, WebParseError, _dom, _id
 
-_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\\Z")
-_FIELD = re.compile(r"[A-Za-z][A-Za-z0-9_\\[\\]-]{0,127}\\Z")
+_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
+_FIELD = re.compile(r"[A-Za-z][A-Za-z0-9_\[\]-]{0,127}\Z")
 _BORROW_SEGMENT = re.compile(
     r"(?:^|/)(?:borrow|borrows|loan|loans|checkout|checkouts|activation|activate|confirm|confirmation)(?:/|$)",
     re.IGNORECASE,
@@ -49,7 +49,7 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
     _resource_id(resource_id)
     if (type(current_url) is not str or type(href) is not str
             or not href or len(href) > 4096 or href.startswith("//")
-            or any(ord(c) < 33 or ord(c) > 126 or c == "\\\\" for c in href)):
+            or any(ord(c) < 33 or ord(c) > 126 or c == "\\" for c in href)):
         raise WebParseError("borrow_url_refused")
     try:
         base = urlsplit(current_url)
