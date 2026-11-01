@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.17.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.18.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -72,6 +72,34 @@ binding ou deux bindings pour la même identité restent bloquants ; le
 contrôle de credential, l'epoch et les gardes après GET restent inchangés.
 La façade legacy sans broker reste en lecture positive seule, sans preuve
 négative. Les tests sont synthétiques, sans compte BnF réel.
+
+## Parcours BnF explicite non publié (#2055, 0.3.18)
+
+L'adaptateur dormant `BnfProviderSession.borrow_explicit_with_claim`
+enchaîne désormais **dans une même session verrouillée** : relecture d'activité
+avant la tentative, refus d'un prêt actif exact déjà observé, nouvelle fiche,
+nouveau formulaire de confirmation et CSRF, unique POST HTTPX, nouvelle lecture
+d'activité, preuve du même `loan_id + resource_id`, puis projection d'une
+`Loan` active. L'état de l'inventaire BnF reste `partial`; ce parcours
+ne prétend pas démontrer par absence qu'un nouveau droit a été créé.
+
+Préconditions obligatoires : consentement manuel strict, admission Core
+`loan.borrow/admitted`, reçu durable Core `request_sent`, bail Core
+réévalué à chaque frontière et compte/notice/session identiques. Le fournisseur
+vérifie également les scopes locaux/époques et interdit la réutilisation
+d'un même `operation_id` dans la session, même si la tentative distante
+précédente a expiré. Core doit garantir l'unicité **inter-processus** du
+checkpoint, et fournir une permission métier positive indépendante du
+simple lien/formulaire HTML. Une réponse HTTP 200 ne vaut pas confirmation :
+seule l'activité positive permet la projection. Une réponse indéterminée
+ne doit jamais déclencher un deuxième POST.
+
+**Non activé en production** : le manifeste ne publie toujours pas
+`acquisition.borrow`, `ProviderSession.borrow` n'est pas implémentée,
+l'interface et le Core ne déclenchent pas cette méthode interne. Il reste
+à raccorder l'admission effective CoreUI, la permission fournisseur exacte,
+le checkpoint persistant Core et le retour de succès au bon compte/profil.
+Les tests sont synthétiques, aucune recette BnF réelle revendiquée.
 
 ## POST d'activation isolé et inactif (#2055, 0.3.17)
 
