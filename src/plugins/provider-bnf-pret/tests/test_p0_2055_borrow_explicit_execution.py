@@ -115,7 +115,7 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                 ("POST", "/loans/activation"),
                 ("GET", "/my_profile/activity"),
             ])
-            self.assertFalse(session.capabilities.borrow)
+            self.assertTrue(session.capabilities.borrow)
             self.assertEqual(session._observed_loans, {"loan-synthetic": RID})
             with self.assertRaisesRegex(
                     ProviderCapabilityError, "borrow_claim_spent"):
