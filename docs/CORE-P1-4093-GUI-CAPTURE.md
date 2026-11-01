@@ -9,7 +9,10 @@ cifereca --capture --capture-dir "$HOME/Downloads"
 
 `cifereca --help` expose les deux options. `--capture-dir` sans `--capture`
 est refusé. La commande sans option et `--trace` seul conservent leur
-comportement : **aucun export automatique**.
+comportement : **aucun export automatique**. Lors de la fermeture de
+`--capture`, le niveau Python du logger `cifereca` est également restauré
+(`DEBUG` uniquement pendant cette invocation), y compris en cas d'échec GUI,
+pour ne pas laisser de journalisation plus verbeuse dans un processus réutilisé.
 
 Sans `--capture-dir`, le dossier de destination est fourni par
 `src/cifereca/install_paths.py::downloads_dir()` (XDG user-dirs.dirs, y
