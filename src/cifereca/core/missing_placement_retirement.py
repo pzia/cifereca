@@ -71,9 +71,13 @@ def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
 
     # No linked catalogue may be cascaded; no active receipt, backup,
     # checkpoint, declaration or metadata may still name the path.
-    if candidate_has_active_dependencies_in_db(
-        db, placement_id=placement_id, path=path
-    ):
+    # A checkpoint may name only the Placement ID, without repeating its
+    # path. Both exact references must be absent before a SQLite retirement.
+    # The same fail-closed checker inventories structured and JSON references.
+    if (candidate_has_active_dependencies_in_db(
+            db, placement_id=placement_id, path=path)
+            or candidate_has_active_dependencies_in_db(
+                db, placement_id=placement_id, path=placement_id)):
         return _blocked("dependent_references"), None
 
     envelope = json.dumps(
