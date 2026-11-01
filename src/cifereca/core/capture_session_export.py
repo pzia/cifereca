@@ -195,6 +195,7 @@ def export_capture_session(
     http_snapshot: dict[str, object], app_exit_code: int,
     build_identity: dict[str, object] | None = None,
     trace_active_at_finish: bool = True,
+    trace_uninterrupted: bool = True,
 ) -> Path:
     """Publish one exclusively created 0600 ZIP in the chosen directory.
 
@@ -219,7 +220,7 @@ def export_capture_session(
         raise ValueError("capture_journal_snapshot_invalid")
     partial = (
         journal["coverage"] != "complete" or http_incomplete
-        or trace_active_at_finish is not True
+        or trace_active_at_finish is not True or trace_uninterrupted is not True
     )
     manifest = {
         "format": _FORMAT, "schema_version": 1,
@@ -235,8 +236,11 @@ def export_capture_session(
         "journal_coverage": journal["coverage"],
         "journal_records": journal["record_count"],
         "journal_omitted_records": journal["omitted_records"],
-        "http_coverage": "partial" if http_incomplete or not trace_active_at_finish
-        else "instrumented_only",
+        "http_coverage": "partial" if (
+            http_incomplete or trace_active_at_finish is not True
+            or trace_uninterrupted is not True
+        ) else "instrumented_only",
+        "trace_interrupted": trace_uninterrupted is not True,
         "http_omitted_exchanges": omitted,
         "http_exchanges": count,
         "html_projected": html_count,

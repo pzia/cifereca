@@ -32,6 +32,10 @@ aucun remplacement. Un chemin `capture_zip: ...` est affiché sur stderr ;
   événements antérieurs/postérieurs et des autres instances sont exclus par
   construction. Quota de 32 Mio et 100 000 lignes, couverture `partial`
   en cas d'omission.
+- Si le niveau Trace est désactivé à n'importe quel moment de la session,
+  même s'il est réactivé avant la fermeture, le manifeste indique
+  `trace_interrupted=true` et `http_coverage=partial`. Les échanges survenus
+  pendant la désactivation ne peuvent pas être reconstruits.
 - `http/index.json`, `http/bodies/*.bin` : snapshot RAM des transports HTTPX
   déjà instrumentés par Trace. Limites Trace inchangées ; aucune nouvelle
   requête HTTP, aucune modification des flux.
