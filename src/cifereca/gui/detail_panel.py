@@ -24,7 +24,6 @@ from .detail_model import fr_date, text_or_dash, detail_display_value, detail_la
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
 from .loan_view import loan_due_detail_value
-from .loan_renewal_visibility import paris_physical_renewal_visible
 
 
 if TYPE_CHECKING:
@@ -646,6 +645,8 @@ class DetailPanel(Gtk.Box):
                 buttons.append(ret_adept)
         # #4047: only physical Paris renewal is offered; no experimental
         # toggle can grant a digital or cross-provider mutation.
+        # Local import also keeps the historical isolated show_loan adapter safe.
+        from cifereca.gui.loan_renewal_visibility import paris_physical_renewal_visible
         if paris_physical_renewal_visible(loan):
             renew = Gtk.Button(label="Prolonger")
             renew.connect("clicked", lambda _b: self.window.confirm_renew(loan, renew))
