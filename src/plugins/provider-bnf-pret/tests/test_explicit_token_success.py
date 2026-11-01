@@ -24,7 +24,7 @@ def test_exact_observed_loan_stages_private_acsm(tmp_path):
         assert downloaded[0].url.params['drm'] == 'acs4'
         assert downloaded[0].url.params['token'] == '0123456789abcdef0123456789abcdef01234567'
         assert list(path.parent.glob("*.part")) == []
-        assert not session.capabilities.borrow
+        assert session.capabilities.borrow
         assert not session.capabilities.digital_download
         assert 'last_loan_errors' not in vars(session)
     finally:
