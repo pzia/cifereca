@@ -1051,11 +1051,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             and getattr_static(session, "source_sync_inventory", None)
                             is not None):
                         from .private_inventory_binding import private_inventory_binding_current
+                        opening_source_epoch = source_context_epoch(self)
                         if not private_inventory_binding_current(
                             self, account, session, scope=(
                                 account.identity_id, account.provider_id,
                                 account.credential_id, account.unique_id,
-                            ), epoch=source_context_epoch(self),
+                            ), epoch=opening_source_epoch,
                         ):
                             raise ProviderConfigurationError(
                                 "private_inventory_source_unbound"
@@ -1072,7 +1073,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                                 account, session, (
                                     account.identity_id, account.provider_id,
                                     account.credential_id, account.unique_id,
-                                ), source_context_epoch(self),
+                                ), opening_source_epoch,
                             ))
 
                     # #3171: opening Sync consumes the same optional A
