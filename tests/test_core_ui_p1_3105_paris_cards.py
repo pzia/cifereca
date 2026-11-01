@@ -4,8 +4,9 @@ from types import SimpleNamespace as NS
 from tests import test_core_ui_1347_sync_action_scope as harness
 
 
-def _window(*, provider_status="ready", enabled=True, config_enabled=True):
-    w, broker, calls, _build, _page = harness._fixture(sources=[])
+def _window(*, provider_status="ready", enabled=True, config_enabled=True,
+            sources=()):
+    w, broker, calls, _build, _page = harness._fixture(sources=list(sources))
     w.service.config = NS(provider_accounts=lambda provider: [
         {
             "provider": "paris", "id": "secret-login",
