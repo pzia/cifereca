@@ -46,13 +46,10 @@ def test_pnb_does_not_attest_return_with_malformed_inventory_row(tmp_path, row):
     loan = _loan()
     try:
         outcome = svc.return_digital(loan)
-        assert outcome["status"] == "verification_unavailable"
-        assert outcome["verification"] == "unavailable"
-        assert outcome["provider_inventory_verified"] is False
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b"]
-        assert svc.verify_return_digital(loan)["status"] == "verification_unavailable"
-        assert session.posts == [(loan.id, "linked-b")]
+        assert outcome == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert session.posts == [] and session.checks == []
     finally:
         svc.close()
 
@@ -84,13 +81,15 @@ def test_genuine_paris_loan_list_and_typed_empty_inventory_have_distinct_meaning
     svc = _library(tmp_path, session=session)
     try:
         active = svc.return_digital(_loan())
-        assert active["status"] == "still_active"
-        assert active["provider_inventory_verified"] is False
+        assert active["status"] == "blocked"
+        assert active["code"] == "loan_return_removed"
+        assert session.posts == [] and session.checks == []
+        # Read-only typed inventory remains available after removing mutation.
         session.inventory = []
         attest_paris_dilicom_complete(session, credential_id="paris-a")
-        verified = svc.verify_return_digital(_loan())
+        verified = svc.verify_paris_return_inventory(_loan())
         assert verified["status"] == "provider_return_confirmed"
-        assert verified["provider_inventory_verified"] is True
-        assert len(session.posts) == 1
+        assert verified["verification"] == "provider_absent"
+        assert session.posts == []
     finally:
         svc.close()
