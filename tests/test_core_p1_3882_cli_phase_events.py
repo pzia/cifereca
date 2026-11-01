@@ -134,3 +134,29 @@ def test_connection_exception_records_terminal_phase_without_fake_sync(
     assert manifest["cli_issue_phase"] == "connect"
     assert events[3]["code"] == "sync_unavailable"
     assert b"PRIVATE_COOKIE_EXCEPTION" not in whole
+
+
+def test_partial_business_result_records_closed_failure_phase(
+    monkeypatch, tmp_path, capsys,
+):
+    make_cli_core(monkeypatch, [
+        ("profile-a", "numilog", "card-a", "account-a", True),
+    ])
+    core = cli.CiferecaCore.open()
+    core.library.synchronize_account_source = lambda _account: {
+        "status": "partial", "reason": "source_sync_partial",
+        "errors": 1, "exception": "PRIVATE_PROVIDER_EXCEPTION",
+    }
+    target = tmp_path / "partial.zip"
+    assert cli.main([
+        "sync", "run", "--provider", "numilog", "--identity", "profile-a",
+        "--confirm", "--report", str(target),
+    ]) == 2
+    assert json.loads(capsys.readouterr().out)["report"] == "created"
+    manifest, events, summary, whole = _archive_events(target)
+    assert manifest["cli_issue_phase"] == "sync"
+    assert {"phase": "sync", "status": "partial",
+            "code": "source_sync_partial", "run_ref": manifest["run_ref"]} in events
+    assert events[-1]["code"] == "source_sync_partial"
+    assert "issue_cli_phase: sync" in summary
+    assert b"PRIVATE_PROVIDER_EXCEPTION" not in whole
