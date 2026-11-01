@@ -75,6 +75,8 @@ def test_secondary_source_requires_both_scoped_ref_and_projection():
         {"source_refs": [valid_ref], "providers": "numilog"},
         {"source_refs": [valid_ref], "providers": {"numilog": True}},
         {"source_refs": [valid_ref], "source": "public_search"},
+        {"source_refs": [valid_ref], "source": ["catalog"]},
+        {"source_refs": [valid_ref], "source": {"kind": "catalog"}},
         {"source_refs": [valid_ref], "providers": ["local", 8]},
         {"source_refs": [dict(valid_ref, provider_id="kobo")]},
     ]
