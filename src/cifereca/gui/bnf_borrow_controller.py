@@ -86,14 +86,16 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     dialog = Adw.MessageDialog.new(
         window, "Emprunter ce livre à la BnF ?",
         f"Compte : {account_name}. "
-        "Une demande de prêt sera envoyée à la BnF après contrôle des "
-        "droits et de la disponibilité "
-        "du livre. Cette opération ne sera envoyée qu'une seule fois. "
+        "Avant de confirmer, vérifiez visuellement sur le site BnF Prêt "
+        "que ce livre est empruntable avec ce compte. "
+        "En confirmant, vous attestez l'avoir vérifié ; la BnF peut "
+        "encore refuser la demande (Pass, quota, disponibilité). "
+        "Cette opération ne sera envoyée qu'une seule fois. "
         "En cas de résultat incertain, consultez Mes emprunts avant toute "
         "nouvelle démarche. Le téléchargement ACSM reste une action distincte.",
     )
     dialog.add_response("cancel", "Annuler")
-    dialog.add_response("borrow", "Confirmer l’emprunt")
+    dialog.add_response("borrow", "J’ai vérifié sur BnF Prêt — emprunter")
     submitted = False
 
     def on_response(_dialog, response):
@@ -113,7 +115,8 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                 return {"status": "blocked", "reason_code": "borrow_scope_changed"}
             return window.service.borrow_bnf_manual(
                 selected, expected_identity_id=identity_id,
-                confirmed=True, expected_context_epoch=core_epoch,
+                confirmed=True, site_checked=True,
+                expected_context_epoch=core_epoch,
                 expected_account=account,
             )
 
@@ -131,8 +134,9 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                 )
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error(
-                    "L’autorisation de prêt n’est pas attestée pour ce "
-                    "compte et ce livre. Aucun nouvel emprunt n’est confirmé.",
+                    "La demande n’a pas été envoyée : le compte, la "
+                    "notice ou la confirmation visuelle doivent être "
+                    "revérifiés. Aucun emprunt n’est confirmé.",
                     "Emprunt BnF",
                 )
             else:
