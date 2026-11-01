@@ -35,7 +35,7 @@ def test_manifest_attempts_count_real_pages_not_logical_cached_observations():
         })
 
     client = KoboVaultClient(
-        "https://vault.example/private", "PRIVATE_TOKEN",
+        "https://vault.example", "PRIVATE_TOKEN",
         transport=httpx.MockTransport(transport),
     )
     try:
