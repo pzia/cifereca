@@ -220,21 +220,26 @@ def promote_completed_delivery(
 
 def cleanup_published_staging(
     storage, *, source: SourceKey, completed: CompletedDelivery, library_root: Path,
-) -> None:
-    """Best-effort private staging cleanup, ONLY after successful B commit."""
+) -> bool:
+    """Return True only when a post-commit private staging attempt was removed.
+
+    False means no cleanup occurred (non-staging path, absent/unsafe attempt,
+    or another SQLite reference). Callers must not report successful physical
+    reconciliation when the defensive dependency check retains the bytes.
+    """
     root, profile = _profile(storage, library_root, source)
     # A missing old receipt file is not a reason to revoke a committed B.
     try:
         original = _physical_target(completed.path, root, profile.name)
     except (ValueError, OSError):
-        return
+        return False
     parts = _stage_parts(original, profile)
     if parts is None:
-        return
+        return False
     attempt = profile / ".canonical-delivery" / parts[1]
     # Never delete if the namespace has been replaced or redirected.
     if attempt.is_symlink() or not attempt.is_dir():
-        return
+        return False
     # A Core delivery attempt is private, but legacy import/index tools may
     # still have registered another physical or operational reference under
     # it. Never turn those rows into dangling paths as a cleanup side effect.
@@ -255,7 +260,7 @@ def cleanup_published_staging(
                 f"OR substr({column},1,?)=? LIMIT 1",
                 (marker, len(prefix), prefix),
             ).fetchone():
-                return
+                return False
         # Path references in catalogue or other operation checkpoints are
         # operational until reconciled. No JSON structure is trusted here:
         # searching the serialized text also catches nested path fields.
@@ -264,18 +269,19 @@ def cleanup_published_staging(
             "WHERE instr(metadata_json,?)>0 LIMIT 1",
             (marker,),
         ).fetchone():
-            return
+            return False
         current_operation = _stage_id(source, completed.delivery_offer_id)
         if db.execute(
             "SELECT 1 FROM acquisition_ledger "
             "WHERE acquisition_id<>? AND instr(metadata_json,?)>0 LIMIT 1",
             (current_operation, marker),
         ).fetchone():
-            return
+            return False
         # Preserve the original receipt until B is already committed (caller
         # contract), but only remove a private run with no other registered
         # consumer. Any error leaves the staging bytes in place.
         shutil.rmtree(attempt)
+        return True
 
 
 __all__ = ["promote_completed_delivery", "cleanup_published_staging"]
