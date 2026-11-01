@@ -203,3 +203,25 @@ def test_primary_partial_label_matches_attested_severity_without_leaking_errors(
     assert "PRIVATE_TOKEN_NOT_FOR_UI" not in label
     if expected_prefix == "Couverture partielle (information)":
         assert " · " in label  # preserves a real Core-attributed attempt date
+
+
+
+def test_sync_page_explains_three_independent_controls_without_network_or_grants():
+    sources = [
+        source(provider="provider.future"),
+        _source(provider_id="public.search", source_id="catalogue-public",
+                sync_capable=False, label="Catalogue public"),
+    ]
+    window, broker, calls, _build, page = _fixture(sources=sources)
+    root = page.children[1].child
+    note = root.children[0].label
+    assert "activation de la source" in note
+    assert "actualisation programmée" in note
+    assert "téléchargement automatique" in note
+    assert "recherche de catalogue seule n'est pas une synchronisation" in note
+    sync_toggle = window._sync_sources_box.children[0].children[0].suffixes[0]
+    assert "N'autorise pas à elle seule la livraison automatique" in sync_toggle.tooltip
+    search_toggle = window._sync_sources_box.children[1].children[0].suffixes[0]
+    assert "n’autorise aucun téléchargement automatique" in search_toggle.tooltip
+    assert window.runner.tasks == []
+    assert all(call[0] == "sources" for call in calls)
