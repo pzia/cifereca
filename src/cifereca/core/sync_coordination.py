@@ -25,6 +25,12 @@ from ..paths import acquisition_lock_file
 _OPENING_CANONICAL_LEASE: ContextVar[InterProcessLock | None] = ContextVar(
     'cifereca.opening.canonical.lease', default=None,
 )
+# Only one opening cycle may share a personal inventory. The ExitStack
+# encloses both A observation and the later metadata mirror, but never
+# survives the global opening-sync acquisition lock.
+_OPENING_SOURCE_INVENTORY_STACK: ContextVar[ExitStack | None] = ContextVar(
+    'cifereca.opening.source_inventory.stack', default=None,
+)
 from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
@@ -581,7 +587,12 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
         with lock:
             lease_token = _OPENING_CANONICAL_LEASE.set(lock)
             try:
-                result = self._opening_sync_locked(progress=progress, deep=deep)
+                with ExitStack() as inventory_stack:
+                    stack_token = _OPENING_SOURCE_INVENTORY_STACK.set(inventory_stack)
+                    try:
+                        result = self._opening_sync_locked(progress=progress, deep=deep)
+                    finally:
+                        _OPENING_SOURCE_INVENTORY_STACK.reset(stack_token)
             finally:
                 _OPENING_CANONICAL_LEASE.reset(lease_token)
         for summary in result.get("identities", ()) if isinstance(result, dict) else ():
@@ -1021,6 +1032,33 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         complete_scope = _complete_digital_loan_scope(account, snapshot)
                         if complete_scope is not None and not inventory_partial:
                             complete_by_source[source_id] = complete_scope
+
+                    # The one source-scoped context also covers the *later*
+                    # mirror_personal_libraries() call. No rights are cached
+                    # across opening runs, and a different/changed owner cannot
+                    # borrow a previously observed manifest.
+                    inventory_stack = _OPENING_SOURCE_INVENTORY_STACK.get()
+                    if (inventory_stack is not None and session is not None
+                            and getattr(getattr(session, "capabilities", None),
+                                        "personal_library", None) is True
+                            and getattr_static(session, "source_sync_inventory", None)
+                            is not None):
+                        from .private_inventory_binding import private_inventory_binding_current
+                        if not private_inventory_binding_current(
+                            self, account, session, scope=(
+                                account.identity_id, account.provider_id,
+                                account.credential_id, account.unique_id,
+                            ), epoch=source_context_epoch(self),
+                        ):
+                            raise ProviderConfigurationError(
+                                "private_inventory_source_unbound"
+                            )
+                        batch = getattr(session, "source_sync_inventory")
+                        if not callable(batch):
+                            raise ProviderConfigurationError(
+                                "source_inventory_batch_invalid"
+                            )
+                        inventory_stack.enter_context(batch(account))
 
                     # #3171: opening Sync consumes the same optional A
                     # reader and verifies B with the exact canonical Core
