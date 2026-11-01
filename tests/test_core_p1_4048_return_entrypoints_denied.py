@@ -117,3 +117,20 @@ def test_legacy_lending_return_is_never_capability_or_admissible_action():
     )
     assert admission.status == "unsupported"
     assert admission.reason_code == "operation_unavailable"
+
+
+
+def test_historical_return_provider_flag_is_not_projected_as_capability():
+    from cifereca.plugin_api.capability_matrix import declared_provider_matrix
+    from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+    descriptor = ProviderDescriptor(
+        id="paris", display_name="Fictif", description="Test",
+        state="ready", capabilities=ProviderCapabilities(
+            loans=True, return_loan=True, renew_loan=True,
+        ),
+    )
+    matrix = declared_provider_matrix(descriptor)
+    operations = {row.operation for row in matrix.observations}
+    assert "loan.return" not in operations
+    assert "loan.renew" in operations
+    assert "loan.inventory" in operations
