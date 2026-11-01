@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 from collections import Counter
 import json
 from pathlib import Path
@@ -66,7 +67,32 @@ def _zip_member(archive, member, limit: int) -> bytes:
     return raw
 
 
+def _shared_journal_reader(path: Path) -> dict | None:
+    """Prefer the public v1 Core contract without requiring Core to exist.
+
+    The tool may be copied or executed from an isolated provider package on
+    older Core installations: ImportError means the existing standalone
+    validator below remains the fallback, with the same closed error codes.
+    """
+    try:
+        shared = importlib.import_module("cifereca.plugin_api.journal_zip")
+    except ImportError:
+        return None
+    try:
+        return shared.read_raw_journal_zip(
+            path, max_json_bytes=_MAX_ARCHIVE_BYTES, max_events=_MAX_EVENTS,
+        )
+    except shared.JournalZipError as exc:
+        raise JournalFormatError(str(exc)) from exc
+
+
 def load_journal(path: Path) -> dict:
+    # The Core public API supplies the versioned shared implementation when
+    # available. The pre-existing pure-stdlib parser stays for independent
+    # command-line use without Core; never open providers or extract ZIPs.
+    shared = _shared_journal_reader(path)
+    if shared is not None:
+        return shared
     """Read legacy JSON-only or canonical daily ZIP, always offline and bounded.
 
     The daily format is the exact three-member archive produced by Core
