@@ -35,6 +35,22 @@ _RETIRED_YOUTH_SOURCE_PACKAGES = frozenset({
     "org.cifereca.youth-source-ecole-loisirs",
     "org.cifereca.youth-source-milan",
 })
+
+# Temporary runtime safety holds for Maintenance tools. Unlike a manifest
+# default, this cannot be overridden by saved plugin state or --force-plugin.
+# Keep recovery of already-pending canonical dedup tombstones available:
+# its separate Core supervisor requires explicit confirmation and revalidation.
+# The hold applies only to these seven audited plugin IDs; other services and
+# future independent maintenance tools are unaffected.
+_MAINTENANCE_SAFETY_HOLDS = {
+    "maintenance.audit.covers": "#3995",
+    "maintenance.audit.languages": "#3995",
+    "maintenance.audit.naming": "#3995",
+    "maintenance.audit.integrity": "#3185",
+    "maintenance.repair.naming": "#3185",
+    "maintenance.cleanup.duplicates": "#3185",
+    "core.maintenance.cache": "#3996",
+}
 from .requirements import check_system_requirements
 from .python_dependencies import PythonDependencyManager, PythonDependencyTransaction
 from .state import PluginStateStore
@@ -165,12 +181,21 @@ class PluginManager:
                     continue
                 override = self.state.enabled_override(descriptor.id)
                 configured_enabled = descriptor.enabled_by_default if override is None else override
-                enabled = descriptor.id in self._force_plugins or (not self._disable_plugins and configured_enabled)
+                safety_issue = (
+                    _MAINTENANCE_SAFETY_HOLDS.get(descriptor.id)
+                    if descriptor.type == "maintenance.tool" else None
+                )
+                enabled = safety_issue is None and (
+                    descriptor.id in self._force_plugins
+                    or (not self._disable_plugins and configured_enabled)
+                )
                 priority = self.state.priority_override(descriptor.id)
                 effective = descriptor.priority if priority is None else priority
                 self._records[descriptor.id] = _RuntimeRecord(
                     descriptor=descriptor, package=package, enabled=enabled, effective_priority=effective,
                     state="disabled" if not enabled else "ready",
+                    reason="maintenance_safety_hold" if safety_issue else "",
+                    reason_detail={"issue": safety_issue} if safety_issue else None,
                 )
 
         # Work out which live instances can safely survive this refresh.  A
@@ -759,6 +784,11 @@ class PluginManager:
             self.refresh()
         if plugin_id not in self._records:
             raise KeyError(plugin_id)
+        record = self._records[plugin_id]
+        if (enabled and record.descriptor.type == "maintenance.tool"
+                and plugin_id in _MAINTENANCE_SAFETY_HOLDS):
+            issue = _MAINTENANCE_SAFETY_HOLDS[plugin_id]
+            raise ValueError(f"maintenance tool temporarily disabled for safety ({issue})")
         if not enabled:
             self._deactivate_plugin_and_dependents(plugin_id)
         self.state.set_enabled(plugin_id, enabled)
