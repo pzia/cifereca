@@ -101,11 +101,14 @@ def test_paris_claims_list_borrow_and_download_but_still_needs_explicit_consent(
         assert r.explicit_action_required is (op != "loan.list")
     # Legacy v1 manifest does not declare separate return/renew operations.
     # Keep the old actual provider untouched, but do not over-advertise it.
-    for op in ("loan.return", "loan.renew"):
-        r = fact(op, d, s, a)
-        assert r.availability == "unknown"
-        assert r.reason_code == "legacy_capability_unmapped"
-        assert not r.usable
+    r = fact("loan.renew", d, s, a)
+    assert r.availability == "unknown"
+    assert r.reason_code == "legacy_capability_unmapped"
+    assert not r.usable
+    # #4048: a provider method or stale descriptor bit cannot publish returns.
+    retired = fact("loan.return", d, s, a)
+    assert retired.operation == "unknown"
+    assert not retired.usable
 
 
 def test_bnf_internal_download_method_is_not_a_public_capability():
@@ -225,12 +228,13 @@ def _publications(d, cls, *, capabilities=None):
 def test_static_paris_publication_audit_distinguishes_legacy_methods():
     d = descriptor(borrow=True, digital=True, renew=True, ret=True)
     facts = _publications(d, ParisActions)
-    assert len(facts) == 5
+    assert len(facts) == 4
+    assert "loan.return" not in facts
     for action in ("loan.list", "loan.borrow", "loan.download_token"):
         assert facts[action].publication_status == "declared"
         assert facts[action].publishable
         assert facts[action].reason_code == "publication_consistent"
-    for action in ("loan.renew", "loan.return"):
+    for action in ("loan.renew",):
         assert facts[action].publication_status == "legacy_unmapped"
         assert facts[action].method_implemented
         assert not facts[action].publishable
