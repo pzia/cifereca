@@ -2,6 +2,8 @@
 
 > **Document historique/partiel — 28/10/2026.** inventaire de prêts v1, observations positives par branche, pas droit à acquérir. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
 
+> **Arbitrage supérieur du 01/11/2026 — #3171.** Les assertions ci-dessous « partial même avec HTTP 200 », « jamais de preuve négative » et « absence non consommée » décrivent **les limites du code historique de cette tranche** ; elles ne constituent plus la règle métier générale des prêts. Une **liste courante de prêts actifs réellement lue avec succès** sur la branche et le compte exacts peut déclarer terminé un prêt ancien absent, y compris si la liste est vide, sans exiger une complétude théorique du catalogue. Une lecture échouée, partielle, annulée, non paginée ou hors scope n'autorise aucune clôture. **Aucun EPUB, Artifact, Placement, OriginLink, SourceReference, Notice ni preuve ADEPT n'est effacé**, et aucun retour fournisseur n'est envoyé. Pour les achats, l'absence distante ne clôt rien. Voir [ARCHITECTURE.md](ARCHITECTURE.md), section 1.1. **Ne pas considérer ce texte comme une preuve de migration du Core/Plugins existants.**
+
 **Statut : première tranche d'API, non activée dans la réconciliation.** API publique
 `cifereca.plugin_api.loan_inventory`, réexportée depuis `cifereca.plugin_api`.
 Le fournisseur historique conserve `ProviderSession.loans(account) -> list[Loan]`.
