@@ -320,6 +320,52 @@ def _safe_audit_snapshot(value: object) -> dict[str, object]:
     return result
 
 
+# CLI phases are observations made by this command, never Core/HTTP proof.
+# A provider-controlled exception, URL or task payload is not a report event.
+_CLI_EVENT_PHASES = frozenset({
+    "selected", "audit_before", "connect", "sync", "trace_export",
+    "audit_after",
+})
+_CLI_EVENT_STATES = frozenset({
+    "started", "success", "complete", "partial", "failed", "busy",
+    "skipped", "cancelled", "unavailable",
+})
+_MAX_CLI_EVENTS = 32
+
+
+def _closed_cli_events(
+    events: object, *, run_ref: str, outcome: dict[str, object],
+) -> tuple[list[dict[str, object]], bool]:
+    """Only bounded closed CLI observations for this run enter events.jsonl."""
+    accepted: list[dict[str, object]] = []
+    truncated = False
+    if type(events) is list:
+        truncated = len(events) > _MAX_CLI_EVENTS
+        for item in events[:_MAX_CLI_EVENTS]:
+            if type(item) is not dict:
+                truncated = True
+                continue
+            phase, status = item.get("phase"), item.get("status")
+            if (type(phase) is not str or phase not in _CLI_EVENT_PHASES
+                    or type(status) is not str or status not in _CLI_EVENT_STATES):
+                truncated = True
+                continue
+            row: dict[str, object] = {"run_ref": run_ref, "phase": phase, "status": status}
+            code = item.get("code")
+            if type(code) is str and code in _REASON_CODES:
+                row["code"] = code
+            accepted.append(row)
+    else:
+        accepted.append({"run_ref": run_ref, "phase": "admitted", "status": "started"})
+    finished: dict[str, object] = {
+        "run_ref": run_ref, "phase": "run_finished", "status": outcome["status"],
+    }
+    if "code" in outcome:
+        finished["code"] = outcome["code"]
+    accepted.append(finished)
+    return accepted, truncated
+
+
 def _json_bytes(value: object) -> bytes:
     payload = (json.dumps(value, sort_keys=True, separators=(",", ":"),
                           ensure_ascii=True) + "\n").encode("ascii")
@@ -390,7 +436,7 @@ def _summary_audit(phase: str, audit: object) -> list[str]:
 
 def _report_summary(
     *, outcome: dict[str, object], exit_code: int, before: object,
-    after: object, evidence_coverage: str,
+    after: object, evidence_coverage: str, last_cli_phase: str | None = None,
 ) -> bytes:
     """Bounded human-readable overview of evidence already in the ZIP.
 
@@ -406,6 +452,8 @@ def _report_summary(
         f"exit_code: {exit_code}",
         f"coverage: {evidence_coverage}; no HTTP/correlated journal proof",
     ]
+    if type(last_cli_phase) is str and last_cli_phase in _CLI_EVENT_PHASES:
+        lines.append(f"last_cli_phase: {last_cli_phase}")
     reason = outcome.get("code")
     if type(reason) is str and reason in _REASON_CODES:
         lines.append(f"reason_code: {reason}")
@@ -430,6 +478,7 @@ def write_sync_report(
     destination: Path, *, account, run_ref: str,
     before: dict[str, object], after: dict[str, object],
     result: dict[str, object], started_at: str, exit_code: int,
+    cli_events: list[dict[str, object]] | None = None,
 ) -> None:
     """Atomic non-overwriting ZIP; no raw HTTP captures or personal identifiers."""
     if not isinstance(destination, Path) or destination.name in {"", ".", ".."}:
@@ -457,6 +506,12 @@ def write_sync_report(
         hashlib.sha256,
     ).hexdigest()
     safe_result = _safe_result(result)
+    events, events_truncated = _closed_cli_events(
+        cli_events, run_ref=run_ref, outcome=safe_result,
+    )
+    cli_phases = [
+        event["phase"] for event in events if event["phase"] in _CLI_EVENT_PHASES
+    ]
     before = _safe_audit_snapshot(before)
     after = _safe_audit_snapshot(after)
     ended = _utc_now()
@@ -478,16 +533,14 @@ def write_sync_report(
             else "canonical_sqlite_graph_without_filesystem"
         ),
         "event_coverage": "cli_milestones_only",
+        "cli_events_truncated": events_truncated,
+        "cli_last_phase": cli_phases[-1] if cli_phases else "not_observed",
         "build_identity": identity,
     }
-    events = [
-        {"run_ref": run_ref, "phase": "admitted", "status": "started"},
-        {"run_ref": run_ref, "phase": "sync_finished", "status": safe_result["status"],
-         **({"code": safe_result["code"]} if "code" in safe_result else {})},
-    ]
     summary = _report_summary(
         outcome=safe_result, exit_code=exit_code, before=before, after=after,
         evidence_coverage=manifest["evidence_coverage"],
+        last_cli_phase=cli_phases[-1] if cli_phases else None,
     )
     parts = {
         "manifest.json": _json_bytes(manifest),
