@@ -688,7 +688,56 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     ):
         local_key = local_artifact_keys.get((owner, artifact_id))
         if local_key is None:
-            continue
+            # A published Placement and exact OriginLink may outlive a missing
+            # local catalogue index. Project the verified physical file, but
+            # never invent a catalogue entry, entitlement or borrower scope.
+            owner_placements = [
+                p for p in placements_by_artifact.get(artifact_id, ())
+                if p.get("identity_id") == owner
+            ]
+            verified = []
+            for placement in owner_placements:
+                placement_id = str(placement.get("placement_id") or "")
+                try:
+                    path = self.local_book_path(placement_id, identity_id=owner)
+                except (ProviderConfigurationError, OSError, ValueError):
+                    continue
+                verified.append((placement, path))
+            if not verified:
+                continue
+            verified.sort(key=lambda pair: str(pair[0].get("placement_id") or ""))
+            first, path = verified[0]
+            artifact = artifacts.get(artifact_id, {})
+            sha256 = str(artifact.get("sha256") or "")
+            if not sha256 and artifact_id.startswith("sha256:"):
+                sha256 = artifact_id.split(":", 1)[1]
+            canonical = "sha256:" + sha256 if sha256 else artifact_id
+            local_key = "artifact:" + canonical
+            if local_key in merged and merged[local_key].get("identity_id") != owner:
+                # This API normally projects a single identity. Do not expose
+                # another profile's placement on an unscoped legacy request.
+                continue
+            if local_key not in merged:
+                merged[local_key] = {
+                    "key": local_key, "book_id": artifact_id,
+                    "title": path.stem or "Sans titre", "author": None,
+                    "provider_id": "local", "providers": ["local"],
+                    "identity_id": owner, "identity_ids": [owner],
+                    "item_id": None, "source_refs": [],
+                    "state": "local", "local": True, "local_path": str(path),
+                    "media_format": artifact.get("media_format"),
+                    "artifact_kind": artifact.get("kind") or "file",
+                    "bundle_members": [], "playlist": None,
+                    "entitlement_type": None, "due_at": None,
+                    "source": "placement", "thumbnail_url": None,
+                    "artifact_id": artifact_id, "sha256": sha256 or None,
+                    "placement_id": first.get("placement_id"),
+                    "placements": [placement_view(p) for p in owner_placements],
+                    "possessions": [], "metadata": {},
+                }
+            local_artifact_keys[(owner, artifact_id)] = local_key
+            for placement in owner_placements:
+                local_keys[(placement.get("placement_id"), artifact_id)] = local_key
         entry = merged[local_key]
         add_unique(entry.setdefault("providers", []), provider)
         source_ref = {"provider_id": provider, "item_id": edition, "identity_id": owner}
