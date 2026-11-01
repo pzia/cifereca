@@ -23,6 +23,7 @@ def _formatter():
 
 
 def _json_formatter(value):
+    _formatter()  # Set up the standalone plugin source path under Core pytest.
     from cifereca_diagnostics_page import format_diagnostic_detail
     return format_diagnostic_detail(value, "json")
 
