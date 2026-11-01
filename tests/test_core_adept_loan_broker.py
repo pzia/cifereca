@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+from cifereca.plugin_api import AttentionRequired
+
 from cifereca.brokers import AdeptLoanBrokerImpl, build_public_brokers
 from cifereca.plugin_api import AdeptLoanBroker
 
@@ -60,18 +63,13 @@ def test_attach_contract_requires_explicit_adept_loan_id_and_passes_it_unchanged
     ]
 
 
-def test_return_is_keyed_only_by_acquisition_and_preserves_core_confirmation():
+def test_retired_broker_return_never_forwards_to_core_or_mutates():
     service = Service()
     broker = AdeptLoanBrokerImpl(service)
-
-    result = broker.return_acquisition("acq-1")
-
-    assert service.calls == [("return", "acq-1")]
-    assert result == {
-        "ok": True,
-        "verification": "confirmed",
-        "artifact_preserved": True,
-    }
+    with pytest.raises(AttentionRequired) as denied:
+        broker.return_acquisition("acq-1")
+    assert denied.value.code == "loan_return_removed"
+    assert service.calls == []
 
 
 def test_empty_profile_scope_keeps_core_origin_resolution():
