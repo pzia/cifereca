@@ -284,9 +284,9 @@ def export_capture_session(
 
 
 
-_ARCHIVE_BLOB = re.compile(r"http/bodies/([0-9a-f]{32})-(request|response)\\.bin\\Z")
-_ARCHIVE_HTML = re.compile(r"html/([0-9a-f]{32})\\.html\\Z")
-_SHA256 = re.compile(r"[0-9a-f]{64}\\Z")
+_ARCHIVE_BLOB = re.compile(r"http/bodies/([0-9a-f]{32})-(request|response)\.bin\Z")
+_ARCHIVE_HTML = re.compile(r"html/([0-9a-f]{32})\.html\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _ARCHIVE_FIXED = frozenset({
     "manifest.json", "README.txt", "logs/journal.jsonl", "http/index.json",
 })
