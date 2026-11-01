@@ -128,6 +128,198 @@ def _safe_result(result: dict[str, object]) -> dict[str, object]:
     return outcome
 
 
+# ZIP audit members are closed DTOs, not arbitrary dictionaries. Even a
+# provider error accidentally placed in an audit snapshot must not become an
+# unconfirmed raw credential export (#3882).
+_AUDIT_RIGHT_CLASSES = frozenset({
+    "source_unlinked", "source_linked_unplaced", "ambiguous_match",
+    "local_unverified", "complete_local", "missing_file",
+})
+_AUDIT_RECEIPT_CLASSES = frozenset({"staged_unpublished", "receipt_recorded"})
+_AUDIT_FILE_STATES = frozenset({
+    "not_requested", "scope_unavailable", "missing_file",
+    "invalid_placement", "file_changed", "sha_mismatch",
+    "file_unavailable", "verified_sha256",
+})
+_AUDIT_STAGING_STATES = frozenset({
+    "not_attested", "indexed_staging_unverified", "verified_staging_file",
+    "staging_file_missing", "staging_unavailable",
+})
+_AUDIT_STAGING_COVERAGE = frozenset({
+    "indexed_account_receipts_only", "unavailable", "truncated",
+})
+
+
+def _safe_count(value: object) -> int | None:
+    return value if type(value) is int and 0 <= value <= 1_000_000 else None
+
+
+def _safe_enum(value: object, allowed: frozenset[str], fallback: str) -> str:
+    return value if type(value) is str and value in allowed else fallback
+
+
+def _safe_reference(value: object) -> str | None:
+    if (type(value) is str and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value)):
+        return value
+    return None
+
+
+def _safe_counts(value: object, allowed: frozenset[str]) -> dict[str, int]:
+    if type(value) is not dict:
+        return {}
+    result: dict[str, int] = {}
+    for key, amount in value.items():
+        if type(key) is str and key in (allowed | {"other"}):
+            count = _safe_count(amount)
+            if count is not None:
+                result[key] = count
+    return result
+
+
+def _safe_staging(value: object) -> dict[str, object]:
+    if type(value) is not dict:
+        return {}
+    result: dict[str, object] = {}
+    if "coverage" in value:
+        result["coverage"] = _safe_enum(
+            value["coverage"], _AUDIT_STAGING_COVERAGE, "unavailable",
+        )
+    for key in ("staged_visible_in_library", "staged_verified"):
+        count = _safe_count(value.get(key))
+        if count is not None:
+            result[key] = count
+    rows = value.get("observations")
+    if type(rows) is list:
+        observations: list[dict[str, object]] = []
+        for row in rows[:512]:
+            if type(row) is not dict:
+                continue
+            item: dict[str, object] = {}
+            ref = _safe_reference(row.get("receipt_ref"))
+            if ref is not None:
+                item["receipt_ref"] = ref
+            item["staging_state"] = _safe_enum(
+                row.get("staging_state"), _AUDIT_STAGING_STATES, "not_attested",
+            )
+            for key in (
+                "staging_sha_verified", "staged_visible_in_library",
+                "origin_proven_by_receipt",
+            ):
+                if type(row.get(key)) is bool:
+                    item[key] = row[key]
+            observations.append(item)
+        result["observations"] = observations
+        if len(rows) > 512:
+            result["coverage"] = "truncated"
+    return result
+
+
+def _safe_resource_evidence(value: object) -> dict[str, object]:
+    if type(value) is not dict:
+        return {}
+    result: dict[str, object] = {}
+    if value.get("schema_version") == 1 and type(value.get("schema_version")) is int:
+        result["schema_version"] = 1
+    if value.get("scope") == "exact_source":
+        result["scope"] = "exact_source"
+    if value.get("network") == "not_used":
+        result["network"] = "not_used"
+    if value.get("mutations") == "none":
+        result["mutations"] = "none"
+    if type(value.get("verify_files")) is bool:
+        result["verify_files"] = value["verify_files"]
+    if type(value.get("truncated")) is bool:
+        result["truncated"] = value["truncated"]
+    for key, classification_set in (
+        ("rights", _AUDIT_RIGHT_CLASSES),
+        ("receipts", _AUDIT_RECEIPT_CLASSES),
+    ):
+        rows = value.get(key)
+        if type(rows) is not list:
+            if key in value:
+                result["truncated"] = True
+            continue
+        records: list[dict[str, object]] = []
+        for row in rows[:512]:
+            if type(row) is not dict:
+                result["truncated"] = True
+                continue
+            item: dict[str, object] = {
+                "classification": _safe_enum(
+                    row.get("classification"), classification_set, "unclassified",
+                ),
+            }
+            ref_key = "resource_ref" if key == "rights" else "receipt_ref"
+            ref = _safe_reference(row.get(ref_key))
+            if ref is not None:
+                item[ref_key] = ref
+            if key == "rights":
+                item["kind"] = _safe_enum(row.get("kind"), _KINDS | {"other"}, "other")
+                item["right_state"] = _safe_enum(row.get("right_state"), _STATES, "unknown")
+                item["file_verification"] = _safe_enum(
+                    row.get("file_verification"), _AUDIT_FILE_STATES, "not_requested",
+                )
+                for count_key in ("origin_link_count", "placement_count"):
+                    count = _safe_count(row.get(count_key))
+                    if count is not None:
+                        item[count_key] = count
+            else:
+                item["status"] = _safe_enum(row.get("status"), _LEDGER | {"other"}, "other")
+            records.append(item)
+        result[key] = records
+        if len(rows) > 512:
+            result["truncated"] = True
+    if "staging_evidence" in value:
+        result["staging_evidence"] = _safe_staging(value["staging_evidence"])
+    return result
+
+
+def _safe_audit_snapshot(value: object) -> dict[str, object]:
+    """Only canonical evidence types can enter the exported before/after ZIP."""
+    if type(value) is not dict:
+        return {"status": "unavailable", "reason": "audit_unavailable"}
+    if value.get("status") == "unavailable":
+        return {"status": "unavailable", "reason": "audit_unavailable"}
+    result: dict[str, object] = {}
+    if value.get("schema_version") == 1 and type(value.get("schema_version")) is int:
+        result["schema_version"] = 1
+    if value.get("audit_scope") == "exact_source":
+        result["audit_scope"] = "exact_source"
+    if "resource_evidence" in value:
+        result["resource_evidence"] = _safe_resource_evidence(value["resource_evidence"])
+    if "physical_verification" in value:
+        result["physical_verification"] = _safe_enum(
+            value["physical_verification"],
+            frozenset({"not_performed", "bounded_sha256_checked"}), "not_performed",
+        )
+    if "catalogue_projection_verification" in value:
+        result["catalogue_projection_verification"] = _safe_enum(
+            value["catalogue_projection_verification"], frozenset({"not_performed"}),
+            "not_performed",
+        )
+    for key, allowed in (
+        ("rights_by_kind", _KINDS),
+        ("rights_by_state", _STATES),
+        ("ledger_by_status", _LEDGER),
+    ):
+        if key in value:
+            result[key] = _safe_counts(value[key], allowed)
+    for key in (
+        "origin_link_count", "placement_reference_count",
+        "staged_sha_verified_count", "staged_visible_in_library_count",
+    ):
+        count = _safe_count(value.get(key))
+        if count is not None:
+            result[key] = count
+    if "staging_evidence_coverage" in value:
+        result["staging_evidence_coverage"] = _safe_enum(
+            value["staging_evidence_coverage"], _AUDIT_STAGING_COVERAGE,
+            "unavailable",
+        )
+    return result
+
+
 def _json_bytes(value: object) -> bytes:
     payload = (json.dumps(value, sort_keys=True, separators=(",", ":"),
                           ensure_ascii=True) + "\n").encode("ascii")
@@ -265,6 +457,8 @@ def write_sync_report(
         hashlib.sha256,
     ).hexdigest()
     safe_result = _safe_result(result)
+    before = _safe_audit_snapshot(before)
+    after = _safe_audit_snapshot(after)
     ended = _utc_now()
     manifest = {
         "schema": _REPORT_SCHEMA,
