@@ -360,6 +360,39 @@ def _content_type(row: Mapping[str, Any]) -> str:
     return "unknown" if support == "unknown" else "ebook"
 
 
+def _library_filter_providers(row: Mapping[str, Any]) -> set[str]:
+    """Provider choices from a scoped Library card, not a remote search hit.
+
+    A secondary provider must be present in both the Core Library projection
+    and its source-reference coordinates for the same identity. This changes
+    only *display filtering*: it does not establish a new OriginLink or right.
+    """
+    primary = str(row.get("provider_id") or row.get("source_provider") or "").casefold()
+    providers = {primary} if primary else set()
+    if row.get("source") not in {"catalog", "entitlement"}:
+        return providers
+    if row.get("local") is True:
+        providers.add("local")
+    identity = row.get("identity_id")
+    projected = row.get("providers")
+    references = row.get("source_refs")
+    if (type(identity) is not str or not identity
+            or not isinstance(projected, (list, tuple))
+            or not isinstance(references, (list, tuple))):
+        return providers
+    declared = {value.casefold() for value in projected
+                if type(value) is str and value.strip()}
+    for ref in references:
+        if not isinstance(ref, Mapping) or ref.get("identity_id") != identity:
+            continue
+        provider = ref.get("provider_id")
+        edition = ref.get("item_id")
+        if (type(provider) is str and provider.strip()
+                and type(edition) is str and edition
+                and provider.casefold() in declared):
+            providers.add(provider.casefold())
+    return providers
+
 def filter_loaded_results(
     rows: Iterable[Mapping[str, Any]],
     query: str = "",
@@ -388,8 +421,7 @@ def filter_loaded_results(
     rank_local = bool(query and str(field or "all").casefold() == "all")
     for raw in rows:
         row = dict(raw)
-        provider = str(row.get("provider_id") or row.get("source_provider") or "").casefold()
-        if provider_set and provider not in provider_set:
+        if provider_set and not (provider_set & _library_filter_providers(row)):
             continue
         if type_set and _content_type(row) not in type_set and not ({format_family(v) for v in available_formats(row)} & {format_family(v) or v for v in type_set}):
             continue
