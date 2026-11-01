@@ -108,6 +108,11 @@ def test_manifest_and_readme_are_bounded_before_decompression(tmp_path, monkeypa
     path = tmp_path / "oversize.zip"
     _canonical_zip(path)
     monkeypatch.setattr(diagnose, "_MAX_MANIFEST_BYTES", 10)
+    # This injection tests the legacy standalone reader's private limit.
+    # The optional Core ZIP reader enforces its own independent manifest
+    # ceiling; route this test through the fallback instead of pretending
+    # a plugin-only monkeypatch alters Core's shared contract.
+    monkeypatch.setattr(diagnose, "_shared_journal_reader", lambda _path: None)
     with pytest.raises(diagnose.JournalFormatError, match="journal_too_large"):
         diagnose.load_journal(path)
 
