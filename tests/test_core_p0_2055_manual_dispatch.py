@@ -258,3 +258,25 @@ def test_wrong_source_or_identity_never_touches_account_or_claim(tmp_path):
         assert session.reads == session.dispatches == []
     finally:
         service.close()
+
+
+def test_legacy_gtk_borrow_never_dispatches_bnf_even_if_capability_changes():
+    """An accidental manifest promotion cannot route BnF to session.borrow."""
+    import ast
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    main = next(n for n in tree.body
+                if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    for name in ("can_borrow_item", "borrow_search_item"):
+        method = next(n for n in main.body
+                      if isinstance(n, ast.FunctionDef) and n.name == name)
+        guard = method.body[0]
+        assert isinstance(guard, ast.If)
+        assert ast.unparse(guard.test) == (
+            "getattr(item, 'source_provider', None) == 'bnf-pret'"
+        )
+        assert isinstance(guard.body[-1], ast.Return)
+        if name == "can_borrow_item":
+            assert guard.body[-1].value.value is False
+        else:
+            assert guard.body[-1].value is None
