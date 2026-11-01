@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.19.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.20.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -72,6 +72,54 @@ binding ou deux bindings pour la même identité restent bloquants ; le
 contrôle de credential, l'epoch et les gardes après GET restent inchangés.
 La façade legacy sans broker reste en lecture positive seule, sans preuve
 négative. Les tests sont synthétiques, sans compte BnF réel.
+
+## Qualification locale structurelle et privée (#2055, 0.3.20)
+
+Pour repérer où se trouvent les signaux **sans publier une capture
+personnelle**, l'outil hors réseau `scripts/bnf_borrow_dom_probe.py`
+consomme exclusivement un HTML privé **sur l'entrée standard** et imprime
+un JSON anonyme à champs fermés. Aucune copie HTML ni session n'est créée,
+aucune requête n'est envoyée, aucune donnée de formulaire, nom de compte,
+titre, ISBN, identifiant, URL ou CSRF n'est conservée dans le rapport.
+
+Depuis le dépôt, avec des fichiers locaux privés déjà obtenus par une
+capture **consentie** (le nom de fichier n'est jamais enregistré) :
+
+```bash
+python3 scripts/bnf_borrow_dom_probe.py --page profile < /chemin/prive/profil.html
+python3 scripts/bnf_borrow_dom_probe.py --page detail < /chemin/prive/livre.html
+python3 scripts/bnf_borrow_dom_probe.py --page confirmation < /chemin/prive/confirmation.html
+```
+
+Le rapport `bnf.borrow.dom-qualification/1` ne comprend que : état
+`ok/unrecognized/limit/book_scope_unrecognized`, nombre plafonné à
+`0/1/2` de *libellés candidats* « prêts restants », « Pass ... valide »,
+« exemplaires disponibles », « Confirmer l'emprunt » et leurs chemins
+**composés uniquement de noms de balises HTML autorisées** (jamais de
+classes, attributs, valeurs, URLs ou texte). L'analyse de la fiche exige
+une unique microdata `Book` fermée ; elle signale aussi le nombre
+plafonné de contrôles `.button-borrow` et de marqueurs négatifs
+`.lb_unavailable` à l'intérieur de ce livre. La page confirmation
+retourne seulement le nombre plafonné de formulaires POST et de noms de
+champs `authenticity_token/resource_id`, jamais leurs valeurs.
+
+Les sources protégées (cookies/SAML/formulaire de connexion) sont refusées
+par le parseur ; la taille maximale est 512 Kio et le JSON de sortie
+ne reprend jamais une erreur ou une chaîne du DOM. **Un indice de présence,
+même dans un HTML authentifié, ne certifie pas le compte, l'actualité du
+quota, le droit du Pass, la permission du livre ni une offre disponible.**
+Le rapport conserve donc inconditionnellement
+`identity_bound=false`, `quota_verified=false`,
+`offer_verified=false`, `borrow_permission_verified=false`,
+`authorized=false` et `eligibility=unverified`.
+
+Pour une qualification métier future, comparer **localement et
+volontairement** les états d'un même compte connecté et d'une fiche
+exacte, relever la provenance et les transitions des signaux, mais
+**ne jamais publier les HTML privés, ZIP non relus, traces, captures
+d'écran personnelles, mot de passe, cookies, jetons SAML, CSRF ou
+liens ACSM** dans GitHub. Le rapport structurel seul ne doit pas
+être promu en `BorrowerOperationEvidence`. Le prêt reste désactivé.
 
 ## Éligibilité BnF — preuve partielle uniquement (#2055, 0.3.19)
 

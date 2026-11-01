@@ -17,7 +17,8 @@ EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_verification.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_post_once.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_explicit_execution.py',
-                  PACKAGE + 'tests/test_p0_2055_borrow_evidence_readonly.py')
+                  PACKAGE + 'tests/test_p0_2055_borrow_evidence_readonly.py',
+                  PACKAGE + 'tests/test_p0_2055_borrow_dom_qualification.py')
 
 
 def selected(paths, root=ROOT, *, full=False):
@@ -26,7 +27,8 @@ def selected(paths, root=ROOT, *, full=False):
         return False
     relevant = full or any(
         path.startswith(PACKAGE)
-        or path in {'scripts/ci_bnf_reader_gate.py', 'tests/test_ci_bnf_reader_gate.py',
+        or path in {'scripts/ci_bnf_reader_gate.py', 'scripts/bnf_borrow_dom_probe.py',
+                    'tests/test_ci_bnf_reader_gate.py',
                     '.github/workflows/pr-ci.yml', 'tests/test_bnf_pret_web_dom.py'}
         for path in paths
     )

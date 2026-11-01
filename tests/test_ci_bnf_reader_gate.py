@@ -40,6 +40,7 @@ class BnfReaderGateTests(unittest.TestCase):
         self.transport()
         self.assertTrue(gate.selected(['.github/workflows/pr-ci.yml'], self.root))
         self.assertTrue(gate.selected(['scripts/ci_bnf_reader_gate.py'], self.root))
+        self.assertTrue(gate.selected(['scripts/bnf_borrow_dom_probe.py'], self.root))
         self.assertTrue(gate.selected([], self.root, full=True))
 
     def test_missing_http_acceptance_is_failure(self):
