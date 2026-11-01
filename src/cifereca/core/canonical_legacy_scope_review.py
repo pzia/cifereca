@@ -148,10 +148,13 @@ def _completed_path_receipt_evidence(
         "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
         "ORDER BY acquisition_id LIMIT ?",
         (_MAX_LEDGER_ROWS + 1,),
-    ).fetchall()
-    if len(ledger) > _MAX_LEDGER_ROWS:
-        raise ValueError("legacy_receipt_global_budget")
-    for operation_id, raw in ledger:
+    )
+    # Stream within the same SQLite read transaction: 100k * 64KiB would
+    # otherwise permit multi-GiB temporary allocations for a maintenance
+    # preview with no need to retain any receipt.
+    for index, (operation_id, raw) in enumerate(ledger):
+        if index >= _MAX_LEDGER_ROWS:
+            raise ValueError("legacy_receipt_global_budget")
         if type(raw) is not str or len(raw) > 65536:
             raise ValueError("legacy_receipt_global_unreadable")
         try:
