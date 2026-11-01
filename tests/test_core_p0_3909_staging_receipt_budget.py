@@ -105,10 +105,25 @@ def test_summary_placeholder_does_not_merge_distinct_receipts(rig, monkeypatch):
     service, storage, root, gets = _failed_after_delivery(rig, monkeypatch)
     _append_completed_receipts(storage, extra_core=2, legacy=False)
     monkeypatch.setattr(evidence, "_MAX_ROWS", 3)
-    counts = audit_source_counts(storage, service.account, library_root=root)
+    # Routine Sync summaries must not hash the receipt files implicitly.
+    def unexpected_hash(*args, **kwargs):
+        pytest.fail("implicit staged file hash in non-verifying summary")
+    with monkeypatch.context() as guard:
+        guard.setattr(evidence, "_verify_staged", unexpected_hash)
+        counts = audit_source_counts(
+            storage, service.account, library_root=root, verify_files=False,
+        )
     assert counts["staging_evidence_coverage"] == "indexed_and_core_receipts"
-    assert counts["staged_sha_verified_count"] == 3
+    assert counts["staged_sha_verified_count"] == 0
     assert counts["staged_visible_in_library_count"] == 0
+    # An explicit verifying audit checks each independent receipt, even
+    # though the aggregate replaces all exported receipt IDs with 'private'.
+    verified = audit_source_counts(
+        storage, service.account, library_root=root, verify_files=True,
+    )
+    assert verified["staging_evidence_coverage"] == "indexed_and_core_receipts"
+    assert verified["staged_sha_verified_count"] == 3
+    assert verified["staged_visible_in_library_count"] == 0
     assert counts["placement_reference_count"] == 0
     assert storage.placements() == []
     assert gets == ["signed-right-offer"]

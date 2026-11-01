@@ -89,7 +89,10 @@ def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None,
         staging = receipt_staging_evidence(
             db, coords=coords, staging_root=(storage.path.parent / "acquisition-work")
             if isinstance(getattr(storage, "path", None), Path) else None,
-            verify_files=True, reference=lambda _ref: "private",
+            # Hashing staging bytes must be explicitly requested: routine
+            # Sync summaries use verify_files=False and must not read every
+            # potentially multi-GB EPUB/PDF only to count receipts.
+            verify_files=verify_files, reference=lambda _ref: "private",
             canonical_root=library_root,
         )
     from .acquisition_audit import inspect_exact_source

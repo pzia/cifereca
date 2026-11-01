@@ -83,7 +83,13 @@ def test_staged_book_local_card_without_origin_is_not_published(tmp_path):
         assert row["origin_proven_by_receipt"] is False
         assert "private-profile" not in json.dumps(result)
         assert str(path) not in json.dumps(result)
-        after = audit_source_counts(storage, ACCOUNT)
+        default = audit_source_counts(storage, ACCOUNT)
+        assert default["staging_evidence_coverage"] == "indexed_account_receipts_only"
+        assert default["staged_sha_verified_count"] == 0
+        assert default["staged_visible_in_library_count"] == 0
+        after = audit_source_counts(
+            storage, ACCOUNT, library_root=root, verify_files=True,
+        )
         assert after["staged_sha_verified_count"] == 1
         assert after["staged_visible_in_library_count"] == 1
         assert after["placement_reference_count"] == 0  # no exact OriginLink
