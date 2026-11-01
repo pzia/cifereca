@@ -14,10 +14,15 @@ from cifereca_bnf_pret_web import ORIGIN, WebParseError, _dom, _id
 
 _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _FIELD = re.compile(r"[A-Za-z][A-Za-z0-9_\[\]-]{0,127}\Z")
-_BORROW_SEGMENT = re.compile(
-    r"(?:^|/)(?:borrow|borrows|loan|loans|checkout|checkouts|activation|activate|confirm|confirmation)(?:/|$)",
-    re.IGNORECASE,
-)
+_BORROW_INTENT = frozenset({
+    "borrow", "borrows", "checkout", "checkouts",
+    "activation", "activate", "confirm", "confirmation", "new", "create",
+})
+_FORBIDDEN_ROUTE = frozenset({
+    "return", "returns", "renew", "renewal", "cancel", "delete",
+    "download", "token", "acsm", "acs4", "reader",
+    "logout", "sso", "admin", "v1", "v2",
+})
 _FORBIDDEN_FIELD = frozenset({
     "password", "samlresponse", "_method", "method", "redirect_to", "return_url",
 })
@@ -61,10 +66,23 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
                 or not target.path.startswith("/") or "//" in target.path
                 or "%" in target.path or "/./" in target.path or "/../" in target.path
                 or len(target.query) > _MAX_QUERY
-                or not _BORROW_SEGMENT.search(target.path)
                 or any(target.path.startswith(p) for p in (
-                    "/v1/", "/sso/", "/my_profile/", "/logout", "/admin/"
+                    "/v1/", "/v2/", "/sso/", "/my_profile/", "/logout", "/admin/"
                 ))):
+            raise ValueError
+        segments = [segment.casefold()
+                    for segment in target.path.split("/") if segment]
+        # /loans/<opaque-id> is a *token retrieval*, not a confirmation GET.
+        # A bare "loans" segment must never be enough to authorize a visit.
+        if (not segments or not any(s in _BORROW_INTENT for s in segments)
+                or any(s in _FORBIDDEN_ROUTE for s in segments)):
+            raise ValueError
+        if (segments[0] not in {"resources", "loans", "borrow", "borrows",
+                               "checkout", "checkouts", "activation",
+                               "confirm", "confirmation"}):
+            raise ValueError
+        if (segments[0] == "resources" and
+                (len(segments) < 3 or segments[1] != resource_id.casefold())):
             raise ValueError
         # A path naming a *different* resource must never authorize a loan.
         resource_path = re.search(r"(?:^|/)resources/([^/]+)", target.path)
