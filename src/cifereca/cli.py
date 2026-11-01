@@ -381,7 +381,9 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "acquisition-audit":
             from types import SimpleNamespace
             from .core.sync_cli_contract import SyncSelectionError, require_unique_sync_account
-            from .core.acquisition_audit import inspect_exact_source, write_acquisition_audit
+            from .core.acquisition_audit import (
+                inspect_exact_source, safe_acquisition_audit, write_acquisition_audit,
+            )
             try:
                 # Persisted local bindings only: no plugin discovery, login,
                 # remote inventory, rights synchronization or file mutation.
@@ -399,10 +401,10 @@ def main(argv: list[str] | None = None) -> int:
                     credential=a.credential, account_id=a.account_id,
                 )
                 root = service.library_dir() if a.verify_files else None
-                audit = inspect_exact_source(
+                audit = safe_acquisition_audit(inspect_exact_source(
                     core.storage, account, library_root=root,
                     verify_files=a.verify_files,
-                )
+                ))
                 result = {"status": "success", "audit": audit}
                 if a.output is not None:
                     write_acquisition_audit(a.output, audit)
