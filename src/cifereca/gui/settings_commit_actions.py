@@ -21,10 +21,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
     level_drop = application_ui.level_dropdown
     levels = application_ui.levels
     library_dir_row = kobo_settings.library_dir_row
-    backup_dir_row = kobo_settings.backup_dir_row
-    backup_interval_row = kobo_settings.backup_interval_row
-    vault_profiles = kobo_settings.vault_profiles
-    vault_profile_drop = kobo_settings.vault_profile_drop
     save, reconnect = settings_bars.save, settings_bars.reconnect
     ai_status = ai_ui.status
     settings_committer = SettingsCommitController(
@@ -62,11 +58,9 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
                 pid: {key: widget.get_text() for key, widget in editor.items()}
                 for pid, editor in provider_download_editors.items()
             },
-            "levels": tuple(levels), "vault_profiles": tuple(vault_profiles),
+            "levels": tuple(levels),
             "ai": capture_ai_settings() if settings_state.dirty("ai") else {},
         }
-        values["backup_directory"] = backup_dir_row.get_text()
-        values["backup_interval"] = backup_interval_row.get_text()
         values["diagnostics_enabled"] = True
         values["experimental_actions"] = exp_switch.get_active()
         values["audiobook_directory"] = global_audio_row.get_text()
@@ -76,7 +70,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
         values["post_download_command"] = global_post_row.get_text()
         values["diagnostics_level_index"] = level_drop.get_selected()
         values["library_directory"] = library_dir_row.get_text()
-        values["vault_profile_index"] = vault_profile_drop.get_selected()
         return values
 
     def save_settings(_button=None, *, reconnect_after=False) -> bool:
