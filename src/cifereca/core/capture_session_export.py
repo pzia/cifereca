@@ -418,9 +418,16 @@ def validate_capture_session(path: Path) -> dict[str, object]:
                 if digest.hexdigest() != expected["sha256"]:
                     raise ValueError("capture_archive_invalid")
             _crosscheck_capture_index(archive, set(names), manifest)
+            # The CLI renders coverage in both JSON and plain text. A ZIP
+            # reconstructed with fresh SHA values is not a trusted source
+            # of text for terminal output; allow only the emitted enum.
+            coverage = manifest.get("coverage")
+            if type(coverage) is not str or coverage not in (
+                "partial", "instrumented_only",
+            ):
+                raise ValueError("capture_archive_invalid")
             return {"format": _FORMAT, "status": "valid",
-                    "coverage": manifest.get("coverage"),
-                    "members": len(names)}
+                    "coverage": coverage, "members": len(names)}
     except (OSError, zipfile.BadZipFile, json.JSONDecodeError, EOFError,
             RuntimeError, KeyError, TypeError) as exc:
         raise ValueError("capture_archive_invalid") from exc
