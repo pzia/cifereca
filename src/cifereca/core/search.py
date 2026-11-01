@@ -369,7 +369,8 @@ def _library_filter_providers(row: Mapping[str, Any]) -> set[str]:
     """
     primary = str(row.get("provider_id") or row.get("source_provider") or "").casefold()
     providers = {primary} if primary else set()
-    if row.get("source") not in {"catalog", "entitlement"}:
+    source_kind = row.get("source")
+    if type(source_kind) is not str or source_kind not in {"catalog", "entitlement"}:
         return providers
     if row.get("local") is True:
         providers.add("local")
