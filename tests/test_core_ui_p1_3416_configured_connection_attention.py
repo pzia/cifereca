@@ -50,9 +50,11 @@ def test_explicitly_disabled_source_or_plugin_does_not_raise_false_alert(
     assert not any(event[0] == "user-reconnect" for event in calls)
 
 
-def test_unavailable_connection_aggregates_with_genuine_live_source_failure():
+def test_unavailable_connection_aggregates_with_neutral_live_source_failure():
+    # A neutral synthetic provider tests banner aggregation without
+    # invoking BnF-specific legacy switches absent from this broker double.
     live = _source(
-        provider_id="bnf-pret", source_id="bnf", status="failed",
+        provider_id="fictional.future", source_id="future", status="failed",
         error="https://private.invalid/?token=PRIVATE_SYNTHETIC",
     )
     window, _broker, calls = _window(sources=[live])
