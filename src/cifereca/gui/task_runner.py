@@ -43,6 +43,44 @@ class TaskRunner:
         # Every key is scoped by task kind; user controls always bypass it.
         self._coalesced: dict[tuple[str, str], int] = {}
 
+    @staticmethod
+    def _source_sync_outcome(value: Any, kind: str) -> str:
+        """Typed broker result, never arbitrary plugin truthiness (#2888).
+
+        The result still travels through the success callback to refresh the
+        UI. Only the final activity/TRACE receipt changes: a returned refusal
+        is not a completed synchronization. Do not infer success from GET.
+        """
+        if kind != "source-sync":
+            return "success"
+        from cifereca.plugin_api import SyncResult
+        from collections.abc import Mapping
+        if not isinstance(value, SyncResult):
+            return "success"  # Legacy non-typed worker results are unchanged.
+        facts = value.facts
+        if value.ok is True:
+            return "success"
+        if isinstance(facts, Mapping):
+            reason = facts.get("reason")
+            status = facts.get("status")
+            if reason == "operation_busy" or status == "operation_busy":
+                return "busy"
+            if status == "partial":
+                return "partial"
+            sources = facts.get("sources")
+            if isinstance(sources, Mapping):
+                statuses = [
+                    row.get("status") for row in sources.values()
+                    if isinstance(row, Mapping)
+                ]
+                if statuses and all(item == "operation_busy" for item in statuses):
+                    return "busy"
+                if statuses and "partial" in statuses and not any(
+                    item in ("error", "failed", "retryable_error") for item in statuses
+                ):
+                    return "partial"
+        return "failed"
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -209,7 +247,10 @@ class TaskRunner:
             )
             outcome_status = "success"
             try:
-                return fn(report) if with_progress else fn()
+                value = fn(report) if with_progress else fn()
+                if self._source_sync_outcome(value, trace_kind) != "success":
+                    outcome_status = "failed"
+                return value
             except BaseException:
                 outcome_status = "failed"
                 raise
@@ -269,13 +310,17 @@ class TaskRunner:
                 outcome = ("error", exc)
             if outcome[0] == "error":
                 trace_failure("worker", outcome[1])
+            business_status = (
+                "failed" if outcome[0] == "error"
+                else self._source_sync_outcome(outcome[1], trace_kind)
+            )
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
             # until the UI consumes it; close() clears detached reservations.
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=%s",
                 task_id, trace_kind, origin,
-                "success" if outcome[0] == "ok" else "failed",
+                "success" if business_status == "success" else "failed",
             )
 
             gtk_pending_since = time.monotonic()
@@ -296,7 +341,7 @@ class TaskRunner:
                     phase_observer(
                         "gtk_delivery_wait",
                         max(0, time.monotonic() - queued_completion_at),
-                        "success" if outcome[0] == "ok" else "failed",
+                        "success" if business_status == "success" else "failed",
                     )
                 with self._lock:
                     self._count = max(0, self._count - 1)
@@ -316,9 +361,12 @@ class TaskRunner:
                     task_id,
                     remaining,
                     label,
-                    kind_outcome == "ok",
-                    None if kind_outcome == "ok" else (
-                        payload.user_message if isinstance(payload, UserFacingError)
+                    business_status == "success",
+                    None if business_status == "success" else (
+                        "Synchronisation déjà en cours" if business_status == "busy"
+                        else "Synchronisation partielle" if business_status == "partial"
+                        else "Échec de synchronisation" if kind_outcome == "ok"
+                        else payload.user_message if isinstance(payload, UserFacingError)
                         else "Traitement indisponible"
                     ),
                 )
@@ -347,7 +395,8 @@ class TaskRunner:
                         return False
                     # A success callback may close the window itself.
                     # Never update detached GTK feedback after that callback.
-                    if success_toast and not getattr(self.window, "_closed", False):
+                    if (business_status == "success" and success_toast
+                            and not getattr(self.window, "_closed", False)):
                         reporter = getattr(self.window, "_activity_result", None)
                         if callable(reporter):
                             reporter(success_toast, success=True, task_id=task_id)

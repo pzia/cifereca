@@ -79,9 +79,10 @@ def test_each_actual_failure_phase_is_correlated_persisted_exported_and_passive(
         assert summary['downloaded'] == int(fault == 'finalize')
         ref = summary['task_ref']
         assert re.fullmatch('[0-9a-f]{12}', ref)
-        # The Core return is not an exception, so executor status is success;
-        # the real GUI wraps a false result as a failed task (tested below).
-        assert f'task_ref={ref} status=success' in caplog.text
+        # #2888: a typed failed/partial SyncResult returned without raising
+        # must still be a failed worker correlation for the exact task_ref.
+        assert result.ok is False
+        assert f'task_ref={ref} status=failed' in caplog.text
         status = broker.numilog_materialization_run_status(sid)
         assert status['diagnostic'] == summary
         assert status['status'] == ('running' if fault == 'finalize' else 'failed')

@@ -10,7 +10,7 @@ from concurrent.futures import Future
 from enum import IntEnum
 from typing import Any, Callable
 
-from .diagnostic_task_context import diagnostic_task_scope
+from .diagnostic_task_context import diagnostic_task_scope, diagnostic_task_business_result
 from .task_admission import SharedTaskAdmission, AdmissionLease
 
 
@@ -207,6 +207,7 @@ class PriorityExecutor:
                     try:
                         with diagnostic_task_scope():
                             result = fn()
+                            diagnostic_task_business_result(result)
                     except BaseException as exc:  # noqa: BLE001 - Future boundary
                         try:
                             future.set_exception(exc)

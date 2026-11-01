@@ -197,6 +197,7 @@ def test_taskrunner_delivery_stops_when_success_callback_closes_window():
 
     namespace.update(
         self=runner, control=None, outcome=("ok", "value"), task_id=1,
+        business_status="success",
         label="test", ok=close_in_callback, err=None, success_toast="success",
     )
     assert namespace["deliver"]() is False
@@ -225,6 +226,7 @@ def test_taskrunner_error_delivery_skips_callbacks_after_teardown():
     runner = SimpleNamespace(window=window, _lock=threading.Lock(), _count=1)
     namespace.update(
         self=runner, control=None, outcome=("error", RuntimeError("failure")),
+        business_status="failed",
         task_id=1, label="test", ok=None,
         err=lambda error: events.append("error"), success_toast=None,
     )
