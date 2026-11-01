@@ -233,6 +233,40 @@ class ReaderHTTPClient:
                 raise ReaderHTTPError('transport_unavailable') from None
         raise ReaderHTTPError('redirect_limit')
 
+    def borrow_confirmation(self, confirmation_url: str, *, resource_id: str):
+        """One read-only GET of a *freshly observed* borrow confirmation link.
+
+        This isolated reader does not expand the SSO/catalogue allowlist.
+        Redirects, foreign origins, POSTs and binary responses fail closed.
+        """
+        from cifereca_bnf_pret_borrow import _transition_url
+        from cifereca_bnf_pret_catalog import resource_url
+        url = _transition_url(resource_url(resource_id), confirmation_url, resource_id)
+        try:
+            with self._stream('GET', url, headers={'Accept': 'text/html'},
+                              timeout=15) as response:
+                if 300 <= response.status_code < 400:
+                    raise ReaderHTTPError('redirect_invalid')
+                if response.status_code != 200:
+                    raise ReaderHTTPError(
+                        {401: 'auth_required', 403: 'access_denied',
+                         429: 'rate_limited'}.get(response.status_code, 'http_unavailable')
+                    )
+                if response.headers.get('content-type', '').split(';')[0].strip() not in {
+                        'text/html', 'application/xhtml+xml'}:
+                    raise ReaderHTTPError('unexpected_content')
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(body) + len(chunk) > MAX_HTML_BYTES:
+                        raise ReaderHTTPError('html_limit')
+                    body.extend(chunk)
+                html = body.decode(response.encoding or 'utf-8', errors='strict')
+                if str(response.url) != url:
+                    raise ReaderHTTPError('redirect_invalid')
+                return url, html
+        except (httpx.HTTPError, UnicodeError):
+            raise ReaderHTTPError('transport_unavailable') from None
+
     def loan_token(self, loan_id: str, signed_url: str) -> bytes:
         """One non-retried GET for a loan previously checked by its session.
 
