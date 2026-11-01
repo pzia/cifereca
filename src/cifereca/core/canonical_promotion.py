@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import stat
 
@@ -115,15 +116,52 @@ def promote_completed_delivery(
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     dest_flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
                   | getattr(os, "O_NOFOLLOW", 0))
+    # Never expose a partially copied EPUB/PDF under its final name. A crash
+    # during the copy leaves only a hidden .part; the exact, journaled source
+    # staging receipt can safely resume without another supplier GET.
+    temporary = ".canonical-promote-" + secrets.token_hex(16) + ".part"
+    dir_fd = os.open(
+        destination_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
     made = None
+    linked = False
+
+    def directory_current() -> bool:
+        try:
+            opened = os.fstat(dir_fd)
+            current = os.stat(destination_dir, follow_symlinks=False)
+            return (
+                stat.S_ISDIR(opened.st_mode)
+                and stat.S_ISDIR(current.st_mode)
+                and (opened.st_dev, opened.st_ino)
+                == (current.st_dev, current.st_ino)
+            )
+        except OSError:
+            return False
+
+    def own_entry(name: str) -> bool:
+        if made is None:
+            return False
+        try:
+            current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            return (stat.S_ISREG(current.st_mode)
+                    and (current.st_dev, current.st_ino)
+                    == (made.st_dev, made.st_ino))
+        except OSError:
+            return False
+
     try:
+        if not directory_current():
+            raise ValueError("canonical_promotion_destination_changed")
         with os.fdopen(os.open(original, flags), "rb") as reader:
             opened = os.fstat(reader.fileno())
-            if not stat.S_ISREG(opened.st_mode) or (
-                opened.st_dev, opened.st_ino
-            ) != (before.st_dev, before.st_ino):
+            if (not stat.S_ISREG(opened.st_mode)
+                    or (opened.st_dev, opened.st_ino)
+                    != (before.st_dev, before.st_ino)):
                 raise ValueError("canonical_promotion_source_changed")
-            with os.fdopen(os.open(target, dest_flags, 0o600), "wb") as writer:
+            output_fd = os.open(temporary, dest_flags, 0o600, dir_fd=dir_fd)
+            with os.fdopen(output_fd, "wb") as writer:
                 made = os.fstat(writer.fileno())
                 digest = hashlib.sha256()
                 while True:
@@ -137,32 +175,47 @@ def promote_completed_delivery(
         if (digest.hexdigest() != completed.final_sha256
                 or not _same_file(original, before)):
             raise ValueError("canonical_promotion_sha_mismatch")
+        if not directory_current() or not own_entry(temporary):
+            raise ValueError("canonical_promotion_destination_changed")
+        # A no-replace hardlink is an atomic namespace promotion. No other
+        # thread can ever open a partially written final file; a foreign
+        # final target is never overwritten or adopted by filename alone.
+        try:
+            os.link(
+                temporary, target.name, src_dir_fd=dir_fd,
+                dst_dir_fd=dir_fd, follow_symlinks=False,
+            )
+        except FileExistsError as exc:
+            raise ValueError("canonical_promotion_destination_conflict") from exc
+        linked = True
+        os.fsync(dir_fd)
         verified = _path_verified(
             storage, root=root, source=source,
             path=target, final_sha256=completed.final_sha256,
         )
-        # Sync the new directory entry as well as the file data so the B
-        # commit never points to a deliberately unflushed destination.
-        dir_fd = os.open(destination_dir, os.O_RDONLY
-                         | getattr(os, "O_DIRECTORY", 0)
-                         | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        if (not directory_current() or not own_entry(target.name)
+                or not _same_file(original, before)):
+            raise ValueError("canonical_promotion_destination_changed")
+        # Staging remains untouched until the Core B transaction commits.
         return verified
     except Exception:
-        # Remove only our own newly created inode; never unlink an object
-        # substituted by another actor while the copy was in progress.
-        if made is not None:
+        # This method never commits B. Discard only our own new hardlink;
+        # do not delete a different inode swapped in by another process.
+        if linked and own_entry(target.name):
+            os.unlink(target.name, dir_fd=dir_fd)
+            os.fsync(dir_fd)
+        raise
+    finally:
+        # Cleanup cannot turn a verified final copy into a false error.
+        # If interrupted before this point, a hidden .part is non-canonical
+        # and the original receipt remains available to retry.
+        if own_entry(temporary):
             try:
-                now = os.stat(target, follow_symlinks=False)
-                if (stat.S_ISREG(now.st_mode) and
-                        (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino)):
-                    target.unlink()
+                os.unlink(temporary, dir_fd=dir_fd)
+                os.fsync(dir_fd)
             except OSError:
                 pass
-        raise
+        os.close(dir_fd)
 
 
 def cleanup_published_staging(
