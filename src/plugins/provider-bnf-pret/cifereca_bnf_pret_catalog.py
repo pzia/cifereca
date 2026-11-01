@@ -1,6 +1,7 @@
 """Read-only HTML catalogue traversal; never infer rights or completeness."""
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 import time
 from urllib.parse import urlencode
@@ -66,6 +67,10 @@ def read_search(client, query, *, is_current=lambda: True):
                 if previous is not None and previous != record:
                     if 'ambiguous_search' not in warnings:
                         warnings.append('ambiguous_search')
+                    if previous.thumbnail_url != record.thumbnail_url:
+                        # Repeated resource on another page: conflicting cover
+                        # cannot be promoted to a specific public image.
+                        records[record.resource_id] = replace(previous, thumbnail_url=None)
                     continue
                 records[record.resource_id] = record
             if parsed.status != 'ok':

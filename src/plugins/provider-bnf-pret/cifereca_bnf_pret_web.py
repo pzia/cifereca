@@ -6,7 +6,7 @@ in WEB.md; a successful parse does not authenticate a session or attest a right.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 import re
 from urllib.parse import urljoin, urlsplit
@@ -141,6 +141,8 @@ class CatalogRecord:
     description: str | None = field(default=None, repr=False)
     # UI button presence is not an availability or borrowing capability.
     availability: str = "unknown"
+    # Public image belongs only to this exact, observed catalogue record.
+    thumbnail_url: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -186,9 +188,12 @@ def parse_suggestions(html: str) -> CatalogPage:
                        for key in ('publisher', 'isbn', 'inLanguage', 'description'))
         record = CatalogRecord(rid, titles[0], tuple(props.get('author', ())),
                                single('publisher'), single('isbn'), single('inLanguage'),
-                               single('description'))
+                               single('description'), thumbnail_url=_loan_cover(card, rid))
         if rid in records and records[rid] != record:
             partial = True
+            if records[rid].thumbnail_url != record.thumbnail_url:
+                # A duplicate must not select the first or last cover.
+                records[rid] = replace(records[rid], thumbnail_url=None)
         else:
             records[rid] = record
     return CatalogPage(tuple(records.values()), "partial" if partial else "ok")
@@ -265,9 +270,12 @@ def parse_search_page(html: str) -> CatalogPage:
             rid, title, tuple(props.get("author", ())),
             single("publisher"), single("isbn"), single("inLanguage"),
             descriptions[0] if len(descriptions) == 1 else None,
+            thumbnail_url=_catalog_book_cover(book),
         )
         if rid in records and records[rid] != record:
             partial = True
+            if records[rid].thumbnail_url != record.thumbnail_url:
+                records[rid] = replace(records[rid], thumbnail_url=None)
         else:
             records[rid] = record
     if not records:
@@ -322,7 +330,8 @@ def parse_detail(html: str, *, page_url: str) -> CatalogPage:
     unavailable = any(n.has_class("lb_unavailable") and n.text() for n in books[0].walk())
     record = CatalogRecord(rid, props["name"][0], tuple(props.get("author", ())),
                            single("publisher"), single("isbn"), single("inLanguage"),
-                           single("description"), "unavailable" if unavailable else "unknown")
+                           single("description"), "unavailable" if unavailable else "unknown",
+                           _catalog_book_cover(books[0]))
     return CatalogPage((record,), "partial" if partial else "ok", scope="detail")
 
 
@@ -379,6 +388,38 @@ def _public_cover_url(value: str) -> str | None:
     except ValueError:
         return None
     return url
+
+
+def _catalog_book_cover(book: _Node) -> str | None:
+    """A cover only within the validated, unique Book microdata scope.
+
+    Do not consult global og:image, adjacent result cards, page header,
+    profile avatars, nested Person/Organization scopes or a book title/ISBN.
+    A conflicting or invalid image candidate means unknown, not first wins.
+    """
+    sources: list[str] = []
+
+    def visit(node: _Node) -> None:
+        if (node.tag in _HIDDEN or 'hidden' in node.attrs
+                or node.attrs.get('aria-hidden') == 'true'):
+            return
+        if node is not book and 'itemscope' in node.attrs:
+            return  # Not an image of this Book.
+        if node.tag == 'img':
+            sources.append(node.attrs.get('data-src') or node.attrs.get('src') or '')
+        elif node.tag == 'meta' and 'image' in node.attrs.get('itemprop', '').split():
+            sources.append(node.attrs.get('content') or '')
+        for child in node.children:
+            if isinstance(child, _Node):
+                visit(child)
+
+    visit(book)
+    if not sources or len(sources) > 4:
+        return None
+    images = [_public_cover_url(source) for source in sources]
+    if any(url is None for url in images) or len(set(images)) != 1:
+        return None
+    return images[0]
 
 
 def _loan_cover(card: _Node, resource_id: str) -> str | None:
