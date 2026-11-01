@@ -52,6 +52,14 @@ class KoboVaultClient:
         self.base_url = base_url
         self.token = str(token or "").strip()
         self.last_manifest_rejections: list[dict[str, str]] = []
+        # Diagnostic counters only. Counts contain no URL, cursor, account,
+        # token, product or response payload and NEVER authorize rights.
+        # A logical scan may include 1..100 paginated HTTP GET attempts.
+        self.manifest_scans_started = 0
+        self.manifest_scans_paginated = 0
+        self.manifest_http_get_attempts = 0
+        self.last_manifest_page_attempts = 0
+        self.last_manifest_pagination_complete = False
         self.last_search_merge_rejections: list[dict[str, str]] = []
         self.client = HTTPX_TRANSPORT.client(producer="provider.kobo",
             headers={
@@ -149,6 +157,13 @@ class KoboVaultClient:
         # that the destination has the same authentication and rights policy.
         kwargs.pop("follow_redirects", None)
         try:
+            # Increment at the actual transport boundary, not for a cache hit,
+            # page guard refusal or a malformed caller parameter. No cursor
+            # or upstream URL leaves this private accounting.
+            if method == "GET" and path == "/library/manifest":
+                self.manifest_http_get_attempts = min(
+                    1_000_000, self.manifest_http_get_attempts + 1,
+                )
             response = self.client.request(
                 method, self._url(path), headers=headers,
                 follow_redirects=False, **kwargs,
@@ -524,6 +539,11 @@ class KoboVaultClient:
 
     def library_manifest(self, *, page_guard: Callable[[], None] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        self.manifest_scans_started = min(
+            1_000_000, self.manifest_scans_started + 1,
+        )
+        self.last_manifest_page_attempts = 0
+        self.last_manifest_pagination_complete = False
         self.last_manifest_rejections = []
         # Rejected conflicting aliases can precede/follow an apparently valid
         # row on another page. Remember both *individually valid* candidates
@@ -540,6 +560,9 @@ class KoboVaultClient:
             # *next* private request, not merely the returned final snapshot.
             if page_guard is not None:
                 page_guard()
+            self.last_manifest_page_attempts = min(
+                100, self.last_manifest_page_attempts + 1,
+            )
             payload = self.library_manifest_page(cursor=cursor)
             if page_guard is not None:
                 page_guard()
@@ -602,6 +625,12 @@ class KoboVaultClient:
             seen.add(cursor)
         else:
             raise KoboVaultError("Kobo-Vault : manifest trop volumineux ou pagination invalide", code="invalid_pagination")
+        # Completeness here means valid pagination ONLY; malicious/foreign
+        # rows still affect last_manifest_rejections and rights admission.
+        self.last_manifest_pagination_complete = True
+        self.manifest_scans_paginated = min(
+            1_000_000, self.manifest_scans_paginated + 1,
+        )
         duplicate_products = {
             product for product, count in product_counts.items() if count > 1
         }
