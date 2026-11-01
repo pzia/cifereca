@@ -114,11 +114,13 @@ def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None,
 
 
 def _safe_result(result: dict[str, object]) -> dict[str, object]:
+    status = result.get("status")
+    code = result.get("code")
     outcome: dict[str, object] = {
-        "status": result.get("status") if result.get("status") in _STATUSES else "failed",
+        "status": status if type(status) is str and status in _STATUSES else "failed",
     }
-    if result.get("code") in _REASON_CODES:
-        outcome["code"] = result["code"]
+    if type(code) is str and code in _REASON_CODES:
+        outcome["code"] = code
     for key in ("downloaded", "completed", "scanned", "unchanged", "pending", "errors"):
         value = result.get(key)
         if type(value) is int and 0 <= value <= 1_000_000:
@@ -199,12 +201,16 @@ def _report_summary(
     """
     lines = [
         "CIFERECA SOURCE SYNC REPORT",
-        f"status: {outcome['status']}",
+        "status: " + (
+            outcome["status"] if type(outcome.get("status")) is str
+            and outcome["status"] in _STATUSES else "failed"
+        ),
         f"exit_code: {exit_code}",
         f"coverage: {evidence_coverage}; no HTTP/correlated journal proof",
     ]
-    if "code" in outcome:
-        lines.append(f"reason_code: {outcome['code']}")
+    reason = outcome.get("code")
+    if type(reason) is str and reason in _REASON_CODES:
+        lines.append(f"reason_code: {reason}")
     for field in _SUMMARY_COUNTS:
         count = _safe_summary_count(outcome.get(field))
         if count is not None:
