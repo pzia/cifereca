@@ -59,6 +59,31 @@ def _safe_destination(directory: Path) -> Path:
     return parent
 
 
+
+def preflight_capture_destination(directory: Path) -> Path:
+    """Verify that a private ZIP can actually be CREATED before opening GUI.
+
+    A directory may exist and be symlink-free but deny file creation via
+    permissions, ACLs or a full filesystem. Probe with an exclusive private
+    temporary file, write one byte, then remove it. This is advisory only:
+    the final export still uses its atomic exclusive-create safeguards.
+    """
+    parent = _safe_destination(directory)
+    fd, name = tempfile.mkstemp(
+        prefix=".cifereca-preflight-", suffix=".tmp", dir=parent,
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        if os.write(fd, b"0") != 1:
+            raise OSError("capture_preflight_write_failed")
+    finally:
+        try:
+            os.close(fd)
+        finally:
+            os.unlink(name)
+    return parent
+
+
 def _headers(meta: object) -> dict[str, str]:
     if type(meta) is not dict:
         return {}

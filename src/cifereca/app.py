@@ -196,7 +196,9 @@ def main() -> int:
         return _run_application()
 
     from pathlib import Path
-    from .core.capture_session_export import _safe_destination, export_capture_session
+    from .core.capture_session_export import (
+        preflight_capture_destination, export_capture_session,
+    )
     from .core.capture_session_journal import CaptureSessionJournal
     from .core.capture_http_window import capture_http_window
     from .http_trace import HTTP_TRACE
@@ -206,7 +208,7 @@ def main() -> int:
 
     directory = Path(directory_arg).expanduser() if directory_arg is not None else downloads_dir()
     try:
-        _safe_destination(directory)
+        preflight_capture_destination(directory)
     except (OSError, ValueError):
         print(f"capture_directory_unavailable: {directory}", file=sys.stderr)
         return 2
