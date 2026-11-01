@@ -5,7 +5,11 @@ Static contract only: never launch Core, plugins or a networked CLI here.
 from __future__ import annotations
 
 import ast
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 
 
@@ -152,6 +156,107 @@ def test_expert_offline_reconciliation_is_not_misidentified_as_mutating_sync():
     assert "enfant" in document
     assert "def _main():" in wal
     assert "python3 -m cifereca.core.library_reconciliation" in document
+
+
+def test_plugin_direct_executables_are_explicitly_classified_without_running_them():
+    """New direct plugin CLIs require an owner-reviewed effect classification."""
+    from cifereca.core.plugin_entrypoint_inventory import CLASSIFIED, inventory
+
+    document = DOC.read_text(encoding="utf-8")
+    report = inventory(ROOT)
+    assert report["status"] == "complete", report
+    assert report["unclassified"] == []
+    assert report["removed"] == []
+    assert len(report["entries"]) == 5
+    assert {row["path"] for row in report["entries"]} == set(CLASSIFIED)
+    assert {row["risk"] for row in report["entries"]} == {"F", "M", "T/M"}
+    for row in report["entries"]:
+        assert f'`{row["path"]}`' in document, row["path"]
+        assert f"**{row['risk']}**" in document, row["risk"]
+    for statement in (
+        "Points d'entrée directs dans les packages plugins",
+        "Benchmark destructeur", "**F**", "**T/M**",
+    ):
+        assert statement.lower() in document.lower(), statement
+
+
+def test_plugin_entrypoint_inventory_flags_unknown_command_and_removed_classifier(
+    tmp_path,
+):
+    from cifereca.core.plugin_entrypoint_inventory import inventory
+
+    (tmp_path / "src/plugins/unknown").mkdir(parents=True)
+    fake_cli = tmp_path / "src/plugins/unknown/new_cli.py"
+    fake_cli.write_text(
+        'import argparse\nif __name__ == "__main__":\n'
+        '    argparse.ArgumentParser()\n',
+        encoding="utf-8",
+    )
+    report = inventory(tmp_path)
+    assert report["status"] == "needs_review"
+    assert report["unclassified"] == ["src/plugins/unknown/new_cli.py"]
+    assert report["removed"]
+    assert report["entries"][0]["risk"] == "unclassified"
+    # AST discovery is inert: source code isn't imported or executed.
+    fake_cli.write_text(
+        'raise RuntimeError("NO_EXECUTION_ALLOWED")\n'
+        'if __name__ == "__main__": pass\n',
+        encoding="utf-8",
+    )
+    report = inventory(tmp_path)
+    assert report["status"] == "needs_review"
+
+
+def test_plugin_entrypoint_inspector_cli_is_offline_and_has_two_output_modes(
+    tmp_path,
+):
+    """Run only the safe inspector; never invoke an executable plugin."""
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + (
+        environment.get("PYTHONPATH") or ""
+    )
+
+    def run(*options):
+        return subprocess.run(
+            [
+                sys.executable, "-m",
+                "cifereca.core.plugin_entrypoint_inventory",
+                "--root", str(ROOT), *options,
+            ],
+            cwd=tmp_path, env=environment,
+            text=True, capture_output=True, timeout=15, check=False,
+        )
+
+    structured = run("--json")
+    assert structured.returncode == 0
+    assert structured.stderr == ""
+    payload = json.loads(structured.stdout)
+    assert payload["status"] == "complete"
+    assert len(payload["entries"]) == 5
+    assert payload["unclassified"] == []
+    assert payload["removed"] == []
+    assert all(not entry["path"].startswith("/") for entry in payload["entries"])
+
+    human = run()
+    assert human.returncode == 0
+    assert human.stderr == ""
+    assert human.stdout == (
+        "plugin_entrypoints_complete count=5 unclassified=0 removed=0\\n"
+    ).replace("\\n", "\n")
+    assert str(ROOT) not in human.stdout
+
+    absent = subprocess.run(
+        [
+            sys.executable, "-m",
+            "cifereca.core.plugin_entrypoint_inventory",
+            "--root", str(tmp_path), "--json",
+        ],
+        cwd=tmp_path, env=environment,
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+    assert absent.returncode == 2
+    assert json.loads(absent.stdout)["status"] == "unavailable"
+    assert absent.stderr == ""
 
 
 def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
