@@ -435,6 +435,8 @@ def main(argv: list[str] | None = None) -> int:
             report_secret = None
             report_library_root = None
             report_started_at = None
+            report_events = []
+            report_active_phase = None
             try:
                 if a.username or a.account:
                     raise SyncSelectionError("legacy_account_selector_unsupported")
@@ -484,6 +486,7 @@ def main(argv: list[str] | None = None) -> int:
                         # Source selection is complete; record the run BEFORE
                         # provider connection so connection failures are audited.
                         report_account = resolved
+                        report_events.append({"phase": "selected", "status": "success"})
                         report_ref = secrets.token_hex(16)
                         report_secret = secrets.token_bytes(32)
                         if a.verify_files:
@@ -499,11 +502,21 @@ def main(argv: list[str] | None = None) -> int:
                             )
                         except Exception:
                             report_before = {"status": "unavailable", "reason": "audit_unavailable"}
+                        report_events.append({
+                            "phase": "audit_before",
+                            "status": "unavailable" if report_before.get("status") == "unavailable"
+                            else "success",
+                        })
+                        report_active_phase = "connect"
+                        report_events.append({"phase": "connect", "status": "started"})
                     service.connect_selected_source(
                         identity=resolved.identity_id,
                         provider=resolved.provider_id,
                         credential=resolved.credential_id,
                     )
+                    if report_account is not None:
+                        report_events.append({"phase": "connect", "status": "success"})
+                        report_active_phase = None
                 if a.sync_cmd == "list":
                     from types import SimpleNamespace
                     connections = {
@@ -542,17 +555,36 @@ def main(argv: list[str] | None = None) -> int:
                         trace_previous_level = diagnostics_level()
                         set_diagnostics_level("trace")
                         trace_started = True
+                    if report_account is not None:
+                        report_active_phase = "sync"
+                        report_events.append({"phase": "sync", "status": "started"})
                     raw = service.synchronize_account_source(account)
                     result = {"provider": account.provider_id,
                               "identity": account.identity_id,
                               **safe_sync_result(raw)}
+                    if report_account is not None:
+                        report_events.append({
+                            "phase": "sync", "status": result["status"],
+                            "code": result.get("code"),
+                        })
+                        report_active_phase = None
                     code = 0 if result["status"] in ("success", "complete") else 2
             except SyncSelectionError as exc:
                 result = {"status": "failed", "code": str(exc)}
                 code = 2
+                if report_account is not None and report_active_phase is not None:
+                    report_events.append({
+                        "phase": report_active_phase, "status": "failed",
+                        "code": str(exc),
+                    })
             except Exception:
                 result = {"status": "failed", "code": "sync_unavailable"}
                 code = 2
+                if report_account is not None and report_active_phase is not None:
+                    report_events.append({
+                        "phase": report_active_phase, "status": "failed",
+                        "code": "sync_unavailable",
+                    })
             finally:
                 if trace_started:
                     try:
@@ -565,6 +597,11 @@ def main(argv: list[str] | None = None) -> int:
                         trace_outcome = "export_failed"
                     finally:
                         set_diagnostics_level(trace_previous_level)
+                    if report_account is not None:
+                        report_events.append({
+                            "phase": "trace_export",
+                            "status": "success" if trace_outcome == "created" else "failed",
+                        })
             # The report's exit_code must equal the command's eventual exit,
             # including an independently requested raw HTTP trace export failure.
             # Trace bytes remain outside the redacted report regardless.
@@ -582,10 +619,16 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     except Exception:
                         report_after = {"status": "unavailable", "reason": "audit_unavailable"}
+                    report_events.append({
+                        "phase": "audit_after",
+                        "status": "unavailable" if report_after.get("status") == "unavailable"
+                        else "success",
+                    })
                     write_sync_report(
                         a.report, account=report_account, run_ref=report_ref,
                         before=report_before, after=report_after,
                         result=result, started_at=report_started_at, exit_code=code,
+                        cli_events=report_events,
                     )
                     result["report"] = "created"
                 except Exception:
