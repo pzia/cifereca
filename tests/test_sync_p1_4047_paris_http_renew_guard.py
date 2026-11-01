@@ -71,10 +71,6 @@ def test_direct_paris_session_cannot_post_unattested_physical_renewal(variant):
         {"Loan": Loan, "Account": Account,
          "ProviderCapabilityError": ProviderCapabilityError},
     )
-    if variant == "closed":
-        # The Core guards closed loans independently. This check ensures the
-        # plugin cannot bypass this after an upstream loan-state transition.
-        pytest.skip("positive plugin state guard is covered by the Core")
     with pytest.raises(ProviderCapabilityError):
         direct(session, selected, a)
     assert posts == []
