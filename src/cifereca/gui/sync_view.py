@@ -306,6 +306,19 @@ def sync_local_reconciliation_presentation(result: object) -> str:
     )
 
 
+# Display projection only. Each extra phase must be attested by a Core DTO;
+# merely advertising a source capability does not create a successful GET.
+# Unknown supplier strings must never become GUI labels or diagnostics.
+_SYNC_PHASE_CAPTIONS = (
+    ("discover_rights", "Notices et droits"),
+    ("offer", "Offre de livraison"),
+    ("fetch", "Réception du fichier"),
+    ("materialize", "Téléchargement local"),
+    ("placement", "Placement en bibliothèque"),
+    ("reconcile", "Rapprochement des fichiers"),
+)
+
+
 def sync_source_phase_summary(source: object) -> str:
     """Present only Core-enumerated phase states, never provider diagnostics.
 
@@ -327,12 +340,8 @@ def sync_source_phase_summary(source: object) -> str:
         "source_disabled": "Source désactivée",
         "source_disconnected": "Source déconnectée",
     }
-    captions = (
-        ("discover_rights", "Notices et droits"),
-        ("materialize", "Téléchargement local"),
-    )
     parts = []
-    for phase, heading in captions:
+    for phase, heading in _SYNC_PHASE_CAPTIONS:
         matches = [
             value for value in entries
             if getattr(value, "phase", None) == phase
@@ -498,9 +507,16 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     information_only = sync_source_informational_partial(source)
     entries = getattr(source, "phase_states", ())
     if isinstance(entries, (tuple, list)) and len(entries) <= 8:
+        # The most downstream failure is the most useful actionable signal.
+        # Preserve the historical materialize > inventory precedence when
+        # there is no finer-grained Core observation.
         phase_labels = (
+            ("placement", "Placement en bibliothèque"),
+            ("fetch", "Réception du fichier"),
             ("materialize", "Téléchargement local"),
+            ("offer", "Offre de livraison"),
             ("discover_rights", "Notices et droits"),
+            ("reconcile", "Rapprochement des fichiers"),
         )
         words = {
             "failed": ("error", "échec — action nécessaire"),
@@ -526,6 +542,10 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
                 raw = getattr(row, "status", None)
                 issue = words.get(raw) if type(raw) is str else None
                 if issue:
+                    # Post-placement reconciliation/deduplication is maintenance,
+                    # not an authority to deny a positively delivered artifact.
+                    if phase == "reconcile" and issue[0] == "error":
+                        issue = ("warning", "maintenance à vérifier")
                     if information_only and phase == "discover_rights" and raw == "partial":
                         candidates.append(("info", "Notices et droits : couverture partielle (information)"))
                     else:
