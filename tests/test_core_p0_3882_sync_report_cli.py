@@ -152,3 +152,39 @@ def test_file_verification_needs_report_destination(monkeypatch, capsys):
         "--confirm", "--verify-files",
     ]) == 2
     assert json.loads(capsys.readouterr().out)["code"] == "report_required_for_file_verification"
+
+
+
+def test_failed_raw_trace_export_is_reflected_in_report_exit_code(
+    monkeypatch, tmp_path, capsys,
+):
+    from cifereca.http_trace import HTTP_TRACE
+
+    observed = make_cli_core(monkeypatch, [
+        ("profile-a", "numilog", "card-a", "account-a", True),
+    ])
+    def fail_export(_destination):
+        raise OSError("PRIVATE_TRACE_EXPORT_ERROR")
+    monkeypatch.setattr(HTTP_TRACE, "export", fail_export)
+    report = tmp_path / "redacted.zip"
+    trace = tmp_path / "raw-trace.zip"
+
+    rc = cli.main([
+        "sync", "run", "--identity", "profile-a", "--provider", "numilog",
+        "--confirm", "--report", str(report),
+        "--trace-export", str(trace), "--confirm-trace-export",
+    ])
+
+    assert rc == 2 and report.is_file() and not trace.exists()
+    assert observed["connects"] == len(observed["runs"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "success"
+    assert result["http_trace"] == "export_failed"
+    assert result["report"] == "created"
+    with zipfile.ZipFile(report) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["status"] == "success"
+        assert manifest["exit_code"] == rc
+        assert b"PRIVATE_TRACE_EXPORT_ERROR" not in b"".join(
+            archive.read(name) for name in archive.namelist()
+        )
