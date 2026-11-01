@@ -1,3 +1,17 @@
+# P0 #2055 — NOUVEL ARBITRAGE 01/11/2026 (prioritaire)
+
+Le lecteur vérifie **visuellement sur pret.bnf.fr** que le titre numérique est empruntable pour son compte, puis choisit dans Cifereca **« J’ai vérifié sur BnF Prêt — emprunter »**. La BnF peut encore refuser la demande (Pass, quota, disponibilité). Les quatre marqueurs automatiques d'éligibilité ne sont **plus un veto P0** ; leur qualification et leur affichage sont reportés au **P2 #4063**. Le consentement humain **n'est pas une preuve fournisseur**.
+
+La façade Core exige `confirmed=True` ET `site_checked=True` (types exacts), puis revalide capacité du PluginManager, compte/notice/session, bail et époque, et réserve un `loan_borrow_claim_once` durable **avant l'unique POST**. Les marqueurs `BorrowerOperationEvidence` ne sont plus consultés dans cette voie manuelle. Le Core instancie un `LendingActionAdmission` consultatif **réservé à cette branche**, sans prétendre que `assess_lending_action(permission_attested=True)` disposerait d'une permission fournisseur attestée. Seule la relecture positive du prêt actif exact valide le succès ; timeout/refus/indéterminé ne déclenche **jamais un retry POST**. Le garde GTK interdit toujours `session.borrow` direct. ACSM/ADEPT et synchronisation restent séparés.
+
+**État d'activation** : le plugin BnF 0.3.20 ne déclare pas `acquisition.borrow` ni `ProviderCapabilities.borrow`, et la publication de capacité via le contrat de prêt actuel attend encore une méthode dédiée compatible. Le changement d'admission et de dialogue **n'active aucun POST réel**. Prochaine tranche P0 : qualification de la façade de capacité sous le Core, tests anti-rejeu et recette avec compte consenti, sans reprendre les quatre marqueurs comme prérequis. P0 #2055 reste ouvert.
+
+---
+
+## Contrat historique initial (supplanté pour la condition de quota/Pass)
+
+Les étapes ci-dessous sont conservées comme historique de la tranche #4044 : **toute exigence de quatre preuves positives automatiques, et tout texte affirmant leur nécessité pour débloquer le P0, sont remplacés par l'arbitrage ci-dessus**. Les gardes de scope/epoch, la capacité explicite, le claim anti-rejeu et la vérification du prêt demeurent obligatoires.
+
 # Core P0 #2055 — dispatch manuel BnF sous preuves positives
 
 Cette tranche ajoute `cifereca.core.manual_bnf_borrow.manual_bnf_borrow(service, item, *, expected_identity_id, confirmed)` sans brancher encore le bouton GTK ni déclarer `acquisition.borrow`.
