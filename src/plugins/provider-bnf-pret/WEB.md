@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.15.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.16.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -72,6 +72,49 @@ binding ou deux bindings pour la même identité restent bloquants ; le
 contrôle de credential, l'epoch et les gardes après GET restent inchangés.
 La façade legacy sans broker reste en lecture positive seule, sans preuve
 négative. Les tests sont synthétiques, sans compte BnF réel.
+
+## Préqualification d'un nouvel emprunt (#2055, 0.3.16 — tranche lecture seule)
+
+Le parcours humain réel est documenté dans l'issue #2055 : fiche → écran de
+confirmation → POST Web unique avec `authenticity_token` → vérification dans
+l'activité → téléchargement séparé. La capture privée n'est pas reproduite dans
+les sources, tests ou diagnostics.
+
+Le module `cifereca_bnf_pret_borrow.py` inspecte **sans réseau** les HTML
+fraîchement obtenus : un lien `.button-borrow` unique dans le `Book` exact,
+transition HTTPS de même origine et de type emprunt, puis formulaire POST
+unique, jeton CSRF présent, contrôle de la ressource et champs cachés bornés.
+Les URLs, champs et jetons sont éphémères, non publiés, avec `repr` expurgé.
+Les boutons seuls, comptes étrangers, actions multiples, redirections,
+formulaires SSO et chemins d'API privée sont refusés.
+
+Le transport dispose d'un **GET distinct et strict** pour l'écran de
+confirmation, sans redirection et sans élargir la liste des endpoints génériques.
+`BnfProviderSession.borrow_preflight(item, account)` impose une session
+connectée, l'objet Account exact, le credential, l'identité et l'époque
+invariables ; il consulte l'activité pour refuser un prêt déjà observé,
+puis relit la fiche et la confirmation sous le même scope. Son seul résultat
+positif est `status=unverified, reason_code=borrow_confirmation_observed` :
+**ce n'est ni une éligibilité attestée, ni une création de prêt**.
+
+La vérification pure `verify_borrow_activation` exige **deux preuves positives
+distinctes** après une éventuelle mutation : un lien de prêt unique dans
+la page d'activation, puis le même `loan_id + resource_id` dans une
+relecture de la section des prêts actifs de la même session. Toute page
+tronquée/ambiguë, un lien différent, un reçu sans prêt ou une confusion
+de compte sont des refus. Elle ne déduit **pas** qu'il s'agit d'un prêt
+nouvellement créé : l'inventaire BnF est partiel et un prêt préexistant
+pourrait avoir été absent de la première page. Aucun GET ni POST n'est
+déclenché par ce vérificateur pur.
+
+**Inactif en production** : le manifeste n'annonce toujours pas
+`acquisition.borrow`, `ProviderCapabilities.borrow` reste faux, aucune UI
+n'appelle ce préflight, et aucun POST métier n'a été ajouté au transport.
+Les tests HTTPX synthétiques couvrent les refus et la non-mutation.
+Pour rendre l'emprunt opérationnel, il faut encore raccorder l'admission Core
+#3121, la confirmation utilisateur, le POST unique protégé contre les
+répétitions, la relecture positive du prêt exact, puis la recette terrain sur
+compte consentant. Aucun succès distant n'est revendiqué par cette tranche.
 
 ## Authentification et limites connues
 
