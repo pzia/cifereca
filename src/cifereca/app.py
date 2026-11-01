@@ -257,6 +257,14 @@ def main() -> int:
         except KeyboardInterrupt:
             logger.warning("TRACE capture interrupted by operator")
             rc = 130
+        except Exception:
+            # Core startup may fail before the GUI's guarded app.run() block.
+            # Exception text and traceback can carry credentials, book URLs,
+            # library paths and cookies: keep the failure in this session's
+            # raw journal by a closed code, never echo the exception to
+            # stderr or turn it into a successful exit code.
+            logger.error("Fatal GUI capture session error code=capture_runtime_failed")
+            rc = 1
     finally:
         try:
             journal.finish()
