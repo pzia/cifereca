@@ -144,3 +144,60 @@ def test_real_executor_keeps_typed_positive_as_success_and_no_phantom_ref(caplog
         assert "TRACE task correlation" not in caplog.text
     finally:
         pool.shutdown(wait=True)
+
+
+
+@pytest.mark.parametrize(("facts", "expected"), [
+    ({"reason": "operation_busy"}, "busy"),
+    ({"status": "partial"}, "partial"),
+    ({"status": "failed"}, "failed"),
+    ({"sources": {"opaque": {"status": "operation_busy"}}}, "busy"),
+])
+def test_task_trace_keeps_failure_receipt_but_distinguishes_source_business_code(
+    caplog, facts, expected,
+):
+    """#2888: analysis can distinguish contention, partial and failed runs."""
+    runner, displayed, flush, logger = _runner()
+    try:
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            runner.submit(
+                "Source privée", lambda: SyncResult(ok=False, facts=facts),
+                kind="source-sync", origin="automatic",
+            )
+            flush()
+        terminal = [
+            record.getMessage() for record in caplog.records
+            if "TRACE task outcome id=" in record.getMessage()
+        ]
+        assert len(terminal) == 1
+        assert "status=failed" in terminal[0]
+        assert f"business_status={expected}" in terminal[0]
+        assert [args[3] for name, args in displayed if name == "finished"] == [False]
+    finally:
+        runner.close()
+
+
+def test_task_trace_business_code_is_closed_and_source_sync_only(caplog):
+    runner, displayed, flush, logger = _runner()
+    try:
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            runner.submit(
+                "Sync réussite", lambda: SyncResult(ok=True),
+                kind="source-sync", origin="user",
+            )
+            flush()
+            runner.submit(
+                "Autre tâche", lambda: {"status": "private", "token": "SECRET_VALUE"},
+                kind="library", origin="user",
+            )
+            flush()
+        terminals = [
+            record.getMessage() for record in caplog.records
+            if "TRACE task outcome id=" in record.getMessage()
+        ]
+        assert len(terminals) == 2
+        assert "status=success business_status=success" in terminals[0]
+        assert "business_status=" not in terminals[1]
+        assert "SECRET_VALUE" not in " ".join(terminals)
+    finally:
+        runner.close()

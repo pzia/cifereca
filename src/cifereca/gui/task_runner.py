@@ -317,10 +317,17 @@ class TaskRunner:
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
             # until the UI consumes it; close() clears detached reservations.
+            # Activity status stays success/failed for existing consumers,
+            # while a closed business outcome distinguishes a busy lock from
+            # a partial result or a genuine source-sync failure (#2888).
+            detail = (
+                f" business_status={business_status}"
+                if trace_kind == "source-sync" else ""
+            )
             _TRACE_LOG.info(
-                "TRACE task outcome id=%s kind=%s origin=%s status=%s",
+                "TRACE task outcome id=%s kind=%s origin=%s status=%s%s",
                 task_id, trace_kind, origin,
-                "success" if business_status == "success" else "failed",
+                "success" if business_status == "success" else "failed", detail,
             )
 
             gtk_pending_since = time.monotonic()
