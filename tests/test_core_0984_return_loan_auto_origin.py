@@ -79,9 +79,10 @@ def test_return_action_with_manual_only_never_claims_or_mutates(tmp_path):
         service.storage.acquisition_put({**row, "strategy": "manual"})
         service.execute_drm_mutation = lambda _req: pytest.fail("Adobe mutation forbidden")
         result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "provider_action_available"
-        assert result["retry"] == "provider_action_explicit"
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert paris.posts == 0
-        assert service.verify_loan_return(loan)["status"] == "not_requested"
+        assert service.verify_loan_return(loan)["status"] == "verification_unavailable"
     finally:
         service.close()
