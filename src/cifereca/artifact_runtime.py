@@ -723,6 +723,15 @@ class LibraryMaintenanceBrokerImpl:
             keeper_placement_id=keeper_placement_id,
         )
 
+    def canonical_placement_inventory(self, *, identity_id: str):
+        """SQL-only v14 placement inventory, including books without catalogue."""
+        from .core.canonical_placement_inventory import (
+            read_canonical_placement_inventory,
+        )
+        return read_canonical_placement_inventory(
+            self.service.storage, identity_id=identity_id,
+        )
+
     def pending_canonical_advisories(self, *, identity_id: str | None = None):
         """Read-only post-publication duplicate inventory, not deletion consent."""
         from .core.canonical_dedup_advisory_review import (
