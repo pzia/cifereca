@@ -57,7 +57,7 @@ def _case(configured=True):
     changes = SettingsRevisionState(["sync"])
     refresh = bind_settings_sync_actions(
         host, page_lifetime=lifetime, settings_state=changes,
-        kobo_settings=controls,
+        sync_settings=controls,
     )
     return host, controls, lifetime, changes, refresh
 
