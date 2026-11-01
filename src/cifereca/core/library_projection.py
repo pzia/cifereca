@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import hashlib
+import json
 import re
 import unicodedata
 from difflib import SequenceMatcher
@@ -531,6 +532,71 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
     )
 
 
+def _verified_legacy_receipt_aliases(storage, *, identity_id: str | None):
+    """Read-only transitional bridge: exact scoped receipt + local bytes.
+
+    A descriptive provider/item catalogue row cannot license a possession.
+    A previously completed acquisition can match its *own* entitlement only
+    when exact identity, credential, borrower, item, artifact, catalogue and
+    placement agree, and the bytes remain SHA-verified. This is a display
+    bridge, not an OriginLink/permission writer or download authority.
+    """
+    from sqlite3 import Error as SqliteError
+
+    try:
+        with storage._lock, storage._connect() as db:
+            rows = db.execute(
+                "SELECT a.identity_id,a.provider_id,a.credential_id,"
+                "a.account_id,a.item_id,a.entitlement_id,a.artifact_id,"
+                "p.placement_id,p.path,a.metadata_json "
+                "FROM acquisition_ledger a "
+                "JOIN placements p ON p.artifact_id=a.artifact_id "
+                "AND p.identity_id=a.identity_id AND p.state='present' "
+                "JOIN catalog_entries c ON c.placement_id=p.placement_id "
+                "AND c.artifact_id=a.artifact_id AND c.identity_id=a.identity_id "
+                "AND c.provider_id=a.provider_id AND c.item_id=a.item_id "
+                "AND c.local_state='local' "
+                "WHERE a.status='complete' AND a.entitlement_id IS NOT NULL "
+                + ("AND a.identity_id=? " if identity_id else "")
+                + "LIMIT 1025",
+                (identity_id,) if identity_id else (),
+            ).fetchall()
+    except (SqliteError, AttributeError):
+        return ()
+    if len(rows) > 1024:
+        return ()  # No unbounded legacy projection or incomplete proof.
+    proven = []
+    checks = {}
+    for owner, provider, credential, account, item, entitlement, artifact, placement, path, raw in rows:
+        if (not all(type(x) is str and x for x in (
+                owner, provider, credential, item, entitlement,
+                artifact, placement, path))
+                or type(account) is not str
+                or not artifact.startswith("sha256:") or len(artifact) != 71):
+            continue
+        try:
+            metadata = json.loads(raw)
+            if (type(metadata) is not dict or metadata.get("path") != path
+                    or metadata.get("sha256") != artifact[7:]):
+                continue
+            if path not in checks:
+                target = Path(path)
+                checks[path] = (
+                    target.is_absolute() and not target.is_symlink()
+                    and target.is_file() and target.resolve(strict=True) == target
+                    and LocalCatalog.sha256(target) == artifact[7:]
+                )
+            if not checks[path]:
+                continue
+        except (ValueError, OSError, TypeError, RuntimeError):
+            continue
+        proven.append((
+            (owner, provider, credential, account, item, entitlement),
+            artifact, placement,
+        ))
+    return tuple(proven)
+
+
 def library_entries(self, *, identity_id: str | None=None, scan: bool=False, logger) -> list[dict[str, Any]]:
     """Canonical Library projection.
 
@@ -750,6 +816,16 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         scope: next(iter(keys))
         for scope, keys in exact_aliases.items() if len(keys) == 1
     }
+    # The old ACSM/Core 0.8 receipt path predates OriginLink v14. Retain
+    # a narrow verified legacy display bridge until receipt migration, never
+    # the former global (provider_id,item_id) catalogue alias.
+    legacy_exact_aliases: dict[tuple[str, ...], set[str]] = {}
+    for scope, artifact, placement in _verified_legacy_receipt_aliases(
+        self.storage, identity_id=identity_id,
+    ):
+        local_key = local_keys.get((placement, artifact))
+        if local_key is not None:
+            legacy_exact_aliases.setdefault(scope, set()).add(local_key)
 
     # A v0.7 backup projection is not scoped by identity/borrower: even a
     # descriptive title/cover can leak a former owner's private metadata.
@@ -782,12 +858,15 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         )
         canonical_key = exact_source_alias.get(exact_scope)
         if canonical_key is None:
-            # A catalogue's provider/item label is descriptive, not proof
-            # that this specific borrower owns the physical placement.
-            # Without an exact OriginLink + SourceReference, always project
-            # the remote entitlement separately. Never use a v0.7 alias,
-            # title, file SHA, or provider+item coincidence for local folding.
-            canonical_key = f"source:{provider_id}:{item_id}"
+            # Display-only compatibility for a completed, exact-account
+            # receipt with SHA-verified local bytes; no unverified catalogue
+            # provider/item label can attach another borrower's possession.
+            receipt_scope = (*exact_scope, str(entitlement.get("entitlement_id") or ""))
+            proved = legacy_exact_aliases.get(receipt_scope, ())
+            canonical_key = (
+                next(iter(proved)) if len(proved) == 1
+                else f"source:{provider_id}:{item_id}"
+            )
         if provider_id == 'bnf-pret' and entitlement_type == 'loan':
             canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
