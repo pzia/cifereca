@@ -216,6 +216,7 @@ def main() -> int:
     # mute that optional mirror only for this opt-in capture session.
     previous_level = diagnostics_level()
     previous_argv = sys.argv
+    previous_logger_level = logging.getLogger("cifereca").level
     preexisting_console = {
         handler for handler in logging.getLogger("cifereca").handlers
         if getattr(handler, "_cifereca_trace_console", False)
@@ -296,5 +297,8 @@ def main() -> int:
             # Restore process state after collecting the Trace coverage
             # snapshot. Existing settings remain untouched on disk.
             set_diagnostics_level(previous_level)
+            # configure_logging(verbose=True) also sets the Python logger
+            # threshold to DEBUG. Restore it for embedded/reused processes.
+            logger.setLevel(previous_logger_level)
             sys.argv = previous_argv
     return 2 if export_failed and rc == 0 else rc
