@@ -82,7 +82,9 @@ l'offre exacte déjà admise sous verrou. Il compose la garde existante de
 liaison identité/credential/compte/session/epoch/SourceKey avec la réévaluation
 du **consentement persistant de source et de sa génération initiale** :
 ON→OFF→ON ne réautorise jamais un ancien GET. Une exception ou une preuve
-non vérifiable retourne False. Il est **non sérialisable**, ne confère pas
+non vérifiable retourne False. La fermeture **expire obligatoirement à la fin
+ou à l'échec de cette tentative** (et refuse tout appel lorsque le verrou de
+Sync n'est plus détenu), même si la politique reste ON. Il est **non sérialisable**, ne confère pas
 de droit, ne peut être substitué par `explicit_user_action` ou par
 `connected`, et ne doit pas être exposé dans le DTO de retour.
 
