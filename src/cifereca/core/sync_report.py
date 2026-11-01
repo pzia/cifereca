@@ -178,6 +178,11 @@ def _safe_counts(value: object, allowed: frozenset[str]) -> dict[str, int]:
 
 
 def _safe_staging(value: object) -> dict[str, object]:
+    """Export only attributable staging observations, never inferred origin.
+
+    Invalid/missing receipt refs or rows make coverage incomplete. A staging
+    receipt is not proof of an OriginLink even when its file SHA is verified.
+    """
     if type(value) is not dict:
         return {}
     result: dict[str, object] = {}
@@ -185,33 +190,63 @@ def _safe_staging(value: object) -> dict[str, object]:
         result["coverage"] = _safe_enum(
             value["coverage"], _AUDIT_STAGING_COVERAGE, "unavailable",
         )
-    for key in ("staged_visible_in_library", "staged_verified"):
-        count = _safe_count(value.get(key))
-        if count is not None:
-            result[key] = count
     rows = value.get("observations")
-    if type(rows) is list:
-        observations: list[dict[str, object]] = []
-        for row in rows[:512]:
-            if type(row) is not dict:
-                continue
-            item: dict[str, object] = {}
-            ref = _safe_reference(row.get("receipt_ref"))
-            if ref is not None:
-                item["receipt_ref"] = ref
-            item["staging_state"] = _safe_enum(
-                row.get("staging_state"), _AUDIT_STAGING_STATES, "not_attested",
-            )
-            for key in (
-                "staging_sha_verified", "staged_visible_in_library",
-                "origin_proven_by_receipt",
-            ):
-                if type(row.get(key)) is bool:
-                    item[key] = row[key]
-            observations.append(item)
-        result["observations"] = observations
-        if len(rows) > 512:
-            result["coverage"] = "truncated"
+    if type(rows) is not list:
+        # An indexed coverage claim without its rows cannot be verified.
+        if result.get("coverage") == "indexed_account_receipts_only":
+            result["coverage"] = "unavailable"
+        return result
+    observations: list[dict[str, object]] = []
+    truncated = len(rows) > 512
+    for row in rows[:512]:
+        if type(row) is not dict:
+            truncated = True
+            continue
+        ref = _safe_reference(row.get("receipt_ref"))
+        if ref is None:
+            # A receipt without a pseudonymized exact binding is not
+            # attributable to this run; do not export a phantom row.
+            truncated = True
+            continue
+        raw_state = row.get("staging_state")
+        state = _safe_enum(raw_state, _AUDIT_STAGING_STATES, "not_attested")
+        if state != raw_state:
+            truncated = True
+        verified = row.get("staging_sha_verified") is True
+        visible = row.get("staged_visible_in_library") is True
+        if verified and state != "verified_staging_file":
+            verified = False
+            truncated = True
+        if visible and not verified:
+            visible = False
+            truncated = True
+        if row.get("origin_proven_by_receipt") is True:
+            # This read-only receipt inspection has no OriginLink proof.
+            truncated = True
+        for flag in ("staging_sha_verified", "staged_visible_in_library",
+                     "origin_proven_by_receipt"):
+            if flag in row and type(row[flag]) is not bool:
+                truncated = True
+        observations.append({
+            "receipt_ref": ref, "staging_state": state,
+            "staging_sha_verified": verified,
+            "staged_visible_in_library": visible,
+            "origin_proven_by_receipt": False,
+        })
+    result["observations"] = observations
+    # Counts are derived from the rows actually exported, not a possibly
+    # inconsistent aggregate on an unexpected input object.
+    for key, field in (
+        ("staged_verified", "staging_sha_verified"),
+        ("staged_visible_in_library", "staged_visible_in_library"),
+    ):
+        positive = sum(row[field] is True for row in observations)
+        raw_count = _safe_count(value.get(key))
+        if raw_count is None or raw_count != positive:
+            truncated = True
+        result[key] = positive
+    if truncated:
+        result["coverage"] = "truncated"
     return result
 
 
