@@ -31,7 +31,7 @@ def _http():
     return {
         "schema": "cifereca.http-trace/1",
         "session_ref": "b" * 32,
-        "omitted_exchanges": 0, "exchanges": [],
+        "omitted_exchanges": 0, "used_bytes": 0, "exchanges": [],
     }
 
 
