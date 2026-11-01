@@ -44,7 +44,9 @@ def test_inflight_clock_skew_preserves_post_guard_but_unblocks_inventory(
         assert session.checks == (["linked-b"] if should_check else [])
         assert session.posts == []
         # Repeated UI calls never reissue an uncertain return POST.
-        assert service.return_digital(loan)["status"] == outcome["status"]
+        assert service.return_digital(loan) == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert session.posts == []
     finally:
         service.close()
