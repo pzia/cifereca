@@ -110,7 +110,7 @@ def test_explorer_renders_event_provenance():
         "row['severity']",
         "row['source']",
         "row['module']",
-        "row['event_id']",
+        'event_id = row["event_id"]',
         "connection_provenance_label(row)",
         "linked_operation_groups(rows)",
     ):
