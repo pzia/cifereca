@@ -67,9 +67,9 @@ acceptance or validated real Numilog EPUB delivery.
 
 **Aucun changement de signature de l'ABI v2 actuelle.** Un plugin peut
 implémenter en plus la méthode optionnelle
-\`downloadable_selected_delivery_candidate_guarded(account, *, edition_id,
+`downloadable_selected_delivery_candidate_guarded(account, *, edition_id,
 resource_id, kind, branch, selected_offer_id, target_dir,
-explicit_user_action, admission_current)\`.
+explicit_user_action, admission_current)`.
 Elle retourne le même **DeliveryCandidate** typé et scopé que le lecteur v2.
 La découverte est passive (sans appel de propriété Python du provider) ;
 **elle est sélectionnée seulement si l'exécuteur Core possède déjà son
@@ -83,12 +83,12 @@ liaison identité/credential/compte/session/epoch/SourceKey avec la réévaluati
 du **consentement persistant de source et de sa génération initiale** :
 ON→OFF→ON ne réautorise jamais un ancien GET. Une exception ou une preuve
 non vérifiable retourne False. Il est **non sérialisable**, ne confère pas
-de droit, ne peut être substitué par \`explicit_user_action\` ou par
-\`connected\`, et ne doit pas être exposé dans le DTO de retour.
+de droit, ne peut être substitué par `explicit_user_action` ou par
+`connected`, et ne doit pas être exposé dans le DTO de retour.
 
 **Obligation de l'adaptateur opt-in :** composer ce callback avec ses gardes
 fournisseur (propriétaire, broker, credential, session, staging) pour
-\`HTTPX_TRANSPORT.attested_https_download(admission_current=...)\`, à
+`HTTPX_TRANSPORT.attested_https_download(admission_current=...)`, à
 **chaque hop HTTPS, bloc réseau et frontière de réception**. Sur False,
 interrompre sans GET supplémentaire, sans publication ni retry, et faire
 nettoyer le staging privé. Le Core réévalue également au début, après GET,
