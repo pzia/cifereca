@@ -75,7 +75,7 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         'bind_settings_actions': tracking, 'build_settings_editors': editors,
         'build_library_download_section': lambda **kwargs: NS(download_group=Widget()),
         'build_settings_application_interface': lambda **kwargs: NS(plugins_button=Widget()),
-        'build_kobo_sync_section': lambda **kwargs: kobo,
+        'build_sync_settings_section': lambda **kwargs: kobo,
         'build_settings_action_bars': lambda **kwargs: bars,
         'build_ai_settings_section': lambda **kwargs: NS(),
         'bind_settings_ai_callbacks': lambda *args, **kwargs: Mock(),
@@ -206,7 +206,7 @@ def test_sync_factory_routes_to_scoped_page_without_global_acquisition():
     ui.run_backup_now.emit('clicked')
     host.navigate.assert_called_once_with('sync')
     host.run_kobo_backup.assert_not_called()
-    state.mark_dirty('sync'); ui.backup_switch.emit('notify::active')
+    state.mark_dirty('sync'); refresh()
     assert not ui.run_backup_now.sensitive
     ui.run_backup_now.emit('clicked')
     host.navigate.assert_called_once_with('sync')
@@ -228,13 +228,13 @@ def test_facade_is_compact_and_importing_composition_does_not_load_gtk():
 
 
 def test_settings_save_does_not_capture_retired_global_kobo_consent():
-    """#3731: legacy switch remains visible read-only, never a save input."""
+    """#3731: generic Settings writes no retired provider-specific values."""
     root = Path(__file__).resolve().parents[1]
     commit = ast.parse((root / "src/cifereca/gui/settings_commit_actions.py").read_text(encoding="utf-8"))
     source = ast.unparse(commit)
     assert "values['backup_enabled']" not in source
     assert "backup_switch.get_active()" not in source
-    # Compatibility settings remain editable without generating acquisition permission.
-    assert "values['backup_directory']" in source
-    assert "values['backup_interval']" in source
-    assert "values['vault_profile_index']" in source
+    assert "values['backup_directory']" not in source
+    assert "values['backup_interval']" not in source
+    assert "values['vault_profile_index']" not in source
+    assert "values['vault_profiles']" not in source
