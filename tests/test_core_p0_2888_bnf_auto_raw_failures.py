@@ -1,7 +1,7 @@
-"""#2888 / #3228: BnF legacy refusal retains a closed phase, never private raw data.
+"""#2888 / #3228: preserve observed BnF refusal causes in the RAW journal.
 
-Original error text may contain credential/URL/path data and must not reach
-an ordinary log or diagnostic export. No production HTTP, downloads or ADEPT.
+No production HTTP, downloads, ADEPT or private tokens. Public outcome codes
+and acquisition admission remain closed, independent of logging detail.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _ready(connected_core):
     return service, session, account, loan, downloaded
 
 
-def test_bnf_download_failure_logs_closed_cause_without_new_attempt(
+def test_bnf_download_failure_logs_original_cause_without_new_attempt(
     connected_core, monkeypatch, caplog,
 ):
     service, session, account, loan, downloaded = _ready(connected_core)
@@ -42,10 +42,12 @@ def test_bnf_download_failure_logs_closed_cause_without_new_attempt(
         "status": "attention_required", "code": "bnf_auto_acquisition_failed",
     }
     assert calls == [True] and downloaded == []
-    assert "TRACE bnf_auto code=acquisition_failed stage=delivery_or_import" in caplog.text
-    assert "provider_id=bnf-pret" not in caplog.text
-    assert loan.id not in caplog.text and SENTINEL not in caplog.text
+    assert "stage=delivery_or_import" in caplog.text
+    assert "provider_id=bnf-pret" in caplog.text
+    assert loan.id in caplog.text and SENTINEL in caplog.text
     assert account.credential_id not in caplog.text
+    assert account.identity_id not in caplog.text
+    assert account.unique_id not in caplog.text
     assert SENTINEL not in repr(outcome)
     assert service.storage.acquisitions(provider_id="manual") == []
 
@@ -54,7 +56,7 @@ def test_bnf_download_failure_logs_closed_cause_without_new_attempt(
     ("indexed_candidates", "cifereca.core.local_candidate_screen"),
     ("physical_candidates", "cifereca.core.local_physical_title_candidates"),
 ])
-def test_bnf_local_preflight_failure_logs_closed_phase_without_get(
+def test_bnf_local_preflight_failure_logs_raw_cause_without_get(
     connected_core, monkeypatch, caplog, stage, patch_path,
 ):
     import importlib
@@ -79,9 +81,11 @@ def test_bnf_local_preflight_failure_logs_closed_phase_without_get(
     assert outcome == {
         "status": "attention_required", "code": "bnf_local_evidence_unavailable",
     }
-    assert f"TRACE bnf_auto code=local_evidence_unavailable stage={stage}" in caplog.text
-    assert SENTINEL not in caplog.text and loan.id not in caplog.text
+    assert f"stage={stage}" in caplog.text
+    assert SENTINEL in caplog.text and loan.id in caplog.text
     assert account.credential_id not in caplog.text
+    assert account.identity_id not in caplog.text
+    assert account.unique_id not in caplog.text
     assert not attempted and not downloaded
     assert SENTINEL not in repr(outcome)
 
