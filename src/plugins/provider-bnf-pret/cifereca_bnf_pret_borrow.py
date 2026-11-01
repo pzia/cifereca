@@ -27,7 +27,8 @@ _FORBIDDEN_FIELD = frozenset({
     "password", "samlresponse", "_method", "method", "redirect_to", "return_url",
 })
 _MAX_QUERY = 4096
-_MEDIA_CONFIRMATION = re.compile(r"/media/[A-Za-z0-9_-]{1,512}/loans_confirmation\Z")
+_MEDIA_CONFIRMATION = re.compile(r"/media/([A-Za-z0-9_-]{1,512})/loans_confirmation\Z")
+_MEDIA_ACTIVATION = re.compile(r"/media/([A-Za-z0-9_-]{1,512})/loans_activation\Z")
 
 
 def _is_media_confirmation(url: str) -> bool:
@@ -82,8 +83,14 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
                     for segment in target.path.split("/") if segment]
         # /loans/<opaque-id> is a *token retrieval*, not a confirmation GET.
         # A bare "loans" segment must never be enough to authorize a visit.
-        media_confirmation = _is_media_confirmation(url)
-        if not media_confirmation:
+        media_confirmation = _MEDIA_CONFIRMATION.fullmatch(target.path)
+        media_activation = _MEDIA_ACTIVATION.fullmatch(target.path)
+        if media_activation:
+            prior = _MEDIA_CONFIRMATION.fullmatch(base.path)
+            if (prior is None or media_activation.group(1) != prior.group(1)
+                    or target.query):
+                raise ValueError
+        if not (media_confirmation or media_activation):
             if (not segments or not any(s in _BORROW_INTENT for s in segments)
                     or any(s in _FORBIDDEN_ROUTE for s in segments)):
                 raise ValueError
