@@ -13,7 +13,8 @@ EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
                   PACKAGE + 'tests/test_explicit_token_failures.py',
                   PACKAGE + 'tests/test_observed_loan_metadata.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_preflight.py',
-                  PACKAGE + 'tests/test_p0_2055_borrow_http_preflight.py')
+                  PACKAGE + 'tests/test_p0_2055_borrow_http_preflight.py',
+                  PACKAGE + 'tests/test_p0_2055_borrow_verification.py')
 
 
 def selected(paths, root=ROOT, *, full=False):
