@@ -481,8 +481,8 @@ def _refresh_sync_page(self) -> None:
             "n’autorise aucun téléchargement automatique."
             if source.sync_capable is not True else
             "Activer cette source pour la connexion et ses synchronisations disponibles. "
-            "Les téléchargements automatiques exigent une autorisation distincte : "
-            "ce bouton n'autorise pas à lui seul la livraison des achats et prêts."
+            "Les téléchargements automatiques exigent une autorisation distincte. "
+            "N'autorise pas à elle seule la livraison automatique des achats et prêts."
         )
         def toggled(widget, _param, sid=source.source_id):
             if not sync_action_scope_current(self, scope):
