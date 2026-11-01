@@ -27,7 +27,7 @@ _FORBIDDEN_FIELD = frozenset({
     "password", "samlresponse", "_method", "method", "redirect_to", "return_url",
 })
 _MAX_QUERY = 4096
-_MEDIA_CONFIRMATION = re.compile(r"/media/[A-Za-z0-9_-]{1,512}/loans_confirmation\\Z")
+_MEDIA_CONFIRMATION = re.compile(r"/media/[A-Za-z0-9_-]{1,512}/loans_confirmation\Z")
 
 
 def _is_media_confirmation(url: str) -> bool:
