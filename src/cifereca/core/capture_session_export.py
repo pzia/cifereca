@@ -130,10 +130,14 @@ def _http_members(snapshot: dict[str, object]):
     html_unavailable: list[dict[str, str]] = []
     incomplete = False
     total_http = 0
+    seen_refs: set[str] = set()
     for entry in exchanges:
         if type(entry) is not dict or not _REF.fullmatch(str(entry.get("exchange_ref", ""))):
             raise ValueError("capture_http_snapshot_invalid")
         ref = entry["exchange_ref"]
+        if ref in seen_refs:
+            raise ValueError("capture_http_snapshot_invalid")
+        seen_refs.add(ref)
         record = {key: value for key, value in entry.items()
                   if key not in ("request_body", "response_body")}
         for side in ("request", "response"):
@@ -279,6 +283,77 @@ def export_capture_session(
             tmp.unlink(missing_ok=True)
 
 
+
+_ARCHIVE_BLOB = re.compile(r"http/bodies/([0-9a-f]{32})-(request|response)\.bin\Z")
+_ARCHIVE_HTML = re.compile(r"html/([0-9a-f]{32})\.html\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_ARCHIVE_FIXED = frozenset({
+    "manifest.json", "README.txt", "logs/journal.jsonl", "http/index.json",
+})
+
+
+def _crosscheck_capture_index(archive: zipfile.ZipFile, names: set[str],
+                              manifest: dict[str, object]) -> None:
+    """Reject coherent-hash archives with forged/orphan HTTP/HTML references.
+
+    A valid digest alone is not evidence that a body belongs to the indexed
+    exchange. This check never extracts files or follows embedded paths.
+    """
+    expected_blobs: set[str] = set()
+    expected_html: set[str] = set()
+    index_info = archive.getinfo("http/index.json")
+    if not 0 < index_info.file_size <= _MAX_HTTP_BYTES:
+        raise ValueError("capture_archive_invalid")
+    index = json.loads(archive.read(index_info))
+    if (type(index) is not dict
+            or index.get("schema") != "cifereca.http-trace/1"
+            or type(index.get("exchanges")) is not list
+            or len(index["exchanges"]) > _MAX_EXCHANGES
+            or type(index.get("html_projections")) is not list
+            or len(index["html_projections"]) > _MAX_EXCHANGES):
+        raise ValueError("capture_archive_invalid")
+    refs: set[str] = set()
+    for row in index["exchanges"]:
+        if type(row) is not dict:
+            raise ValueError("capture_archive_invalid")
+        ref = row.get("exchange_ref")
+        if type(ref) is not str or _REF.fullmatch(ref) is None or ref in refs:
+            raise ValueError("capture_archive_invalid")
+        refs.add(ref)
+        for side in ("request", "response"):
+            body = row.get(side + "_body")
+            blob = f"http/bodies/{ref}-{side}.bin"
+            meta = manifest["members"].get(blob)
+            if (type(body) is not dict or body.get("blob") != blob
+                    or type(body.get("stored_bytes")) is not int
+                    or type(body.get("sha256")) is not str
+                    or _SHA256.fullmatch(body["sha256"]) is None
+                    or type(meta) is not dict
+                    or body["stored_bytes"] != meta.get("bytes")
+                    or body["sha256"] != meta.get("sha256")):
+                raise ValueError("capture_archive_invalid")
+            expected_blobs.add(blob)
+    for row in index["html_projections"]:
+        if type(row) is not dict:
+            raise ValueError("capture_archive_invalid")
+        ref = row.get("exchange_ref")
+        member = row.get("member")
+        if (type(ref) is not str or ref not in refs
+                or member != f"html/{ref}.html" or member in expected_html):
+            raise ValueError("capture_archive_invalid")
+        expected_html.add(member)
+    if (type(manifest.get("http_exchanges")) is not int
+            or manifest["http_exchanges"] != len(refs)
+            or type(manifest.get("html_projected")) is not int
+            or manifest["html_projected"] != len(expected_html)):
+        raise ValueError("capture_archive_invalid")
+    actual_blobs = {name for name in names if _ARCHIVE_BLOB.fullmatch(name)}
+    actual_html = {name for name in names if _ARCHIVE_HTML.fullmatch(name)}
+    if (actual_blobs != expected_blobs or actual_html != expected_html
+            or names != _ARCHIVE_FIXED | actual_blobs | actual_html):
+        raise ValueError("capture_archive_invalid")
+
+
 def validate_capture_session(path: Path) -> dict[str, object]:
     """Bounded, read-only hash/structure check. Never extract or upload data."""
     try:
@@ -328,6 +403,7 @@ def validate_capture_session(path: Path) -> dict[str, object]:
                         digest.update(chunk)
                 if digest.hexdigest() != expected["sha256"]:
                     raise ValueError("capture_archive_invalid")
+            _crosscheck_capture_index(archive, set(names), manifest)
             return {"format": _FORMAT, "status": "valid",
                     "coverage": manifest.get("coverage"),
                     "members": len(names)}
