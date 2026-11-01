@@ -15,6 +15,7 @@ from cifereca.core.library_local_inspection import LocalInspection
 from cifereca.core.missing_placement_operator import MissingPlacementOperatorSession
 from tests.test_core_p0_2847_operator_session import _session
 from tests.test_core_p0_2847_relocation_transaction import catalogue, rig
+from tests.test_library_reconciliation import epub
 
 
 def test_explicit_operator_linked_preview_keeps_token_private_and_is_one_use(rig):
@@ -88,6 +89,11 @@ def test_incomplete_operator_can_never_prepare_linked_detachment(rig):
 def test_real_scoped_inspection_requires_observed_path_key_and_second_consent(rig):
     db, root, old, new, pid, artifact, payload, lockpath = rig
     catalogue(rig)
+    # The generic relocation rig writes arbitrary bytes, not an EPUB.
+    # An invalid physical library member makes the scoped audit incomplete;
+    # the operator must never bypass that guard. Use a valid synthetic EPUB
+    # solely for this completed-audit integration test.
+    epub(new, title="Synthetic observed EPUB")
     service, _operator = _session(rig)
     audit = audit_library(db.path, {"alice": (root / "alice",)})
     inspected = LocalInspection(
