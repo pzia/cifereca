@@ -121,6 +121,26 @@ d'écran personnelles, mot de passe, cookies, jetons SAML, CSRF ou
 liens ACSM** dans GitHub. Le rapport structurel seul ne doit pas
 être promu en `BorrowerOperationEvidence`. Le prêt reste désactivé.
 
+## Arbitrage manuel P0 et marqueurs informatifs P2 (#2055, #4063)
+
+**Pass/quota/exemplaires/permission automatiques ne sont plus des prérequis
+du parcours manuel P0.** L'utilisateur vérifie visuellement l'empruntabilité
+sur BnF Prêt puis confirme une seule transaction pour son compte et sa
+notice exacts. Le site peut refuser ; refus ou réponse inconnue ne
+permettent aucun rejeu POST. La qualification des marqueurs est reportée
+en P2 #4063, pour affichage **informatif** uniquement s'ils sont
+réellement observés. La sonde DOM ci-dessus n'est pas une permission.
+
+**État code :** Core manual_bnf_borrow exige encore les quatre preuves
+positives historiques ; la capability acquisition.borrow reste absente,
+et l'interface de prêt BnF est désactivée. Le P0 doit implémenter une
+admission Core distincte pour ce geste manuellement confirmé tout en
+préservant le compte, le bail, le claim SQLite anti-rejeu, le POST unique
+et la relecture d'un prêt actif positif. Ne pas fabriquer une preuve
+BorrowerOperationEvidence et ne pas appeler directement session.borrow.
+Les anciennes restrictions décrites ci-dessous sont **supplantées**
+pour ce cas d'usage, sans prétendre que le code soit déjà migré.
+
 ## Éligibilité BnF — preuve partielle uniquement (#2055, 0.3.19)
 
 Le fournisseur propose désormais la méthode interne de qualification
