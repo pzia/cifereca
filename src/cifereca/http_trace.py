@@ -36,8 +36,14 @@ def _browser_headers(value):
     duplicates; an explicitly supplied User-Agent is a deliberate exception.
     """
     headers = httpx.Headers(value)
-    if "user-agent" not in headers:
+    explicit = headers.get_list("user-agent")
+    if not explicit:
         headers["User-Agent"] = BROWSER_USER_AGENT
+    elif len(explicit) != 1 or not explicit[0].strip():
+        # A blank or duplicated UA is not a deliberate protocol exception.
+        # Reject it before any network I/O instead of silently replacing the
+        # Core default or sending an ambiguous browser identity.
+        raise ValueError("invalid explicit User-Agent")
     return headers
 
 
