@@ -544,7 +544,6 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     if scan:
         self.catalog_scan()
     merged: dict[str, dict[str, Any]] = {}
-    source_alias: dict[tuple[str, str], str] = {}
     local_keys = {}
     local_artifact_keys: dict[tuple[str, str], str] = {}
     default_identity_id = self.identities[0].identity_id if self.identities else None
@@ -617,7 +616,6 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             sha256 = artifact_id.split(":", 1)[1]
         canonical = f"sha256:{sha256}" if sha256 else (artifact_id or f"source:{provider_id}:{item_id}")
         key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
-        source_alias[(provider_id, item_id)] = key
         local_keys[(row.get('placement_id'), artifact_id)] = key
         local_artifact_keys[(row_identity or default_identity_id, artifact_id)] = key
         metadata = dict(row.get("metadata") or {})
@@ -682,7 +680,6 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     # Never use a title, mere SHA equality, or an unscoped provider/item ID to
     # attribute a purchase to a credential. Unresolved sources stay distinct.
     exact_aliases: dict[tuple[str, str, str, str, str], set[str]] = {}
-    linked_edition_scopes: set[tuple[str, str, str]] = set()
     for artifact_id, owner, provider, credential, account, edition in (
         _verified_provider_origin_coordinates(self.storage, identity_id=identity_id)
     ):
@@ -746,7 +743,6 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         exact_aliases.setdefault(
             (owner, provider, credential, account, edition), set(),
         ).add(local_key)
-        linked_edition_scopes.add((owner, provider, edition))
 
     # Multiple Artifacts for the same exact source cannot be disambiguated by
     # metadata alone. Only a *unique* canonical link can fold the remote card.
@@ -786,13 +782,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         )
         canonical_key = exact_source_alias.get(exact_scope)
         if canonical_key is None:
-            # A proven origin for another account vetoes the legacy
-            # provider+item shortcut. This is not a veto to acquisition.
-            canonical_key = (
-                f"source:{provider_id}:{item_id}"
-                if (entitlement_identity, provider_id, item_id) in linked_edition_scopes
-                else source_alias.get(source_key, f"source:{provider_id}:{item_id}")
-            )
+            # A catalogue's provider/item label is descriptive, not proof
+            # that this specific borrower owns the physical placement.
+            # Without an exact OriginLink + SourceReference, always project
+            # the remote entitlement separately. Never use a v0.7 alias,
+            # title, file SHA, or provider+item coincidence for local folding.
+            canonical_key = f"source:{provider_id}:{item_id}"
         if provider_id == 'bnf-pret' and entitlement_type == 'loan':
             canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
