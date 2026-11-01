@@ -17,16 +17,6 @@ class SyncSettingsControls:
     open_sync_button: Any
     sync_navigation_status: Any
 
-    @property
-    def run_backup_now(self) -> Any:
-        """Old UI port, read-only alias; never invokes a backup."""
-        return self.open_sync_button
-
-    @property
-    def backup_status(self) -> Any:
-        """Old UI port, read-only alias; contains navigation text only."""
-        return self.sync_navigation_status
-
 
 def build_sync_settings_section(
     *, section: Any, download_group: Any, config: Any, Gtk: Any, Adw: Any,
