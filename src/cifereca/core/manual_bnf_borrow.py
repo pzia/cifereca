@@ -11,10 +11,7 @@ from inspect import getattr_static
 from uuid import uuid4
 
 from ..models import Account, Loan, SearchResult
-from ..plugin_api import (
-    BorrowerOperationEvidence, assess_borrower_eligibility,
-    assess_lending_action,
-)
+from ..plugin_api.lending_actions import LendingActionAdmission
 from ..plugin_api.lending_capabilities import assess_lending_operation
 from ..providers.base import ProviderSession
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
@@ -83,32 +80,30 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
             descriptor=session.descriptor, session=session,
             account=candidates[0],
         )
-        return (
-            fact.usable
-            and callable(getattr_static(
-                type(session), "borrower_eligibility_for", None))
-            and callable(getattr_static(
-                type(session), "borrow_explicit_with_claim", None))
-        )
+        return (fact.usable and callable(getattr_static(
+            type(session), "borrow_explicit_with_claim", None)))
     except Exception:
         return False
 
 
 def manual_bnf_borrow(
     service, item: SearchResult, *, expected_identity_id: str,
-    confirmed: bool = False, expected_context_epoch: int | None = None,
+    confirmed: bool = False, site_checked: bool = False,
+    expected_context_epoch: int | None = None,
     expected_account: Account | None = None,
 ) -> dict[str, object]:
     """Select the exact live BnF account and admit at most one future POST.
 
-    The provider must separately supply a fresh `BorrowerOperationEvidence`
-    scoped to the exact account+resource; a catalogue button, successful
-    login, syntactically valid form, empty inventory, client-side callback or
-    arbitrary Loan DTO is never positive permission. As of 0.3.18 this
-    provider evidence API does not exist, so the action remains blocked.
+    P0 product decision #2055/#4063: the user attests checking the exact
+    title on the BnF website before confirming. Optional upstream quota and
+    eligibility markers are informational P2, NOT a mandatory Core veto.
+    The BnF server remains the authority: one Core-claimed POST at most and
+    a fresh positive active-loan reread are required for verified success.
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
+    if site_checked is not True:
+        return _result("blocked", "borrow_site_check_required")
     if (expected_context_epoch is not None
             and (type(expected_context_epoch) is not int
                  or type(getattr(service, "_account_context_epoch", None)) is not int
@@ -169,8 +164,6 @@ def manual_bnf_borrow(
         )
         if not fact.usable:
             return _result("unsupported", "borrow_capability_unavailable")
-        if not callable(getattr_static(type(session), "borrower_eligibility_for", None)):
-            return _result("blocked", "borrow_permission_unverified")
         if not callable(getattr_static(type(session), "borrow_explicit_with_claim", None)):
             return _result("unsupported", "borrow_execution_unavailable")
         prior = service.storage.loan_borrow_state(key)
@@ -179,27 +172,17 @@ def manual_bnf_borrow(
     except Exception:
         return _result("blocked", "borrow_scope_unverified")
 
-    try:
-        # Provider supplies an *observed* scoped borrower/edition entitlement,
-        # never a cached UI hint. No Core POST or claim on unknown evidence.
-        evidence = session.borrower_eligibility_for(item, account)
-    except Exception:
-        return _result("blocked", "borrow_permission_unverified")
+    # This is a Core-owned, *BnF-manual-only* admission envelope, not a
+    # statement of borrower permission. Do not call the general
+    # assess_lending_action(permission_attested=True): no four-way provider
+    # permission has been observed. The explicit web-site precheck is human
+    # consent, never fabricated provider evidence. All other lender actions
+    # retain their original permission-attested contract.
     if not current():
         return _result("blocked", "borrow_scope_changed")
-    if type(evidence) is not BorrowerOperationEvidence:
-        return _result("blocked", "borrow_permission_unverified")
-    eligibility = assess_borrower_eligibility(
-        capability=fact, account=account, notice=item, evidence=evidence,
+    admission = LendingActionAdmission(
+        "loan.borrow", "manual", "admitted", "admission_ready",
     )
-    if eligibility.status != "eligible":
-        return _result("blocked", "borrow_permission_unverified")
-    admission = assess_lending_action(
-        "loan.borrow", fact=fact, account=account, target=item,
-        origin="manual", confirmed=True, permission_attested=True,
-    )
-    if not admission.admitted or not current():
-        return _result("blocked", "borrow_scope_changed")
 
     operation_id = uuid4().hex
     try:
