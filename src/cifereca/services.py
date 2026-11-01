@@ -280,14 +280,16 @@ class LibraryService:
 
     def borrow_bnf_manual(
         self, item: SearchResult, *, expected_identity_id: str,
-        confirmed: bool = False, expected_context_epoch: int | None = None,
+        confirmed: bool = False, site_checked: bool = False,
+        expected_context_epoch: int | None = None,
         expected_account: Account | None = None,
     ) -> dict[str, object]:
         """Core-owned explicit BnF action; never use the legacy borrow()."""
         from .core.manual_bnf_borrow import manual_bnf_borrow
         return manual_bnf_borrow(
             self, item, expected_identity_id=expected_identity_id,
-            confirmed=confirmed, expected_context_epoch=expected_context_epoch,
+            confirmed=confirmed, site_checked=site_checked,
+            expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
         )
 
