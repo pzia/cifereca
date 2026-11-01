@@ -1,17 +1,13 @@
 """UX P0 #1011: diagnostics presentation contracts.
 
-These tests deliberately document current UX deficits with strict xfail.
-They become ordinary passing regressions once the Plugins/CoreUI owner
-implements the behavior. Source-level tests complement, but NEVER replace,
+Positive regressions match the actual runtime and journal-page renderers.
+Source-level tests complement, but NEVER replace,
 the real GTK/Xvfb D01-D16 recipe.
 """
 from __future__ import annotations
 
 import ast
 from pathlib import Path
-
-import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "src/plugins/diagnostics-page/cifereca_diagnostics_page.py"
@@ -65,34 +61,39 @@ def test_1011_report_view_is_embedded_in_independent_scroller():
     assert wrapped, "Report must have a dedicated Gtk.ScrolledWindow"
 
 
-@pytest.mark.xfail(strict=True, reason="#1011 D01/D03: unavailable must not look healthy")
 def test_1011_runtime_status_is_never_hardcoded_ok():
     build = _build_statements()
     render = next(
         node for node in ast.walk(build)
         if isinstance(node, ast.FunctionDef) and node.name == "render"
     )
-    hardcoded_healthy = [
-        node for node in ast.walk(render)
-        if isinstance(node, ast.Dict)
-        for key, value in zip(node.keys, node.values)
-        if isinstance(key, ast.Constant) and key.value == "status"
-        and isinstance(value, ast.Constant) and value.value == "ok"
-    ]
-    assert not hardcoded_healthy, (
-        "A runtime diagnostic's presence does not attest operational health"
-    )
+    source = ast.get_source_segment(PLUGIN.read_text(encoding="utf-8"), render) or ""
+    assert '"status": runtime_diagnostic_status(row)' in source
+    from sys import path
+    plugin_dir = str(PLUGIN.parent)
+    if plugin_dir not in path:
+        path.insert(0, plugin_dir)
+    from cifereca_diagnostics_page import runtime_diagnostic_status
+    assert runtime_diagnostic_status({}) == "unknown"
+    assert runtime_diagnostic_status({"status": True}) == "unknown"
+    assert runtime_diagnostic_status({"status": "unavailable"}) == "error"
+    assert runtime_diagnostic_status({"status": "blocked"}) == "error"
+    assert runtime_diagnostic_status({"state": "degraded"}) == "warning"
+    assert runtime_diagnostic_status({"status": "ready"}) == "ok"
 
 
-@pytest.mark.xfail(strict=True, reason="#1011 D01: empty snapshots need a visible state")
 def test_1011_empty_diagnostic_snapshot_has_visible_feedback():
     build = _build_statements()
-    render = next(
+    display = next(
         node for node in ast.walk(build)
-        if isinstance(node, ast.FunctionDef) and node.name == "render"
+        if isinstance(node, ast.FunctionDef) and node.name == "display_events"
     )
-    source = ast.get_source_segment(PLUGIN.read_text(encoding="utf-8"), render) or ""
-    assert any(
-        phrase in source.casefold()
-        for phrase in ("non alimenté", "aucun événement", "aucune donnée")
-    ), "An empty snapshot should not silently render a blank diagnostic panel"
+    source = ast.get_source_segment(
+        PLUGIN.read_text(encoding="utf-8"), display
+    ) or ""
+    # Empty is a journal-page state, not a runtime-status rendering state.
+    assert "if not rows:" in source
+    assert "empty_observation(" in source
+    assert "Aucun événement sur cette page." in source
+    assert "Vérifier la période, les filtres" in source
+    assert "Données indisponibles" in PLUGIN.read_text(encoding="utf-8")

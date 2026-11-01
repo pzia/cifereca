@@ -242,6 +242,27 @@ def relevant_runtime_diagnostics(diagnostics_broker, inventory_rows) -> list[dic
     return rows
 
 
+def runtime_diagnostic_status(row: Mapping[str, Any]) -> str:
+    """A runtime's presence is not operational health (#1011/#3946).
+
+    Preserve only a bounded status vocabulary. Missing or malformed status
+    remains unknown; never infer success from the existence of a report.
+    """
+    if not isinstance(row, Mapping):
+        return "unknown"
+    state = row.get("status", row.get("state"))
+    if type(state) is not str:
+        return "unknown"
+    value = state.casefold()
+    if value in {"ok", "ready", "healthy", "success"}:
+        return "ok"
+    if value in {"warning", "degraded", "partial", "attention_required"}:
+        return "warning"
+    if value in {"failed", "error", "blocked", "unavailable"}:
+        return "error"
+    return "unknown"
+
+
 def active_checks(diagnostics_broker) -> list[dict[str, Any]]:
     """Normalize Core-owned health checks for this presentation-only page."""
     rows: list[dict[str, Any]] = []
@@ -2171,7 +2192,7 @@ class DiagnosticsPagePlugin:
                 for row in relevant_runtime_diagnostics(broker, inventory):
                     add_diag({
                         "message": f"Runtime {row.get('plugin_id')}",
-                        "status": "ok",
+                        "status": runtime_diagnostic_status(row),
                         "plugin_id": row.get("plugin_id"),
                         "detail": {key: value for key, value in row.items() if key != "plugin_id"},
                     })

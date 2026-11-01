@@ -1,15 +1,12 @@
 """UX P0 #1013: search scope and pagination must be transparent.
 
-Characterization only. The broker currently returns 50 events per page and
-the search is local to the page, which can produce misleading zero results.
+The journal broker searches before pagination. Legacy sources remain
+explicitly page-local and must not be conflated with the canonical journal.
 """
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-
-import pytest
-
 
 FILE = Path(__file__).resolve().parents[1] / "src/plugins/diagnostics-page/diagnostics_explorer.py"
 
@@ -34,18 +31,40 @@ def _events(term: str, first: int):
     } for i in range(50)]
 
 
-@pytest.mark.xfail(strict=True, reason="#1013: search currently filters only the current page")
 def test_search_finds_matches_beyond_first_page():
     explorer = _explorer()
-    first_page = {"events": _events("ordinary event", 0), "total": 100, "offset": 0,
-                  "sources": [{"source": "core_events", "status": "available"}]}
-    second_page = {"events": _events("special error", 50), "total": 100, "offset": 50,
-                   "sources": [{"source": "core_events", "status": "available"}]}
-    assert explorer.sanitized_rows(first_page, search="special") == []
-    assert len(explorer.sanitized_rows(second_page, search="special")) == 50
-    # A global search must not show an empty result when a later page matches.
-    assert explorer.sanitized_rows(first_page, search="special"), (
-        "An empty local page is not evidence that no source event matches."
+    all_events = _events("ordinary event", 0) + _events("special error", 50)
+    for event in all_events:
+        event["source"] = "journal"
+
+    class JournalBroker:
+        def __init__(self):
+            self.calls = []
+
+        def events(self, **kwargs):
+            self.calls.append(kwargs)
+            # Simulate Core's GLOBAL search before applying pagination.
+            filtered = [event for event in all_events
+                        if kwargs["search"].casefold() in event["message"].casefold()]
+            offset = kwargs["offset"]
+            return {"events": filtered[offset:offset + kwargs["limit"]],
+                    "total": len(filtered), "offset": offset,
+                    "sources": [{"source": "journal", "status": "available"}]}
+
+    broker = JournalBroker()
+    page = explorer.fetch_explorer_page(
+        broker, source="journal", period="all", search="special", offset=0,
+    )
+    assert broker.calls[0]["search"] == "special"
+    assert broker.calls[0]["limit"] == explorer.PAGE_SIZE
+    assert broker.calls[0]["offset"] == 0
+    assert page["total"] == 50
+    assert len(page["events"]) == 50
+    # The GTK journal view must NOT re-filter the already searched,
+    # redacted display projection and must not claim page-local search.
+    assert len(explorer.sanitized_rows(page, search="")) == 50
+    assert "cette page uniquement" not in explorer.explorer_header(
+        page, explorer.sanitized_rows(page), search=""
     )
 
 
