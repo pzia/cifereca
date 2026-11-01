@@ -176,7 +176,7 @@ def test_navigation_callback_is_provider_neutral_and_cannot_authorize_download()
 
 
 def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refresh():
-    _, section, _ = _build({"kobo_backup.enabled": True})
+    controls, section, _ = _build({"kobo_backup.enabled": True})
     group = section.children[0]
     manual = group.children[0]
     assert "sources et autorisations" in manual.title
@@ -185,7 +185,6 @@ def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refr
     assert all("Ancien réglage global" not in row.title for row in group.children)
     # The obsolete widget is instantiated only for compatibility; it must
     # have no GTK parent and cannot appear in the saved Settings surface.
-    controls, _, _ = _build({"kobo_backup.enabled": True})
     assert all(controls.backup_switch is not row
                and controls.backup_switch not in row.suffixes
                for row in group.children)
