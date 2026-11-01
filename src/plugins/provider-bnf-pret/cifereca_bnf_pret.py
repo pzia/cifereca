@@ -927,6 +927,104 @@ class BnfProviderSession(ProviderSession):
                 source_provider=self.provider_id, source_credential=self.credential_id,
             )
 
+    def borrower_eligibility_for(self, item: SearchResult, account: Account):
+        """Fresh read-only *partial* borrower evidence for #2055.
+
+        Real BnF pages currently do not attest the subscription state,
+        remaining borrower quota or final borrow authorization separately.
+        Never infer their positivity from successful authentication, a
+        .button-borrow link or an observed CSRF form. Consequently this
+        method NEVER returns an eligible positive four-way result.
+
+        This intentionally unadvertised provider API is only preparation
+        for a future, independently qualified source contract. No POST,
+        no ACSM, no acquired right, no diagnostic payload containing IDs.
+        """
+        from cifereca.plugin_api import BorrowerOperationEvidence
+        with self._lock:
+            if (type(item) is not SearchResult
+                    or type(account) is not Account
+                    or item.source_provider != self.provider_id
+                    or item.source_credential != self.credential_id
+                    or item.docbase != 'BNF_PRET'
+                    or item.medium != 'digital'
+                    or type(item.record_id) is not str
+                    or not item.record_id or len(item.record_id) > 128
+                    or not self.connected or self._closed
+                    or len(self._accounts) != 1
+                    or account is not self._accounts[0]):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            epoch = self._epoch
+            borrower = (
+                account.unique_id, account.identity_id,
+                account.provider_id, account.credential_id, account.is_primary,
+            )
+            notice = (
+                item.id, item.record_id, item.docbase, item.medium,
+                item.source_provider, item.source_credential,
+                item.source_collection,
+            )
+            if (borrower[2:] != (
+                    self.provider_id, self.credential_id, account.is_primary)
+                    or not borrower[1] or type(borrower[4]) is not bool):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            broker = self.identity_broker
+            owner = (self._core_owner_binding(borrower[0], borrower[1])
+                     if broker is not None else None)
+            if broker is not None and (owner is None or owner[1] != (borrower[1],)):
+                raise ProviderConfigurationError('account_scope_mismatch')
+
+            def current():
+                return (
+                    not self._closed and self.connected is True
+                    and self._epoch == epoch
+                    and len(self._accounts) == 1
+                    and account is self._accounts[0]
+                    and self.identity_broker is broker
+                    and (account.unique_id, account.identity_id,
+                         account.provider_id, account.credential_id,
+                         account.is_primary) == borrower
+                    and (item.id, item.record_id, item.docbase, item.medium,
+                         item.source_provider, item.source_credential,
+                         item.source_collection) == notice
+                    and self.provider_id == borrower[2]
+                    and self.credential_id == borrower[3]
+                    and (broker is None or
+                         self._core_owner_binding(borrower[0], borrower[1]) == owner)
+                )
+
+            if not current():
+                raise ProviderConfigurationError('account_scope_mismatch')
+            # Existing positively observed loan is NOT a permission to
+            # open a second one. Never interpret absence on a partial
+            # activity page as a positive quota or availability signal.
+            loans = self._read_live_loans_locked(account)
+            if not current():
+                raise ProviderConfigurationError('account_scope_mismatch')
+            if any(loan.record_id == notice[1] for loan in loans):
+                raise ProviderCapabilityError('borrow_existing_loan')
+            try:
+                record = read_detail(self.client, notice[1])
+            except (ReaderHTTPError, WebParseError) as exc:
+                raise ProviderError(
+                    self._report_failure('borrow_eligibility', exc)) from None
+            if not current() or record.resource_id != notice[1]:
+                raise ProviderConfigurationError('account_scope_mismatch')
+            # The sole qualified negative is the literal "unavailable"
+            # marker *inside this exact book's microdata*. Missing marker
+            # remains UNKNOWN, never an affirmative "available".
+            return BorrowerOperationEvidence(
+                identity_id=borrower[1], provider_id=borrower[2],
+                credential_id=borrower[3], borrower_id=borrower[0],
+                docbase=notice[2], record_id=notice[1],
+                source_collection=notice[6], account_state='unknown',
+                quota_state='unknown',
+                item_offer=(
+                    'unavailable' if record.availability == 'unavailable'
+                    else 'unknown'
+                ), permission='unknown',
+            )
+
     def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
         """Read-only inspection for #2055; never an authorization or POST.
 
