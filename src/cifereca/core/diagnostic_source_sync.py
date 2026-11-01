@@ -8,6 +8,15 @@ from .public_provider_diagnostics import canonical_public_provider_id
 from .source_sync_timing import TIMING_FIELDS
 
 PREFIX = "TRACE source sync "
+# Terminal counters come exclusively from Core's finalized A→B executor;
+# no synthetic zeroes are emitted when that executor did not run.
+CANONICAL_EXECUTION_STATUSES = (
+    "downloaded", "recovered", "present_attested", "pending", "blocked",
+    "failed", "cancelled", "skipped_archived", "inactive",
+)
+_CANONICAL_FIELDS = frozenset(
+    "canonical_" + state for state in CANONICAL_EXECUTION_STATUSES
+)
 _OUTCOMES = {
     ("start", "running"): "source_sync_started",
     ("completed", "success"): "source_sync_complete",
@@ -22,7 +31,7 @@ def public_fields(value: object) -> dict:
     if type(value) is not dict or set(value) - {
         "schema_version", "provider_id", "operation_kind", "phase", "status",
         "code", "duration_ms", "task_ref", "loans", "library",
-    } - TIMING_FIELDS:
+    } - TIMING_FIELDS - _CANONICAL_FIELDS:
         return {}
     if (type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or canonical_public_provider_id(value.get("provider_id")) is None
@@ -42,6 +51,15 @@ def public_fields(value: object) -> dict:
             return {}
     for key, limit in (("duration_ms", 86_400_000), ("loans", 1_000_000), ("library", 1_000_000)):
         if key in value and (type(value[key]) is not int or not 0 <= value[key] <= limit):
+            return {}
+    present = set(value) & _CANONICAL_FIELDS
+    if present:
+        if (present != _CANONICAL_FIELDS
+                or value["phase"] != "completed"
+                or value["status"] not in {"success", "partial"}
+                or any(type(value[key]) is not int
+                       or not 0 <= value[key] <= 1_000_000
+                       for key in _CANONICAL_FIELDS)):
             return {}
     if "task_ref" in value and (type(value["task_ref"]) is not str or
                                 re.fullmatch(r"[0-9a-f]{12}", value["task_ref"]) is None):

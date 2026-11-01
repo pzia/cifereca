@@ -585,6 +585,17 @@ class Diagnostics:
                 value = counts.get(key)
                 if type(value) is int and 0 <= value <= 1_000_000:
                     fields[key] = value
+        if (type(counts) is dict and phase == "completed"
+                and status in {"success", "partial"}):
+            from .core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+            execution = counts.get("canonical_execution")
+            if (type(execution) is dict
+                    and set(execution) == set(CANONICAL_EXECUTION_STATUSES)
+                    and all(type(execution[state]) is int
+                            and 0 <= execution[state] <= 1_000_000
+                            for state in CANONICAL_EXECUTION_STATUSES)):
+                for state in CANONICAL_EXECUTION_STATUSES:
+                    fields["canonical_" + state] = execution[state]
         if type(timings) is dict and phase == "completed":
             from .core.source_sync_timing import TIMING_FIELDS
             for key in TIMING_FIELDS:
