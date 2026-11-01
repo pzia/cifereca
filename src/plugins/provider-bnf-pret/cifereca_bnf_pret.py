@@ -57,7 +57,7 @@ _PUBLIC_CODES = frozenset({
     'borrow_resource_invalid', 'borrow_url_refused', 'borrow_scope_mismatch',
     'borrow_detail_unrecognized', 'borrow_action_unverified',
     'borrow_form_unverified', 'borrow_csrf_unverified',
-    'borrow_not_authorized',
+    'borrow_not_authorized', 'borrow_claim_spent',
     'borrow_existing_loan', 'borrow_receipt_unverified',
     'borrow_activity_unverified',
 })
@@ -110,6 +110,8 @@ class BnfProviderSession(ProviderSession):
         # Only loans positively observed during this credential session are
         # eligible for an explicit, fresh-read token retrieval.
         self._observed_loans = {}
+        # Extra same-session guard: Core already owns durable at-most-once.
+        self._borrow_post_attempts = set()
 
     def _report_failure(self, phase, error):
         code = _public_code(error)
@@ -1085,8 +1087,14 @@ class BnfProviderSession(ProviderSession):
                     confirm_html, page_url=confirm_url, resource_id=reference[1])
                 if not current():
                     raise ProviderConfigurationError('account_scope_mismatch')
-                # The durable claim was already reserved by Core. There is
-                # exactly one POST from this path and no implicit retry.
+                # The durable claim was already reserved by Core. Avoid
+                # dispatching the same operation_id a second time even if an
+                # internal caller mistakenly reuses the receipt. Core's
+                # SQLite claim remains authoritative across process restarts.
+                operation_id = claimed_receipt['operation_id']
+                if operation_id in self._borrow_post_attempts:
+                    raise ProviderCapabilityError('borrow_claim_spent')
+                self._borrow_post_attempts.add(operation_id)
                 receipt_html = self.client.borrow_activation_once(
                     form, confirmation_url=confirm_url,
                     resource_id=reference[1], admission=admission,
