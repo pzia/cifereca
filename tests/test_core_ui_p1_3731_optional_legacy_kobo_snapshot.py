@@ -1,17 +1,20 @@
-"""#3731: retiring the Kobo-specific Settings editor must not reset its legacy state.
+"""#3731: obsolete Kobo editor snapshots cannot mutate the generic Settings draft.
 
-All tests run on a draft and synthetic Config; no provider I/O, disk write,
-automatic-acquisition grant, or user account is touched.
+Compatibility adapter tests remain in test_settings_legacy_kobo.py; the active
+Settings surface is provider-neutral and preserves old values byte-for-byte.
 """
 from copy import deepcopy
 
 import pytest
 
-from cifereca.gui.settings_draft import SettingsValidationError
 from tests.test_settings_draft import editor, validate, account, descriptor
 
 
 LEGACY = ("backup_interval", "vault_profile_index", "backup_directory", "vault_profiles")
+
+
+def _stored(config):
+    return deepcopy(config.data.get("kobo_backup"))
 
 
 def test_future_provider_neutral_editor_can_omit_every_legacy_kobo_widget(editor):
@@ -32,37 +35,31 @@ def test_future_provider_neutral_editor_can_omit_every_legacy_kobo_widget(editor
 
 
 @pytest.mark.parametrize("missing", LEGACY)
-def test_partial_kobo_widget_snapshot_is_refused_without_reset(editor, missing):
+def test_partial_obsolete_widget_snapshot_is_ignored_without_reset(editor, missing):
     config, values = editor
     del values[missing]
     before = deepcopy(config.data)
-    with pytest.raises(SettingsValidationError, match="Configuration Kobo incomplète"):
-        validate(editor)
+    draft = validate(editor)
+    assert draft.data["kobo_backup"] == before["kobo_backup"]
     assert config.data == before and not config.path.exists()
 
 
-@pytest.mark.parametrize(("key", "invalid", "message"), [
-    ("backup_interval", None, "Configuration Kobo invalide"),
-    ("backup_interval", 30, "Configuration Kobo invalide"),
-    ("backup_directory", {}, "Configuration Kobo invalide"),
-    ("vault_profile_index", True, "Profil de sauvegarde historique invalide"),
-    ("vault_profile_index", "1", "Profil de sauvegarde historique invalide"),
-    ("vault_profiles", "Android", "Profil de sauvegarde historique invalide"),
-    ("vault_profiles", {"0": "Android"}, "Profil de sauvegarde historique invalide"),
-    ("vault_profiles", [99], "Profil de sauvegarde historique invalide"),
+@pytest.mark.parametrize(("key", "invalid"), [
+    ("backup_interval", None), ("backup_interval", 30),
+    ("backup_directory", {}), ("vault_profile_index", True),
+    ("vault_profile_index", "1"), ("vault_profiles", "Android"),
+    ("vault_profiles", {"0": "Android"}), ("vault_profiles", [99]),
 ])
-def test_kobo_legacy_widget_snapshot_rejects_malformed_fields(
-    editor, key, invalid, message,
-):
+def test_malformed_obsolete_widget_snapshot_cannot_mutate_settings(editor, key, invalid):
     config, values = editor
     values[key] = invalid
     before = deepcopy(config.data)
-    with pytest.raises(SettingsValidationError, match=message):
-        validate(editor)
+    draft = validate(editor)
+    assert draft.data["kobo_backup"] == before["kobo_backup"]
     assert config.data == before and not config.path.exists()
 
 
-def test_full_legacy_editor_still_updates_only_non_permission_kobo_keys(editor):
+def test_full_legacy_editor_values_are_ignored_without_regranting_consent(editor):
     config, values = editor
     config.set("kobo_backup", {
         "enabled": True, "allow_unlinked_acquisition": True,
@@ -73,12 +70,16 @@ def test_full_legacy_editor_still_updates_only_non_permission_kobo_keys(editor):
     values["backup_directory"] = "new"
     values["backup_interval"] = "12"
     values["vault_profile_index"] = 1
+    values["backup_enabled"] = False
+    values["allow_unlinked_acquisition"] = False
     draft = validate(editor)
-    changed = draft.data["kobo_backup"]
-    assert changed["directory"] == "new"
-    assert changed["interval_minutes"] == 15
-    assert changed["display_profile"] == "Desktop"
-    assert changed["enabled"] is True
-    assert changed["allow_unlinked_acquisition"] is True
-    assert changed["private_extension"] == 15
+    assert draft.data["kobo_backup"] == before["kobo_backup"]
     assert config.data == before and not config.path.exists()
+
+
+def test_generic_draft_source_contains_no_legacy_adapter_call():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/settings_draft.py").read_text(encoding="utf-8")
+    assert "apply_legacy_kobo_settings" not in source
+    assert "settings_legacy_kobo import" not in source
