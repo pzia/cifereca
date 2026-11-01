@@ -50,7 +50,13 @@ def _build_sync_page(self):
     title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
     title.set_width_chars(1)
     refresh = self.action_button("Actualiser l’affichage", "view-refresh-symbolic")
-    all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
+    refresh.set_tooltip_text(
+        "Relire les états disponibles, sans lancer de synchronisation ni acquisition."
+    )
+    all_now = self.action_button(
+        "Actualiser les synchronisations actives",
+        "emblem-synchronizing-symbolic", suggested=True,
+    )
     self._sync_all_button = all_now
     heading.append(title)
     self._sync_summary = Gtk.Label(label="Sélectionnez une identité", xalign=0)
@@ -285,7 +291,11 @@ def _refresh_sync_page(self) -> None:
     if all_now is not None:
         all_now.set_sensitive(actionable)
         all_now.set_tooltip_text(
-            global_label if actionable
+            "Exécuter la synchronisation de cette identité. "
+            "Selon les capacités et autorisations déjà enregistrées, "
+            "des fichiers peuvent être reçus automatiquement. "
+            "Ce bouton ne change aucun consentement."
+            if actionable
             else "Aucune source activée, connectée et synchronisable pour cette identité"
         )
     def append_catalogue_searches():
