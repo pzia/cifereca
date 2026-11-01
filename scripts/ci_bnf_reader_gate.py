@@ -15,7 +15,8 @@ EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_preflight.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_http_preflight.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_verification.py',
-                  PACKAGE + 'tests/test_p0_2055_borrow_post_once.py')
+                  PACKAGE + 'tests/test_p0_2055_borrow_post_once.py',
+                  PACKAGE + 'tests/test_p0_2055_borrow_explicit_execution.py')
 
 
 def selected(paths, root=ROOT, *, full=False):
