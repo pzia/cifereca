@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +231,12 @@ class KoboSession(ProviderSession):
         # that started its GET, even when an A→B→A reconnect returns the same
         # account identifier. This guard does not infer any negative rights.
         self._personal_binding_generation = 0
+        # Only the explicit Core source Sync may opt into a short-lived,
+        # context-local reuse of one already validated personal manifest.
+        # Never an inter-operation TTL or a cross-thread cache.
+        self._source_inventory_batch = ContextVar(
+            'cifereca.kobo.source_inventory_batch', default=None,
+        )
         # Sanitized integrity signal for Core backup/preview. A personal
         # manifest with discarded upstream rows must never authorize pruning.
         self.backup_manifest_rejection_count = 0
@@ -645,6 +654,66 @@ class KoboSession(ProviderSession):
 
         return vault.library_manifest(page_guard=check)
 
+    @contextmanager
+    def source_sync_inventory(self, account: Account):
+        """Reuse one validated personal-library projection within one source Sync.
+
+        No persistent rights cache, no bypass of the live owner/binding fences.
+        The context is scoped to the current execution context and discarded
+        even when the Sync fails. A new explicit Sync always fetches again.
+        """
+        if (type(account) is not Account or not self.connected
+                or len(self._accounts) != 1):
+            raise ProviderCapabilityError("kobo_source_inventory_scope_invalid")
+        bound = self._accounts[0]
+        generation = self._personal_binding_generation
+        upstream_id = bound.unique_id
+        scope = (
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+        if (scope[1:] != ("kobo", self.credential_id, upstream_id)
+                or type(scope[0]) is not str or not scope[0]):
+            raise ProviderCapabilityError("kobo_source_inventory_scope_invalid")
+        self._ensure_personal_binding(
+            bound, generation, expected_account_id=upstream_id,
+            expected_identity_id=bound.identity_id,
+        )
+        broker = self.identity_broker
+        owner = self._rights_owner_snapshot(upstream_id) if broker is not None else None
+        if broker is not None and (owner is None or owner[1] != (scope[0],)):
+            raise ProviderCapabilityError("kobo_source_inventory_owner_invalid")
+        batch = {
+            "bound": bound, "generation": generation,
+            "upstream_id": upstream_id, "bound_identity": bound.identity_id,
+            "caller": account, "scope": scope, "broker": broker,
+            "owner": owner, "rows": None, "rejections": (),
+        }
+        token = self._source_inventory_batch.set(batch)
+        try:
+            yield
+        finally:
+            self._source_inventory_batch.reset(token)
+
+    def _check_source_inventory_batch(
+        self, batch: dict, bound: Account, generation: int, upstream_id: str,
+    ) -> None:
+        """A context cache hit has exactly the same owner as its first GET."""
+        self._ensure_personal_binding(
+            bound, generation, expected_account_id=upstream_id,
+            expected_identity_id=batch["bound_identity"],
+        )
+        caller = batch["caller"]
+        if (batch["bound"] is not bound
+                or batch["generation"] != generation
+                or batch["upstream_id"] != upstream_id
+                or (caller.identity_id, caller.provider_id,
+                    caller.credential_id, caller.unique_id) != batch["scope"]
+                or self.identity_broker is not batch["broker"]
+                or (batch["broker"] is not None and
+                    self._rights_owner_snapshot(upstream_id) != batch["owner"])):
+            raise ProviderCapabilityError("kobo_source_inventory_owner_changed")
+
     def library(self) -> list[SearchResult]:
         # The rights/inventory view must be tied to a verified connection,
         # independently of the acquisition-specific backup_manifest() path.
@@ -664,6 +733,12 @@ class KoboSession(ProviderSession):
         bound_identity_id = bound_account.identity_id
         generation = self._personal_binding_generation
         account_id = bound_account.unique_id
+        batch = self._source_inventory_batch.get()
+        if batch is not None:
+            self._check_source_inventory_batch(batch, bound_account, generation, account_id)
+            if batch["rows"] is not None:
+                self.last_library_rejections = list(batch["rejections"])
+                return deepcopy(list(batch["rows"]))
         items = self._scoped_personal_manifest(
             bound_account, generation, account_id,
         )
@@ -765,6 +840,10 @@ class KoboSession(ProviderSession):
             bound_account, generation, expected_account_id=account_id,
             expected_identity_id=bound_identity_id,
         )
+        if batch is not None:
+            self._check_source_inventory_batch(batch, bound_account, generation, account_id)
+            batch["rows"] = tuple(deepcopy(rows))
+            batch["rejections"] = tuple(self.last_library_rejections)
         return rows
 
     def _rights_owner_snapshot(self, expected_account: str):
