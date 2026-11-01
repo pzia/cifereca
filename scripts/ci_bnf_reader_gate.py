@@ -17,7 +17,8 @@ EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_verification.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_post_once.py',
                   PACKAGE + 'tests/test_p0_2055_borrow_explicit_execution.py',
-                  PACKAGE + 'tests/test_p0_2055_borrow_evidence_readonly.py')
+                  PACKAGE + 'tests/test_p0_2055_borrow_evidence_readonly.py',
+                  PACKAGE + 'tests/test_p0_2055_borrow_dom_qualification.py')
 
 
 def selected(paths, root=ROOT, *, full=False):
