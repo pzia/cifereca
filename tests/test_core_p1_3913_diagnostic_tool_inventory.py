@@ -152,3 +152,31 @@ def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
         candidates += 1
         assert path.name in document, f"unclassified_scripts_entrypoint:{path.name}"
     assert candidates >= 30
+
+
+def test_shell_scripts_and_environment_launchers_are_classified():
+    """Do not add an executable shell gate that can mutate the host silently."""
+    document = DOC.read_text(encoding="utf-8")
+    candidates = [
+        *sorted((ROOT / "scripts").glob("*.sh")),
+        *sorted((ROOT / "environnements").glob("*/*")),
+    ]
+    found = set()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        if not path.read_bytes().startswith(b"#!/usr/bin/env bash"):
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        found.add(relative)
+        assert relative in document, f"unclassified_shell_entrypoint:{relative}"
+    assert len(found) >= 11
+    assert "scripts/ci-install-gtk-e2e-runtime.sh" in found
+    assert "scripts/ci-plugins-only-runtime-gate.sh" in found
+
+
+def test_adept_snapshot_diagnostic_is_not_described_as_server_evidence():
+    document = DOC.read_text(encoding="utf-8")
+    assert "validate-resolution-snapshot" in document
+    assert "sans mutation ni attestation Adobe serveur" in document
+    assert "ticket P0 #3909" in document
