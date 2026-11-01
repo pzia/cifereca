@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.23.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.24.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -20,7 +20,9 @@ saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
 
-## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.21)
+## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.24)
+
+**Compatibilité :** le signal typé `BorrowRequestNotSubmitted` exige Core Plugin API **1.4.4**. Mettre à jour le Core avant le plugin 0.3.24 ; les corrections de recherche `/resources?q=…` introduites dans 0.3.23 restent en place.
 
 **Arbitrage du 01/11/2026 :** l'utilisateur vérifie sur **pret.bnf.fr**
 que le titre numérique exact semble empruntable pour son compte avant de
@@ -41,10 +43,9 @@ exactes avec bail valide et un reçu SQLite de tentative durable.
 Transaction : lecture fraîche activité → fiche exacte → lien unique non
 désactivé → GET confirmation/formulaire/CSRF → un POST d'activation sans
 redirect/retry → relecture d'activité et corrélation du prêt actif.
-`HTTP 200` seul n'est pas une confirmation. Toute issue inconnue
-consomme la réservation et ne génère aucun deuxième POST ; l'utilisateur
-vérifie son compte BnF. Aucun téléchargement ACSM/ADEPT implicite et
-aucune création de prêt depuis la synchronisation.
+`HTTP 200` seul n'est pas une confirmation. **Dès l'appel au transport POST**, tout refus HTTP, timeout ou résultat incertain conserve le verrou durable ; aucun deuxième POST, même après redémarrage. L'utilisateur vérifie son compte BnF. **Avant tout POST**, si le provider atteste une défaillance de lecture de l'activité, de la fiche ou du formulaire, le Core libère le verrou uniquement par CAS sur l'opération exacte (`borrow_not_submitted`). Aucune relance automatique : nouvelle vérification visuelle et nouvelle confirmation requises. Aucun téléchargement ACSM/ADEPT implicite et aucune création de prêt depuis la synchronisation.
+
+Le badge HTML générique `.lb_unavailable` est purement informatif lorsqu'un lien d'emprunt unique et actif est présent sur la fiche exacte. Lien absent, désactivé ou ambigu, confirmation / CSRF incorrect ou édition discordante restent bloquants avant POST.
 
 La qualification de la permission pré-POST en quatre signaux a été
 abandonnée comme **verrou P0** (voir décision produit #2055). La méthode

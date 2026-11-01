@@ -60,10 +60,10 @@ def test_real_packages_publish_the_same_provider_id_version_and_lending_api(
     assert plugin["id"] == "provider." + provider
     assert plugin["type"] == "provider.library"
     assert plugin["version"] == info["package"]["version"]
-    # Both published provider manifests now require Plugin API >=1.4.1.
-    # Keep this static conformance fixture aligned with the actual packages.
-    # Paris now requires the additive declarative account options ABI.
-    expected_api = ">=1.4.3,<2" if provider == "paris" else ">=1.4.1,<2"
+    # Keep requirements aligned with each real provider manifest.
+    # Paris requires declarative account options >=1.4.3; BnF's typed
+    # pre-POST non-submission signal requires Plugin API >=1.4.4.
+    expected_api = ">=1.4.3,<2" if provider == "paris" else ">=1.4.4,<2"
     assert info["package"]["plugin_api"] == expected_api
     assert "sync.loans" in plugin["capabilities"]
     assert descriptor.state == "ready" and descriptor.id == provider

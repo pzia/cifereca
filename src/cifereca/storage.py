@@ -263,6 +263,47 @@ class Storage:
             # profiles, processes or a restart with fresh SSO cookies.
             return False, {"status": "verification_unavailable"}
 
+    def loan_borrow_release_unsent(self, key: str, operation_id: str) -> bool:
+        """CAS release ONLY when provider attests no borrow POST was attempted.
+
+        A request_sent claim is reserved before the provider's read-only
+        activity/detail/form prechecks. If they fail *before* the mutating
+        transport call, the Core may free this claim to allow a new, separate
+        human-confirmed attempt. Never use after an ambiguous network POST,
+        4xx/5xx response, partial activity, or a generic provider exception.
+        No corrupt row, completed claim or mismatched operation can be freed.
+        """
+        if (not self._loan_borrow_checkpoint_key_valid(key)
+                or type(operation_id) is not str
+                or not 0 < len(operation_id) <= 128):
+            return False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            if previous is None or type(previous[0]) is not str:
+                return False
+            if not 0 < len(previous[0]) <= 4096:
+                return False
+            try:
+                row = json.loads(previous[0])
+            except (TypeError, ValueError):
+                return False
+            if (type(row) is not dict
+                    or row.get("schema") != 1
+                    or row.get("operation") != "loan.borrow"
+                    or row.get("status") != "request_sent"
+                    or row.get("operation_id") != operation_id
+                    or row.get("request_accepted") is not False
+                    or row.get("verification") != "not_checked"):
+                return False
+            removed = db.execute(
+                "DELETE FROM metadata WHERE key=? AND value=?",
+                (key, previous[0]),
+            )
+            return removed.rowcount == 1
+
     def loan_borrow_finish(
         self, key: str, operation_id: str, *, status: str,
         accepted: bool = False, verified_loan_id: str | None = None,

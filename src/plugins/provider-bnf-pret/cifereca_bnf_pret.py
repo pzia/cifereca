@@ -11,7 +11,8 @@ from cifereca.plugin_api import (
     Account, Loan, SearchResult, ItemDetail, CredentialField,
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
-    ProviderCapabilityError, ProviderError, normalize_language_tag,
+    ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted,
+    normalize_language_tag,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
 )
@@ -1179,6 +1180,7 @@ class BnfProviderSession(ProviderSession):
             # Reusing a consumed operation must not even trigger new GETs.
             if claimed_receipt['operation_id'] in self._borrow_post_attempts:
                 raise ProviderCapabilityError('borrow_claim_spent')
+            post_started = False
             try:
                 before = self._snapshot(self.client.activity())
                 if not current():
@@ -1208,6 +1210,10 @@ class BnfProviderSession(ProviderSession):
                 operation_id = claimed_receipt['operation_id']
                 if operation_id in self._borrow_post_attempts:
                     raise ProviderCapabilityError('borrow_claim_spent')
+                # From here onward the POST *may* have reached BnF. Any
+                # timeout, 4xx/5xx or parsing failure permanently spends the
+                # Core claim until a separately verified resolution exists.
+                post_started = True
                 self._borrow_post_attempts.add(operation_id)
                 receipt_html = self.client.borrow_activation_once(
                     form, confirmation_url=confirm_url,
@@ -1247,8 +1253,14 @@ class BnfProviderSession(ProviderSession):
                     raw={'inventory_exhaustive': False},
                 )
             except (ReaderHTTPError, WebParseError) as error:
-                raise ProviderError(
-                    self._report_failure('borrow', error)) from None
+                safe_code = self._report_failure('borrow', error)
+                if not post_started:
+                    # Read-only activity/detail/form GET failure only. The
+                    # transport has NOT attempted a mutating request; Core
+                    # may CAS-release its reserved checkpoint. This exception
+                    # is NEVER emitted after entering borrow_activation_once.
+                    raise BorrowRequestNotSubmitted(safe_code) from None
+                raise ProviderError(safe_code) from None
 
     def close(self):
         # Invalidate in-flight work before waiting for the bounded HTTP operation.

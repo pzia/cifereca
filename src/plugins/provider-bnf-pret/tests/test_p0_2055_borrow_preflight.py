@@ -54,11 +54,32 @@ class BnfBorrowPreflightTests(unittest.TestCase):
             DETAIL.replace("<a class=", '<a disabled class='),
             DETAIL.replace("<a class=", '<a aria-disabled="true" class='),
             DETAIL.replace("</article>", '<a class="button-borrow" href="/loans/new"></a></article>'),
-            DETAIL.replace("</article>", '<span class="lb_unavailable">Indisponible</span></article>'),
         ):
             with self.subTest(markup=html[:100]):
                 with self.assertRaises(WebParseError):
                     confirmation_link(html, page_url=DETAIL_URL, resource_id=RESOURCE)
+
+    def test_ambiguous_unavailable_badge_does_not_veto_enabled_book_action(self):
+        # Observed in the user's BnF capture: the generic badge may coexist
+        # with an enabled exact-resource borrow link. Its meaning is P2,
+        # not a positive or negative permission for the manual POST.
+        ambiguous = DETAIL.replace(
+            "</article>",
+            '<span class="lb_unavailable">Indisponible</span></article>',
+        )
+        self.assertEqual(
+            confirmation_link(ambiguous, page_url=DETAIL_URL,
+                              resource_id=RESOURCE),
+            CONFIRM_URL,
+        )
+        # A genuinely disabled borrow link is still rejected.
+        disabled = ambiguous.replace(
+            '<a class="button-borrow"', '<a disabled class="button-borrow"',
+        )
+        with self.assertRaisesRegex(
+                WebParseError, "^borrow_action_unverified$"):
+            confirmation_link(disabled, page_url=DETAIL_URL,
+                              resource_id=RESOURCE)
 
     def test_link_scope_does_not_follow_a_different_book(self):
         for rid, url in (("different", DETAIL_URL),

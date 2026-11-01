@@ -231,3 +231,61 @@ def test_malformed_borrow_checkpoint_never_reopened(tmp_path):
                 db.loan_borrow_claim_once(invalid, "op")
     finally:
         db.close()
+
+
+def test_unsent_borrow_cas_release_allows_new_manual_attempt(tmp_path):
+    """Read-only pre-POST rejection can release only its exact claim."""
+    from cifereca.models import Account
+    db = Storage(tmp_path / "unsent.sqlite3")
+    account = Account(
+        identity_id="default", provider_id="bnf-pret",
+        credential_id="cred", unique_id="borrower",
+    )
+    key = borrow_claim_key(account, notice(account))
+    try:
+        claimed, row = db.loan_borrow_claim_once(key, "first-operation")
+        assert claimed and row["status"] == "request_sent"
+        assert not db.loan_borrow_release_unsent(key, "wrong-operation")
+        assert db.loan_borrow_claim_once(key, "other")[0] is False
+        assert db.loan_borrow_release_unsent(key, "first-operation") is True
+        assert db.loan_borrow_state(key) is None
+        assert db.loan_borrow_claim_once(key, "new-confirmed-action")[0] is True
+        assert not db.loan_borrow_release_unsent(key, "first-operation")
+        assert db.loan_borrow_state(key)["operation_id"] == "new-confirmed-action"
+    finally:
+        db.close()
+
+
+def test_unsent_release_refuses_corrupt_confirmed_or_ambiguous_checkpoints(tmp_path):
+    from cifereca.models import Account
+    db = Storage(tmp_path / "unsent-refused.sqlite3")
+    account = Account(
+        identity_id="default", provider_id="bnf-pret",
+        credential_id="cred", unique_id="borrower",
+    )
+    key = borrow_claim_key(account, notice(account))
+    try:
+        db.metadata_set(key, "corrupted")
+        assert not db.loan_borrow_release_unsent(key, "op")
+        assert db.metadata_get(key) == "corrupted"
+        # A claim that may have attempted a POST cannot be deleted, even
+        # when a caller has learned the exact operation id.
+        db.metadata_set(key, "")
+        assert not db.loan_borrow_release_unsent(key, "op")
+        db.metadata_set(key, json.dumps({
+            "schema": 1, "operation": "loan.borrow",
+            "operation_id": "op", "status": "verification_unavailable",
+            "request_accepted": False, "verification": "unavailable",
+        }))
+        assert not db.loan_borrow_release_unsent(key, "op")
+        db.metadata_set(key, json.dumps({
+            "schema": 1, "operation": "loan.borrow",
+            "operation_id": "op", "status": "confirmed",
+            "request_accepted": True, "verification": "positive_active_loan",
+        }))
+        assert not db.loan_borrow_release_unsent(key, "op")
+        assert not db.loan_borrow_release_unsent("not-claim", "op")
+        assert not db.loan_borrow_release_unsent(key, "")
+        assert db.loan_borrow_claim_once(key, "retry")[0] is False
+    finally:
+        db.close()

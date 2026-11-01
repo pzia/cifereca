@@ -133,6 +133,15 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                     "L’emprunt BnF n’est pas disponible pour ce compte.",
                     "Emprunt BnF",
                 )
+            elif (type(result) is dict and result.get("status") == "blocked"
+                    and result.get("reason_code") == "borrow_not_submitted"):
+                window.show_error(
+                    "Aucune demande de prêt n’a été envoyée à la BnF : "
+                    "la fiche ou la confirmation n’est plus exploitable. "
+                    "Vérifiez le livre sur pret.bnf.fr avant une nouvelle "
+                    "demande volontaire.",
+                    "Emprunt BnF",
+                )
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error(
                     "La demande BnF n’a pas été admise dans ce contexte. "

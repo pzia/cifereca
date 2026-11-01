@@ -46,9 +46,19 @@ class Conflict(PluginApiError):
 class Cancelled(PluginApiError):
     pass
 
+class BorrowRequestNotSubmitted(PluginApiError):
+    """Provider attests it did NOT attempt a mutating request.
+
+    A caller may release its durable borrow claim ONLY on this narrowly
+    scoped signal, emitted by the trusted provider *before* entering the
+    POST transport. A timeout, status 4xx/5xx or other exception after
+    attempting a POST must NEVER produce this signal.
+    """
+
+
 
 __all__ = [
     "PluginApiError", "UserFacingError", "AttentionRequired", "UnsupportedOperation",
     "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable",
-    "NotFound", "Conflict", "Cancelled",
+    "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted",
 ]
