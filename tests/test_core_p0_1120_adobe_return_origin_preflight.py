@@ -104,8 +104,7 @@ def test_real_core_facade_refuses_before_checkpoint_or_adobe(
         assert service.storage.loan_return_state(key) is None
         result = service.return_loan_prefer_adept(loan)
         assert result == {
-            "status": expected_status, "scope": "adobe_first_paris",
-            "retry": expected_retry,
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
         }
         assert service.storage.loan_return_state(key) is None
         assert paris.posts == 0
@@ -119,18 +118,12 @@ def test_refusal_helpers_are_called_before_claim_and_have_no_mutations():
     tree = ast.parse(path.read_text(encoding="utf-8"))
     handler = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                    and n.name == "return_loan_prefer_adept")
-    names = {ast.unparse(n.func): n.lineno
-             for n in ast.walk(handler) if isinstance(n, ast.Call)
-             and ast.unparse(n.func) in {
-                 "return_adept_origin_preflight.missing_acquisition_outcome",
-                 "return_adept_origin_preflight.unready_to_return_outcome",
-                 "self.storage.loan_return_claim",
-                 "self.return_adept_acquisition",
-             }}
-    assert (names["return_adept_origin_preflight.missing_acquisition_outcome"]
-            < names["return_adept_origin_preflight.unready_to_return_outcome"]
-            < names["self.storage.loan_return_claim"]
-            < names["self.return_adept_acquisition"])
+    body = ast.unparse(handler)
+    # Retired Adobe-first flow has no origin-driven return dispatch or claim.
+    assert "loan_return_removed" in body
+    assert "self.storage.loan_return_claim" not in body
+    assert "self.return_adept_acquisition" not in body
+    assert "missing_acquisition_outcome" not in body
     helper_path = path.parent / "return_adept_origin_preflight.py"
     helper_tree = ast.parse(helper_path.read_text(encoding="utf-8"))
     calls = {ast.unparse(n.func) for n in ast.walk(helper_tree)
