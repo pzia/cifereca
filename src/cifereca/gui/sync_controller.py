@@ -79,7 +79,7 @@ def _build_sync_page(self):
     add_sync_action(heading, all_now)
     root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
-        label="Synchroniser actualise les inventaires et peut recevoir les fichiers disponibles "
+        label="L'action globale actualise les inventaires et peut recevoir les fichiers disponibles "
         "lorsque le téléchargement automatique de ce compte est autorisé. "
         "Chaque compte conserve son propre réglage. Les interrupteurs ont "
         "des effets distincts : activation de la source (connexion et synchronisation "
