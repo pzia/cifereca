@@ -42,6 +42,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     notice_scope = (
         item.id, item.record_id, item.docbase, item.medium,
         item.source_provider, item.source_credential, item.source_collection,
+        item.title,
     )
     account_scope = (
         account.identity_id, account.provider_id, account.credential_id,
@@ -72,7 +73,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                      account.is_primary) == account_scope
                 and (item.id, item.record_id, item.docbase, item.medium,
                      item.source_provider, item.source_credential,
-                     item.source_collection) == notice_scope
+                     item.source_collection, item.title) == notice_scope
             )
         except Exception:
             return False
