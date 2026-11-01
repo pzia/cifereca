@@ -967,6 +967,19 @@ class ParisProviderSession(ProviderSession):
         return loan
 
     def renew(self, loan: Loan, account: Account) -> dict[str, Any]:
+        # Provider-side defense: even a direct plugin call must never POST
+        # RenewLoans for digital loans, another supplier or a foreign account.
+        # Core still owns the fresh positive CanRenew check and at-most-once claim.
+        if (type(loan) is not Loan or type(account) is not Account
+                or self.provider_id != "paris"
+                or loan.medium != "physical"
+                or loan.source_provider != "paris"
+                or loan.source_credential != self.credential_id
+                or account.provider_id != self.provider_id
+                or account.credential_id != self.credential_id
+                or loan.source_account_id != (account.unique_id or "primary")
+                or loan.identity_id != account.identity_id):
+            raise ProviderCapabilityError("paris_renew_physical_only")
         return self.client.renew_loan(loan, "" if account.is_primary else account.unique_id)
 
     def return_digital(self, loan: Loan, account: Account) -> dict[str, Any]:
