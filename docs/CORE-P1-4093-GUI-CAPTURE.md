@@ -26,7 +26,7 @@ aucun remplacement. Un chemin `capture_zip: ...` est affiché sur stderr ;
 
 ## Périmètre exact
 
-- `logs/journal.log` : copie brute, **par handler de cette instance**,
+- `logs/journal.jsonl` : copie brute, **par handler de cette instance**,
   activée avant les premiers événements applicatifs et terminée après le
   message d'arrêt. Aucun scan du journal du jour ni des rotations ; les
   événements antérieurs/postérieurs et des autres instances sont exclus par
