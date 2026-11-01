@@ -76,3 +76,23 @@ def test_adept_acquisition_helper_refuses_without_even_reading_origin():
             ProviderConfigurationError=None, DrmMutationRequest=None, time=None,
         )
     assert error.value.code == "loan_return_removed"
+
+
+
+def test_coreui_facades_no_longer_publish_voluntary_return_callbacks():
+    import ast
+    from pathlib import Path
+    gui = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
+    forbidden = {
+        "confirm_return", "_return_loan", "_return_loan_pnb",
+        "_return_loan_result", "return_adept_from_detail",
+    }
+    for filename in ("main_window.py", "loans_controller.py"):
+        tree = ast.parse((gui / filename).read_text(encoding="utf-8"))
+        found = {node.name for node in ast.walk(tree)
+                 if isinstance(node, ast.FunctionDef)}
+        assert not (found & forbidden), (filename, found & forbidden)
+    for filename in ("detail_panel.py", "detail_facets_controller.py"):
+        source = (gui / filename).read_text(encoding="utf-8")
+        assert "return_adept_from_detail(" not in source
+        assert "confirm_return(" not in source
