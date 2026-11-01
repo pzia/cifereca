@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.21.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.22.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -454,7 +454,7 @@ lire les pages publiques sans s'authentifier, mais le Core sélectionne ses
 sources parmi les sessions connectées : aucune recherche anonyme dans l'IHM
 n'est promise par cette version.
 
-Le GET `/results?q=…` utilise le terme encodé, de 2 à 128 caractères. Le client
+Le GET `/resources?q=…` utilise le terme encodé, de 2 à 128 caractères. Le client
 suit seulement une ancre visible `rel=next` ou `.pagination a.next`, validée sur
 la même origine, les mêmes critères et le numéro suivant. Une recherche lit
 au maximum cinq pages dans un budget total de 30 secondes. Aucun numéro de page
@@ -611,3 +611,21 @@ refusé ; une identité réaffectée avant admission ne déclenche aucun GET.
 Ce consommateur ne publie lui-même aucun Placement : la transaction et
 l'idempotence restent au moteur #3171. Ce test ne certifie ni une licence
 réelle, ni l'EPUB manuel préexistant, ni la reprise après crash.
+
+
+## Correctif recherche catalogue 0.3.22 — #2055 (01/11/2026)
+
+Recette utilisateur : la recherche du portail utilise
+`https://pret.bnf.fr/resources?q=r%C3%A9volte`, alors que la version
+précédente tentait `/results?q=...` et recevait HTTP 404 (18 réponses
+après le déploiement du 01/11). Le plugin utilise désormais `/resources?q=`
+pour la recherche en lecture seule et pour la validation des liens de page,
+avec une conservation stricte des filtres et du numéro de page observé.
+La route `/results` n'est plus autorisée. `/resources/{id}` demeure
+la route distincte des fiches ; ni la recherche ni ce correctif ne
+réalisent d'emprunt, n'élargissent les routes SSO ou ne contournent
+les contrôles HTTPS et de provenance.
+
+Les tests sont synthétiques, en particulier le balisage des cartes et les
+liens de pagination. La réponse réelle du portail (HTTP 200, parsing DOM,
+résultats affichés et éventuelle pagination) reste à valider après déploiement.
