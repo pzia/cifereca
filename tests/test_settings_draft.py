@@ -1406,13 +1406,14 @@ def test_untyped_global_download_widget_refused_without_mutation(editor, field, 
     assert config.data == before and not config.path.exists()
 
 
-@pytest.mark.parametrize("invalid", [None, 0, 1, "false", "true", [], {}])
-def test_experimental_settings_toggle_must_remain_boolean(editor, invalid):
+@pytest.mark.parametrize("obsolete", [None, 0, 1, "false", "true", [], {}])
+def test_retired_experimental_widget_is_ignored_without_rewriting_stored_flag(editor, obsolete):
     config, values = editor
-    values["experimental_actions"] = invalid
+    values["experimental_actions"] = obsolete
+    config.set("experimental_actions", True)
     before = deepcopy(config.data)
-    with pytest.raises(SettingsValidationError, match="Préférence expérimentale invalide"):
-        validate(editor)
+    draft = validate(editor)
+    assert draft.data["experimental_actions"] is True
     assert config.data == before and not config.path.exists()
 
 
@@ -1459,7 +1460,7 @@ def test_valid_download_and_diagnostics_snapshot_preserves_current_behavior(edit
     before = deepcopy(config.data)
     draft = validate(editor)
     assert draft.data["diagnostics"]["level"] == "verbose"
-    assert draft.data["experimental_actions"] is False
+    assert "experimental_actions" not in draft.data
     assert draft.data["providers"]["settings"]["future-provider"]["downloads"]["command"] == [
         "tool", "--safe",
     ]
