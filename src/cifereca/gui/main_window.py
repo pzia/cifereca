@@ -1691,11 +1691,12 @@ class MainWindow(Adw.ApplicationWindow):
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
 
     def can_borrow_item(self, item: SearchResult) -> bool:
-        # #2055: BnF's manual borrow must pass Core evidence, explicit consent
-        # and a durable claim. Never expose the legacy direct session.borrow
-        # button if its manifest/capability is accidentally promoted.
+        # #2055: the BnF button is *only* the Core's inert readiness check.
+        # Current BnF has no acquisition.borrow capability; no button shown.
+        # A future published action still needs positive borrower permission
+        # and explicit consent at the time of the actual attempt.
         if getattr(item, "source_provider", None) == "bnf-pret":
-            return False
+            return self.service.can_borrow_bnf(item)
         try:
             # The button must reflect the same exact borrower-account scope
             # enforced by the click handler, not just a provider capability.
@@ -1729,11 +1730,13 @@ class MainWindow(Adw.ApplicationWindow):
         return session, accounts
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
-        # #2055: direct ProviderSession.borrow bypasses Core's claim and
-        # borrower permission. The future BnF dialog must call the dedicated
-        # Core dispatcher, never this generic historical path.
+        # #2055: the historic session.borrow() path must NEVER be used for
+        # BnF. Source-specific consent and a durable Core claim are required.
         if getattr(item, "source_provider", None) == "bnf-pret":
-            self.show_error("Emprunt BnF non disponible : autorisation et confirmation dédiées requises.", "Emprunt impossible")
+            from .bnf_borrow_controller import present_bnf_borrow
+            present_bnf_borrow(
+                self, item, control, Adw=Adw, TaskPriority=TaskPriority,
+            )
             return
         try:
             session, accounts = self._eligible_borrow_accounts(item)
