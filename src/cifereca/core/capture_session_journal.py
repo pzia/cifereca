@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import io
+import json
 import logging
 import os
 import threading
@@ -101,7 +102,22 @@ class CaptureSessionJournal:
                 self._omitted += 1
                 return
             try:
-                raw = (formatter(record) + "\n").encode("utf-8")
+                # Each JSONL line contains the unmodified canonical log
+                # record as a string; multiline traceback stays in that one
+                # field and cannot be confused with other sessions' lines.
+                line = {
+                    "timestamp_utc": datetime.fromtimestamp(
+                        record.created, timezone.utc,
+                    ).isoformat(timespec="milliseconds"),
+                    "process_id": self.process_id,
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "raw": formatter(record),
+                }
+                raw = (json.dumps(
+                    line, ensure_ascii=False, allow_nan=False,
+                    separators=(",", ":"),
+                ) + "\n").encode("utf-8")
             except (UnicodeError, ValueError, TypeError, RecursionError):
                 self._omitted += 1
                 return
