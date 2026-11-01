@@ -137,6 +137,12 @@ def test_key_changes_with_borrower_credential_identity_or_book(connected_core):
     assert borrow_claim_key(replace(account, identity_id="alex"), item) != key
     assert borrow_claim_key(replace(account, credential_id="other"),
                             replace(item, source_credential="other")) != key
+    # A UI/search row id is NOT a new right to submit another borrow POST
+    # for the same upstream edition.
+    assert borrow_claim_key(account, replace(item, id="other-ui-key")) == key
+    assert borrow_claim_key(account, replace(
+        item, source_collection="other-subcatalogue")) != key
+    assert borrow_claim_key(account, replace(item, source_collection="")) is None
     assert borrow_claim_key(account, replace(item, record_id="other")) != key
     assert borrow_claim_key(account, replace(item, docbase="other")) != key
     assert borrow_claim_key(account, replace(item, medium="physical")) != key
