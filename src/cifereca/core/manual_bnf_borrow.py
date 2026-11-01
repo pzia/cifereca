@@ -65,7 +65,7 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
         if len(candidates) != 1:
             return False
         claim_key = borrow_claim_key(candidates[0], item)
-        if claim_key is None or service.storage.metadata_get(claim_key) is not None:
+        if claim_key is None or service.storage.loan_borrow_state(claim_key) is not None:
             # Even a corrupt or uncertain attempt is spent. Never invite
             # a user to repeat a mutating request on the same edition.
             return False
