@@ -19,7 +19,7 @@ def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_sett
         # navigation only and must not present the old flag as active.
         dirty = settings_state.dirty("sync")
         kobo_status.set_subtitle(
-            "Enregistrez vos modifications avant d'ouvrir Synchronisation."
+            "Modifications à enregistrer avant d'ouvrir Synchronisation."
             if dirty else
             "Activation, révocation et suivi des synchronisations par source."
         )
