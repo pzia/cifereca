@@ -437,6 +437,7 @@ def _summary_audit(phase: str, audit: object) -> list[str]:
 def _report_summary(
     *, outcome: dict[str, object], exit_code: int, before: object,
     after: object, evidence_coverage: str, last_cli_phase: str | None = None,
+    issue_cli_phase: str | None = None,
 ) -> bytes:
     """Bounded human-readable overview of evidence already in the ZIP.
 
@@ -454,6 +455,8 @@ def _report_summary(
     ]
     if type(last_cli_phase) is str and last_cli_phase in _CLI_EVENT_PHASES:
         lines.append(f"last_cli_phase: {last_cli_phase}")
+    if type(issue_cli_phase) is str and issue_cli_phase in _CLI_EVENT_PHASES:
+        lines.append(f"issue_cli_phase: {issue_cli_phase}")
     reason = outcome.get("code")
     if type(reason) is str and reason in _REASON_CODES:
         lines.append(f"reason_code: {reason}")
@@ -512,6 +515,11 @@ def write_sync_report(
     cli_phases = [
         event["phase"] for event in events if event["phase"] in _CLI_EVENT_PHASES
     ]
+    issue_phases = [
+        event["phase"] for event in events
+        if event["phase"] in _CLI_EVENT_PHASES
+        and event["status"] in {"failed", "partial", "busy", "cancelled"}
+    ]
     before = _safe_audit_snapshot(before)
     after = _safe_audit_snapshot(after)
     ended = _utc_now()
@@ -535,12 +543,14 @@ def write_sync_report(
         "event_coverage": "cli_milestones_only",
         "cli_events_truncated": events_truncated,
         "cli_last_phase": cli_phases[-1] if cli_phases else "not_observed",
+        "cli_issue_phase": issue_phases[-1] if issue_phases else "none",
         "build_identity": identity,
     }
     summary = _report_summary(
         outcome=safe_result, exit_code=exit_code, before=before, after=after,
         evidence_coverage=manifest["evidence_coverage"],
         last_cli_phase=cli_phases[-1] if cli_phases else None,
+        issue_cli_phase=issue_phases[-1] if issue_phases else None,
     )
     parts = {
         "manifest.json": _json_bytes(manifest),
