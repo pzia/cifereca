@@ -565,12 +565,19 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
         candidates.append(("error", "Synchronisation : échec — action nécessaire"))
     elif status in {"blocked", "attention_required"}:
         candidates.append(("warning", "Synchronisation : action nécessaire"))
+    elif status == "interrupted":
+        # A non-finished run needs visibility even without provider details
+        # or a phase projection. It must never launch a retry automatically.
+        candidates.append(("warning", "Synchronisation : interrompue"))
     elif status == "partial":
         candidates.append((
             ("info", "Synchronisation : couverture partielle (information)")
             if information_only
             else ("warning", "Synchronisation : résultat partiel")
         ))
+    elif status not in {"success", "idle", "running", "cancelled"}:
+        # Unknown/untyped Core states are not proof of a clean run.
+        candidates.append(("warning", "Synchronisation : état non confirmé"))
     if getattr(source, "enabled", None) is True and getattr(source, "connected", None) is False:
         candidates.append(("warning", "Compte déconnecté — reconnexion nécessaire"))
     # Stable precedence independent of upstream phase ordering. A severe
