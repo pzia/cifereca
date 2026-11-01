@@ -117,5 +117,6 @@ def test_complete_loan_still_announces_success_without_false_failure():
     args, kwargs = window._activity_result.call_args
     assert kwargs == {}
     assert "Livre récupéré" in args[0]
-    assert "restitution ADEPT disponible" in args[0]
+    # P1 #4048: no voluntary restitution control or wording remains.
+    assert "restitution" not in args[0].lower()
     window.show_error.assert_not_called()
