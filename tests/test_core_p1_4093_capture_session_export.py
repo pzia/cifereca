@@ -179,6 +179,10 @@ def test_gui_entry_creates_zip_without_real_gtk(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(app, "_run_application", fake_app)
     from cifereca.http_trace import HTTP_TRACE
     monkeypatch.setattr(HTTP_TRACE, "snapshot", lambda: _http([]))
+    monkeypatch.setattr(HTTP_TRACE, "status", lambda: {
+        "session_ref": "h" * 32, "exchanges": 0,
+        "used_bytes": 0, "omitted_exchanges": 0,
+    })
     assert app.main() == 0
     assert called == [(True, ["cifereca", "--no-plugins"])]
     archive_path, = tmp_path.glob("cifereca-capture-*.zip")
