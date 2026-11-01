@@ -47,8 +47,6 @@ def _case(configured=True):
             "open_sync_button", "sync_navigation_status",
         )
     })
-    controls.open_sync_button = controls.open_sync_button
-    controls.sync_navigation_status = controls.sync_navigation_status
     host = NS(
         _closed=False,
         config={"kobo_backup.enabled": configured},
