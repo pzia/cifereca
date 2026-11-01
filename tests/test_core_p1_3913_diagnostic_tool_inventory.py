@@ -167,7 +167,7 @@ def test_plugin_direct_executables_are_explicitly_classified_without_running_the
     assert report["status"] == "complete", report
     assert report["unclassified"] == []
     assert report["removed"] == []
-    assert len(report["entries"]) == 4
+    assert len(report["entries"]) == 5
     assert {row["path"] for row in report["entries"]} == set(CLASSIFIED)
     assert {row["risk"] for row in report["entries"]} == {"F", "M", "T/M"}
     for row in report["entries"]:
@@ -232,7 +232,7 @@ def test_plugin_entrypoint_inspector_cli_is_offline_and_has_two_output_modes(
     assert structured.stderr == ""
     payload = json.loads(structured.stdout)
     assert payload["status"] == "complete"
-    assert len(payload["entries"]) == 4
+    assert len(payload["entries"]) == 5
     assert payload["unclassified"] == []
     assert payload["removed"] == []
     assert all(not entry["path"].startswith("/") for entry in payload["entries"])
@@ -241,7 +241,7 @@ def test_plugin_entrypoint_inspector_cli_is_offline_and_has_two_output_modes(
     assert human.returncode == 0
     assert human.stderr == ""
     assert human.stdout == (
-        "plugin_entrypoints_complete count=4 unclassified=0 removed=0\\n"
+        "plugin_entrypoints_complete count=5 unclassified=0 removed=0\\n"
     ).replace("\\n", "\n")
     assert str(ROOT) not in human.stdout
 
