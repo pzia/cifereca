@@ -273,7 +273,7 @@ class HTTPProviderTests(unittest.TestCase):
         self.assertEqual(m['plugins'][0]['id'],'provider.bnf-pret')
         self.assertEqual(m['plugins'][0]['system_requires'],[])
         self.assertFalse(PLUGIN.descriptor.capabilities.digital_download)
-        self.assertFalse(PLUGIN.descriptor.capabilities.borrow)
+        self.assertTrue(PLUGIN.descriptor.capabilities.borrow)
 
 
 
@@ -480,7 +480,7 @@ class HTTPCatalogTests(unittest.TestCase):
         row,=session.search('fiction')
         state['detail']=DETAIL.replace('</article>','<p class="lb_unavailable">Indisponible</p></article>')
         self.assertEqual(session.holdings(row).availability_status,'unavailable')
-        self.assertFalse(session.capabilities.borrow)
+        self.assertTrue(session.capabilities.borrow)
         self.assertFalse(session.capabilities.digital_download)
 
     def test_close_during_search_discards_inflight_results(self):
