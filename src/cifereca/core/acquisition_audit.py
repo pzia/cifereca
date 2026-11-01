@@ -142,6 +142,7 @@ def inspect_exact_source(
         except Exception:
             pass
     rights_out = []
+    multipath_truncated = False
     for ref_id, kind, state in refs[:_MAX_ROWS]:
         matched = links[ref_id]
         physical = {
@@ -156,22 +157,50 @@ def inspect_exact_source(
         else:
             classification = "local_unverified"
         check = "not_requested"
+        multi_proof = None
         if physical and verify_files:
-            artifact, path, placement_state = next(iter(physical.values()))
-            if directory is None:
-                check = "scope_unavailable"
-            elif placement_state != "present":
-                check = "missing_file"
+            if len(physical) > 1:
+                # Every same-identity Placement must be checked: using the
+                # first row falsely reports "missing_file" when another
+                # Placement of this exact Artifact remains verified.
+                # Preserve ambiguous_match: these are still distinct paths,
+                # not permission to relink, discard or deduplicate.
+                if len(physical) > _MAX_ROWS:
+                    multipath_truncated = True
+                if directory is None or len(physical) > _MAX_ROWS:
+                    check = "multiple_placements_unverified"
+                    multi_proof = (0, 0, min(len(physical), _MAX_ROWS))
+                else:
+                    proofs = [
+                        ("missing_file" if placement_state != "present" else
+                         _file_proof(root=library_root, directory=directory,
+                                     path=path, artifact_id=artifact))
+                        for artifact, path, placement_state in physical.values()
+                    ]
+                    verified = sum(value == "verified_sha256" for value in proofs)
+                    missing = sum(value == "missing_file" for value in proofs)
+                    multi_proof = (verified, missing, len(proofs) - verified - missing)
+                    check = (
+                        "multiple_placements_all_verified" if verified == len(proofs)
+                        else "multiple_placements_mixed" if verified
+                        else "multiple_placements_none_verified"
+                    )
             else:
-                check = _file_proof(
-                    root=library_root, directory=directory,
-                    path=path, artifact_id=artifact,
-                )
-            if classification == "local_unverified":
-                classification = "complete_local" if check == "verified_sha256" else (
-                    "missing_file" if check == "missing_file" else "local_unverified"
-                )
-        rights_out.append({
+                artifact, path, placement_state = next(iter(physical.values()))
+                if directory is None:
+                    check = "scope_unavailable"
+                elif placement_state != "present":
+                    check = "missing_file"
+                else:
+                    check = _file_proof(
+                        root=library_root, directory=directory,
+                        path=path, artifact_id=artifact,
+                    )
+                if classification == "local_unverified":
+                    classification = "complete_local" if check == "verified_sha256" else (
+                        "missing_file" if check == "missing_file" else "local_unverified"
+                    )
+        item = {
             "resource_ref": _reference(secret, "right", ref_id),
             "kind": kind if kind in _RIGHT_TYPES else "other",
             "right_state": state if state in _RIGHT_STATES else "unknown",
@@ -179,7 +208,13 @@ def inspect_exact_source(
             "origin_link_count": min(len(matched), _MAX_ROWS),
             "placement_count": min(len(physical), _MAX_ROWS),
             "file_verification": check,
-        })
+        }
+        if multi_proof is not None:
+            item.update(zip(
+                ("verified_placement_count", "missing_placement_count",
+                 "unverified_placement_count"), multi_proof,
+            ))
+        rights_out.append(item)
     receipt_out = [{
         "receipt_ref": _reference(secret, "receipt", acquisition_id),
         "status": status if status in _LEDGER_STATES else "other",
@@ -190,7 +225,8 @@ def inspect_exact_source(
         "schema_version": 1, "scope": "exact_source",
         "network": "not_used", "mutations": "none",
         "verify_files": verify_files,
-        "truncated": len(refs) > _MAX_ROWS or len(ledger) > _MAX_ROWS,
+        "truncated": (len(refs) > _MAX_ROWS or len(ledger) > _MAX_ROWS
+                      or multipath_truncated),
         "rights": rights_out, "receipts": receipt_out,
         "staging_evidence": staging,
     }
