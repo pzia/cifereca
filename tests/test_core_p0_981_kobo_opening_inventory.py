@@ -116,9 +116,11 @@ def test_opening_changed_binding_never_reuses_inventory_for_metadata(tmp_path, m
     )
     try:
         result = service.opening_sync()
-        assert result["catalog_mirror"]["sources_blocked"] >= 1
-        assert result["catalog_mirror"]["notices_mirrored"] == 0
-        assert state["reads"] == 1
+        # A changed Core epoch cancels the batch. The mirror may read the
+        # still-authorized provider again, but must never consume A's cache.
+        assert result["catalog_mirror"]["status"] == "inventory_only"
+        assert state["reads"] == 2
         assert state["enters"] == state["exits"] == 1
+        assert state["active"] is False and state["rows"] is None
     finally:
         service.close()
