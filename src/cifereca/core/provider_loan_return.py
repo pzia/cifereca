@@ -21,6 +21,10 @@ def return_digital(self, loan: Loan, *, explicit_retry: bool = False, _TRACE_LOG
     If a prior request exists, normal repeated clicks never send POST.
     An explicit retry may POST only after a fresh read proves still active.
     """
+    # #4048: retired helper is callable from legacy tests/plugins; stop before
+    # a provider session, inventory read, checkpoint or HTTP request.
+    return {"status": "blocked", "code": "loan_return_removed", "retry": "none"}
+
     # This helper is also directly callable through the guarded service facade.
     # Only the native True can authorize a second PNB POST. Truthy strings,
     # integers or foreign objects must not bypass the durable at-most-once
