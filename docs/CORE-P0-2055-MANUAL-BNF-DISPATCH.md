@@ -14,6 +14,17 @@ Cette tranche ajoute `cifereca.core.manual_bnf_borrow.manual_bnf_borrow(service,
 
 Le résultat public est un petit dictionnaire `status/reason_code/provider_verified/retry`, sans jeton, lien, nom de compte, notice ou exception fournisseur.
 
+## Verrou CoreUI sur la voie générique
+
+Le chemin historique `MainWindow.borrow_search_item()` invoque directement
+`ProviderSession.borrow(item, account)`, sans bail, admission ou claim Core.
+Pour BnF uniquement, `can_borrow_item` cache donc le bouton générique et
+`borrow_search_item` refuse explicitement tout appel direct, **même si**
+un manifeste/descripteur BnF publiait accidentellement `borrow=True`.
+Ce garde doit rester jusqu'à l'ajout d'une vraie confirmation GTK BnF
+aboutissant exclusivement au dispatcher Core vérifié. Les autres sources
+conservent leur comportement historique.
+
 ## Non-activation explicite
 
 Ce code n'est **pas** une nouvelle API d'emprunt disponible : le manifeste BnF et `capabilities.borrow` restent négatifs, `borrower_eligibility_for` manque, et aucun composant UI/sync ne l'invoque. Les tests utilisent un faux fournisseur ayant *fictivement* publié la capability et les quatre preuves métier pour tester l'orchestration ; ils ne simulent pas une autorisation BnF réelle.
