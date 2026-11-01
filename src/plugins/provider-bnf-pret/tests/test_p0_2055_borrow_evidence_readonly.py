@@ -90,7 +90,7 @@ class EvidenceReadOnlyTests(unittest.TestCase):
                 ("GET", "/my_profile/activity"),
                 ("GET", "/resources/" + RID),
             ])
-            self.assertFalse(session.capabilities.borrow)
+            self.assertTrue(session.capabilities.borrow)
             self.assertEqual(session._borrow_post_attempts, set())
         finally:
             session.close()
@@ -163,12 +163,12 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
-    def test_no_borrow_while_unqualified_even_if_new_method_exists(self):
+    def test_manual_only_borrow_is_published_but_legacy_direct_borrow_is_refused(self):
         from cifereca_bnf_pret import PLUGIN
         import json
-        self.assertFalse(PLUGIN.descriptor.capabilities.borrow)
+        self.assertTrue(PLUGIN.descriptor.capabilities.borrow)
         manifest = json.loads((ROOT / "cifereca-plugin.json").read_text())
-        self.assertNotIn("acquisition.borrow",
+        self.assertIn("acquisition.borrow",
                          manifest["plugins"][0]["capabilities"])
 
 
