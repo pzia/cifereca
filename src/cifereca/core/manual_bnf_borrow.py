@@ -13,8 +13,9 @@ from uuid import uuid4
 from ..models import Account, Loan, SearchResult
 from ..plugin_api import (
     BorrowerOperationEvidence, assess_borrower_eligibility,
-    assess_lending_action, assess_lending_operation,
+    assess_lending_action,
 )
+from ..plugin_api.lending_capabilities import assess_lending_operation
 from ..providers.base import ProviderSession
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
