@@ -72,7 +72,8 @@ def test_keyboard_interrupt_after_admission_creates_cancelled_zip(
     assert b"PRIVATE_SESSION_COOKIE" not in payload
     for private in (b"profile-a", b"card-a", b"account-a"):
         assert private not in payload
-    assert len(observed["runs"]) == (1 if phase == "sync" else 0)
+    # A synthetic interrupt replaces the provider callback before its body runs.
+    assert observed["runs"] == []
 
 
 def test_keyboard_interrupt_during_final_audit_keeps_prior_sync_proof(
