@@ -85,6 +85,10 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
         # A bare "loans" segment must never be enough to authorize a visit.
         media_confirmation = _MEDIA_CONFIRMATION.fullmatch(target.path)
         media_activation = _MEDIA_ACTIVATION.fullmatch(target.path)
+        if media_confirmation and (
+                base.path != "/resources/" + resource_id
+                or base.query or base.fragment):
+            raise ValueError
         if media_activation:
             prior = _MEDIA_CONFIRMATION.fullmatch(base.path)
             if (prior is None or media_activation.group(1) != prior.group(1)
@@ -167,6 +171,7 @@ def confirmation_link(html: str, *, page_url: str, resource_id: str) -> str:
     # Observed on pret.bnf.fr: a submit button inside a GET form scoped to
     # this Book. Read the exact action/hidden fields; never synthesize a route.
     if (button.tag != "button" or button.attrs.get("type", "").lower() != "submit"
+            or "name" in button.attrs
             or any(key in button.attrs for key in
                    ("form", "formaction", "formmethod", "formtarget", "formenctype"))):
         raise WebParseError("borrow_action_unverified")
