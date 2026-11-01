@@ -1,5 +1,35 @@
 # Core P0 #2055 — dispatch manuel BnF sous preuves positives
 
+## Arbitrage produit prioritaire — 01/11/2026 (#4063)
+
+**L'emprunt manuel BnF P0 ne doit PAS exiger l'observation automatique
+préalable des quatre marqueurs de Pass, quota, exemplaires et permission.**
+Leur qualification/affichage est reporté en **P2 #4063**. Le lecteur
+vérifie visuellement que le titre est empruntable sur BnF Prêt puis confirme
+dans Cifereca un geste unique lié au compte et à la notice exacts
+(« J'ai vérifié l'empruntabilité sur BnF Prêt »). La BnF peut refuser
+pour quota, Pass ou disponibilité ; le refus doit être présenté avec un
+motif fermé **sans nouvelle tentative POST automatique**.
+
+**État livré ≠ nouveau contrat :** le code historique du dispatcher décrit
+ci-dessous exige encore quatre valeurs positives de BorrowerOperationEvidence
+et la capability acquisition.borrow reste absente. Il doit être adapté ;
+ne jamais simuler une permission positive à partir d'un bouton, d'un simple
+HTTP 200 ou d'une déclaration non scellée. La nouvelle admission doit
+conserver identité, credential, édition et compte exacts, session/epoch
+épinglées, confirmation explicite, bail Core, claim SQLite durable avant
+**un seul POST**, absence de rejeu après timeout/refus ambigu, et relecture
+d'un **prêt actif positif** comme seule preuve de succès. Aucun emprunt
+automatique, téléchargement implicite, retour fournisseur ou suppression.
+
+Le contrat générique assess_borrower_eligibility (#3120) reste pertinent
+pour les observations facultatives, mais son statut unverified ne constitue
+plus à lui seul un veto au geste BnF **manuel**. Les étapes suivantes
+décrivent le code existant, **pas** les critères d'acceptation finaux.
+Aucune activation de l'emprunt avant implémentation et recette consentie ;
+le P0 #2055 reste ouvert.
+
+
 Cette tranche ajoute `cifereca.core.manual_bnf_borrow.manual_bnf_borrow(service, item, *, expected_identity_id, confirmed)` sans brancher encore le bouton GTK ni déclarer `acquisition.borrow`.
 
 ## Admission Core (en ordre)
