@@ -17,7 +17,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
     global_cmd_row = download_settings.global_cmd_row
     global_post_row = download_settings.global_post_row
     provider_download_editors = download_settings.provider_download_editors
-    exp_switch = application_ui.experimental_switch
     level_drop = application_ui.level_dropdown
     levels = application_ui.levels
     library_dir_row = kobo_settings.library_dir_row
@@ -62,7 +61,6 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             "ai": capture_ai_settings() if settings_state.dirty("ai") else {},
         }
         values["diagnostics_enabled"] = True
-        values["experimental_actions"] = exp_switch.get_active()
         values["audiobook_directory"] = global_audio_row.get_text()
         values["download_command"] = global_cmd_row.get_text()
         values["download_directory"] = global_dir_row.get_text()
