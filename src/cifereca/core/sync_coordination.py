@@ -25,6 +25,17 @@ from ..paths import acquisition_lock_file
 _OPENING_CANONICAL_LEASE: ContextVar[InterProcessLock | None] = ContextVar(
     'cifereca.opening.canonical.lease', default=None,
 )
+# Only one opening cycle may share a personal inventory. The ExitStack
+# encloses both A observation and the later metadata mirror, but never
+# survives the global opening-sync acquisition lock.
+_OPENING_SOURCE_INVENTORY_STACK: ContextVar[ExitStack | None] = ContextVar(
+    'cifereca.opening.source_inventory.stack', default=None,
+)
+# Pin the Core source epoch at A, not just the provider's own session owner.
+# A generation change before the late mirror revokes ALL opening cache hits.
+_OPENING_SOURCE_INVENTORY_LEASES: ContextVar[list | None] = ContextVar(
+    'cifereca.opening.source_inventory.leases', default=None,
+)
 from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
@@ -596,7 +607,14 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
         with lock:
             lease_token = _OPENING_CANONICAL_LEASE.set(lock)
             try:
-                result = self._opening_sync_locked(progress=progress, deep=deep)
+                with ExitStack() as inventory_stack:
+                    stack_token = _OPENING_SOURCE_INVENTORY_STACK.set(inventory_stack)
+                    leases_token = _OPENING_SOURCE_INVENTORY_LEASES.set([])
+                    try:
+                        result = self._opening_sync_locked(progress=progress, deep=deep)
+                    finally:
+                        _OPENING_SOURCE_INVENTORY_LEASES.reset(leases_token)
+                        _OPENING_SOURCE_INVENTORY_STACK.reset(stack_token)
             finally:
                 _OPENING_CANONICAL_LEASE.reset(lease_token)
         for summary in result.get("identities", ()) if isinstance(result, dict) else ():
@@ -1037,6 +1055,42 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         if complete_scope is not None and not inventory_partial:
                             complete_by_source[source_id] = complete_scope
 
+                    # The one source-scoped context also covers the *later*
+                    # mirror_personal_libraries() call. No rights are cached
+                    # across opening runs, and a different/changed owner cannot
+                    # borrow a previously observed manifest.
+                    inventory_stack = _OPENING_SOURCE_INVENTORY_STACK.get()
+                    if (inventory_stack is not None and session is not None
+                            and getattr(getattr(session, "capabilities", None),
+                                        "personal_library", None) is True
+                            and getattr_static(session, "source_sync_inventory", None)
+                            is not None):
+                        from .private_inventory_binding import private_inventory_binding_current
+                        opening_source_epoch = source_context_epoch(self)
+                        if not private_inventory_binding_current(
+                            self, account, session, scope=(
+                                account.identity_id, account.provider_id,
+                                account.credential_id, account.unique_id,
+                            ), epoch=opening_source_epoch,
+                        ):
+                            raise ProviderConfigurationError(
+                                "private_inventory_source_unbound"
+                            )
+                        batch = getattr(session, "source_sync_inventory")
+                        if not callable(batch):
+                            raise ProviderConfigurationError(
+                                "source_inventory_batch_invalid"
+                            )
+                        inventory_stack.enter_context(batch(account))
+                        leases = _OPENING_SOURCE_INVENTORY_LEASES.get()
+                        if leases is not None:
+                            leases.append((
+                                account, session, (
+                                    account.identity_id, account.provider_id,
+                                    account.credential_id, account.unique_id,
+                                ), opening_source_epoch,
+                            ))
+
                     # #3171: opening Sync consumes the same optional A
                     # reader and verifies B with the exact canonical Core
                     # phase used by explicit source Sync. No additional
@@ -1285,6 +1339,23 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 # diagnostic strings. The persisted outcome remains failed.
                 logger.warning("TRACE sync source projection failed code=source_state_projection_failed")
         emit("identity_end", **summary)
+
+    # The personal mirror runs only *after* all opening A observations.
+    # An epoch/owner/session rebind since A cannot reuse a previous private
+    # snapshot. Drop the opening's entire optional batch before mirroring;
+    # mirror_personal_libraries will independently revalidate and do fresh
+    # requests for each still-authorized source. Never let a stale cache hit
+    # cross the Core epoch fence.
+    opening_leases = _OPENING_SOURCE_INVENTORY_LEASES.get()
+    opening_stack = _OPENING_SOURCE_INVENTORY_STACK.get()
+    if opening_leases and opening_stack is not None:
+        from .private_inventory_binding import private_inventory_binding_current
+        if any(not private_inventory_binding_current(
+            self, lease_account, lease_session, scope=lease_scope,
+            epoch=lease_epoch,
+        ) for lease_account, lease_session, lease_scope, lease_epoch in opening_leases):
+            opening_stack.close()
+            opening_leases.clear()
 
     # Personal store catalog mirroring is INVENTORY ONLY (#1862). Do not
     # report an automatic local acquisition merely because a provider advertises
