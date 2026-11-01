@@ -27,7 +27,7 @@ class SaveSettings(unittest.TestCase):
             'settings_state':SettingsRevisionState(['accounts','library','sync','interface','ai','diagnostic']),
             'build_settings_draft':build_settings_draft,'SettingsValidationError':SettingsValidationError,
             'track_all_settings_widgets':Mock(),'update_settings_actions':Mock(),
-            'refresh_kobo_backup_status':Mock()}
+            'refresh_sync_navigation':Mock()}
         for name in ['global_cmd_row','global_post_row','global_dir_row','global_ebook_row','global_audio_row','backup_dir_row']:ns[name]=Value()
         ns.update(diag_switch=Value(active=True),level_drop=Value(),exp_switch=Value(),backup_switch=Value(),backup_interval_row=Value('60'),vault_profile_drop=Value(),library_dir_row=Value(self.config.get('library.directory')))
         ns['save_settings'], ns['save_and_reconnect'] = bind_settings_commit(
@@ -36,11 +36,11 @@ class SaveSettings(unittest.TestCase):
             descriptors=ns['descriptors'], public_ids=ns['public_ids'],
             download_settings=NS(**{k: ns[k] for k in ('global_dir_row', 'global_ebook_row', 'global_audio_row', 'global_cmd_row', 'global_post_row', 'provider_download_editors')}),
             application_ui=NS(diagnostics_switch=ns['diag_switch'], experimental_switch=ns['exp_switch'], level_dropdown=ns['level_drop'], levels=ns['levels']),
-            kobo_settings=NS(**{k: ns[k] for k in ('backup_switch', 'library_dir_row', 'backup_dir_row', 'backup_interval_row', 'vault_profiles', 'vault_profile_drop')}),
+            sync_settings=NS(**{k: ns[k] for k in ('backup_switch', 'library_dir_row', 'backup_dir_row', 'backup_interval_row', 'vault_profiles', 'vault_profile_drop')}),
             settings_bars=NS(save=ns['save'], reconnect=ns['reconnect']),
             ai_ui=NS(status=Mock()), ai_cfg={}, capture_ai_settings=lambda: {},
             refresh_text=ns['refresh_text'], track_all_settings_widgets=ns['track_all_settings_widgets'],
-            update_settings_actions=ns['update_settings_actions'], refresh_kobo_backup_status=ns['refresh_kobo_backup_status'],
+            update_settings_actions=ns['update_settings_actions'], refresh_sync_navigation=ns['refresh_sync_navigation'],
         )
         ns['settings_state'].mark_dirty('accounts')
         self.ns=ns
