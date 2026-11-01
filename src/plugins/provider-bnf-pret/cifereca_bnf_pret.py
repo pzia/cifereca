@@ -54,6 +54,9 @@ _PUBLIC_CODES = frozenset({
     'search_page_limit', 'inventory_not_exhaustive',
     'loan_not_observed', 'invalid_loan_token', 'token_limit', 'session_closed',
     'download_redirect_refused', 'download_storage_failed',
+    'borrow_resource_invalid', 'borrow_url_refused', 'borrow_scope_mismatch',
+    'borrow_detail_unrecognized', 'borrow_action_unverified',
+    'borrow_form_unverified', 'borrow_csrf_unverified',
 })
 
 
@@ -914,6 +917,70 @@ class BnfProviderSession(ProviderSession):
                                     else 'Disponibilité non vérifiée'), holdings=[],
                 source_provider=self.provider_id, source_credential=self.credential_id,
             )
+
+    def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
+        """Read-only inspection for #2055; never an authorization or POST.
+
+        Deliberately not declared as acquisition.borrow or called by search,
+        holdings, sync, startup or CoreUI. Future action admission must bind
+        the user's explicit confirmation to this same live account/session.
+        """
+        from cifereca_bnf_pret_borrow import confirmation_link, activation_form
+        with self._lock:
+            if (type(item) is not SearchResult or item.source_provider != self.provider_id
+                    or item.source_credential != self.credential_id
+                    or item.docbase != 'BNF_PRET' or item.medium != 'digital'
+                    or type(item.record_id) is not str
+                    or not self.connected or self._closed
+                    or len(self._accounts) != 1 or account is not self._accounts[0]):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            epoch = self._epoch
+            scope = (account.unique_id, account.identity_id,
+                     account.provider_id, account.credential_id)
+            if scope[2:] != (self.provider_id, self.credential_id) or not scope[1]:
+                raise ProviderConfigurationError('account_scope_mismatch')
+            broker = self.identity_broker
+            owner = (self._core_owner_binding(scope[0], scope[1])
+                     if broker is not None else None)
+            if broker is not None and (owner is None or owner[1] != (scope[1],)):
+                raise ProviderConfigurationError('account_scope_mismatch')
+
+            def current():
+                return (not self._closed and self.connected and self._epoch == epoch
+                        and len(self._accounts) == 1 and account is self._accounts[0]
+                        and (account.unique_id, account.identity_id,
+                             account.provider_id, account.credential_id) == scope
+                        and self.identity_broker is broker
+                        and (broker is None or
+                             self._core_owner_binding(scope[0], scope[1]) == owner))
+
+            # Fresh positive inventory is used only to reject a *known*
+            # existing loan, never to infer a right to borrow from absence.
+            loans = self._read_live_loans_locked(account)
+            if not current():
+                raise ProviderConfigurationError('account_scope_mismatch')
+            if any(loan.record_id == item.record_id for loan in loans):
+                raise ProviderCapabilityError('borrow_existing_loan')
+            try:
+                target = resource_url(item.record_id)
+                actual, html = self.client.request('GET', target)
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                link = confirmation_link(
+                    html, page_url=actual, resource_id=item.record_id)
+                actual, confirmation = self.client.borrow_confirmation(
+                    link, resource_id=item.record_id)
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                # Do not return or log the action URL, CSRF or hidden fields.
+                activation_form(confirmation, page_url=actual,
+                                resource_id=item.record_id)
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                return {'status': 'unverified',
+                        'reason_code': 'borrow_confirmation_observed'}
+            except (ReaderHTTPError, WebParseError) as error:
+                raise ProviderError(self._report_failure('borrow_preflight', error)) from None
 
     def close(self):
         # Invalidate in-flight work before waiting for the bounded HTTP operation.
