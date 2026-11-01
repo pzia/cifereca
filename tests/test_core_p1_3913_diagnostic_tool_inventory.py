@@ -205,7 +205,7 @@ def test_plugin_direct_executables_are_explicitly_classified_without_running_the
         assert f"`{path}`" in document, f"undocumented_plugin_entrypoint:{path}"
     for statement in (
         "Points d'entrée directs dans les packages plugins",
-        "Benchmark destructeur", "classe **F**", "**T/M**",
+        "Benchmark destructeur", "**F**", "**T/M**",
     ):
         # Retain a human side-effect classification, not a path-only inventory.
         assert statement.lower() in document.lower(), statement
