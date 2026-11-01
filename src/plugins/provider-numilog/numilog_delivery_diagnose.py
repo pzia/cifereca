@@ -7,10 +7,12 @@ report does NOT prove final EPUB placement or an ADEPT result.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections import Counter
 import json
 from pathlib import Path
 import re
+import stat
 import sys
 import zipfile
 
@@ -47,28 +49,87 @@ class JournalFormatError(ValueError):
     pass
 
 
+_DAILY_JSON = "cifereca-journal-brut.json"
+_DAILY_FILES = frozenset({_DAILY_JSON, "manifest.json", "README.txt"})
+_MAX_MANIFEST_BYTES = 64 * 1024
+_MAX_README_BYTES = 16 * 1024
+
+
+def _zip_member(archive, member, limit: int) -> bytes:
+    """Bound the decompressed read; never extract members to disk."""
+    if member.file_size < 2 or member.file_size > limit:
+        raise JournalFormatError("journal_too_large")
+    with archive.open(member) as source:
+        raw = source.read(limit + 1)
+    if len(raw) != member.file_size or len(raw) > limit:
+        raise JournalFormatError("journal_too_large")
+    return raw
+
+
 def load_journal(path: Path) -> dict:
-    """Read a single bounded JSON ZIP member without extracting any path."""
+    """Read legacy JSON-only or canonical daily ZIP, always offline and bounded.
+
+    The daily format is the exact three-member archive produced by Core
+    diagnostic_journal_zip.py. The manifest selects and authenticates the raw
+    member; no ZIP path is ever extracted or treated as a filesystem path.
+    """
+    manifest = None
     try:
         with zipfile.ZipFile(path) as archive:
-            members = [member for member in archive.infolist() if not member.is_dir()]
-            if (len(members) != 1 or members[0].file_size > _MAX_ARCHIVE_BYTES
-                    or members[0].file_size < 2 or not members[0].filename.endswith(".json")):
+            members = archive.infolist()
+            names = [member.filename for member in members]
+            if (len(names) != len(set(names))
+                    or any(member.is_dir() or "/" in member.filename
+                           or "\\" in member.filename
+                           or member.flag_bits & 1
+                           or stat.S_IFMT(member.external_attr >> 16) == stat.S_IFLNK
+                           for member in members)):
                 raise JournalFormatError("unexpected_journal_archive")
-            with archive.open(members[0]) as source:
-                raw = source.read(_MAX_ARCHIVE_BYTES + 1)
-            if len(raw) > _MAX_ARCHIVE_BYTES:
-                raise JournalFormatError("journal_too_large")
+            by_name = {member.filename: member for member in members}
+            if set(names) == _DAILY_FILES:
+                manifest_raw = _zip_member(archive, by_name["manifest.json"],
+                                           _MAX_MANIFEST_BYTES)
+                _zip_member(archive, by_name["README.txt"], _MAX_README_BYTES)
+                manifest = json.loads(manifest_raw)
+                if (type(manifest) is not dict
+                        or manifest.get("format") != "cifereca-journal-daily-zip"
+                        or type(manifest.get("schema_version")) is not int
+                        or manifest["schema_version"] != 1
+                        or manifest.get("raw_file") != _DAILY_JSON
+                        or type(manifest.get("raw_bytes")) is not int
+                        or not 2 <= manifest["raw_bytes"] <= _MAX_ARCHIVE_BYTES
+                        or type(manifest.get("event_count")) is not int
+                        or not 0 <= manifest["event_count"] <= _MAX_EVENTS
+                        or type(manifest.get("sha256")) is not str
+                        or re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"]) is None):
+                    raise JournalFormatError("invalid_journal_manifest")
+                raw = _zip_member(archive, by_name[_DAILY_JSON],
+                                  _MAX_ARCHIVE_BYTES)
+                if len(raw) != manifest["raw_bytes"]:
+                    raise JournalFormatError("journal_size_mismatch")
+                if hashlib.sha256(raw).hexdigest() != manifest["sha256"]:
+                    raise JournalFormatError("journal_digest_mismatch")
+            elif len(members) == 1 and names[0].endswith(".json"):
+                # Backward compatibility with earlier one-JSON ZIP exports.
+                raw = _zip_member(archive, members[0], _MAX_ARCHIVE_BYTES)
+            else:
+                raise JournalFormatError("unexpected_journal_archive")
         result = json.loads(raw)
-    except (OSError, zipfile.BadZipFile, UnicodeError, json.JSONDecodeError, RuntimeError) as exc:
+    except (OSError, zipfile.BadZipFile, UnicodeError, json.JSONDecodeError,
+            RuntimeError, EOFError, ValueError) as exc:
+        if isinstance(exc, JournalFormatError):
+            raise
         raise JournalFormatError("unreadable_journal") from exc
     if (type(result) is not dict or result.get("format") != "cifereca-raw-journal-events"
-            or result.get("schema_version") != 1 or type(result.get("events")) is not list):
+            or type(result.get("schema_version")) is not int
+            or result["schema_version"] != 1
+            or type(result.get("events")) is not list):
         raise JournalFormatError("unsupported_journal_format")
     if len(result["events"]) > _MAX_EVENTS:
         raise JournalFormatError("too_many_events")
+    if manifest is not None and len(result["events"]) != manifest["event_count"]:
+        raise JournalFormatError("journal_event_count_mismatch")
     return result
-
 
 def _closed(value, accepted, fallback="unknown"):
     return value if type(value) is str and value in accepted else fallback
