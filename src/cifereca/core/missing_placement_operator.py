@@ -1,7 +1,8 @@
 """#2847: private, revocable Core operator session for missing Placements.
 
 This is NOT a plugin capability or a GTK action. The CoreUI caller retains the
-session and provides its active identity/SQLite-stamp validity predicate.
+session and provides its active identity/SQLite-stamp validity predicate,
+plus proof that the scoped inspection actually completed.
 An opaque plan token never leaves this object. An explicit second action and
 the acquisition lock are required for either SQLite-only repair.
 """
@@ -62,13 +63,17 @@ class MissingPlacementOperatorSession:
     """
 
     def __init__(self, service, *, identity_id: str,
-                 scope_valid: Callable[[], bool]) -> None:
+                 scope_valid: Callable[[], bool],
+                 inspection_complete: bool = False) -> None:
         if (type(identity_id) is not str or not identity_id
                 or len(identity_id) > 256 or not callable(scope_valid)):
             raise ValueError("invalid_missing_placement_operator_scope")
         self._service = service
         self._identity_id = identity_id
         self._scope_valid = scope_valid
+        # A partial inventory cannot authorize a destructive SQLite repair.
+        # The CoreUI passes this only from a fully completed scoped audit.
+        self._inspection_complete = inspection_complete is True
         self._pending: tuple[str, str, Path | None, Path, str] | None = None
         self._closed = False
 
@@ -109,6 +114,9 @@ class MissingPlacementOperatorSession:
 
     def preview_retirement(self, *, placement_id: str) -> dict[str, object]:
         self.cancel()
+        if not self._inspection_complete:
+            return _public({"status": "blocked", "reason": "incomplete_inspection"},
+                           preview=True)
         root = self._root()
         if root is None:
             return _public({"status": "blocked", "reason": "scope_changed"}, preview=True)
@@ -129,6 +137,9 @@ class MissingPlacementOperatorSession:
     def preview_relocation(self, *, placement_id: str,
                            candidate_path: Path) -> dict[str, object]:
         self.cancel()
+        if not self._inspection_complete:
+            return _public({"status": "blocked", "reason": "incomplete_inspection"},
+                           preview=True)
         root = self._root()
         if root is None:
             return _public({"status": "blocked", "reason": "scope_changed"}, preview=True)
