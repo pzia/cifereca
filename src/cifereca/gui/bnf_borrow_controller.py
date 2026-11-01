@@ -86,14 +86,15 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     dialog = Adw.MessageDialog.new(
         window, "Emprunter ce livre à la BnF ?",
         f"Compte : {account_name}. "
-        "Une demande de prêt sera envoyée à la BnF après contrôle des "
-        "droits et de la disponibilité "
-        "du livre. Cette opération ne sera envoyée qu'une seule fois. "
+        "Avant de confirmer, vérifiez vous-même sur le site BnF Prêt "
+        "que ce titre est empruntable. "
+        "La BnF peut refuser la transaction (Pass, quota ou disponibilité). "
+        "La demande ne sera envoyée qu'une seule fois. "
         "En cas de résultat incertain, consultez Mes emprunts avant toute "
         "nouvelle démarche. Le téléchargement ACSM reste une action distincte.",
     )
     dialog.add_response("cancel", "Annuler")
-    dialog.add_response("borrow", "Confirmer l’emprunt")
+    dialog.add_response("borrow", "J’ai vérifié sur BnF Prêt — emprunter")
     submitted = False
 
     def on_response(_dialog, response):
