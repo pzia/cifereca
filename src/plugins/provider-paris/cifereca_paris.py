@@ -977,7 +977,13 @@ class ParisProviderSession(ProviderSession):
                 or loan.renewable is not True
                 or type(loan.raw) is not dict
                 or loan.raw.get("CanRenew") is not True
+                or type(loan.id) is not str or not loan.id
                 or (loan.raw.get("Id") or loan.raw.get("HoldingId")) != loan.id
+                or (loan.state is not None and (
+                    type(loan.state) is not str or loan.state.casefold() in {
+                        "returned", "closed", "expired", "cancelled", "canceled",
+                    }
+                ))
                 or loan.source_provider != "paris"
                 or loan.source_credential != self.credential_id
                 or account.provider_id != self.provider_id
