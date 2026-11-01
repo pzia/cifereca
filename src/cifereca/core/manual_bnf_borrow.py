@@ -32,9 +32,67 @@ def _result(status: str, reason: str, *, verified: bool = False):
     }
 
 
+def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
+    """Inert CoreUI availability, never borrower permission or a provider GET.
+
+    The currently installed BnF manifest has no acquisition.borrow, so this
+    always returns False in production until that capability is qualified.
+    A future published action still needs fresh positive entitlement, consent,
+    scope and durable claim at the moment the user confirms.
+    """
+    if (type(item) is not SearchResult or item.source_provider != "bnf-pret"
+            or item.docbase != "BNF_PRET" or item.medium != "digital"):
+        return False
+    try:
+        manager = service._plugin_manager
+        plugin_id = service._provider_plugin_ids["bnf-pret"]
+        plugin = manager.status(plugin_id)
+        identity = service.current_identity
+        if (plugin.enabled is not True or plugin.state != "ready"
+                or plugin.descriptor.type != "provider.library"
+                or plugin.descriptor.id != plugin_id
+                or not getattr(identity, "identity_id", None)):
+            return False
+        session = service._session_for_source(
+            "bnf-pret", item.source_credential)
+        rows = _inert_session_accounts(session)
+        if rows is None or _inert_session_state(session) is None:
+            return False
+        candidates = [
+            a for a in service.accounts
+            if (type(a) is Account and a.is_primary is True
+                and a.identity_id == identity.identity_id
+                and a.provider_id == "bnf-pret"
+                and a.credential_id == item.source_credential
+                and sum(r is a for r in rows) == 1)
+        ]
+        if len(candidates) != 1 or borrow_claim_key(candidates[0], item) is None:
+            return False
+        if capture_borrow_action_scope(
+                service, item, candidates[0], session,
+                expected_identity_id=identity.identity_id) is None:
+            return False
+        fact = assess_lending_operation(
+            "loan.borrow",
+            manifest_capabilities=tuple(plugin.descriptor.capabilities),
+            descriptor=session.descriptor, session=session,
+            account=candidates[0],
+        )
+        return (
+            fact.usable
+            and callable(getattr_static(
+                type(session), "borrower_eligibility_for", None))
+            and callable(getattr_static(
+                type(session), "borrow_explicit_with_claim", None))
+        )
+    except Exception:
+        return False
+
+
 def manual_bnf_borrow(
     service, item: SearchResult, *, expected_identity_id: str,
-    confirmed: bool = False,
+    confirmed: bool = False, expected_context_epoch: int | None = None,
+    expected_account: Account | None = None,
 ) -> dict[str, object]:
     """Select the exact live BnF account and admit at most one future POST.
 
@@ -46,6 +104,13 @@ def manual_bnf_borrow(
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
+    if (expected_context_epoch is not None
+            and (type(expected_context_epoch) is not int
+                 or type(getattr(service, "_account_context_epoch", None)) is not int
+                 or service._account_context_epoch != expected_context_epoch)):
+        return _result("blocked", "borrow_scope_changed")
+    if expected_account is not None and type(expected_account) is not Account:
+        return _result("blocked", "borrow_scope_unverified")
     if (type(item) is not SearchResult
             or type(expected_identity_id) is not str
             or not expected_identity_id
@@ -57,7 +122,7 @@ def manual_bnf_borrow(
         manager = service._plugin_manager
         plugin_id = service._provider_plugin_ids["bnf-pret"]
         plugin = manager.status(plugin_id)
-        if (plugin.state != "ready"
+        if (plugin.state != "ready" or plugin.enabled is not True
                 or plugin.descriptor.type != "provider.library"
                 or plugin.descriptor.id != plugin_id):
             return _result("blocked", "borrow_capability_unavailable")
@@ -78,12 +143,18 @@ def manual_bnf_borrow(
         if len(candidates) != 1:
             return _result("blocked", "borrow_scope_unverified")
         account = candidates[0]
+        if expected_account is not None and account is not expected_account:
+            return _result("blocked", "borrow_scope_changed")
         lease = capture_borrow_action_scope(
             service, item, account, session,
             expected_identity_id=expected_identity_id)
         key = borrow_claim_key(account, item)
         if lease is None or key is None:
             return _result("blocked", "borrow_scope_unverified")
+        def current():
+            return (lease.current(service) and (
+                expected_context_epoch is None
+                or service._account_context_epoch == expected_context_epoch))
         # Canonical installed PluginManager descriptor is the manifest source;
         # never accept a capability fabricated by a caller or the selected row.
         fact = assess_lending_operation(
@@ -109,7 +180,7 @@ def manual_bnf_borrow(
         evidence = session.borrower_eligibility_for(item, account)
     except Exception:
         return _result("blocked", "borrow_permission_unverified")
-    if not lease.current(service):
+    if not current():
         return _result("blocked", "borrow_scope_changed")
     if type(evidence) is not BorrowerOperationEvidence:
         return _result("blocked", "borrow_permission_unverified")
@@ -122,7 +193,7 @@ def manual_bnf_borrow(
         "loan.borrow", fact=fact, account=account, target=item,
         origin="manual", confirmed=True, permission_attested=True,
     )
-    if not admission.admitted or not lease.current(service):
+    if not admission.admitted or not current():
         return _result("blocked", "borrow_scope_changed")
 
     operation_id = uuid4().hex
@@ -136,15 +207,15 @@ def manual_bnf_borrow(
     try:
         # A concurrent rebind after the durable claim still forbids the POST.
         # The consumed claim is NOT reopened on this failure.
-        if not lease.current(service):
+        if not current():
             service.storage.loan_borrow_finish(
                 key, operation_id, status="blocked")
             return _result("blocked", "borrow_scope_changed")
         loan = session.borrow_explicit_with_claim(
             item, account, admission=admission, claimed_receipt=receipt,
-            confirmed=True, core_scope_current=lambda: lease.current(service),
+            confirmed=True, core_scope_current=lambda: current(),
         )
-        if (not lease.current(service) or type(loan) is not Loan
+        if (not current() or type(loan) is not Loan
                 or loan.record_id != item.record_id
                 or loan.source_provider != "bnf-pret"
                 or loan.source_credential != account.credential_id
@@ -171,4 +242,4 @@ def manual_bnf_borrow(
         return _result("verification_unavailable", "borrow_result_unverified")
 
 
-__all__ = ["manual_bnf_borrow"]
+__all__ = ["manual_bnf_borrow", "manual_bnf_borrow_available"]
