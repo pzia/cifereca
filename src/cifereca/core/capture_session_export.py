@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 import codecs
-import gzip
 import json
 import os
 from pathlib import Path
@@ -128,6 +127,7 @@ def _http_members(snapshot: dict[str, object]):
     index["exchanges"] = []
     members: dict[str, bytes] = {}
     html: list[dict[str, str]] = []
+    html_unavailable: list[dict[str, str]] = []
     incomplete = False
     total_http = 0
     for entry in exchanges:
@@ -158,21 +158,36 @@ def _http_members(snapshot: dict[str, object]):
             state = body.get("state")
             if state not in ("complete",):
                 incomplete = True
-            if side == "response" and state == "complete":
-                projected = _decode_html_body(
-                    data, entry.get("response"), body.get("representation"),
-                )
-                if projected is not None:
-                    html_name = f"html/{ref}.html"
-                    members[html_name] = projected
-                    html.append({"exchange_ref": ref, "member": html_name})
+            if side == "response":
+                mime = _headers(entry.get("response")).get("content-type", "")
+                if mime.split(";", 1)[0].strip().lower() in (
+                    "text/html", "application/xhtml+xml",
+                ):
+                    if state == "complete":
+                        projected = _decode_html_body(
+                            data, entry.get("response"), body.get("representation"),
+                        )
+                    else:
+                        projected = None
+                    if projected is None:
+                        incomplete = True
+                        html_unavailable.append({
+                            "exchange_ref": ref,
+                            "reason": "body_incomplete" if state != "complete"
+                            else "encoding_unavailable",
+                        })
+                    else:
+                        html_name = f"html/{ref}.html"
+                        members[html_name] = projected
+                        html.append({"exchange_ref": ref, "member": html_name})
         index["exchanges"].append(record)
     index["html_projections"] = html
+    index["html_unavailable"] = html_unavailable
     members["http/index.json"] = _as_json(index)
     omitted = snapshot.get("omitted_exchanges", 0)
     if type(omitted) is not int or omitted < 0:
         raise ValueError("capture_http_snapshot_invalid")
-    return members, incomplete or omitted > 0, omitted, len(exchanges), len(html)
+    return members, incomplete or omitted > 0, omitted, len(exchanges), len(html), len(html_unavailable)
 
 
 def export_capture_session(
@@ -194,7 +209,7 @@ def export_capture_session(
             or journal.get("coverage") not in ("complete", "partial")
             or type(app_exit_code) is not int):
         raise ValueError("capture_journal_snapshot_invalid")
-    members, http_incomplete, omitted, count, html_count = _http_members(http_snapshot)
+    members, http_incomplete, omitted, count, html_count, html_unavailable = _http_members(http_snapshot)
     members["logs/journal.log"] = journal["raw"]
     members["README.txt"] = _DESCRIPTION.encode("utf-8")
     now = datetime.now().astimezone()
@@ -225,6 +240,7 @@ def export_capture_session(
         "http_omitted_exchanges": omitted,
         "http_exchanges": count,
         "html_projected": html_count,
+        "html_unavailable": html_unavailable,
         "not_covered": ["non_instrumented_http", "external_browser",
                         "subprocess", "requests_urllib"],
         "members": {name: {"sha256": sha256(content).hexdigest(),
@@ -278,6 +294,9 @@ def validate_capture_session(path: Path) -> dict[str, object]:
             if not {"manifest.json", "logs/journal.log", "http/index.json",
                     "README.txt"}.issubset(names):
                 raise ValueError("capture_archive_invalid")
+            manifest_info = archive.getinfo("manifest.json")
+            if manifest_info.file_size > 512 * 1024:
+                raise ValueError("capture_archive_invalid")
             data = archive.read("manifest.json")
             if len(data) > 512 * 1024:
                 raise ValueError("capture_archive_invalid")
@@ -286,6 +305,9 @@ def validate_capture_session(path: Path) -> dict[str, object]:
                     or manifest.get("format") != _FORMAT
                     or type(manifest.get("members")) is not dict
                     or set(manifest["members"]) != set(names) - {"manifest.json"}):
+                raise ValueError("capture_archive_invalid")
+            total_size = sum(info.file_size for info in infos)
+            if total_size > 128 * 1024 * 1024:
                 raise ValueError("capture_archive_invalid")
             for info in infos:
                 if info.filename == "manifest.json":
