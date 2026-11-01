@@ -544,10 +544,18 @@ def execute_admitted_convergence(
             # or subscriber identifiers. Neither the message nor traceback
             # crosses the Core log boundary; the outcome stays fail-closed.
             _LOG.warning("TRACE convergence code=canonical_%s_failed", phase)
-            _LOG.warning("TRACE convergence code=canonical_delivery_or_commit_failed")
+            # A logged generic delivery/commit failure hid post-GET failures
+            # that already have a durable recovery receipt. Use only fixed
+            # phase codes: arbitrary provider exceptions may carry tokens,
+            # private file paths, subscriber IDs and signed URLs.
             results.append(ConvergenceOutcome(
-                key, "failed", "canonical_promotion_failed"
-                if phase == "promotion" else "delivery_or_commit_failed",
+                key, "failed", {
+                    "recovery": "canonical_recovery_failed",
+                    "delivery": "canonical_delivery_failed",
+                    "receipt": "canonical_receipt_failed",
+                    "promotion": "canonical_promotion_failed",
+                    "publication": "canonical_publication_failed",
+                }[phase],
             ))
     # Every terminal result is correlated to the same ephemeral item handle.
     # Emit only after the transaction: no callback or logging can create B.
