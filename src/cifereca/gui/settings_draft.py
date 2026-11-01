@@ -264,11 +264,6 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 'Schéma des options modifié : recharger les paramètres.'
             )
         for field in getattr(descriptor, 'account_options', ()):
-            if (field.key in original_options
-                    and type(original_options[field.key]) is not str):
-                raise SettingsValidationError(
-                    'Options du fournisseur invalides : recharger les paramètres.'
-                )
             if field.key not in option_fields:
                 # Legacy editors predate newer descriptor options. Preserve
                 # existing values, but do not activate an account whose new
@@ -280,6 +275,11 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                         f'Schéma des options modifié : renseignez {field.label}.'
                     )
                 continue
+            if (field.key in original_options
+                    and type(original_options[field.key]) is not str):
+                raise SettingsValidationError(
+                    'Options du fournisseur invalides : recharger les paramètres.'
+                )
             # AccountOptionField is a declarative TEXT schema. Never turn
             # None/bool/dicts from a stale widget snapshot into a plausible
             # provider option by applying str() (e.g. endpoint='None').
