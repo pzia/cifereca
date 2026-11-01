@@ -35,6 +35,7 @@ def _session(rig, *, scope_valid=lambda: True):
     service = _Service(storage, root)
     return service, MissingPlacementOperatorSession(
         service, identity_id="alice", scope_valid=scope_valid,
+        inspection_complete=True,
     )
 
 
@@ -102,6 +103,24 @@ def test_closed_or_stale_session_blocks_even_after_valid_preview(rig):
     operator.close()
     assert operator.preview_retirement(placement_id=pid)["reason"] == "scope_changed"
     assert storage.placement_get(pid)["state"] == "missing"
+
+
+def test_partial_inspection_cannot_prepare_retirement_or_relocation(rig):
+    storage, root, old, new, pid, artifact, payload, lockpath = rig
+    service = _Service(storage, root)
+    operator = MissingPlacementOperatorSession(
+        service, identity_id="alice", scope_valid=lambda: True,
+        inspection_complete=False,
+    )
+    assert operator.preview_retirement(placement_id=pid) == {
+        "status": "blocked", "reason": "incomplete_inspection", "read_only": True,
+    }
+    assert operator.preview_relocation(placement_id=pid, candidate_path=new) == {
+        "status": "blocked", "reason": "incomplete_inspection", "read_only": True,
+    }
+    assert operator.confirm(user_confirmed=True)["reason"] == "confirmation_required"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert new.read_bytes() == payload
 
 
 def test_missing_library_root_never_created_by_operator(rig, tmp_path):
