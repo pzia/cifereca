@@ -62,6 +62,26 @@ def compact_availability_label(value: object) -> str:
         return text.split(" — ", 1)[0].strip()
     return text
 
+def search_detail_borrow_action_candidate(item: object, availability: str) -> bool:
+    """Presentation candidate only; never entitlement or permission.
+
+    The BnF reader deliberately returns 'Disponibilité non vérifiée' even
+    when the user can borrow a book. For this source the reader checks the
+    exact title on pret.bnf.fr before confirming a Core-owned attempt; the
+    real, immutable account/notice/claim guard is still checked separately
+    by service.can_borrow_bnf(). Other sources keep their legacy UI gate.
+    """
+    from ..models import SearchResult
+
+    if type(item) is not SearchResult or item.medium != "digital":
+        return False
+    if item.source_provider in {"numilog", "numilog-catalog", "kobo"}:
+        return False
+    if item.source_provider == "bnf-pret":
+        return item.docbase == "BNF_PRET" and bool(item.record_id)
+    return availability == "Empruntable"
+
+
 def compact_detail_rows(rows: Iterable[tuple[str, object]]) -> tuple[tuple[str, object], ...]:
     """Drop empty filler cells from dense detail sections."""
     result: list[tuple[str, object]] = []
