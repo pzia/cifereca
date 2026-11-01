@@ -142,6 +142,10 @@ def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
     document = DOC.read_text(encoding="utf-8")
     candidates = 0
     for path in sorted((ROOT / "scripts").glob("*.py")):
+        # A pytest test module is not an operator CLI even if it includes
+        # examples of ArgumentParser or an __main__ guard in a fixture.
+        if path.name.startswith("test_"):
+            continue
         source = path.read_text(encoding="utf-8")
         if "__main__" not in source and "ArgumentParser" not in source:
             continue
