@@ -211,3 +211,31 @@ rotations partielles, fichier existant/symlink, concurrence et annulation.
 `src/plugins/diagnostics-page/tests/test_daily_journal_export.py` valide
 la sélection sans Core réseau ; `test_daily_journal_export_gtk.py` exécute
 le sélecteur GTK4 réel lorsqu'un DISPLAY est disponible.
+
+
+## Contrat journal ZIP réutilisable — P1 #3913 (version 1)
+
+Le producteur `src/cifereca/core/diagnostic_journal_zip.py` utilise
+`cifereca.journal_zip_contract.daily_journal_manifest` : les **noms des
+membres**, les valeurs `format` et `schema_version=1` sont maintenus
+dans un module commun Python standard library, sans GTK, Core ouvert,
+provider, réseau ou SQLite. **Aucun champ ZIP déjà livré n'est modifié.**
+
+Le lecteur public et borné est `cifereca.plugin_api.journal_zip.read_raw_journal_zip`
+(renvoie le JSON **brut** sans modifier ses événements). Il accepte un ZIP
+canonique à **exactement trois membres** et, pour les anciens exports,
+un ZIP mono-JSON si `allow_legacy=True` ; il refuse les noms/doublons
+inattendus, chemins internes, liens symboliques, archives illisibles,
+dépassements de taille, versions non reconnues, incohérences du manifeste
+(`raw_bytes`, SHA-256 et `event_count`). Aucune extraction sur disque.
+Les erreurs sont uniquement des codes stables `JournalZipError`, jamais
+un chemin, une URL ou un secret recopié.
+
+**SHA-256 = vérification d'intégrité, pas signature ni preuve d'authenticité.**
+Les exports bruts peuvent contenir les credentials effectivement journalisés ;
+leur lecture et leur conservation restent exclusivement locales, et toute
+projection expurgée demeure la responsabilité du consommateur. Ce lecteur ne
+prend **pas** en charge les ZIP `sync run --report` ou `--trace-export` :
+ces formats ont un contrat indépendant. En contexte sans Core installé,
+un analyseur spécialisé peut conserver son lecteur historique autonome et
+les mêmes codes d'erreur ; ne pas forcer l'import de GTK ou de la configuration.

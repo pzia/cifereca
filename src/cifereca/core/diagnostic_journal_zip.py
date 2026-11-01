@@ -16,6 +16,10 @@ import tempfile
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from .diagnostic_journal import _events
+from ..journal_zip_contract import (
+    JOURNAL_ZIP_SCHEMA_VERSION, RAW_JOURNAL_FORMAT, RAW_MEMBER,
+    MANIFEST_MEMBER, README_MEMBER, daily_journal_manifest,
+)
 
 _MAX_EVENTS = 50_000
 _MAX_JSON_BYTES = 48_000_000
@@ -86,7 +90,7 @@ def export_daily_journal_zip(
     # other rotations contained today's events.
     coverage = "partial" if gaps or active_missing else ("available" if events else "empty")
     document = {
-        "schema_version": 1, "format": "cifereca-raw-journal-events",
+        "schema_version": JOURNAL_ZIP_SCHEMA_VERSION, "format": RAW_JOURNAL_FORMAT,
         "atomic": False, "coverage": coverage,
         "rotation_gaps": gaps, "active_log_missing": active_missing,
         "events": selected,
@@ -110,7 +114,7 @@ def export_daily_journal_zip(
                          compresslevel=6, allowZip64=False) as archive:
                 digest = sha256()
                 written = 0
-                with archive.open("cifereca-journal-brut.json", "w") as raw:
+                with archive.open(RAW_MEMBER, "w") as raw:
                     encoder = json.JSONEncoder(
                         ensure_ascii=False, allow_nan=False, separators=(",", ":"),
                     )
@@ -122,25 +126,19 @@ def export_daily_journal_zip(
                             raise ValueError("journal_export_limit")
                         raw.write(chunk)
                         digest.update(chunk)
-                manifest = {
-                    "schema_version": 1, "format": "cifereca-journal-daily-zip",
-                    "source": "journal", "date_local": day.isoformat(),
-                    "timezone": zone_label,
-                    "utc_start": start.isoformat(), "utc_end_exclusive": stop.isoformat(),
-                    "event_count": len(selected),
-                    "raw_file": "cifereca-journal-brut.json",
-                    "raw_bytes": written, "sha256": digest.hexdigest(),
-                    "coverage": coverage, "rotation_gaps": gaps,
-                    "active_log_missing": active_missing,
-                    "atomic": False, "capture": "sequential_retained_log_read",
-                    "filter": "local_day_only", "ui_filters_applied": False,
-                }
+                manifest = daily_journal_manifest(
+                    date_local=day.isoformat(), timezone=zone_label,
+                    utc_start=start.isoformat(), utc_end_exclusive=stop.isoformat(),
+                    event_count=len(selected), raw_bytes=written,
+                    sha256_hex=digest.hexdigest(), coverage=coverage,
+                    rotation_gaps=gaps, active_log_missing=active_missing,
+                )
                 archive.writestr(
-                    "manifest.json",
+                    MANIFEST_MEMBER,
                     json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False),
                 )
                 archive.writestr(
-                    "README.txt",
+                    README_MEMBER,
                     "Cifereca — journal brut du jour (JSON UTF-8).\n"
                     "Les événements proviennent du journal canonique, sans "
                     "masquage ou sélection UI.\n"
