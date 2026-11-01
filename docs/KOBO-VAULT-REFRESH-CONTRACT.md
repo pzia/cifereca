@@ -19,8 +19,15 @@ Référence : `pzia/KVault/src/worker.js` :
   `search(force=True)` de Cifereca ne le contourne donc pas.
 - Le bouton navigateur « Actualiser Kobo » passe par un **autre chemin**,
   `POST /api/kobo/catalog` avec le JSON `forceRefresh: true`, capable de
-  bypasser le cache public. Ne pas réutiliser cet endpoint navigateur en
-  Cifereca : il ne relève pas du contrat Provider.
+  bypasser **son propre** cache Cloudflare. Il n'actualise **pas** le cache
+  Provider : l'API navigateur utilise la clé `/__internal-cache/kobo-catalog-v3`
+  (q, langue, taille/index de page), tandis que l'API Provider utilise
+  `https://kobo-vault.invalid/__v2_catalog_v3` (q, champ, langue, limite,
+  page). Ces clés sont distinctes, même pour une recherche identique.
+  Ne pas réutiliser cet endpoint navigateur en Cifereca.
+- `PUT /api/v2/vault/{uid}/acquisition-access` réinitialise le **backoff**
+  de sync personnelle, **pas** sa date `last_success_at` : republier les
+  credentials ne force donc pas la synchro Kobo pendant la fenêtre de 24 h.
 - `GET /api/v2/library/manifest` appelle
   `ensureFreshLibraryProjection` **sur la première page seulement**.
   La projection D1 est considérée fraîche pendant 24 h
