@@ -53,6 +53,8 @@ Cette règle s'applique à **tous les rôles** : backlog, core/coreui, plugins, 
 - Si une anomalie distincte apparaît, **ne pas la corriger dans la même PR** : signaler un blocage directement pertinent et transmettre au rôle propriétaire ; sinon la laisser hors périmètre. Une panne CI préexistante ne justifie pas d'étendre le correctif.
 - **Restitution concise dans le chat par défaut** : ticket/PR, résultat, validations, blocage et prochaine action, avec liens GitHub utiles. **Ne pas générer ni joindre de rapport détaillé sous forme de fichier** (Markdown, PDF, ZIP, etc.) sauf demande explicite ou preuve spécifique indispensable. Les artefacts CI demeurent accessibles sur GitHub.
 
+**Diagnostics de terrain / choix de commandes :** consulter le [registre des outils P1 #3913](docs/CORE-P1-3913-DIAGNOSTIC-TOOLS.md) avant de proposer un script, un audit ou un export. Distinguer systématiquement lecture locale, réseau fournisseur, mutation, rapport fermé et trace/journal bruts ; le rôle `backlog` recommande mais n'exécute aucun outil.
+
 ## Rôles et propriétaires
 
 Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités dans une même modification ; transmettre les dépendances au bon propriétaire.

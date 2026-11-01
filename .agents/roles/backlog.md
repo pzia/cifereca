@@ -71,6 +71,12 @@ Référence : [politique de livraison asynchrone](../../docs/AGENT-DELIVERY-POLI
 
 ## Aiguillage des diagnostics existants (31/10/2026 — #3913)
 
+**Registre complet, classes d'effets, commandes et exemples multi-provider :**
+[diagnostics CLI P1 #3913](../../docs/CORE-P1-3913-DIAGNOSTIC-TOOLS.md).
+Pour les choix et risques, consulter cette matrice avant de recommander un
+script autonome. La présente table reste un aide-mémoire court ; elle ne crée
+aucune permission d'exécuter des tests, outils ou synchronisations en rôle backlog.
+
 Lors d'un triage, **proposer d'abord l'outil présent dans le dépôt**, avec la commande exacte, l'effet de bord (lecture seule / réseau / écriture), et le format de preuve attendu. Ne pas présenter une spécification de ticket comme une commande disponible sur `main`. Le rôle backlog **ne lance pas** ces commandes : il les recommande à l'utilisateur ou à l'agent propriétaire, puis analyse les sorties fournies.
 
 | Symptôme / besoin | Outil à recommander | Précaution |
