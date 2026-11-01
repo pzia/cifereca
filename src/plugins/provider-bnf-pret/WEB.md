@@ -5,6 +5,27 @@ Depuis la version 0.2.0, le package remplace `ui.page.bnf-pret` par `provider.bn
 L'installation et l'activation ne démarrent aucun navigateur et ne nécessitent
 ni Playwright, ni Chromium, ni Browser Recorder. Les anciens modules navigateur sont supprimés.
 
+## Couvertures du catalogue BnF — tranche P1 #4118 (qualification synthétique)
+
+Les résultats de recherche et les fiches n'imposent plus une miniature toujours
+inconnue : une URL est projetée dans `SearchResult.thumbnail_url` et
+`ItemDetail.thumbnail_url` **seulement** si elle est réellement portée par
+la carte liée à la ressource, ou par l'unique microdata `Book` de cette
+ressource. Le validateur public d'images utilisé pour les prêts refuse les
+origines non autorisées, URLs signées, paramètres privés et chemins suspects ;
+les images multiples/conflictuelles, d'autres notices, les avatars et les
+`og:image` globaux restent `unknown` (`None`). Les doublons de recherche
+entre pages ne peuvent pas ressusciter une image contradictoire.
+
+Aucun GET d'image supplémentaire n'est réalisé par le plugin, aucun accès
+prêt/compte ni changement de capacité. Tests hors réseau sur DOM synthétique,
+dont recherche paginée et projection provider. **À qualifier sur des pages BnF
+réelles autorisées** : la présence et les sélecteurs exacts des images dans
+`/resources?q=...` et `/resources/{id}` n'ont pas été attestés par ces tests ;
+si le portail n'émet aucune image admissible, les placeholders restent normaux.
+Recette GTK de deux cartes/détails à couvertures attestées toujours requise
+avant fermeture de #4118.
+
 ## Installer et essayer
 
 Depuis la branche contenant cette version :
