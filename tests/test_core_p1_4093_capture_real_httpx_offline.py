@@ -44,7 +44,7 @@ def test_capture_gui_session_observes_only_real_mock_httpx_requests_and_html(
                 "Content-Type": "text/html; charset=utf-8",
                 "Content-Encoding": "gzip",
             },
-            content=compressed,
+            stream=httpx.ByteStream(compressed),
         )
 
     def simulate_gui(*, capture_mode=False):
