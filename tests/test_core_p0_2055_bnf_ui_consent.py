@@ -154,6 +154,20 @@ def test_notice_refresh_before_confirm_blocks_even_with_same_catalogue_row(tmp_p
         service.close()
 
 
+def test_title_changed_after_site_checked_dialog_blocks_before_claim(tmp_path):
+    service, session, account, item = setup(tmp_path)
+    try:
+        window, errors, results, refreshes = view(service, session, account, item)
+        dialog = request(window, item)
+        assert dialog is not None
+        item.title = "Another edition with same resource id"
+        dialog.respond("borrow")
+        assert not window.runner.tasks and not session.dispatches
+        assert errors and "a changé" in errors[0][0]
+    finally:
+        service.close()
+
+
 def test_scope_change_after_queued_confirmation_blocks_worker(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
