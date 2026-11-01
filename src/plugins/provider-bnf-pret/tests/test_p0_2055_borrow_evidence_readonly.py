@@ -170,6 +170,16 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         manifest = json.loads((ROOT / "cifereca-plugin.json").read_text())
         self.assertIn("acquisition.borrow",
                          manifest["plugins"][0]["capabilities"])
+        from cifereca.plugin_api import ProviderCapabilityError
+        session, account, item, calls = self.make()
+        try:
+            with self.assertRaisesRegex(
+                    ProviderCapabilityError,
+                    "bnf_borrow_requires_core_dispatch"):
+                session.borrow(item, account)
+            self.assertEqual(calls, [])
+        finally:
+            session.close()
 
 
 if __name__ == "__main__":
