@@ -40,6 +40,19 @@ def build_provider_account_editor(
     invalid_saved_snapshot = (
         type(raw_credentials) is not dict or type(raw_options) is not dict
     )
+    # An existing, declared TEXT value that is not actually text must not be
+    # rendered as blank/default and then overwritten by an unrelated Save.
+    # Retired/undeclared fields remain opaque and are preserved verbatim.
+    if not invalid_saved_snapshot:
+        declared_credentials = getattr(descriptor, "credential_fields", ())
+        declared_options = getattr(descriptor, "account_options", ())
+        invalid_saved_snapshot = any(
+            field.key in raw_credentials and type(raw_credentials[field.key]) is not str
+            for field in declared_credentials
+        ) or any(
+            field.key in raw_options and type(raw_options[field.key]) is not str
+            for field in declared_options
+        )
     # Display can recover from corrupt saved data. Do not mutate config and
     # never allow a later unrelated Save to silently replace malformed fields.
     credentials = dict(raw_credentials) if type(raw_credentials) is dict else {}
