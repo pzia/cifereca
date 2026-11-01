@@ -53,9 +53,11 @@ MEDIA_DETAIL = (
     '<button type="submit" class="button-borrow button">Emprunter</button>'
     '</form></article>')
 MEDIA_FORM = ('<a href="/resources/' + RID + '">Book</a>'
-              '<form method="post" action="' + MEDIA_ACTIVATE + '">'
+              '<form method="post" action="' + MEDIA_ACTIVATE
+              + '?email=synthetic%40example.invalid&amp;notify=1&amp;_resource_id='
+              + RID + '">'
               '<input type="hidden" name="authenticity_token" value="synthetic-csrf">'
-              '<input type="hidden" name="resource_id" value="' + RID + '">'
+              '<button type="submit" class="button-borrow">Confirmer</button>'
               '</form>')
 
 
@@ -100,6 +102,11 @@ class BnfExplicitExecutionTests(unittest.TestCase):
                                       headers={"content-type": "text/html"})
             if request.method == "POST" and path in {"/loans/activation", MEDIA_ACTIVATE}:
                 state["post_count"] += 1
+                if path == MEDIA_ACTIVATE:
+                    self.assertEqual(dict(request.url.params),
+                                     {"_resource_id": RID, "notify": "1",
+                                      "email": "synthetic@example.invalid"})
+                    self.assertNotIn(b"_resource_id=", request.content)
                 self.assertIn(b"authenticity_token=synthetic-csrf", request.content)
                 if after_post:
                     after_post()
