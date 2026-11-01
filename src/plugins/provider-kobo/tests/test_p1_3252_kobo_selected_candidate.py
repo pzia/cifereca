@@ -224,7 +224,7 @@ def test_wrong_selection_or_offer_refused_without_content_get(
 
 
 @pytest.mark.parametrize("response", [
-    httpx.Response(302, headers={"location": "https://other.invalid/epub"}),
+    httpx.Response(302, headers={"location": "http://other.invalid/epub"}),
     httpx.Response(403, content=b"forbidden"),
     httpx.Response(200, content=b"<html>login</html>",
                    headers={"content-type": "text/html"}),

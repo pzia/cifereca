@@ -1193,6 +1193,65 @@ class KoboSession(ProviderSession):
             path=Path(path), provider_hint=hint,
         )
 
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """Core #3171 opt-in: exact v2 candidate with live revocable consent.
+
+        No new entitlement is created. The Core callback is composed with
+        existing borrower, broker, epoch and staging guards at every HTTPS hop.
+        """
+        from cifereca.plugin_api import (
+            SourceReference, ProviderRightsScope, DeliveryCandidate,
+        )
+        if not callable(admission_current):
+            raise ProviderCapabilityError("kobo_candidate_admission_changed")
+        try:
+            allowed = admission_current() is True
+        except Exception:
+            allowed = False
+        if not allowed:
+            raise ProviderCapabilityError("kobo_candidate_admission_changed")
+        scope = ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+        path, hint = self.rights_selected_delivery_candidate(
+            account, edition_id=edition_id, right_id=resource_id,
+            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
+        )
+        try:
+            current = (
+                (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id)
+                == (scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id)
+                and admission_current() is True
+            )
+        except Exception:
+            current = False
+        if not current:
+            # Only clean a newly staged candidate within this Core-owned run.
+            try:
+                staged = Path(path)
+                if (staged.parent == Path(target_dir)
+                        and staged.is_file() and not staged.is_symlink()):
+                    staged.unlink(missing_ok=True)
+            except (OSError, TypeError, ValueError):
+                pass
+            raise ProviderCapabilityError("kobo_candidate_admission_changed")
+        return DeliveryCandidate(
+            source=SourceReference(
+                scope, branch, edition_id, resource_id, kind,
+            ),
+            selected_offer_id=selected_offer_id,
+            path=Path(path), provider_hint=hint,
+        )
+
     def rights_selected_delivery_offer_snapshot(
         self, account, *, edition_id, right_id, kind, branch,
         explicit_user_action=False,
@@ -1271,6 +1330,7 @@ class KoboSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
     ):
         """Optional Core #3171 selected-candidate ABI; never a final receipt.
 
@@ -1284,6 +1344,7 @@ class KoboSession(ProviderSession):
             kind=kind, branch=branch, delivery_offer_id=delivery_offer_id,
             target_dir=target_dir,
             explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
         )
 
     def backup_manifest(self) -> list[dict[str, Any]]:

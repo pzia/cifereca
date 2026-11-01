@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import tempfile
+import secrets
 from xml.etree import ElementTree
 import zipfile
 
@@ -82,7 +82,8 @@ def _candidate_format_ok(path: Path, fmt: str) -> bool:
 
 def stage_selected_candidate(session, account: Account, *, edition_id,
                              right_id, kind, branch, delivery_offer_id,
-                             target_dir, explicit_user_action=False):
+                             target_dir, explicit_user_action=False,
+                             admission_current=None):
     """Exactly one Core-selected purchase, fresh POST, then one isolated GET.
 
     A signed URL can rotate without changing the offer ID, but the supplier
@@ -101,6 +102,24 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             or account.credential_id != session.credential_id
             or type(account.identity_id) is not str or not account.identity_id):
         raise ProviderCapabilityError("kobo_candidate_not_admitted")
+    # Only the Core-owned opt-in supplies this live, epoch-pinned closure.
+    # The existing v2 path remains compatible when no closure is supplied.
+    if admission_current is not None and not callable(admission_current):
+        raise ProviderCapabilityError("kobo_candidate_admission_changed")
+
+    def core_current():
+        if admission_current is None:
+            return True
+        try:
+            return admission_current() is True
+        except Exception:
+            return False
+
+    def require_core():
+        if not core_current():
+            raise ProviderCapabilityError("kobo_candidate_admission_changed")
+
+    require_core()
     target = Path(target_dir)
     try:
         if (not target.is_dir() or target.is_symlink()
@@ -163,6 +182,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
 
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
+        require_core()
         # An opaque offer string alone cannot bootstrap a file: recheck the
         # exact scoped personal manifest before initiating another private POST.
         inventory = session.rights_observation_snapshot(account)
@@ -174,12 +194,14 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
         if right.delivery == "unavailable":
             raise ProviderCapabilityError("kobo_candidate_delivery_unavailable")
 
+        require_core()
         payload = session.resolve_acquisition(
             right_id, mode="descriptor", expected_offer_id=delivery_offer_id,
             expected_identity_id=caller[0],
         )
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
+        require_core()
         url, fmt = _single_admitted_candidate(
             payload, delivery_offer_id, identity_id=caller[0],
             credential_id=caller[2], account_id=caller[3],
@@ -187,74 +209,75 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
         )
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
-        # Always use Core's public-peer pinned transport, never the authenticated
-        # Vault client or system proxies. A 302/307 cannot leak a signed URL,
-        # cookies or an Authorization header to another origin.
+        require_core()
+        # The single Core attested-delivery transport owns all supplier
+        # redirects, pinned public TCP peers, staging integrity and limits.
+        # Vault's authenticated client and POSTs never enter this path.
         if not stage_current():
             raise ProviderCapabilityError("kobo_candidate_staging_rebound")
-        # Use an open Linux dirfd: a symlink swap during the Vault or
-        # HTTPX request cannot redirect the candidate into another folder.
-        fd, filename = tempfile.mkstemp(
-            prefix=".kobo-selected-", suffix="." + fmt,
-            dir=Path("/proc/self/fd") / str(stagefd),
-        )
-        path = Path(filename)
-        succeeded = False
+        candidate = target / (".kobo-selected-" + secrets.token_hex(12) + "." + fmt)
+        staged = False
+        accepted = False
         try:
-            with os.fdopen(fd, "wb") as out:
-                if not bound():
-                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
-                with HTTPX_TRANSPORT.public_client(
-                    producer="provider.kobo.delivery", timeout=30,
-                ) as transfer:
-                    with transfer.stream("GET", url, headers={
-                        "Accept": "application/octet-stream",
-                    }, follow_redirects=False) as response:
-                        if response.status_code != 200:
-                            raise ProviderCapabilityError(
-                                "kobo_candidate_http_unavailable"
-                            )
-                        declared = response.headers.get("content-length", "")
-                        if declared.isdecimal() and int(declared) > _MAX_DELIVERY_BYTES:
-                            raise ProviderCapabilityError(
-                                "kobo_candidate_size_exceeded"
-                            )
-                        media = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                        if media in ("text/html", "text/plain", "application/json"):
-                            raise ProviderCapabilityError(
-                                "kobo_candidate_not_a_file"
-                            )
-                        size = 0
-                        for chunk in response.iter_bytes():
-                            if not bound():
-                                raise ProviderCapabilityError(
-                                    "kobo_candidate_owner_changed"
-                                )
-                            size += len(chunk)
-                            if size > _MAX_DELIVERY_BYTES:
-                                raise ProviderCapabilityError(
-                                    "kobo_candidate_size_exceeded"
-                                )
-                            out.write(chunk)
-                out.flush()
-                os.fsync(out.fileno())
-            if (not bound() or not _candidate_format_ok(path, fmt)):
-                raise ProviderCapabilityError(
-                    "kobo_candidate_owner_changed" if not bound()
-                    else "kobo_candidate_format_invalid"
-                )
-            # A supplier stream is never a Core receipt or verified OriginLink.
-            # Only this staging path is returned; the signed URL remains private.
+            if not bound():
+                raise ProviderCapabilityError("kobo_candidate_owner_changed")
+            require_core()
+            receipt = HTTPX_TRANSPORT.attested_https_download(
+                producer="provider.kobo.delivery", url=url, target=candidate,
+                # Core checks source policy/epoch on each hop and chunk;
+                # plugin additionally checks borrower, broker and staging.
+                admission_current=lambda: (bound() and stage_current()
+                                           and core_current()),
+                headers={"Accept": "application/octet-stream"},
+                timeout=30, max_bytes=_MAX_DELIVERY_BYTES, max_redirects=8,
+            )
+            staged = True
+            require_core()
+            if not bound():
+                raise ProviderCapabilityError("kobo_candidate_owner_changed")
             if not stage_current():
                 raise ProviderCapabilityError("kobo_candidate_staging_rebound")
-            succeeded = True
-            return target / path.name, ""
-        except (httpx.HTTPError, OSError, ValueError):
+            if not _candidate_format_ok(receipt.path, fmt):
+                raise ProviderCapabilityError("kobo_candidate_format_invalid")
+            require_core()
+            # A staged file is not a Core OriginLink/Placement or consent grant.
+            accepted = True
+            return receipt.path, ""
+        except ValueError as exc:
+            code = str(exc)
+            if code == "delivery_admission_changed":
+                raise ProviderCapabilityError(
+                    "kobo_candidate_owner_changed" if not bound()
+                    else "kobo_candidate_staging_rebound" if not stage_current()
+                    else "kobo_candidate_admission_changed"
+                ) from None
+            known = {
+                "delivery_redirect_loop": "kobo_candidate_redirect_loop",
+                "delivery_redirect_limit": "kobo_candidate_redirect_limit",
+                "delivery_redirect_invalid": "kobo_candidate_redirect_refused",
+                "delivery_redirect_missing": "kobo_candidate_redirect_refused",
+                "delivery_url_invalid": "kobo_candidate_redirect_refused",
+                "delivery_ip_literal_refused": "kobo_candidate_redirect_refused",
+                "delivery_size_exceeded": "kobo_candidate_size_exceeded",
+                "delivery_html_instead_of_file": "kobo_candidate_not_a_file",
+                "delivery_http_status": "kobo_candidate_http_unavailable",
+                "delivery_staging_unsafe": "kobo_candidate_staging_rebound",
+                "delivery_staging_changed": "kobo_candidate_staging_rebound",
+                "delivery_staging_unavailable": "kobo_candidate_staging_rebound",
+            }
             raise ProviderCapabilityError(
-                "kobo_candidate_transport_failed"
+                known.get(code, "kobo_candidate_transport_failed")
             ) from None
+        except (httpx.HTTPError, OSError):
+            raise ProviderCapabilityError("kobo_candidate_transport_failed") from None
         finally:
-            if not succeeded:
-                path.unlink(missing_ok=True)
+            if staged and not accepted:
+                # Core has already cleaned unsuccessful streams. Remove a
+                # successfully staged but provider-rejected format only inside
+                # the original Core-created directory inode.
+                try:
+                    os.unlink(candidate.name, dir_fd=stagefd)
+                except OSError:
+                    pass
     finally:
         os.close(stagefd)
