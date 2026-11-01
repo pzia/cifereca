@@ -184,8 +184,8 @@ def test_plugin_entrypoint_inventory_flags_unknown_command_and_removed_classifie
     (tmp_path / "src/plugins/unknown").mkdir(parents=True)
     fake_cli = tmp_path / "src/plugins/unknown/new_cli.py"
     fake_cli.write_text(
-        'import argparse\\nif __name__ == "__main__":\\n'
-        '    argparse.ArgumentParser()\\n',
+        'import argparse\nif __name__ == "__main__":\n'
+        '    argparse.ArgumentParser()\n',
         encoding="utf-8",
     )
     report = inventory(tmp_path)
@@ -195,8 +195,8 @@ def test_plugin_entrypoint_inventory_flags_unknown_command_and_removed_classifie
     assert report["entries"][0]["risk"] == "unclassified"
     # AST discovery is inert: source code isn't imported or executed.
     fake_cli.write_text(
-        'raise RuntimeError("NO_EXECUTION_ALLOWED")\\n'
-        'if __name__ == "__main__": pass\\n',
+        'raise RuntimeError("NO_EXECUTION_ALLOWED")\n'
+        'if __name__ == "__main__": pass\n',
         encoding="utf-8",
     )
     report = inventory(tmp_path)
