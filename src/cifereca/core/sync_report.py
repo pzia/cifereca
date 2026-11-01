@@ -114,11 +114,13 @@ def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None,
 
 
 def _safe_result(result: dict[str, object]) -> dict[str, object]:
+    status = result.get("status")
+    code = result.get("code")
     outcome: dict[str, object] = {
-        "status": result.get("status") if result.get("status") in _STATUSES else "failed",
+        "status": status if type(status) is str and status in _STATUSES else "failed",
     }
-    if result.get("code") in _REASON_CODES:
-        outcome["code"] = result["code"]
+    if type(code) is str and code in _REASON_CODES:
+        outcome["code"] = code
     for key in ("downloaded", "completed", "scanned", "unchanged", "pending", "errors"):
         value = result.get(key)
         if type(value) is int and 0 <= value <= 1_000_000:
@@ -132,6 +134,104 @@ def _json_bytes(value: object) -> bytes:
     if len(payload) > 512 * 1024:
         raise ValueError("sync_report_size_limit")
     return payload
+
+
+
+# Closed summary vocabulary: never interpolate provider data, filesystem paths,
+# HTTP diagnostics or arbitrary exception messages into the shareable report.
+_SUMMARY_COUNTS = ("scanned", "downloaded", "completed", "unchanged", "pending", "errors")
+_SUMMARY_SNAPSHOT_COUNTS = (
+    "origin_link_count", "placement_reference_count",
+    "staged_sha_verified_count", "staged_visible_in_library_count",
+)
+_SUMMARY_RIGHT_CLASSES = (
+    "source_unlinked", "source_linked_unplaced", "missing_file",
+    "ambiguous_match", "local_unverified", "complete_local",
+)
+_SUMMARY_RECEIPT_CLASSES = ("staged_unpublished", "receipt_recorded")
+
+
+def _safe_summary_count(value: object) -> int | None:
+    return value if type(value) is int and 0 <= value <= 1_000_000 else None
+
+
+def _summary_audit(phase: str, audit: object) -> list[str]:
+    """Describe exact-source snapshots; never attribute their deltas to a run."""
+    if type(audit) is not dict or audit.get("status") == "unavailable":
+        return [f"audit_{phase}: unavailable"]
+    has_evidence = type(audit.get("resource_evidence")) is dict or any(
+        _safe_summary_count(audit.get(field)) is not None
+        for field in _SUMMARY_SNAPSHOT_COUNTS
+    ) or type(audit.get("rights_by_kind")) is dict
+    if not has_evidence:
+        return [f"audit_{phase}: unavailable"]
+    lines = [f"audit_{phase}: available"]
+    for field in _SUMMARY_SNAPSHOT_COUNTS:
+        value = _safe_summary_count(audit.get(field))
+        if value is not None:
+            lines.append(f"snapshot_{phase}_{field}: {value}")
+    evidence = audit.get("resource_evidence")
+    if type(evidence) is not dict:
+        return lines
+    if evidence.get("truncated") is True:
+        lines.append(f"snapshot_{phase}_resources_truncated: true")
+    if phase != "after":
+        return lines
+    # These are classifications, not necessarily failures. In particular a
+    # catalogue-only reference may legitimately have no local OriginLink.
+    for group, classes in (
+        ("rights", _SUMMARY_RIGHT_CLASSES),
+        ("receipts", _SUMMARY_RECEIPT_CLASSES),
+    ):
+        records = evidence.get(group)
+        if type(records) is not list:
+            continue
+        for category in classes:
+            count = sum(
+                type(item) is dict and item.get("classification") == category
+                for item in records[:512]
+            )
+            if count:
+                lines.append(f"observed_{group}_{category}: {count}")
+    return lines
+
+
+def _report_summary(
+    *, outcome: dict[str, object], exit_code: int, before: object,
+    after: object, evidence_coverage: str,
+) -> bytes:
+    """Bounded human-readable overview of evidence already in the ZIP.
+
+    This output is intentionally NOT a synthesis of the provider's raw result:
+    it only copies closed status/counters and canonical, local snapshots.
+    """
+    lines = [
+        "CIFERECA SOURCE SYNC REPORT",
+        "status: " + (
+            outcome["status"] if type(outcome.get("status")) is str
+            and outcome["status"] in _STATUSES else "failed"
+        ),
+        f"exit_code: {exit_code}",
+        f"coverage: {evidence_coverage}; no HTTP/correlated journal proof",
+    ]
+    reason = outcome.get("code")
+    if type(reason) is str and reason in _REASON_CODES:
+        lines.append(f"reason_code: {reason}")
+    for field in _SUMMARY_COUNTS:
+        count = _safe_summary_count(outcome.get(field))
+        if count is not None:
+            lines.append(f"reported_{field}: {count}")
+    lines.extend(_summary_audit("before", before))
+    lines.extend(_summary_audit("after", after))
+    lines.append(
+        "note: snapshots describe one source at two instants, not per-run "
+        "causality or proof of final Placement/OriginLink."
+    )
+    lines.append(
+        "note: omitted classes are unobserved in the bounded sample; "
+        "absence is not an exhaustive negative proof."
+    )
+    return ("\n".join(lines) + "\n").encode("ascii")
 
 
 def write_sync_report(
@@ -175,7 +275,10 @@ def write_sync_report(
         "status": safe_result["status"],
         "exit_code": exit_code,
         "evidence_coverage": (
-            "canonical_sqlite_graph_with_bounded_sha256"
+            "local_audit_unavailable"
+            if before.get("status") == "unavailable"
+            or after.get("status") == "unavailable"
+            else "canonical_sqlite_graph_with_bounded_sha256"
             if before.get("physical_verification") == "bounded_sha256_checked"
             and after.get("physical_verification") == "bounded_sha256_checked"
             else "canonical_sqlite_graph_without_filesystem"
@@ -188,12 +291,10 @@ def write_sync_report(
         {"run_ref": run_ref, "phase": "sync_finished", "status": safe_result["status"],
          **({"code": safe_result["code"]} if "code" in safe_result else {})},
     ]
-    summary = (
-        "CIFERECA SOURCE SYNC REPORT\n"
-        f"status: {safe_result['status']}\n"
-        f"exit_code: {exit_code}\n"
-        f"coverage: {manifest['evidence_coverage']}; no HTTP/correlated journal proof\n"
-    ).encode("ascii")
+    summary = _report_summary(
+        outcome=safe_result, exit_code=exit_code, before=before, after=after,
+        evidence_coverage=manifest["evidence_coverage"],
+    )
     parts = {
         "manifest.json": _json_bytes(manifest),
         "sync-result.json": _json_bytes(safe_result),
