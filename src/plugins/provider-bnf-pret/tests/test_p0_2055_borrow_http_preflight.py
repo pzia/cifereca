@@ -101,10 +101,6 @@ class BorrowReadOnlyHTTPTests(unittest.TestCase):
             session.close()
 
     def test_fresh_identity_change_prevents_confirmation_get(self):
-        selected = []
-        session, account, item, calls = self.make()
-        session.client.http.close()
-
         def mutation():
             account.identity_id = "another-identity"
         session, account, item, calls = self.make(after_detail=mutation)
@@ -116,9 +112,6 @@ class BorrowReadOnlyHTTPTests(unittest.TestCase):
             session.close()
 
     def test_rebind_during_confirmation_invalidates_result(self):
-        captured = []
-        session, account, item, calls = self.make()
-        session.close()
         def hook():
             account.credential_id = "other-credential"
         session, account, item, calls = self.make(after_confirmation=hook)
