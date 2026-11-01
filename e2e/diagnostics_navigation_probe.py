@@ -2913,9 +2913,16 @@ def main() -> int:
                     for row in settings_rows(section, Adw.ActionRow)
                 )
             ),
-            "interface": lambda: any(
-                row.get_title() == "Actions expérimentales"
-                for row in settings_rows(section, Adw.ActionRow)
+            "interface": lambda: (
+                not any(
+                    row.get_title() == "Actions expérimentales"
+                    for row in settings_rows(section, Adw.ActionRow)
+                )
+                and any(
+                    getattr(button, "get_label", lambda: "")()
+                    == "Configurer la barre de titre et les actions…"
+                    for button in settings_rows(section, Gtk.Button)
+                )
             ),
             "ai": lambda: any(
                 row.get_title() == "Modèle installé sur le serveur"
@@ -2931,32 +2938,36 @@ def main() -> int:
         capture("08-settings-" + key)
         later(75, lambda: inspect_settings_section(index + 1))
 
-    # P0 #1127: a physical GTK Save click must persist a harmless setting
-    # to the E2E runner's disposable XDG_CONFIG_HOME; no provider or network.
+    # #3731 / P0 #1127: persist a harmless library setting from the actual
+    # GTK Save button. The retired experimental-actions permission has no UI.
+    # All files and provider interactions remain offline in disposable XDG.
     def begin_settings_persisted_edit():
         w = window[0]
-        w._settings_tabs.set_visible_child_name("interface")
-        later(180, change_persisted_interface_switch)
+        w._settings_tabs.set_visible_child_name("library")
+        later(180, change_persisted_library_entry)
 
-    def change_persisted_interface_switch():
+    def change_persisted_library_entry():
         w = window[0]
         section = w._settings_tabs.get_visible_child()
-        row = next((node for node in settings_rows(section, Adw.ActionRow)
-                    if node.get_title() == "Actions expérimentales"), None)
+        row = next(
+            (r for r in settings_rows(section, Adw.EntryRow)
+             if r.get_title() == "Répertoire livres audio"), None
+        )
         assert row is not None and row.get_mapped()
-        switches = settings_rows(row, Gtk.Switch)
-        assert len(switches) == 1 and switches[0].get_mapped()
-        setting = switches[0]
-        old_value = bool(core.config.get("experimental_actions", False))
-        assert setting.get_active() == old_value
-        report["settings_original_experimental_actions"] = old_value
-        report["pointer_actions"].append(device[0].click_widget(setting))
-        later(140, lambda: save_persisted_interface_change(setting, old_value))
+        original = row.get_text()
+        target = str(core.config.path.parent / "e2e-audio-directory")
+        if target == original:
+            target += "-alternative"
+        config_before = core.config.get("downloads.content_type_directories.audiobook", "") or ""
+        assert original == str(config_before)
+        row.set_text(target)
+        assert row.get_text() == target
+        later(140, lambda: save_persisted_library_change(row, target, config_before))
 
-    def save_persisted_interface_change(setting, old_value):
+    def save_persisted_library_change(setting, target, original):
         w = window[0]
-        assert setting.get_active() is (not old_value), "GTK Switch not toggled by XTEST"
-        assert bool(core.config.get("experimental_actions", False)) == old_value, (
+        assert setting.get_text() == target
+        assert (core.config.get("downloads.content_type_directories.audiobook", "") or "") == original, (
             "Unsaved GTK change leaked to live Core configuration"
         )
         viewport = w.view_stack.get_child_by_name("settings")
@@ -2966,31 +2977,35 @@ def main() -> int:
         assert len(saves) == 2, "Missing desktop/footer Save actions"
         save = next((node for node in saves
                      if node.get_mapped() and node.get_sensitive()), None)
-        assert save is not None, "Edited Interface tab cannot be saved"
+        assert save is not None, "Edited Library tab cannot be saved"
         checks_before = broker.checks
         queries_before = len(broker.event_queries)
         report["pointer_actions"].append(device[0].click_widget(save))
         deadline = monotonic() + 12
 
         def saved():
-            # Check the **durable JSON**, not merely the Gtk.Switch state.
             try:
                 on_disk = json.loads(core.config.path.read_text(encoding="utf-8"))
-                persisted = on_disk.get("experimental_actions")
-            except (OSError, ValueError):
+                persisted = (
+                    (on_disk.get("downloads") or {})
+                    .get("content_type_directories", {}).get("audiobook")
+                )
+            except (OSError, ValueError, AttributeError):
                 persisted = None
-            target = not old_value
             ui_finished = all(not node.get_sensitive() for node in saves)
-            if persisted is target and ui_finished:
-                assert core.config.get("experimental_actions") is target
+            if persisted == target and ui_finished:
+                assert core.config.get("downloads.content_type_directories.audiobook") == target
                 assert broker.checks == checks_before
                 assert len(broker.event_queries) == queries_before
+                assert "experimental_actions" not in on_disk or (
+                    type(on_disk["experimental_actions"]) is bool
+                )
                 report["checks"]["settings_real_gtk_save_persists_xdg_json"] = True
-                capture("08f-settings-saved-interface")
+                capture("08f-settings-saved-library")
                 begin_settings_reconnect_proof()
             elif monotonic() >= deadline:
                 raise AssertionError(
-                    "GTK Save did not commit an isolated Interface setting",
+                    "GTK Save did not commit an isolated Library setting",
                     persisted, target, ui_finished,
                 )
             else:

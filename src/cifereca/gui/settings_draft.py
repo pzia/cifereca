@@ -64,10 +64,6 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         raise SettingsValidationError(
             'Paramètres de répertoire ou de téléchargement invalides : recharger les paramètres.'
         )
-    if type(values.get('experimental_actions')) is not bool:
-        raise SettingsValidationError(
-            'Préférence expérimentale invalide : recharger les paramètres.'
-        )
     levels = values.get('levels')
     level_index = values.get('diagnostics_level_index')
     if (type(levels) not in (list, tuple)
@@ -398,7 +394,6 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         draft.set_provider_settings(provider_id, settings)
     draft.set('diagnostics.enabled', True)
     draft.set('diagnostics.level', values['levels'][values['diagnostics_level_index']])
-    draft.set('experimental_actions', values['experimental_actions'])
     ai_restart_required = False
     if ai_dirty:
         try:
