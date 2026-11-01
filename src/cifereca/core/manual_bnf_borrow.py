@@ -56,7 +56,7 @@ def manual_bnf_borrow(
         manager = service._plugin_manager
         plugin_id = service._provider_plugin_ids["bnf-pret"]
         plugin = manager.status(plugin_id)
-        if (plugin.state != "active"
+        if (plugin.state != "ready"
                 or plugin.descriptor.type != "provider.library"
                 or plugin.descriptor.id != plugin_id):
             return _result("blocked", "borrow_capability_unavailable")
