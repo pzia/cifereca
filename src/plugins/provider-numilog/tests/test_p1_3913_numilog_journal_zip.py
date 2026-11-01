@@ -104,14 +104,35 @@ def test_reject_extra_duplicate_or_path_member(tmp_path, extra):
         diagnose.load_journal(path)
 
 
-def test_manifest_and_readme_are_bounded_before_decompression(tmp_path, monkeypatch):
-    path = tmp_path / "oversize.zip"
+def test_manifest_and_readme_are_bounded_before_decompression(tmp_path):
+    # Exercise the *actual* v1 limits in both the shared Core reader and the
+    # standalone fallback. Patching a legacy-only constant no longer tests
+    # the active reader when cifereca.plugin_api.journal_zip is installed.
+    path = tmp_path / "oversize-manifest.zip"
+    _canonical_zip(path, changes={"padding": "x" * (70 * 1024)})
+    with pytest.raises(diagnose.JournalFormatError, match="journal_too_large"):
+        diagnose.load_journal(path)
+
+    source = tmp_path / "normal.zip"
+    _canonical_zip(source)
+    with zipfile.ZipFile(source) as archive:
+        raw = archive.read("cifereca-journal-brut.json")
+        manifest = archive.read("manifest.json")
+    readme = tmp_path / "oversize-readme.zip"
+    with zipfile.ZipFile(readme, "w") as archive:
+        archive.writestr("cifereca-journal-brut.json", raw)
+        archive.writestr("manifest.json", manifest)
+        archive.writestr("README.txt", b"X" * (17 * 1024))
+    with pytest.raises(diagnose.JournalFormatError, match="journal_too_large"):
+        diagnose.load_journal(readme)
+
+
+def test_legacy_reader_private_manifest_limit_remains_enforced(tmp_path, monkeypatch):
+    path = tmp_path / "legacy-manifest-bound.zip"
     _canonical_zip(path)
+    # A standalone Numilog diagnostic also runs when Core is unavailable;
+    # retain the original regression for that independent parser.
     monkeypatch.setattr(diagnose, "_MAX_MANIFEST_BYTES", 10)
-    # This injection tests the legacy standalone reader's private limit.
-    # The optional Core ZIP reader enforces its own independent manifest
-    # ceiling; route this test through the fallback instead of pretending
-    # a plugin-only monkeypatch alters Core's shared contract.
     monkeypatch.setattr(diagnose, "_shared_journal_reader", lambda _path: None)
     with pytest.raises(diagnose.JournalFormatError, match="journal_too_large"):
         diagnose.load_journal(path)

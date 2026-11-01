@@ -128,3 +128,14 @@ def test_unknown_archive_does_not_select_arbitrary_json(tmp_path):
         archive.writestr("sync-result.json", "{}")
     with pytest.raises(contract.JournalZipError, match="unexpected_journal_archive"):
         contract.read_raw_journal_zip(path)
+
+
+def test_excessively_nested_json_is_closed_not_traceback(tmp_path):
+    # A tiny ZIP can contain a JSON nesting bomb: the standalone command
+    # must emit a stable closed error, not an unhandled RecursionError.
+    path = tmp_path / "nested-legacy.zip"
+    nested = b"[" * 2500 + b"0" + b"]" * 2500
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("journal.json", nested)
+    with pytest.raises(contract.JournalZipError, match="unreadable_journal"):
+        contract.read_raw_journal_zip(path)
