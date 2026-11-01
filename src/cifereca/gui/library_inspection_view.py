@@ -790,6 +790,31 @@ class LocalInspectionController:
         action_scroll.set_min_content_height(40)
         action_scroll.set_visible(False)
         toolbar_view.add_bottom_bar(action_scroll)
+        # A historical missing Placement has its own Core-only review flow.
+        # Never reuse the acquisition/right attachment action or its token.
+        missing_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        missing_review = Gtk.Button(label='Prévisualiser le retrait SQL…')
+        missing_review.set_tooltip_text(
+            'Vérifier le placement obsolète, les références SQLite et le '
+            'fichier absent avant toute modification. Ne supprime aucun EPUB.'
+        )
+        missing_apply = Gtk.Button(label='Confirmer le retrait SQL…')
+        missing_apply.set_visible(False)
+        missing_apply.set_sensitive(False)
+        missing_note = Gtk.Label(label='', xalign=0)
+        missing_note.set_wrap(False)
+        missing_note.set_max_width_chars(36)
+        missing_note.set_ellipsize(Pango.EllipsizeMode.END)
+        missing_actions.append(missing_review)
+        missing_actions.append(missing_apply)
+        missing_actions.append(missing_note)
+        missing_actions_scroll = Gtk.ScrolledWindow()
+        missing_actions_scroll.set_name('reconciliation-missing-placement-actions')
+        missing_actions_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        missing_actions_scroll.set_min_content_height(40)
+        missing_actions_scroll.set_child(missing_actions)
+        missing_actions_scroll.set_visible(False)
+        toolbar_view.add_bottom_bar(missing_actions_scroll)
         # Navigation is always visible; the action row is additionally
         # present only when a right has been selected for comparison.
         toolbar_view.add_bottom_bar(footer)
@@ -816,6 +841,10 @@ class LocalInspectionController:
         selected_provider = [None]
         pair_version = [0]
         placement_committed = [False]
+        missing_case = [None]
+        missing_version = [0]
+        missing_preview_ready = [False]
+        missing_busy = [False]
         declarations = DeclarationActions(
             Gtk=Gtk, Adw=Adw, window=window, runner=self.parent.runner,
             session=session, selection=lambda: (selected_right[0], selected_file[0]),
@@ -834,6 +863,20 @@ class LocalInspectionController:
             label = _reconciliation_step_label(stage, selected_provider[0])
             guide_status.set_text(label)
             guide_status.set_tooltip_text(label)
+
+        def reset_missing():
+            # No previous preview survives a selected path, file, filter or
+            # inspection change. This does not delete any SQLite row.
+            missing_version[0] += 1
+            session.cancel_missing_repair()
+            missing_case[0] = None
+            missing_preview_ready[0] = False
+            missing_busy[0] = False
+            missing_actions_scroll.set_visible(False)
+            missing_review.set_sensitive(False)
+            missing_apply.set_visible(False)
+            missing_apply.set_sensitive(False)
+            missing_note.set_text('')
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
@@ -1483,10 +1526,20 @@ class LocalInspectionController:
         def select(_listing, row):
             if row is None or not valid():
                 return
+            reset_missing()
             case = session.detail(row._local_case_key)
             if case is not None:
                 states = ', '.join(STATES[name] for name in case.states)
                 detail.set_text(PROVIDERS[case.provider]+' · '+states+'\n\n'+case.details)
+                if 'stored_path_missing_historical' in case.states:
+                    missing_case[0] = case.key
+                    missing_actions_scroll.set_visible(True)
+                    missing_review.set_sensitive(summary.get('status') == 'complete')
+                    missing_note.set_text(
+                        'Prévisualisation uniquement · aucune écriture automatique.'
+                        if summary.get('status') == 'complete' else
+                        'Inspection incomplète : réparation indisponible.'
+                    )
                 selected_right[0] = (
                     case.key if (
                         'rights_without_verified_file' in case.states
@@ -1541,9 +1594,143 @@ class LocalInspectionController:
                     candidate_items[0] = ()
                     candidate_box.set_visible(False)
 
+        def preview_missing_retirement(*_args):
+            if (not valid() or missing_case[0] is None
+                    or missing_busy[0] or missing_preview_ready[0]):
+                return
+            chosen = missing_case[0]
+            version = missing_version[0]
+            missing_busy[0] = True
+            missing_review.set_sensitive(False)
+            missing_apply.set_visible(False)
+            missing_note.set_text('Vérification des références en cours…')
+
+            def read():
+                return session.preview_missing_retirement(chosen)
+
+            def completed(result):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != missing_case[0]):
+                    return
+                missing_busy[0] = False
+                ready = (type(result) is dict and result.get('status') == 'ready'
+                         and result.get('read_only') is True
+                         and result.get('requires_explicit_confirmation') is True)
+                missing_preview_ready[0] = ready
+                missing_apply.set_visible(ready)
+                missing_apply.set_sensitive(ready)
+                missing_review.set_sensitive(not ready)
+                missing_note.set_text(
+                    'Placement sans référence active attestée : confirmation requise.'
+                    if ready else
+                    'Retrait bloqué : références, racine ou état à vérifier.'
+                )
+
+            def failed(_error):
+                if (self.session is session and self.alive()
+                        and version == missing_version[0]):
+                    session.cancel_missing_repair()
+                    missing_busy[0] = False
+                    missing_preview_ready[0] = False
+                    missing_review.set_sensitive(True)
+                    missing_note.set_text(
+                        'Vérification indisponible · aucune écriture.'
+                    )
+
+            self.parent.runner.submit(
+                'Prévisualisation du placement obsolète', read, completed, failed,
+                priority=TaskPriority.MAINTENANCE,
+                kind='maintenance-inspection',
+            )
+
+        def confirm_missing_retirement(*_args):
+            if (not valid() or missing_busy[0] or not missing_preview_ready[0]
+                    or not missing_apply.get_visible()
+                    or missing_case[0] is None):
+                return
+            chosen = missing_case[0]
+            version = missing_version[0]
+            missing_apply.set_sensitive(False)
+            # Separate consent: preview never supplies a write permission.
+            dialog = Adw.MessageDialog.new(
+                window, 'Retirer cet emplacement SQLite ?',
+                'Le fichier est déjà absent selon l’inspection. '
+                'Le Core revérifiera la racine, les références et le chemin '
+                'sous verrou. Seule la ligne de placement obsolète sera '
+                'retirée de la base ; aucun EPUB, droit ou provenance ne '
+                'sera supprimé. Annuler ne modifie rien.',
+            )
+            dialog.add_response('cancel', 'Annuler')
+            dialog.add_response('apply', 'Retirer le placement SQL')
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+            dialog.set_response_appearance('apply', Adw.ResponseAppearance.DESTRUCTIVE)
+
+            def on_response(_dialog, response):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != missing_case[0]):
+                    session.cancel_missing_repair()
+                    return
+                if response != 'apply':
+                    session.cancel_missing_repair()
+                    missing_preview_ready[0] = False
+                    missing_apply.set_visible(False)
+                    missing_review.set_sensitive(True)
+                    missing_note.set_text('Annulé · aucune modification.')
+                    return
+                missing_busy[0] = True
+                missing_apply.set_visible(False)
+                missing_note.set_text('Confirmation reçue · contrôle sous verrou…')
+
+                def commit():
+                    return session.confirm_missing_repair(
+                        chosen, user_confirmed=True,
+                    )
+
+                def completed(outcome):
+                    if (self.session is not session or not self.alive()
+                            or version != missing_version[0]):
+                        return
+                    if (type(outcome) is dict
+                            and outcome.get('status') == 'retired'):
+                        # The old audit is obsolete after the SQLite commit.
+                        self.clear()
+                        self.start()
+                        return
+                    missing_busy[0] = False
+                    missing_preview_ready[0] = False
+                    missing_review.set_sensitive(True)
+                    missing_note.set_text(
+                        'Retrait non appliqué · relancer la prévisualisation.'
+                    )
+
+                def failed(_error):
+                    if (self.session is session and self.alive()
+                            and version == missing_version[0]):
+                        session.cancel_missing_repair()
+                        missing_busy[0] = False
+                        missing_preview_ready[0] = False
+                        missing_review.set_sensitive(True)
+                        missing_note.set_text(
+                            'Retrait indisponible · aucune suppression confirmée.'
+                        )
+
+                self.parent.runner.submit(
+                    'Retrait contrôlé du placement obsolète',
+                    commit, completed, failed,
+                    priority=TaskPriority.MAINTENANCE,
+                    kind='maintenance-inspection',
+                )
+
+            dialog.connect('response', on_response)
+            dialog.present()
+
         def render(*_args, reset=False):
             if not valid():
                 return
+            reset_missing()
             if reset: offset[0] = 0
             page = session.page(provider=list(PROVIDERS)[provider.get_selected()],
                                 state=list(STATES)[state.get_selected()], offset=offset[0],
@@ -1579,6 +1766,8 @@ class LocalInspectionController:
             offset[0] = max(0, min(offset[0]+delta, max(0, current_total[0]-1)))
             render()
 
+        missing_review.connect('clicked', preview_missing_retirement)
+        missing_apply.connect('clicked', confirm_missing_retirement)
         listing.connect('row-selected', select)
         candidate_prev.connect('clicked', lambda *_: move_candidate(-1))
         candidate_next.connect('clicked', lambda *_: move_candidate(1))
