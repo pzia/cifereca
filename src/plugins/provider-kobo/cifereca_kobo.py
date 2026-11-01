@@ -1620,6 +1620,11 @@ class KoboSession(ProviderSession):
 
     def diagnostic_state(self) -> dict[str, Any]:
         data = super().diagnostic_state()
+
+        def safe_manifest_count(name: str) -> int:
+            value = getattr(self.client, name, 0)
+            return value if type(value) is int and 0 <= value <= 1_000_000 else 0
+
         data.update({
             # Do not leak URL userinfo, private host/path or a signed query
             # through public diagnostics or support exports.
@@ -1641,6 +1646,18 @@ class KoboSession(ProviderSession):
                 "truncated": self.backup_manifest_policy["truncated"],
                 "manifest_authoritative": self.backup_manifest_policy["manifest_authoritative"],
                 "acquisition_authorized": False,
+            },
+            # Bounded diagnostics; no credential, URL, request parameters,
+            # cursors or server cache claims. Counts are best-effort since
+            # concurrent consumers can share one session.
+            "manifest_request_stats": {
+                "scans_started": safe_manifest_count("manifest_scans_started"),
+                "scans_paginated": safe_manifest_count("manifest_scans_paginated"),
+                "http_get_attempts": safe_manifest_count("manifest_http_get_attempts"),
+                "last_scan_page_attempts": safe_manifest_count("last_manifest_page_attempts"),
+                "last_scan_pagination_complete": (
+                    getattr(self.client, "last_manifest_pagination_complete", False) is True
+                ),
             },
             "catalog_search_rejections": _public_kobo_rejections(
                 getattr(self.catalog, "last_search_rejections", ())
