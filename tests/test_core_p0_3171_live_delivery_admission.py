@@ -18,9 +18,11 @@ def test_opted_in_candidate_receives_live_core_source_admission(source):
     enabled = change(source, True)
     original = service.session.downloadable_selected_delivery_candidate
     admission_results = []
+    retained = []
 
     def guarded(account, *, admission_current, **kwargs):
         assert callable(admission_current)
+        retained.append(admission_current)
         # This is a Core-owned, non-serializable callback, not a plugin grant.
         admission_results.extend([admission_current(), admission_current()])
         return original(account, **kwargs)
@@ -29,6 +31,7 @@ def test_opted_in_candidate_receives_live_core_source_admission(source):
     result = synchronize_account_source(service, service.account)
     assert result["canonical_execution"]["downloaded"] == 1
     assert admission_results == [True, True]
+    assert retained and retained[0]() is False  # no GET after completion
     assert calls == ["offer", "delivery"]
     assert len(db.placements()) == 1
     assert change(source, False, enabled["revision"])["enabled"] is False
@@ -66,15 +69,18 @@ def test_consent_revoked_inside_candidate_stream_never_publishes(source, reenabl
 def test_guarded_candidate_failure_has_no_fallback_to_v2(source):
     service, db, root, calls, broker = source
     change(source, True)
+    retained = []
 
     def guarded(_account, *, admission_current, **_kwargs):
         assert admission_current()
+        retained.append(admission_current)
         raise ValueError("synthetic_guarded_transport_failure")
 
     service.session.downloadable_selected_delivery_candidate_guarded = guarded
     result = synchronize_account_source(service, service.account)
     assert result["canonical_execution"]["downloaded"] == 0
     assert calls == ["offer"]
+    assert retained and retained[0]() is False  # no GET after failure
     assert db.placements() == []
     assert list((root / "A" / ".canonical-delivery").glob("run-*")) == []
 
