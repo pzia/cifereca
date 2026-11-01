@@ -896,7 +896,7 @@ class BnfProviderSession(ProviderSession):
             docbase='BNF_PRET', medium='digital', title=record.title,
             author=', '.join(record.authors) or None, type='Livre numérique',
             format=None, publisher=record.publisher, published_at=None,
-            description=record.description, thumbnail_url=None,
+            description=record.description, thumbnail_url=record.thumbnail_url,
             friendly_url=resource_url(record.resource_id), scenario='BNF_PRET',
             source_provider=self.provider_id, source_credential=self.credential_id,
             content_type='ebook', owned=None, downloadable=False,
@@ -922,7 +922,7 @@ class BnfProviderSession(ProviderSession):
             return ItemDetail(
                 record_id=record.resource_id, docbase='BNF_PRET', title=record.title,
                 author=', '.join(record.authors) or None, type='Livre numérique',
-                year=None, thumbnail_url=None, availability_status=record.availability,
+                year=None, thumbnail_url=record.thumbnail_url, availability_status=record.availability,
                 availability_label=('Indisponibilité affichée par le portail' if unavailable
                                     else 'Disponibilité non vérifiée'), holdings=[],
                 source_provider=self.provider_id, source_credential=self.credential_id,
