@@ -112,6 +112,15 @@ def test_no_attestation_from_tampered_or_cross_identity_file(rig, kind):
     assert store.placement_get(placement)["state"] == "missing"
 
 
+def test_dot_dot_alias_into_another_profile_is_rejected(rig):
+    store, root, old, new, placement, artifact, other, data = rig
+    foreign = other / "same.epub"
+    foreign.write_bytes(data)
+    disguised = root / "alice" / ".." / "bob" / "kobo" / "same.epub"
+    assert preview(rig, target=disguised)["reason"] == "invalid_scope"
+    assert store.placement_get(placement)["state"] == "missing"
+
+
 def test_target_placement_collision_blocks_even_same_sha(rig):
     store, root, old, new, placement, artifact, other, data = rig
     store.placement_put({
