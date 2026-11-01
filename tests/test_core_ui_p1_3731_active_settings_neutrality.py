@@ -16,6 +16,8 @@ def test_live_settings_bindings_contain_no_kobo_compatibility_imports_or_fields(
         assert "kobo_settings" not in source
         assert "refresh_kobo_backup_status" not in source
         assert "kobo_backup_action_state" not in source
+        assert "sync_settings.run_backup_now" not in source
+        assert "sync_settings.backup_status" not in source
         for entry in ast.walk(module):
             if isinstance(entry, ast.ImportFrom):
                 assert not (entry.module or "").startswith("settings_legacy_kobo")
