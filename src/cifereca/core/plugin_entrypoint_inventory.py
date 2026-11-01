@@ -109,7 +109,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         result = {"status": "unavailable", "entries": [],
                   "unclassified": [], "removed": []}
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    else:
+        print(
+            f"plugin_entrypoints_{result['status']} "
+            f"count={len(result['entries'])} "
+            f"unclassified={len(result['unclassified'])} "
+            f"removed={len(result['removed'])}"
+        )
     return 0 if result["status"] == "complete" else 2
 
 
