@@ -61,6 +61,22 @@ def _safe_kobo_sync_receipt(summary: dict[str, Any]) -> dict[str, Any]:
     return {"redacted": True, **_safe_kobo_backup_diagnostic_detail(summary)}
 
 
+def _export_parent_is_safe(destination: Path) -> bool:
+    """Check known output-path blockers before Core or provider I/O.
+
+    This is only an early usability/safety preflight; the atomic writers
+    independently enforce O_EXCL, mode 0600 and symlink protections again
+    at publication time to handle filesystem races.
+    """
+    try:
+        target = Path(os.path.abspath(destination.expanduser()))
+        return target.parent.is_dir() and not any(
+            component.is_symlink() for component in (target, *target.parents)
+        )
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="CLI auxiliaire multi-provider cifereca")
     p.add_argument("--version", action="version", version=f"cifereca {__version__}")
@@ -341,6 +357,9 @@ def main(argv: list[str] | None = None) -> int:
         if a.output is not None and os.path.lexists(a.output):
             print(json.dumps({"status": "failed", "code": "audit_destination_exists"}))
             return 2
+        if a.output is not None and not _export_parent_is_safe(a.output):
+            print(json.dumps({"status": "failed", "code": "audit_destination_unavailable"}))
+            return 2
 
     if a.cmd == "sync" and a.sync_cmd == "run":
         from .core.sync_cli_contract import SyncSelectionError
@@ -370,6 +389,10 @@ def main(argv: list[str] | None = None) -> int:
             # Refuse before any remote provider connection or acquisition.
             # Core export also checks O_EXCL against symlink/concurrent races.
             preflight_code = "trace_export_destination_exists"
+        elif a.report is not None and not _export_parent_is_safe(a.report):
+            preflight_code = "report_destination_unavailable"
+        elif a.trace_export is not None and not _export_parent_is_safe(a.trace_export):
+            preflight_code = "trace_export_destination_unavailable"
         if preflight_code is not None:
             print(json.dumps({"status": "failed", "code": preflight_code},
                              ensure_ascii=False))
