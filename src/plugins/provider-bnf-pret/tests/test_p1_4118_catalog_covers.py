@@ -133,6 +133,8 @@ class CatalogCoversTests(unittest.TestCase):
                 if url == ORIGIN + "/resources/book-a":
                     return url, detail(CDN)
                 raise AssertionError("Unexpected network request")
+            def clear(self):
+                pass
             def close(self):
                 pass
         session = BnfProviderSession(
