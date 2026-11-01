@@ -86,7 +86,7 @@ def test_unverified_mode_never_hashes_or_claims_recoverable_file(rig, monkeypatc
 
 @pytest.mark.parametrize("fault", [
     "deleted", "symlink", "invalid_source", "wrong_sha", "outside_root",
-    "reused_offer", "duplicate_json_key",
+    "reused_offer", "duplicate_json_key", "fake_receipt",
 ])
 def test_untrusted_receipts_or_bytes_never_become_verified_core_staging(
     rig, monkeypatch, fault,
@@ -116,6 +116,8 @@ def test_untrusted_receipts_or_bytes_never_become_verified_core_staging(
                     payload["sha256"] = "f" * 64
                 elif fault == "outside_root":
                     payload["path"] = str(root.parent / "foreign.pdf")
+                elif fault == "fake_receipt":
+                    payload["receipt"] = "core-delivery:not-a-verified-witness"
                 else:
                     payload["offer_id"] = "unrelated-offer"
                 updated = json.dumps(payload)

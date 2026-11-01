@@ -101,7 +101,9 @@ def core_staging_receipt_observations(
                 or any(ch not in "0123456789abcdef" for ch in details["sha256"])
                 or type(details["receipt"]) is not str
                 or not details["receipt"].startswith("core-delivery:")
-                or len(details["receipt"]) > 1024
+                or len(details["receipt"]) != len("core-delivery:") + 64
+                or any(ch not in "0123456789abcdef"
+                       for ch in details["receipt"][len("core-delivery:"):])
                 or type(details["adept_receipt"]) is not str
                 or len(details["adept_receipt"]) > 1024
                 or any(ch in v for v in (
@@ -120,8 +122,9 @@ def core_staging_receipt_observations(
         except (TypeError, ValueError, IndexError, KeyError, RecursionError):
             continue
 
-        # A published OriginLink means the receipt status might be stale,
-        # but no final Placement is inferred without a separate FS check.
+        # A published OriginLink for this exact source+artifact, even with
+        # another completed receipt, makes an "unpublished" label unsafe.
+        # No final Placement is inferred without a separate FS check.
         source_id = _stable(
             "source", *details["source"],
         )
@@ -130,12 +133,12 @@ def core_staging_receipt_observations(
             "ON o.source_reference_id=s.source_reference_id "
             "WHERE o.origin_kind='provider' AND o.identity_id=? "
             "AND o.artifact_id=? AND o.source_reference_id=? "
-            "AND o.evidence_ref=? AND s.identity_id=? "
+            "AND s.identity_id=? "
             "AND s.provider_id=? AND s.credential_id=? AND s.account_id=? "
             "AND s.branch_id=? AND s.edition_id=? "
             "AND s.right_id=? AND s.reference_kind=? LIMIT 1",
             (coords[0], "sha256:" + details["sha256"], source_id,
-             details["receipt"], *details["source"]),
+             *details["source"]),
         ).fetchone()
         entry["staging_state"] = "core_staged_unverified"
         if not verify_files:
