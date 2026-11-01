@@ -435,7 +435,13 @@ def main(argv: list[str] | None = None) -> int:
     """
     import argparse
 
-    parser = argparse.ArgumentParser(
+    class _ClosedArgumentParser(argparse.ArgumentParser):
+        def error(self, message: str) -> None:
+            # argparse otherwise echoes unknown raw arguments/paths to stderr.
+            # This tool must keep even *malformed* invocations confidential.
+            self.exit(2, "capture_validator_invalid_arguments\\n".replace("\\n", "\n"))
+
+    parser = _ClosedArgumentParser(
         description="Contrôle hors réseau d'un ZIP privé de session --capture."
     )
     parser.add_argument("--validate", required=True, type=Path, metavar="ZIP")
