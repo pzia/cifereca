@@ -1967,7 +1967,8 @@ class LibraryService:
         """
         # #4048: a direct legacy DRM request must not bypass the Core facade
         # or invoke an ADEPT return, even if an older runtime advertises it.
-        if getattr(request, "operation", None) == "return":
+        operation = getattr(request, "operation", None)
+        if type(operation) is str and operation.casefold() == "return":
             raise AttentionRequired(
                 "Restitution volontaire retirée de Cifereca.",
                 code="loan_return_removed",
