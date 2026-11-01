@@ -133,7 +133,6 @@ _PROVIDER_FLAGS = (
     ("personal_inventory.list", ("personal_library",)),
     ("loan.inventory", ("loans",)),
     ("loan.borrow", ("borrow",)),
-    ("loan.return", ("return_loan",)),
     ("loan.renew", ("renew_loan",)),
     ("acquisition.download", ("digital_download", "direct_download")),
     ("artifact.backup", ("backup",)),
