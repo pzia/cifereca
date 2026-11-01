@@ -1,7 +1,7 @@
 """P0 #2055: one synthetic BnF activation POST, never a live loan or ADEPT.
 
-The transport is NOT wired to ProviderSession.borrow or declared in the BnF
-manifest. Every test uses httpx.MockTransport; no remote request is possible.
+The transport is reachable ONLY from the Core-confirmed manual adapter;
+legacy ProviderSession.borrow remains guarded. All I/O uses MockTransport.
 """
 from pathlib import Path
 import sys
@@ -166,13 +166,13 @@ class BorrowPostOnceTests(unittest.TestCase):
             finally:
                 client.close()
 
-    def test_public_bnf_provider_still_does_not_advertise_borrow(self):
+    def test_public_bnf_provider_advertises_manual_only_borrow(self):
         from cifereca_bnf_pret import PLUGIN
         import json
-        self.assertFalse(PLUGIN.descriptor.capabilities.borrow)
+        self.assertTrue(PLUGIN.descriptor.capabilities.borrow)
         manifest = json.loads((ROOT / "cifereca-plugin.json").read_text())
         capabilities = manifest["plugins"][0]["capabilities"]
-        self.assertNotIn("acquisition.borrow", capabilities)
+        self.assertIn("acquisition.borrow", capabilities)
 
 
 if __name__ == "__main__":
