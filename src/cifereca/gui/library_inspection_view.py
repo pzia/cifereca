@@ -68,6 +68,39 @@ _INSPECTION_PHASES = frozenset({
 })
 
 
+def _missing_placement_retirement_message(result: object) -> str:
+    """Bounded public wording only; counts never authorize SQL deletion.
+
+    In particular, (0,0) does not prove that an operational checkpoint or
+    declaration is absent. Never interpolate raw paths, provider data or
+    exception/reason strings supplied by a plugin.
+    """
+    generic = 'Retrait bloqué : références, racine ou état à vérifier.'
+    if type(result) is not dict:
+        return generic
+    if result.get('status') == 'ready':
+        return 'Placement sans référence active attestée : confirmation requise.'
+    if (result.get('status') != 'blocked'
+            or result.get('reason') != 'dependent_references'):
+        return generic
+    catalogue = result.get('catalogue_rows')
+    backup = result.get('backup_rows')
+    if (type(catalogue) is not int or not 0 <= catalogue <= 128
+            or type(backup) is not int or not 0 <= backup <= 128):
+        return 'Retrait bloqué : références non classifiables à examiner.'
+    if catalogue == backup == 0:
+        return (
+            'Retrait bloqué : référence opérationnelle ou historique '
+            '(checkpoint, déclaration, reçu, métadonnée). '
+            'Aucune notice liée ou sauvegarde directe détectée.'
+        )
+    return (
+        f'Retrait bloqué : {catalogue} notice(s) liée(s), '
+        f'{backup} sauvegarde(s) directe(s). '
+        'D’autres références peuvent exister. Aucune suppression.'
+    )
+
+
 def _toggle_inspection_maximize(window) -> None:
     """Only GTK window state changes, never a new read or a private export."""
     if window.is_maximized():
@@ -948,6 +981,7 @@ class LocalInspectionController:
             missing_apply.set_visible(False)
             missing_apply.set_sensitive(False)
             missing_note.set_text('')
+            missing_note.set_tooltip_text(None)
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
@@ -1936,11 +1970,9 @@ class LocalInspectionController:
                 missing_apply.set_visible(ready)
                 missing_apply.set_sensitive(ready)
                 missing_review.set_sensitive(not ready)
-                missing_note.set_text(
-                    'Placement sans référence active attestée : confirmation requise.'
-                    if ready else
-                    'Retrait bloqué : références, racine ou état à vérifier.'
-                )
+                diagnostic = _missing_placement_retirement_message(result)
+                missing_note.set_text(diagnostic)
+                missing_note.set_tooltip_text(diagnostic)
 
             def failed(_error):
                 if (self.session is session and self.alive()
