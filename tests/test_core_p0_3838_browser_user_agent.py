@@ -2,6 +2,7 @@
 import asyncio
 
 import httpx
+import pytest
 
 from cifereca.http_trace import (
     BROWSER_USER_AGENT, HTTPX_TRANSPORT, TraceHTTPClient, TraceAsyncHTTPClient,
@@ -105,3 +106,39 @@ def test_direct_wrappers_and_async_service_inherit_core_default():
         ) as client:
             assert client.headers["User-Agent"] == BROWSER_USER_AGENT
     asyncio.run(direct())
+
+
+@pytest.mark.parametrize("value", [
+    {"User-Agent": ""},
+    {"user-agent": "    "},
+    httpx.Headers([("User-Agent", "Mozilla/5.0"), ("user-agent", "legacy/1")]),
+])
+def test_empty_or_duplicate_explicit_user_agent_is_not_a_valid_protocol_exception(value):
+    with pytest.raises(ValueError, match="invalid explicit User-Agent"):
+        HTTPX_TRANSPORT.client(
+            producer="core.browser.test", headers=value,
+            transport=httpx.MockTransport(lambda _: pytest.fail("unexpected network")),
+        )
+    # Caller-owned Headers or dictionaries must never be modified.
+    if isinstance(value, dict):
+        assert "User-Agent" in value or "user-agent" in value
+
+
+def test_nonempty_protocol_exception_remains_supported_with_redirects():
+    seen = []
+    def respond(request):
+        seen.append(request)
+        if request.url.host == "first.example.test":
+            return httpx.Response(302, headers={"location": "https://second.example.test/"})
+        return httpx.Response(200)
+    with HTTPX_TRANSPORT.client(
+        producer="provider.protocol-exception",
+        headers={"User-Agent": "provider-required/2"},
+        follow_redirects=True, trust_env=False,
+        transport=httpx.MockTransport(respond),
+    ) as client:
+        client.get("https://first.example.test/")
+    assert len(seen) == 2
+    assert [request.headers["User-Agent"] for request in seen] == [
+        "provider-required/2", "provider-required/2",
+    ]
