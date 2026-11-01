@@ -125,13 +125,17 @@ def complete_selected_delivery(
         except (AttributeError, TypeError, KeyError, ValueError):
             return False
 
+    # Fail closed if a plugin retains this closure after completion/exception.
+    admission_live = [True]
+
     def admission_current() -> bool:
         """Non-serializable Core permission, never created by a plugin.
 
         A source ON from a later OFF→ON revision cannot revive this closure;
         the caller's generation- and scope-pinned consent reader decides.
         """
-        if not callable(consent_still_current):
+        if (not admission_live[0] or shared_lock._handle is None
+                or not callable(consent_still_current)):
             return False
         try:
             return bound() and consent_still_current() is True
@@ -293,6 +297,10 @@ def complete_selected_delivery(
         except (OSError, ValueError):
             pass
         raise
+    finally:
+        # The callback must not authorize a future GET outside this one
+        # attempted selected delivery, even if source ON/epochs are unchanged.
+        admission_live[0] = False
 
 
 __all__ = ["complete_selected_delivery"]
