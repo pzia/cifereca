@@ -73,6 +73,36 @@ contrôle de credential, l'epoch et les gardes après GET restent inchangés.
 La façade legacy sans broker reste en lecture positive seule, sans preuve
 négative. Les tests sont synthétiques, sans compte BnF réel.
 
+## Éligibilité BnF — preuve partielle uniquement (#2055, 0.3.19)
+
+Le fournisseur propose désormais la méthode interne de qualification
+`borrower_eligibility_for(item, account)`, **sans nouvelle capability**.
+Elle réalise deux lectures GET bornées uniquement sur la session connectée
+et le compte exact : inventaire actif puis fiche de l'édition sélectionnée.
+Un prêt déjà positif interdit de répéter une demande ; un changement de
+compte, de notice, de session, d'epoch ou de binding Core invalide la lecture.
+Elle retourne une `BorrowerOperationEvidence` correctement scoppée, mais
+**jamais éligible** : l'état de souscription, le quota individuel et la
+permission explicite restent `unknown`, car le DOM qualifié ne prouve
+aucun de ces droits. Un marqueur textuel `.lb_unavailable` dans la fiche
+exacte peut seulement établir `item_offer=unavailable` ; son absence
+reste `unknown`, pas `available`.
+
+La méthode ne lit pas le CSRF, ne suit pas la confirmation et ne fait
+aucun POST, téléchargement ACSM, ADEPT ni publication de droit. L'absence
+sur une page partielle ne constitue pas un quota disponible. Les tests HTTPX
+`MockTransport` incluent l'action tentante `.button-borrow`, le refus
+d'un prêt actif, le changement de profil/notice et l'offre indisponible.
+
+**P0 bloqué explicitement** : pour activer `acquisition.borrow`, il reste
+à qualifier avec un compte réel consentant trois sources autorisées de
+preuves positives (abonnement Pass actif, quota disponible, permission
+d'emprunt pour cette édition), ainsi que le signal positif d'offre de
+l'édition. Les sélecteurs encore inconnus ne sont pas simulés comme vrais.
+Ni UI BnF active ni prêt réel : l'interface #4052 conserve son bouton masqué.
+La lecture source est volontairement une préparation et ne transforme pas
+une capacité de recherche en droit de prêt.
+
 ## Parcours BnF explicite non publié (#2055, 0.3.18)
 
 L'adaptateur dormant `BnfProviderSession.borrow_explicit_with_claim`
