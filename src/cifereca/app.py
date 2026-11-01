@@ -26,22 +26,24 @@ Puis relancez :
     return 3
 
 
-def main() -> int:
-    if "--version" in sys.argv[1:]:
+def _run_application(*, capture_mode: bool = False) -> int:
+    if "--version" in sys.argv[1:]: 
         print(f"cifereca {__version__}")
         return 0
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(
-            "Usage: cifereca [--trace] [--no-plugins] [--force-plugin ID]\n"
+            "Usage: cifereca [--trace] [--capture [--capture-dir DIR]] [--no-plugins] [--force-plugin ID]\n"
             "       cifereca [--help | --version]\n\n"
             "  --trace         Activer le niveau Trace dans le Core et l'interface\n"
             "  --debug         Alias de --trace (compatibilité)\n"
             "  --verbose       Alias de --trace (compatibilité)\n"
+            "  --capture       Journal et HTTP/HTML de cette session (ZIP privé)\n"
+            "  --capture-dir   Dossier du ZIP (défaut : Téléchargements XDG)\n"
             "  --no-plugins    Désactiver les plugins au lancement\n"
             "  --force-plugin  Activer le plugin indiqué (répétable)"
         )
         return 0
-    verbose = any(arg in {"--trace", "--verbose", "--debug"} for arg in sys.argv[1:])
+    verbose = capture_mode or any(arg in {"--trace", "--verbose", "--debug"} for arg in sys.argv[1:])
     no_plugins = "--no-plugins" in sys.argv[1:]
     force_plugins: list[str] = []
     cleaned = [sys.argv[0]]
