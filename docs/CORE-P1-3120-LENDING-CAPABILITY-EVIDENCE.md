@@ -27,7 +27,7 @@ aucun accès fournisseur et ne consomme aucune tâche.
 | `loan.borrow` | `acquisition.borrow` | `borrow` | `borrow` |
 | `loan.download_token` | `acquisition.download` | `digital_download` | `download_digital` |
 | `loan.renew` | `lending.renew` (future, non publiée) | `renew_loan` | `renew` |
-| `loan.return` | `lending.return` (future, non publiée) | `return_loan` | `return_digital` |
+
 
 **Paris** : lecture/emprunt/téléchargement déclarés v1 ; retour et
 renouvellement historiques disponibles dans le code, mais les capacités
@@ -79,3 +79,9 @@ interne non publiable. Les fixtures détectent les contradictions sans
 construire de client HTTP. L'intégration éventuelle de ce validateur au
 packaging/runtime doit être traitée séparément et ne peut transformer
 automatiquement un avertissement de contrat legacy en échec d'installation.
+
+> **Mise à jour #4048 / #4073 (01/11/2026)** : `loan.return` est désormais
+> une opération **retirée**, absente du validateur et de la matrice publics.
+> Le bit legacy `return_loan` ne confère aucun droit d'action ; son retrait
+> technique des exécutants historiques suit #4059 (non livré). La lecture
+> des prêts restitués ou expirés reste autorisée.
