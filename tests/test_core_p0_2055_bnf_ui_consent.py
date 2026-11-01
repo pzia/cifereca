@@ -116,6 +116,7 @@ def test_future_positive_bnf_requires_dialog_confirm_one_time_only(tmp_path):
         outcome = window.runner.complete_one()
         assert outcome["status"] == "confirmed"
         assert session.dispatches == [("book-1", "reader")]
+        assert service.can_borrow_bnf(item) is False  # checkpoint consumed
         assert results == ["Prêt BnF actif vérifié dans Mes emprunts"]
         assert refreshes == [True]
         assert errors == []
