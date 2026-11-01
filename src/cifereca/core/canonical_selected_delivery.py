@@ -139,8 +139,10 @@ def complete_selected_delivery(
             return False
 
     def current() -> bool:
-        return (admission_current() if consent_still_current is not None
-                else bound())
+        # Legacy candidate adapters keep the existing Core executor's
+        # post-delivery consent verdict (blocked, not transport failed).
+        # Guarded adapters enforce the revocation immediately in the bridge.
+        return admission_current() if guarded else bound()
 
     if not current():
         raise ValueError("canonical_delivery_source_rebound")
