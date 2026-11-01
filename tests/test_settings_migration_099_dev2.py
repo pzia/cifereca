@@ -123,3 +123,20 @@ class SaveSettings(unittest.TestCase):
         self.runner.submit.assert_not_called()
         self.assertEqual(self.config.data,before)
         self.window.show_error.assert_called_once()
+
+    def test_legacy_experimental_flag_is_preserved_but_not_rewritten_by_ui(self):
+        """#3731: unrelated Settings save never enables or resets a retired bit."""
+        for stored in (True, False):
+            self.config.set('experimental_actions', stored)
+            # An obsolete UI widget must no longer be consulted at commit.
+            self.ns['exp_switch'].get_active = Mock(
+                side_effect=AssertionError('retired experimental switch consulted')
+            )
+            self.assertTrue(self.ns['save_settings']())
+            self.runner.submit.call_args.args[1]()
+            saved = self.service.save_configuration.call_args.args[0]
+            self.assertEqual(saved['experimental_actions'], stored)
+
+    def test_new_installation_has_no_experimental_permission_default(self):
+        from cifereca.config_defaults import DEFAULT_CONFIG
+        self.assertNotIn('experimental_actions', DEFAULT_CONFIG)
