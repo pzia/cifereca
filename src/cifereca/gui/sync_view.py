@@ -611,7 +611,15 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
-        sync_label = "Partielle" + (f" · {last_attempt}" if last_attempt else "")
+        # A Core-attested incomplete notices/rights inventory with a positive
+        # independent local phase is information, not an actionable failure.
+        # Keep the provenance in the detail; do not imply file publication.
+        prefix = (
+            "Couverture partielle (information)"
+            if alert is not None and alert[0] == "info"
+            else "Partielle"
+        )
+        sync_label = prefix + (f" · {last_attempt}" if last_attempt else "")
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
