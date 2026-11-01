@@ -76,9 +76,21 @@ acceptance or validated real Numilog EPUB delivery.
    must never invalidate completed acquisition or trigger another GET.
 
 Same SHA in another profile cannot authorize reusing another profile's
-path/placement. Partial inventories never generate negative reconciliation.
-A verified file's physical integrity, not a historical receipt or
-`backup_items`, is the authority for reuse.
+path/placement. A verified file's physical integrity, not a historical receipt
+or `backup_items`, is the authority for reuse.
+
+**Distinction normative #3171 (01/11/2026) :** le statut de ce snapshot de
+**ressources téléchargeables** ne constitue jamais, à lui seul, une preuve
+négative sur des achats ou des prêts. Pour les **prêts**, seule la lecture
+courante des prêts actifs du compte/branche exact, correctement terminée
+(et paginée si nécessaire), permet de marquer un prêt ancien absent comme
+**terminé** ; une lecture échouée, partielle ou non exécutée ne le permet pas.
+Cette transition préserve fichier, Artifact, Placement, OriginLink fournisseur,
+SourceReference et preuves ADEPT. Pour les **achats**, une absence distante ne
+révoque rien : la concordance du catalogue personnel est complète lorsque les
+références des copies locales attestées L sont toutes dans l'inventaire courant
+R du même compte (**L ⊆ R**), sans confondre couverture, résultat de Sync et
+publication physique. Voir [ARCHITECTURE.md](ARCHITECTURE.md#11-sémantique-dabsence-et-de-couverture--arbitrage-du-01112026).
 
 ## CI
 
