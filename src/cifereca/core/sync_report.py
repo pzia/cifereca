@@ -159,6 +159,12 @@ def _summary_audit(phase: str, audit: object) -> list[str]:
     """Describe exact-source snapshots; never attribute their deltas to a run."""
     if type(audit) is not dict or audit.get("status") == "unavailable":
         return [f"audit_{phase}: unavailable"]
+    has_evidence = type(audit.get("resource_evidence")) is dict or any(
+        _safe_summary_count(audit.get(field)) is not None
+        for field in _SUMMARY_SNAPSHOT_COUNTS
+    ) or type(audit.get("rights_by_kind")) is dict
+    if not has_evidence:
+        return [f"audit_{phase}: unavailable"]
     lines = [f"audit_{phase}: available"]
     for field in _SUMMARY_SNAPSHOT_COUNTS:
         value = _safe_summary_count(audit.get(field))
@@ -269,7 +275,10 @@ def write_sync_report(
         "status": safe_result["status"],
         "exit_code": exit_code,
         "evidence_coverage": (
-            "canonical_sqlite_graph_with_bounded_sha256"
+            "local_audit_unavailable"
+            if before.get("status") == "unavailable"
+            or after.get("status") == "unavailable"
+            else "canonical_sqlite_graph_with_bounded_sha256"
             if before.get("physical_verification") == "bounded_sha256_checked"
             and after.get("physical_verification") == "bounded_sha256_checked"
             else "canonical_sqlite_graph_without_filesystem"
