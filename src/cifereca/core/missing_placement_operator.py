@@ -19,6 +19,9 @@ from .missing_placement_relocation_transaction import relocate_missing_placement
 from .missing_placement_retirement import (
     prepare_missing_placement_retirement, retire_missing_placement,
 )
+from .missing_placement_catalogue_detachment import (
+    prepare_missing_catalogue_detachment, retire_missing_linked_catalogue,
+)
 
 
 def _public(result: object, *, preview: bool) -> dict[str, object]:
@@ -141,6 +144,42 @@ class MissingPlacementOperatorSession:
                 return _public({"status": "blocked", "reason": "scope_changed"}, preview=True)
         return _public(result, preview=True)
 
+    def preview_linked_catalogue_retirement(
+        self, *, placement_id: str,
+    ) -> dict[str, object]:
+        """Review only a source-compatible, directly linked local projection.
+
+        Never interpret a generic dependent_references count as authority.
+        Only the specialized strict Core preparer may produce this plan.
+        """
+        self.cancel()
+        if not self._inspection_complete:
+            return _public(
+                {"status": "blocked", "reason": "incomplete_inspection"},
+                preview=True,
+            )
+        root = self._root()
+        if root is None:
+            return _public(
+                {"status": "blocked", "reason": "scope_changed"}, preview=True,
+            )
+        result = prepare_missing_catalogue_detachment(
+            self._service.storage, placement_id=placement_id,
+            identity_id=self._identity_id, library_root=root,
+        )
+        token = result.get("plan_token")
+        if (result.get("status") == "review_required"
+                and type(token) is str and len(token) == 64
+                and self._root() == root):
+            self._pending = ("linked_retire", placement_id, None, root, token)
+        else:
+            self.cancel()
+            if result.get("status") == "review_required":
+                return _public(
+                    {"status": "blocked", "reason": "scope_changed"}, preview=True,
+                )
+        return _public(result, preview=True)
+
     def preview_relocation(self, *, placement_id: str,
                            candidate_path: Path) -> dict[str, object]:
         self.cancel()
@@ -185,6 +224,12 @@ class MissingPlacementOperatorSession:
                         self._service.storage, placement_id=placement_id,
                         identity_id=self._identity_id, library_root=root,
                         plan_token=token, confirmed=True,
+                    )
+                elif operation == "linked_retire":
+                    result = retire_missing_linked_catalogue(
+                        self._service.storage, placement_id=placement_id,
+                        identity_id=self._identity_id, library_root=root,
+                        plan_token=token, confirmed=True, shared_lock=locked,
                     )
                 elif operation == "relocate" and candidate is not None:
                     result = relocate_missing_placement(
