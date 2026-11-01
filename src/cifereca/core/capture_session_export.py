@@ -82,7 +82,11 @@ def _decode_html_body(data: bytes, response: object, representation: object) -> 
             try:
                 decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
                 data = decoder.decompress(data, _MAX_HTML_BYTES + 1)
-                if not decoder.eof or decoder.unconsumed_tail:
+                if not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+                    # A gzip/deflate stream may be followed by unprocessed
+                    # bytes or another compressed member. Never label the
+                    # first member as a complete HTML projection while
+                    # silently dropping the rest of the HTTP response.
                     return None
             except zlib.error:
                 return None
@@ -90,7 +94,11 @@ def _decode_html_body(data: bytes, response: object, representation: object) -> 
             try:
                 decoder = zlib.decompressobj()
                 data = decoder.decompress(data, _MAX_HTML_BYTES + 1)
-                if not decoder.eof or decoder.unconsumed_tail:
+                if not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+                    # A gzip/deflate stream may be followed by unprocessed
+                    # bytes or another compressed member. Never label the
+                    # first member as a complete HTML projection while
+                    # silently dropping the rest of the HTTP response.
                     return None
             except zlib.error:
                 return None
