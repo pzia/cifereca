@@ -14,9 +14,11 @@ import sqlite3
 from typing import Literal
 
 from .canonical_post_placement import verified_post_placement_duplicates
+from .duplicate_maintenance_guard import _mentions_exact_path
 
 _MAX_ORIGINS = 256
 _MAX_SCOPES = 64
+_MAX_LEDGER_ROWS = 100_000
 
 
 # An operational checkpoint is stronger than a shared Artifact SHA: it
@@ -41,7 +43,25 @@ def _completed_path_receipt_evidence(
     ).fetchall()
     if len(records) > 1000:
         raise ValueError("legacy_receipt_budget")
+    # The account binding is current only if the exact credential and
+    # borrower still belong to this profile. The historic receipt by itself
+    # cannot rebind a source to a different profile.
+    connection = db.execute(
+        "SELECT identity_id,enabled FROM provider_connections "
+        "WHERE provider_id=? AND credential_id=?",
+        (provider, credential),
+    ).fetchone()
+    accounts = db.execute(
+        "SELECT account_id FROM provider_accounts WHERE identity_id=? "
+        "AND provider_id=? AND credential_id=?",
+        (identity, provider, credential),
+    ).fetchall()
+    if (connection != (identity, 1)
+            or sum(item[0] == account for item in accounts) != 1):
+        raise ValueError("legacy_receipt_account_rebound")
+
     found = 0
+    exact_operation_id = None
     for (operation_id, p, cred, acct, item, owner, status,
          stored_artifact, raw) in records:
         if type(raw) is not str or len(raw) > 65536:
@@ -102,16 +122,48 @@ def _completed_path_receipt_evidence(
             "AND o.artifact_id=? AND o.source_reference_id=? "
             "AND o.evidence_ref=? AND s.identity_id=? AND s.provider_id=? "
             "AND s.credential_id=? AND s.account_id=? "
-            "AND s.edition_id=? AND s.evidence_kind='provider_response'",
+            "AND s.branch_id=? AND s.edition_id=? "
+            "AND s.right_id=? AND s.reference_kind=? "
+            "AND s.evidence_kind='provider_response'",
             (identity, artifact, source_ref, details["receipt"], identity,
-             provider, credential, account, edition),
+             provider, credential, account, source.branch, edition,
+             source.right_id, source.kind),
         ).fetchone()[0]
         if proofs != 1:
             raise ValueError("legacy_receipt_origin_unproven")
         found += 1
         if found > 1:
             raise ValueError("legacy_receipt_ambiguous")
-    return found
+        exact_operation_id = operation_id
+
+    if found != 1:
+        return 0
+
+    # A source-specific positive receipt cannot prove a unique *path*
+    # binding if any other ledger entry (different provider/account/profile
+    # or older operation) also names that path. Inspect all rows, including
+    # JSON-escaped and nested path references. This is deliberately bounded
+    # and fail-closed: incompleteness must not become a migration hint.
+    ledger = db.execute(
+        "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
+        "ORDER BY acquisition_id LIMIT ?",
+        (_MAX_LEDGER_ROWS + 1,),
+    ).fetchall()
+    if len(ledger) > _MAX_LEDGER_ROWS:
+        raise ValueError("legacy_receipt_global_budget")
+    for operation_id, raw in ledger:
+        if type(raw) is not str or len(raw) > 65536:
+            raise ValueError("legacy_receipt_global_unreadable")
+        try:
+            payload = json.loads(raw, object_pairs_hook=_unique_checkpoint_fields)
+        except (ValueError, TypeError, RecursionError) as exc:
+            raise ValueError("legacy_receipt_global_unreadable") from exc
+        if type(payload) is not dict:
+            raise ValueError("legacy_receipt_global_unreadable")
+        if (_mentions_exact_path(payload, path)
+                and operation_id != exact_operation_id):
+            raise ValueError("legacy_receipt_cross_source_path_collision")
+    return 1
 
 
 

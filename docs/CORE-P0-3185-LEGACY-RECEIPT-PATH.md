@@ -26,3 +26,19 @@ opérationnelles, un plan Core dédié et une confirmation explicite sous verrou
 Le lecteur est borné à 1 000 reçus pour la source examinée. Aucun chemin,
 compte, titre, identifiant privé ou contenu de reçu n'est publié au broker.
 Tests SQLite/PDF entièrement synthétiques.
+
+## Exhaustivité négative : collision de chemin dans le ledger
+
+Un reçu positif *de la source attendue* ne suffit pas à prouver que le chemin
+historique n'a jamais été enregistré pour un autre compte ou fournisseur.
+Avant de retourner `completed_receipt_path_review_required`, le diagnostic
+examine donc **tous les reçus** dans un snapshot SQLite cohérent (budget
+100 000). Une deuxième entrée, même `retryable_error`, qui cite le même
+chemin (directement, sous une propriété imbriquée ou avec encodage JSON)
+annule cette indication : `legacy_receipt_unverified`. Un JSON ambigu,
+illisible ou un inventaire tronqué n'est jamais interprété comme une absence.
+
+Les coordonnées de connexion et compte sont aussi revérifiées dans
+`provider_connections` et `provider_accounts`, ainsi que
+`branch_id/right_id/reference_kind` dans la SourceReference liée à
+l'OriginLink. Cette lecture n'autorise toujours ni migration, ni effacement.
