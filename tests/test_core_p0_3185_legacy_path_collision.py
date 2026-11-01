@@ -39,7 +39,7 @@ def test_any_foreign_ledger_path_reference_blocks_positive_legacy_binding(
     path = str(paths[1])
     raw = None
     if variant == "escaped_path":
-        raw = json.dumps({"path": path}).replace("/", "\\/")
+        raw = json.dumps({"path": path}).replace("/", chr(92) + "/")
     elif variant == "nested_path":
         raw = json.dumps({"history": {"old": [path]}})
     elif variant == "different_status":
@@ -70,7 +70,7 @@ def test_unrelated_ledger_path_does_not_create_false_collision(rig):
     storage, _root, paths, _pubs, _lock = rig
     _mark_legacy(rig)
     _journal(rig)
-    _insert_other_ledger(storage, path=str(paths[1]) + ".other")
+    _insert_other_ledger(storage, path=str(paths[1]) + ".other", owner="A")
     result = _review(rig)
     assert result.reason == "completed_receipt_path_review_required"
     assert result.completed_path_receipts == 1
@@ -87,6 +87,11 @@ def test_account_or_source_reference_rebound_is_never_path_evidence(
     _mark_legacy(rig)
     _journal(rig)
     with storage._lock, storage._connect() as db:
+        if mutation in ("changed_reference_branch", "changed_reference_kind"):
+            # The real v14 schema makes published coordinates immutable.
+            # Remove the guard ONLY in this synthetic database to simulate
+            # out-of-band corruption; the read-only Core must fail closed.
+            db.execute("DROP TRIGGER trg_linked_source_coords_immutable")
         if mutation == "disabled_connection":
             db.execute(
                 "UPDATE provider_connections SET enabled=0 "
