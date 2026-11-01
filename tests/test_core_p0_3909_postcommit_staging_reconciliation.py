@@ -19,7 +19,13 @@ from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
 
 
 @pytest.fixture(autouse=True)
-def _unexpected_postcommit_exception_must_fail_test(monkeypatch):
+def _unexpected_postcommit_exception_must_fail_test(monkeypatch, tmp_path):
+    # All Core acquisition modules must see the same synthetic process lock.
+    # The production path is shared; tests patch independent module imports.
+    monkeypatch.setattr(
+        "cifereca.core.canonical_postcommit_reconcile.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
     # The production caller deliberately protects an already committed B
     # from maintenance errors. In these controlled new scenarios, however,
     # all input is known: expose unexpected exceptions as test failures.
