@@ -8,6 +8,7 @@ import os
 import socket
 from pathlib import Path
 import tempfile
+import secrets
 import threading
 import unicodedata
 import zipfile
@@ -839,6 +840,63 @@ class NumilogSession(ProviderSession):
             path=Path(path), provider_hint=hint,
         )
 
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """Core P0 #3171 opt-in: source consent during the selected GET.
+
+        This does not modify the historical v2 ABI or grant any entitlement.
+        Every signed supplier hop composes Core source/epoch consent with the
+        existing Numilog borrower, broker and staging checks.
+        """
+        from cifereca.plugin_api import (
+            SourceReference, ProviderRightsScope, DeliveryCandidate,
+        )
+        if not callable(admission_current):
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+        try:
+            allowed = admission_current() is True
+        except Exception:
+            allowed = False
+        if not allowed:
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+        scope = ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+        path, hint = self.rights_selected_delivery_candidate(
+            account, edition_id=edition_id, right_id=resource_id,
+            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            core_admission_current=admission_current,
+        )
+        try:
+            still_current = (
+                (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id)
+                == (scope.identity_id, scope.provider_id,
+                    scope.credential_id, scope.account_id)
+                and admission_current() is True
+            )
+        except Exception:
+            still_current = False
+        if not still_current:
+            try:
+                staged = Path(path)
+                if (staged.parent == Path(target_dir)
+                        and staged.is_file() and not staged.is_symlink()):
+                    staged.unlink(missing_ok=True)
+            except (OSError, TypeError, ValueError):
+                pass
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+        return DeliveryCandidate(
+            source=SourceReference(scope, branch, edition_id, resource_id, kind),
+            selected_offer_id=selected_offer_id,
+            path=Path(path), provider_hint=hint,
+        )
+
     def rights_selected_delivery_offer_snapshot(
         self, account, *, edition_id, right_id, kind, branch,
         explicit_user_action=False,
@@ -877,6 +935,7 @@ class NumilogSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
+        core_admission_current=None,
     ):
         """Execute one Core-admitted selected purchase, returning a *candidate*.
 
@@ -902,6 +961,22 @@ class NumilogSession(ProviderSession):
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('numilog_selected_delivery_scope_mismatch')
 
+        if core_admission_current is not None and not callable(core_admission_current):
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+
+        def core_current():
+            if core_admission_current is None:
+                return True
+            try:
+                return core_admission_current() is True
+            except Exception:
+                return False
+
+        def require_core():
+            if not core_current():
+                raise ProviderCapabilityError('numilog_candidate_admission_changed')
+
+        require_core()
         # Core owns and pre-creates a private staging directory. Do not
         # perform any private MesLivres GET or create filesystem paths if
         # the selected destination is missing, redirected or unsafe.
@@ -939,6 +1014,7 @@ class NumilogSession(ProviderSession):
                     or owner is None or owner[0] != 'broker'
                     or owner[2] != (pinned[0],)):
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+            require_core()
             # library() is the existing scoped positive listing. A stale or
             # ambiguous item cannot select an alternative book by title.
             listed = self.library()
@@ -960,6 +1036,7 @@ class NumilogSession(ProviderSession):
 
             if not selected_owner_still_bound():
                 raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+            require_core()
             matches = [
                 item for item in listed
                 if (item.record_id == right_id
@@ -971,21 +1048,23 @@ class NumilogSession(ProviderSession):
             # This existing path fetches the fresh exact signed card again,
             # rejects changed offer/owner before the delivery GET and stages
             # a candidate. A returned Path is NOT a canonical Core receipt.
+            require_core()
             staged = self.download_direct(
                 matches[0], target_dir,
                 expected_offer_id=delivery_offer_id,
                 expected_identity_id=pinned[0],
                 stage_acsm_only=True,
+                core_admission_current=core_admission_current,
             )
             # A broker rebind, disconnected session or even A→A replacement
             # after the last signed GET is not a Core receipt. Withdraw the
             # private candidate before it can be admitted by Core.
-            if not selected_owner_still_bound():
+            if not selected_owner_still_bound() or not core_current():
                 if (type(staged) is tuple and len(staged) == 2
                         and isinstance(staged[0], Path)
                         and staged[0].parent == target):
                     staged[0].unlink(missing_ok=True)
-                raise ProviderCapabilityError('numilog_selected_delivery_owner_changed')
+                raise ProviderCapabilityError('numilog_candidate_admission_changed')
             return staged
 
     def public_product_detail(self, product_url):
@@ -1389,7 +1468,8 @@ class NumilogSession(ProviderSession):
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
                   authorized_link=None, authorized_kind=None, expected_owner_scope=None,
-                  stage_acsm_only=False, stage_dirfd=None):
+                  stage_acsm_only=False, stage_dirfd=None, attested_readbook_offer=False,
+                  core_admission_current=None):
         # The exact Core-selected staging directory is held open across the
         # supplier GET. /proc/self/fd pins its inode if the path is replaced
         # with a symlink while HTTPX streams the response. Legacy/manual
@@ -1400,6 +1480,22 @@ class NumilogSession(ProviderSession):
                 or not Path('/proc/self/fd/' + str(stage_dirfd)).is_dir()):
             raise ProviderCapabilityError('numilog_selected_staging_invalid')
 
+        if core_admission_current is not None and not callable(core_admission_current):
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+
+        def core_current():
+            if core_admission_current is None:
+                return True
+            try:
+                return core_admission_current() is True
+            except Exception:
+                return False
+
+        def require_core():
+            if not core_current():
+                raise ProviderCapabilityError('numilog_candidate_admission_changed')
+
+        require_core()
         def selected_candidate_path(file):
             if stage_dirfd is None:
                 return file
@@ -1423,6 +1519,9 @@ class NumilogSession(ProviderSession):
             # broker instance plus exact candidate multiset from the initial
             # fresh owned card, not just its identity label.
             owner_scope = expected_owner_scope
+            delivery_client = self.client
+            delivery_accounts = self._accounts
+            delivery_session_scope = (self.provider_id, self.credential_id)
             if owner is not None:
                 if owner_scope is None and self.identity_broker is not None:
                     owner_scope = self._inventory_owner_or_none()
@@ -1448,6 +1547,16 @@ class NumilogSession(ProviderSession):
             )
             selected_kind = authorized_kind if selected_link is not None else None
             signed_redirect_chain = False
+            # Only a freshly revalidated, Core-selected MesLivres dwld offer
+            # can attest the *first* external readBook redirect. A raw URL,
+            # legacy download or unselected HTML navigation cannot do so.
+            selected_readbook = (
+                attested_readbook_offer is True and stage_acsm_only is True
+                and source == 'readbook' and owner is not None
+                and owner_scope is not None and url == expected_readbook
+                and url_origin(url) == url_origin(self.library_url)
+                and urlsplit(url).path.casefold() == '/pages/compte/readbook.ashx'
+            )
             owned_confirmation = (
                 from_owned_confirmation is True and source == 'owned_card'
                 and url_origin(url) == url_origin(self.library_url)
@@ -1469,12 +1578,24 @@ class NumilogSession(ProviderSession):
                     'Numilog : livraison externe non liée à un achat ; téléchargement arrêté'
                 )
             for hop in range(12):
+                require_core()
                 trace.fail('adept_unconfirmed')
                 if owner is not None:
                     self._validate_download_owner(owner, owner_scope=owner_scope)
                 trace.fail('origin_rejected')
                 attested_hop = (url == selected_link or signed_redirect_chain)
-                if attested_hop:
+                external_selected_hop = (
+                    stage_acsm_only is True and stage_dirfd is not None
+                    and attested_hop and url_origin(url) != url_origin(self.library_url)
+                )
+                if external_selected_hop:
+                    # The Core transport validates and *pins the actual TCP
+                    # peer*. A preflight getaddrinfo() followed by httpx GET
+                    # is vulnerable to DNS rebinding and MUST NOT be used for
+                    # an attested selected external delivery.
+                    if not _attested_public_https(url):
+                        raise ProviderCapabilityError('numilog_candidate_url_refused')
+                elif attested_hop:
                     _checked_attested_network_url(url, self.allowed_origins)
                 else:
                     checked_url(url, self.allowed_origins)
@@ -1493,6 +1614,127 @@ class NumilogSession(ProviderSession):
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
                         )
+                if external_selected_hop:
+                    # No Numilog session cookies/Authorization/Referer can be
+                    # transferred to a public supplier. Only the core's
+                    # public-peer-pinned transport touches external HTTPS.
+                    # This branch is restricted to Core-selected staging:
+                    # it neither invokes ADEPT nor publishes a Placement.
+                    def admitted():
+                        try:
+                            if (not core_current()
+                                    or self.connected is not True or owner is None
+                                    or self.client is not delivery_client
+                                    or self._accounts is not delivery_accounts
+                                    or (self.provider_id, self.credential_id)
+                                        != delivery_session_scope):
+                                return False
+                            self._validate_download_owner(
+                                owner, owner_scope=owner_scope,
+                            )
+                            pinned = os.fstat(stage_dirfd)
+                            current = os.stat(
+                                destination.parent, follow_symlinks=False,
+                            )
+                            return (
+                                pinned.st_dev == current.st_dev
+                                and pinned.st_ino == current.st_ino
+                                and (current.st_mode & 0o170000) == 0o040000
+                            )
+                        except (OSError, ValueError, ProviderCapabilityError):
+                            return False
+
+                    target = destination.parent / (
+                        '.numilog-pinned-' + secrets.token_hex(12) + '.part'
+                    )
+                    completed = False
+                    try:
+                        try:
+                            receipt = HTTPX_TRANSPORT.attested_https_download(
+                                producer='provider.numilog.delivery',
+                                url=url, target=target,
+                                admission_current=admitted,
+                                headers={
+                                    'Accept': (
+                                        'application/vnd.adobe.adept+xml,'
+                                        'application/epub+zip,application/octet-stream'
+                                    ),
+                                },
+                                timeout=25, max_bytes=self.maximum,
+                                max_redirects=8,
+                            )
+                        except ValueError:
+                            trace.fail('origin_rejected')
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_transport_refused'
+                            ) from None
+                        if receipt.path != target or not admitted():
+                            trace.fail('origin_rejected')
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_owner_changed'
+                            )
+                        trace.fail('artifact_invalid')
+                        if inspect_artifact(receipt.path, 'acsm').valid:
+                            if selected_link is not None and selected_kind != 'acsm':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
+                            extension = '.acsm'
+                        else:
+                            if receipt.content_type in {
+                                'application/vnd.adobe.adept+xml',
+                                'application/xml', 'text/xml',
+                            }:
+                                trace.fail('xml_not_acsm')
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_xml_not_acsm'
+                                )
+                            validate_epub(receipt.path)
+                            if selected_link is not None and selected_kind != 'epub_direct':
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_format_changed'
+                                )
+                            extension = '.epub'
+                        if not admitted():
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_owner_changed'
+                            )
+                        final = target.with_suffix(extension)
+                        # Move by the directory FD already pinned before
+                        # any selected supplier request: an ancestor rename or
+                        # symlink swap cannot redirect this final step.
+                        os.replace(
+                            target.name, final.name,
+                            src_dir_fd=stage_dirfd, dst_dir_fd=stage_dirfd,
+                        )
+                        try:
+                            staged = selected_candidate_path(final)
+                            if not admitted():
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_owner_changed'
+                                )
+                            code = 'acsm_candidate' if extension == '.acsm' else 'epub_candidate'
+                            trace.success(code)
+                            trace.event(
+                                'artifact_validation', code,
+                                hops=min(12, hop + receipt.redirects + 1),
+                            )
+                            completed = True
+                            return staged, self.library_url
+                        finally:
+                            if not completed:
+                                try:
+                                    os.unlink(final.name, dir_fd=stage_dirfd)
+                                except FileNotFoundError:
+                                    pass
+                    finally:
+                        if not completed:
+                            try:
+                                os.unlink(target.name, dir_fd=stage_dirfd)
+                            except FileNotFoundError:
+                                pass
+                    # Redirects and byte streaming are handled exclusively
+                    # inside the public Core transport above.
                 trace.fail('redirect_loop')
                 if url in seen:
                     raise ProviderError('Numilog : boucle de téléchargement')
@@ -1517,7 +1759,9 @@ class NumilogSession(ProviderSession):
                 headers = {'Referer': referer}
                 if attested_hop and url_origin(url) != url_origin(self.library_url):
                     headers['Cookie'] = ''
+                require_core()
                 with self.client.stream('GET', url, headers=headers) as r:
+                    require_core()
                     self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
                     # Validate Location before recording target evidence. A
                     # blocked redirect still gets its ordinary HTTP event
@@ -1526,7 +1770,7 @@ class NumilogSession(ProviderSession):
                     redirect_to = redirect_error = None
                     if r.status_code in REDIRECTS:
                         try:
-                            if attested_hop:
+                            if attested_hop or (selected_readbook and hop == 0):
                                 raw_location = r.headers.get('location','')
                                 if not _raw_network_url(raw_location):
                                     raise ProviderError('Numilog : redirection réseau inattendue')
@@ -1573,7 +1817,16 @@ class NumilogSession(ProviderSession):
                         ):
                             attested_confirmation_redirect = redirect_to
                         url = redirect_to
-                        signed_redirect_chain = attested_hop
+                        # A same-origin confirmation page remains a normal
+                        # HTML navigation requiring the strict card/readBook
+                        # binding. Only an external HTTPS delivery hop starts
+                        # the attested publisher chain.
+                        signed_redirect_chain = (
+                            attested_hop or (
+                                selected_readbook and hop == 0
+                                and url_origin(redirect_to) != url_origin(self.library_url)
+                            )
+                        )
                         trace.fail('redirect_limit')
                         continue
                     self._status(r)
@@ -1586,6 +1839,7 @@ class NumilogSession(ProviderSession):
                             )
                         trace.fail('html_oversize')
                         html = self._small(r).decode('utf-8-sig',errors='replace')
+                        require_core()
                         try:
                             kind = html_response_kind(html)
                         except ParseError:
@@ -1780,6 +2034,7 @@ class NumilogSession(ProviderSession):
                     try:
                         with os.fdopen(fd,'wb') as output:
                             for chunk in r.iter_bytes():
+                                require_core()
                                 size += len(chunk)
                                 if size > self.maximum:
                                     raise ProviderError('Numilog : téléchargement trop volumineux')
@@ -1880,7 +2135,21 @@ class NumilogSession(ProviderSession):
             raise ProviderError('Numilog : trop de redirections ou pages intermédiaires')
 
     def download_direct(self,item,target_dir,*,expected_offer_id=None,expected_identity_id=None,
-                        stage_acsm_only=False):
+                        stage_acsm_only=False, core_admission_current=None):
+        if core_admission_current is not None and not callable(core_admission_current):
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+
+        def require_core():
+            if core_admission_current is None:
+                return
+            try:
+                if core_admission_current() is True:
+                    return
+            except Exception:
+                pass
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+
+        require_core()
         with self.lock:
             # Only an exact, prequalified Core-selected offer may stage the
             # raw ACSM. Legacy/manual download retains its ADEPT import path.
@@ -1916,9 +2185,11 @@ class NumilogSession(ProviderSession):
             # Read a fresh private library only for an explicit user action.
             # Search/sync call _rows() without delivery_evidence, so no signed
             # ACSM link escapes into SearchResult, catalog, or diagnostics.
+            require_core()
             rows = self._rows(
                 include_delivery=True, delivery_record_id=item.record_id,
             )
+            require_core()
             if owner is not None:
                 self._validate_download_owner(owner, owner_scope=owner_scope)
             row = next((row for row in rows if self._id(row) == item.record_id),None)
@@ -1994,6 +2265,7 @@ class NumilogSession(ProviderSession):
                     isinstance(evidence, OwnedDelivery)
                     or type(row.get('confirmation')) is str
                 )
+                require_core()
                 return self._download(start,directory/name,title=row['title'],author=item.author,
                     book_id=self._id(row),source='owned_card' if entry_from_owned_card else 'readbook',
                     identity_id=owner,expected_owner_scope=owner_scope,
@@ -2003,7 +2275,12 @@ class NumilogSession(ProviderSession):
                     authorized_link=evidence.url if isinstance(evidence, OwnedDelivery) else None,
                     authorized_kind=evidence.delivery_kind
                         if isinstance(evidence, OwnedDelivery) else None,
-                    stage_acsm_only=stage_acsm_only, stage_dirfd=stage_dirfd)
+                    stage_acsm_only=stage_acsm_only, stage_dirfd=stage_dirfd,
+                    attested_readbook_offer=(
+                        stage_acsm_only is True
+                        and type(expected_offer_id) is str
+                        and expected_offer_id.startswith('numilog.readbook:')
+                    ), core_admission_current=core_admission_current)
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
             finally:
