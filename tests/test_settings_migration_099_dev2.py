@@ -133,9 +133,11 @@ class SaveSettings(unittest.TestCase):
                 side_effect=AssertionError('retired experimental switch consulted')
             )
             self.assertTrue(self.ns['save_settings']())
-            self.runner.submit.call_args.args[1]()
+            task = self.runner.submit.call_args.args
+            result = task[1]()
             saved = self.service.save_configuration.call_args.args[0]
             self.assertEqual(saved['experimental_actions'], stored)
+            task[2](result)  # complete the pending async job before next save
 
     def test_new_installation_has_no_experimental_permission_default(self):
         from cifereca.config_defaults import DEFAULT_CONFIG
