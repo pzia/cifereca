@@ -152,3 +152,66 @@ def activation_form(html: str, *, page_url: str,
         if name in fields and fields[name] != rid:
             raise WebParseError("borrow_scope_mismatch")
     return BorrowForm(action, tuple(fields.items()))
+
+
+@dataclass(frozen=True, repr=False)
+class BorrowActivationProof:
+    """A positive *active* upstream loan observed independently after activation.
+
+    Not evidence that a fresh loan was created or that an ACSM was fulfilled:
+    the BnF inventory is intrinsically partial. Never log the opaque IDs.
+    """
+    loan_id: str = field(repr=False)
+    resource_id: str = field(repr=False)
+
+    def __repr__(self) -> str:
+        return "BorrowActivationProof(active_loan_observed=True)"
+
+
+def verify_borrow_activation(
+    activation_html: str, activity_html: str, *, resource_id: str,
+    before, expected_scope,
+) -> BorrowActivationProof:
+    """Verify one activation receipt against the *fresh* active-loan section.
+
+    The remote response and subsequent reader activity are independent HTML
+    observations; an HTTP 200 or a successful form submission alone is never
+    a confirmed result. The before snapshot can only flag a known existing
+    loan, not establish absence from a partial inventory.
+    """
+    from cifereca_bnf_pret_web import (
+        LoanSnapshot, ProfileScope, parse_loans,
+    )
+    rid = _resource_id(resource_id)
+    if (type(expected_scope) is not ProfileScope
+            or type(before) is not LoanSnapshot
+            or before.scope != expected_scope):
+        raise WebParseError("borrow_scope_mismatch")
+    # Prior presence is a *positive* refusal, not a negative availability
+    # claim when the earlier page happened to omit a loan.
+    if any(row.resource_id == rid for row in before.loans):
+        raise WebParseError("borrow_existing_loan")
+    receipt = _dom(activation_html)
+    ids = {_id(n.attrs.get("href", ""), "loans")
+           for n in receipt.walk() if n.tag == "a" and n.closed}
+    ids.discard(None)
+    if len(ids) != 1:
+        raise WebParseError("borrow_receipt_unverified")
+    loan_id = next(iter(ids))
+    observed = parse_loans(
+        activity_html, page_url=ORIGIN + "/my_profile/activity",
+        expected=expected_scope, observed=expected_scope,
+    )
+    # A partial parser result can contain positives, but it cannot bind an
+    # ambiguous activation to an exact loan safely.
+    if observed.status != "observed":
+        raise WebParseError("borrow_activity_unverified")
+    matches = [row for row in observed.loans
+               if row.loan_id == loan_id and row.resource_id == rid]
+    conflicting = [row for row in observed.loans
+                   if row.loan_id == loan_id or row.resource_id == rid]
+    if len(matches) != 1 or len(conflicting) != 1:
+        raise WebParseError("borrow_receipt_unverified")
+    # Prior page was partial, so a pre-existing loan may have been omitted;
+    # do not label this record proof of *creation*, quota or eligibility.
+    return BorrowActivationProof(loan_id, rid)
