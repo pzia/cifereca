@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from concurrent.futures import Future
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from ..task_queue import PriorityExecutor, TaskPriority
@@ -59,7 +60,7 @@ class TaskRunner:
         facts = value.facts
         if value.ok is True:
             return "success"
-        if isinstance(facts, dict):
+        if isinstance(facts, Mapping):
             reason = facts.get("reason")
             status = facts.get("status")
             if reason == "operation_busy" or status == "operation_busy":
@@ -67,10 +68,10 @@ class TaskRunner:
             if status == "partial":
                 return "partial"
             sources = facts.get("sources")
-            if isinstance(sources, dict):
+            if isinstance(sources, Mapping):
                 statuses = [
                     row.get("status") for row in sources.values()
-                    if isinstance(row, dict)
+                    if isinstance(row, Mapping)
                 ]
                 if statuses and all(item == "operation_busy" for item in statuses):
                     return "busy"
