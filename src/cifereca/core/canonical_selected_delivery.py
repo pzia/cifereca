@@ -11,6 +11,7 @@ from .source_context import source_context_epoch
 
 import hashlib
 from inspect import getattr_static
+from typing import Callable
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,7 @@ def complete_selected_delivery(
     service, account: Account, session, source: SourceKey,
     offer: ProviderRightObservation, *,
     library_root: Path, shared_lock: InterProcessLock,
+    consent_still_current: Callable[[], bool] | None = None,
 ) -> CompletedDelivery:
     """Witness candidate GET then final validated EPUB/PDF or ADEPT fulfillment.
 
@@ -59,7 +61,14 @@ def complete_selected_delivery(
     if (account.identity_id, account.provider_id,
             account.credential_id, account.unique_id) != coords:
         raise ValueError("canonical_delivery_scope_mismatch")
+    # Optional, explicit opt-in. The existing v2/v1 candidate ABI remains
+    # unchanged; only a guarded producer receives a live Core admission
+    # callback, which it MUST compose at every external GET hop and chunk.
+    guarded_name = "downloadable_selected_delivery_candidate_guarded"
+    guarded = (callable(consent_still_current)
+               and callable(getattr_static(session, guarded_name, None)))
     reader_name = (
+        guarded_name if guarded else
         "downloadable_selected_delivery_candidate"
         if getattr_static(session, "downloadable_selected_delivery_candidate", None) is not None
         else "rights_selected_delivery_candidate"
@@ -116,7 +125,30 @@ def complete_selected_delivery(
         except (AttributeError, TypeError, KeyError, ValueError):
             return False
 
-    if not bound():
+    # Fail closed if a plugin retains this closure after completion/exception.
+    admission_live = [True]
+
+    def admission_current() -> bool:
+        """Non-serializable Core permission, never created by a plugin.
+
+        A source ON from a later OFF→ON revision cannot revive this closure;
+        the caller's generation- and scope-pinned consent reader decides.
+        """
+        if (not admission_live[0] or shared_lock._handle is None
+                or not callable(consent_still_current)):
+            return False
+        try:
+            return bound() and consent_still_current() is True
+        except Exception:
+            return False
+
+    def current() -> bool:
+        # Legacy candidate adapters keep the existing Core executor's
+        # post-delivery consent verdict (blocked, not transport failed).
+        # Guarded adapters enforce the revocation immediately in the bridge.
+        return admission_current() if guarded else bound()
+
+    if not current():
         raise ValueError("canonical_delivery_source_rebound")
     identities = [x for x in storage.identities()
                   if x.get("identity_id") == scope.identity_id]
@@ -145,21 +177,22 @@ def complete_selected_delivery(
     # Once this method returns, the executor owns the verified bytes for its
     # durable crash-recovery checkpoint: never delete that successful run.
     try:
-        if not bound():
+        if not current():
             raise ValueError("canonical_delivery_source_rebound")
         candidate = getattr(session, reader_name)(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
                 "selected_offer_id": offer.delivery_offer_id}
-               if reader_name == "downloadable_selected_delivery_candidate"
+               if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}
                else {"right_id": source.right_id,
                      "delivery_offer_id": offer.delivery_offer_id}),
             kind=source.kind, branch=source.branch,
             target_dir=attempt, explicit_user_action=True,
+            **({"admission_current": admission_current} if guarded else {}),
         )
-        if not bound():
+        if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
-        if reader_name == "downloadable_selected_delivery_candidate":
+        if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}:
             expected = SourceReference(
                 scope, source.branch, source.edition_id, source.right_id, source.kind,
             )
@@ -216,7 +249,7 @@ def complete_selected_delivery(
             produced = _physical_target(Path(artifact["path"]), root, directory)
             if produced != destination.resolve(strict=True):
                 raise ValueError("canonical_delivery_adept_artifact_foreign")
-            if not bound():
+            if not current():
                 raise ValueError("canonical_delivery_source_rebound_after_adept")
             received = produced
             kind = detect_artifact_format(received)
@@ -238,7 +271,7 @@ def complete_selected_delivery(
                 or inspection.protected is True or not valid):
             raise ValueError("canonical_delivery_final_invalid")
         digest = LocalCatalog.sha256(final)
-        if not _same_file(final, before) or not bound():
+        if not _same_file(final, before) or not current():
             raise ValueError("canonical_delivery_final_changed")
         # This receipt is a Core witness issued AFTER the verified, in-scope
         # candidate callback. It is deliberately distinct from provider A's
@@ -264,6 +297,10 @@ def complete_selected_delivery(
         except (OSError, ValueError):
             pass
         raise
+    finally:
+        # The callback must not authorize a future GET outside this one
+        # attempted selected delivery, even if source ON/epochs are unchanged.
+        admission_live[0] = False
 
 
 __all__ = ["complete_selected_delivery"]

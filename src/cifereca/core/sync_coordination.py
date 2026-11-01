@@ -313,6 +313,10 @@ def _run_observed_canonical_convergence(
             delivery = lambda key, offer: complete_selected_delivery(
                 self, account, candidate_session, key, offer,
                 library_root=self.library_dir(), shared_lock=sync_lease,
+                # Late-bound: execute_admitted_convergence calls this only
+                # after current_consent is defined and the offer is admitted.
+                # Plugins receive it only via the explicit guarded candidate ABI.
+                consent_still_current=lambda: current_consent(key),
             )
     if (admitted_snapshots and callable(delivery)
             and (canonical_on or callable(consent_reader))):

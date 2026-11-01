@@ -63,6 +63,47 @@ ADEPT binding or the final SQLite guards.
 The contract plus Core reader bridge is a milestone, **not** final #3719/#3171
 acceptance or validated real Numilog EPUB delivery.
 
+## Extension optionnelle — admission Core vivante pendant la livraison (#3171)
+
+**Aucun changement de signature de l'ABI v2 actuelle.** Un plugin peut
+implémenter en plus la méthode optionnelle
+`downloadable_selected_delivery_candidate_guarded(account, *, edition_id,
+resource_id, kind, branch, selected_offer_id, target_dir,
+explicit_user_action, admission_current)`.
+Elle retourne le même **DeliveryCandidate** typé et scopé que le lecteur v2.
+La découverte est passive (sans appel de propriété Python du provider) ;
+**elle est sélectionnée seulement si l'exécuteur Core possède déjà son
+lecteur de consentement vivant**. Une méthode absente conserve le v2 existant.
+Une exception ou un candidat invalide de cette méthode **n'active aucun
+repli** par le v2/v1 historique.
+
+Le callable **admission_current() → bool** est construit par le Core pour
+l'offre exacte déjà admise sous verrou. Il compose la garde existante de
+liaison identité/credential/compte/session/epoch/SourceKey avec la réévaluation
+du **consentement persistant de source et de sa génération initiale** :
+ON→OFF→ON ne réautorise jamais un ancien GET. Une exception ou une preuve
+non vérifiable retourne False. La fermeture **expire obligatoirement à la fin
+ou à l'échec de cette tentative** (et refuse tout appel lorsque le verrou de
+Sync n'est plus détenu), même si la politique reste ON. Il est **non sérialisable**, ne confère pas
+de droit, ne peut être substitué par `explicit_user_action` ou par
+`connected`, et ne doit pas être exposé dans le DTO de retour.
+
+**Obligation de l'adaptateur opt-in :** composer ce callback avec ses gardes
+fournisseur (propriétaire, broker, credential, session, staging) pour
+`HTTPX_TRANSPORT.attested_https_download(admission_current=...)`, à
+**chaque hop HTTPS, bloc réseau et frontière de réception**. Sur False,
+interrompre sans GET supplémentaire, sans publication ni retry, et faire
+nettoyer le staging privé. Le Core réévalue également au début, après GET,
+après ADEPT éventuel et juste avant émission du reçu final ; l'exécuteur
+conserve son contrôle SQL transactionnel avant OriginLink/Placement.
+
+**Limite expresse :** l'ancien v2 sans opt-in reste compatible mais ne reçoit
+pas cette fermeture Core par bloc. Ce correctif Core ne vaut **ni migration
+Kobo/Numilog/BnF/Paris, ni preuve de consentement revérifié pendant leurs
+transports effectifs** ; leur rôle Plugins doit adopter l'extension et fournir
+les tests d'absence de fuite, de révocation au milieu d'un flux, de refus DNS/
+URL dangereux et de non-rejeu. Voir #3848, #3867, #3252.
+
 ## Required execution sequence
 
 1. Sync observes and confirms the exact offered resource under global source
