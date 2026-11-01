@@ -5,10 +5,6 @@ from .settings_legacy_kobo_section import kobo_backup_action_state
 
 
 def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_settings):
-    backup_switch = kobo_settings.backup_switch
-    backup_dir_row = kobo_settings.backup_dir_row
-    backup_interval_row = kobo_settings.backup_interval_row
-    vault_profile_drop = kobo_settings.vault_profile_drop
     kobo_run_now = kobo_settings.run_backup_now
     kobo_status = kobo_settings.backup_status
     def refresh_kobo_backup_status(*_args) -> None:
@@ -39,14 +35,5 @@ def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_sett
             self.navigate("sync")
 
     kobo_run_now.connect("clicked", open_kobo_sync_page)
-    # Subscribe AFTER dirty tracking so the message never claims that an
-    # unsaved switch is already active. No provider access from callbacks.
-    for widget, signal in (
-        (backup_switch, "notify::active"),
-        (backup_dir_row, "notify::text"),
-        (backup_interval_row, "notify::text"),
-        (vault_profile_drop, "notify::selected"),
-    ):
-        widget.connect(signal, refresh_kobo_backup_status)
     refresh_kobo_backup_status()
     return refresh_kobo_backup_status
