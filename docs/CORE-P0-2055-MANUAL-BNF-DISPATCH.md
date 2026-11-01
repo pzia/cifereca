@@ -18,6 +18,17 @@ read-only ; ils ne sont PAS utilisés comme admission de ce parcours précis.
 
 ## Chemin d'exécution réservé à BnF Prêt
 
+Le détail de notice affiche la **section d'emprunt BnF** même si le
+libellé catalogue est `Inconnue`, `Indisponible` ou vide ; cela ne rend
+pas le bouton actif pour autant. Celui-ci dépend exclusivement de
+`can_borrow_bnf` (capacité, session, compte et claim), puis du geste
+humain de vérification sur le portail et de la confirmation dédiée.
+Les autres prêteurs conservent leur condition d'affichage
+`availability == "Empruntable"` et les stores commerciaux restent
+exclus. Tests purs dans
+`tests/test_core_p0_2055_bnf_detail_action_visibility.py`.
+
+
 1. `MainWindow.can_borrow_item` consulte
    `service.can_borrow_bnf(item)` : plugin installé/activé, capacité
    `acquisition.borrow` effectivement publiée, session connectée,
@@ -55,7 +66,9 @@ read-only ; ils ne sont PAS utilisés comme admission de ce parcours précis.
 6. Sous le verrou du provider, `borrow_explicit_with_claim` lit
    l'activité fraîche et refuse un prêt exact déjà positif ; GET
    fiche du livre sélectionné ; vérifie un lien d'emprunt unique non
-   désactivé et sans marqueur de refus ; GET de confirmation puis
+   désactivé ; un badge générique `.lb_unavailable` coexistant avec
+   ce lien est un marqueur informatif P2 #4063 et **ne bloque pas**
+   l'essai manuel ; GET de confirmation puis
    extraction du formulaire POST et CSRF liés à la même édition.
    **Un seul POST**, sans redirection ni retry. La BnF peut répondre
    par refus, erreur ou succès non prouvé.
@@ -64,10 +77,20 @@ read-only ; ils ne sont PAS utilisés comme admission de ce parcours précis.
    du `Loan` puis clôt le claim SQLite. `confirmed` exige
    `provider_verified=True` ; HTTP 200 et présence du formulaire
    ne suffisent jamais.
-8. Timeout, 4xx/5xx, activation ambiguë, contexte modifié ou
-   lecture d'activité non concluante : message sans données privées,
-   `verification_unavailable`, **aucun retry du POST**.
-   L'utilisateur vérifie Mes emprunts / le portail BnF.
+8. Si une erreur se produit **avant tout accès au transport POST**
+   (GET activité, fiche ou formulaire impossible), le provider émet
+   `BorrowRequestNotSubmitted`. Le Core appelle
+   `Storage.loan_borrow_release_unsent`, **CAS atomique** limité
+   à l'opération exacte et à l'état `request_sent/not_checked`.
+   Le retour `borrow_not_submitted` n'affirme aucun droit et
+   ne provoque aucun retry automatique ; un nouvel essai exige
+   un nouveau contrôle visuel et une nouvelle confirmation humaine.
+9. **Une fois le transport POST invoqué**, le provider ne peut plus
+   émettre `BorrowRequestNotSubmitted` ; timeout, refus 4xx/5xx,
+   réponse ambiguë, contexte modifié ou inventaire incomplet
+   consomment durablement le claim (`verification_unavailable`).
+   Toute répétition automatique est interdite : l'utilisateur
+   vérifie Mes emprunts / le portail BnF avant toute suite.
    Le téléchargement ACSM/ADEPT est une opération distincte ; aucune
    licence ni acquisition implicite pendant le nouvel emprunt.
 

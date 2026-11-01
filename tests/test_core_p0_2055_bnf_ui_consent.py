@@ -214,6 +214,32 @@ def test_upstream_permission_denial_never_leaks_sensitive_errors_to_modal(tmp_pa
         service.close()
 
 
+def test_pre_post_unavailability_is_explicitly_no_request_and_retryable(tmp_path):
+    from cifereca.plugin_api import BorrowRequestNotSubmitted
+    from cifereca.core.borrow_action_scope import borrow_claim_key
+
+    service, session, account, item = setup(tmp_path)
+    try:
+        window, errors, results, refreshes = view(service, session, account, item)
+        dialog = request(window, item)
+        assert dialog is not None
+        session.failure = BorrowRequestNotSubmitted(
+            "PRIVATE_AUTH_TOKEN_DO_NOT_LEAK")
+        dialog.respond("borrow")
+        outcome = window.runner.complete_one()
+        assert outcome["status"] == "blocked"
+        assert outcome["reason_code"] == "borrow_not_submitted"
+        assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
+        assert service.can_borrow_bnf(item) is True
+        assert len(errors) == 1
+        assert "Aucune demande de prêt" in errors[0][0]
+        assert "nouvelle demande volontaire" in errors[0][0]
+        assert "PRIVATE_AUTH_TOKEN" not in str(errors)
+        assert results == refreshes == []
+    finally:
+        service.close()
+
+
 def test_no_confusion_of_selected_account_by_draft_copy(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:

@@ -108,8 +108,12 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
 def confirmation_link(html: str, *, page_url: str, resource_id: str) -> str:
     """Get the unique enabled borrow link inside the exact Book microdata.
 
-    Button counts, JavaScript handlers and catalogue availability are never
-    promoted to a Web action.
+    The only actionable signal is one *enabled* exact-resource borrow link
+    after the reader's manual confirmation. A generic lb_unavailable badge
+    can coexist with an active borrow control in captured BnF pages: treat
+    it as an informational P2 marker, NOT a veto. BnF itself decides quota,
+    copies and rights when the confirmed transaction reaches its server.
+    Button counts and catalogue availability alone are never a Web action.
     """
     rid = _resource_id(resource_id)
     if page_url != ORIGIN + "/resources/" + rid:
@@ -127,8 +131,7 @@ def confirmation_link(html: str, *, page_url: str, resource_id: str) -> str:
     button = controls[0]
     if (button.tag != "a" or not button.closed
             or not button.attrs.get("href") or "disabled" in button.attrs
-            or button.attrs.get("aria-disabled", "").lower() == "true"
-            or any(n.has_class("lb_unavailable") for n in books[0].walk())):
+            or button.attrs.get("aria-disabled", "").lower() == "true"):
         raise WebParseError("borrow_action_unverified")
     return _transition_url(page_url, button.attrs["href"], rid)
 

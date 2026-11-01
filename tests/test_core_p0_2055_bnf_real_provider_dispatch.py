@@ -192,3 +192,34 @@ def test_real_provider_no_site_check_never_reads_or_claims(tmp_path):
             borrow_claim_key(account, item)) is None
     finally:
         service.close()
+
+
+def test_disabled_book_control_before_post_frees_claim_for_later_human_action(tmp_path):
+    """A disabled action cannot permanently lock the edition without POST."""
+    disabled = DETAIL.replace(
+        '<a class="button-borrow"', '<a disabled class="button-borrow"',
+    )
+    service, session, account, item, state = real_session_service(
+        tmp_path, detail=disabled,
+    )
+    try:
+        outcome = service.borrow_bnf_manual(
+            item, expected_identity_id="default",
+            confirmed=True, site_checked=True,
+            expected_context_epoch=service._account_context_epoch,
+            expected_account=account,
+        )
+        assert outcome["status"] == "blocked"
+        assert outcome["reason_code"] == "borrow_not_submitted"
+        assert state["post"] == 0
+        assert state["calls"] == [
+            ("GET", "/my_profile/activity"),
+            ("GET", "/resources/" + RID),
+        ]
+        key = borrow_claim_key(account, item)
+        assert service.storage.metadata_get(key) is None
+        assert service.can_borrow_bnf(item) is True
+        assert not service.storage.acquisitions()
+        assert not service.storage.entitlements(provider_id="bnf-pret")
+    finally:
+        service.close()

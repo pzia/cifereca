@@ -11,7 +11,7 @@ from inspect import getattr_static
 from uuid import uuid4
 
 from ..models import Account, Loan, SearchResult
-from ..plugin_api import LendingActionAdmission
+from ..plugin_api import LendingActionAdmission, BorrowRequestNotSubmitted
 from ..plugin_api.lending_capabilities import assess_lending_operation
 from ..providers.base import ProviderSession
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
@@ -225,6 +225,19 @@ def manual_bnf_borrow(
         if finished is None:
             return _result("verification_unavailable", "borrow_checkpoint_unavailable")
         return _result("confirmed", "borrow_active_loan_observed", verified=True)
+    except BorrowRequestNotSubmitted:
+        # The trusted provider raises this ONLY before attempting a POST.
+        # A failed read-only precheck must not permanently consume the
+        # edition's claim. CAS release still requires this exact operation
+        # and the original request_sent state; no retry happens here.
+        try:
+            freed = service.storage.loan_borrow_release_unsent(
+                key, operation_id)
+        except Exception:
+            freed = False
+        return (_result("blocked", "borrow_not_submitted") if freed
+                else _result("verification_unavailable",
+                             "borrow_checkpoint_unavailable"))
     except Exception:
         # A timeout/500/rebind after dispatch may have created a real upstream
         # loan; NEVER issue a new borrow POST or free the consumed claim.

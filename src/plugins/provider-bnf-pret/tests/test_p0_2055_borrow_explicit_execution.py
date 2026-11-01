@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT.parents[1]))
 from cifereca.models import Account, Loan
 from cifereca.plugin_api import (
     LendingActionAdmission, ProviderCapabilityError, ProviderConfigurationError,
+    BorrowRequestNotSubmitted,
 )
 from cifereca_bnf_pret import BnfProviderSession
 from cifereca_bnf_pret_http import ReaderHTTPClient
@@ -198,14 +199,15 @@ class BnfExplicitExecutionTests(unittest.TestCase):
         finally:
             session.close()
 
-    def test_last_second_unavailable_marker_refuses_before_post(self):
-        unavailable = DETAIL.replace(
-            "</article>",
-            '<span class="lb_unavailable">Indisponible</span></article>',
+    def test_last_second_disabled_book_control_refuses_before_post(self):
+        disabled = DETAIL.replace(
+            '<a class="button-borrow"',
+            '<a disabled class="button-borrow"',
         )
-        session, account, item, state = self.make(detail_html=unavailable)
+        session, account, item, state = self.make(detail_html=disabled)
         try:
-            with self.assertRaisesRegex(Exception, "borrow_action_unverified"):
+            with self.assertRaisesRegex(
+                    BorrowRequestNotSubmitted, "borrow_action_unverified"):
                 self.execute(session, account, item)
             self.assertEqual(state["post_count"], 0)
             self.assertEqual(state["calls"], [
@@ -216,11 +218,32 @@ class BnfExplicitExecutionTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_availability_badge_with_active_borrow_button_defers_to_bnf(self):
+        # Real capture exposed both classes on one Book: the manual user
+        # has visually checked the selected book on the official portal.
+        # The ambiguous status badge is not the permission authority.
+        ambiguous = DETAIL.replace(
+            "</article>",
+            '<span class="lb_unavailable">Indisponible</span></article>',
+        )
+        session, account, item, state = self.make(detail_html=ambiguous)
+        try:
+            loan = self.execute(session, account, item)
+            self.assertEqual((loan.id, loan.record_id),
+                             ("loan-synthetic", RID))
+            self.assertEqual(state["post_count"], 1)
+            self.assertEqual(state["activity_reads"], 2)
+        finally:
+            session.close()
+
     def test_bnf_quota_refusal_one_post_and_no_second_attempt(self):
         session, account, item, state = self.make(post_status=403)
         try:
-            with self.assertRaisesRegex(Exception, "access_denied"):
+            with self.assertRaisesRegex(Exception, "access_denied") as error:
                 self.execute(session, account, item)
+            self.assertNotIsInstance(
+                error.exception, BorrowRequestNotSubmitted,
+            )
             self.assertEqual(state["post_count"], 1)
             with self.assertRaisesRegex(
                     ProviderCapabilityError, "borrow_claim_spent"):
