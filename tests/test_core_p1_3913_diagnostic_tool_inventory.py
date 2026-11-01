@@ -154,61 +154,53 @@ def test_expert_offline_reconciliation_is_not_misidentified_as_mutating_sync():
     assert "python3 -m cifereca.core.library_reconciliation" in document
 
 
-def _is_direct_plugin_entrypoint(tree: ast.AST) -> bool:
-    """Inspect syntax only; comments, fixtures and quoted text aren't CLIs."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
-            condition = node.test
-            if (isinstance(condition.left, ast.Name)
-                    and condition.left.id == "__name__"
-                    and len(condition.ops) == 1
-                    and isinstance(condition.ops[0], ast.Eq)
-                    and len(condition.comparators) == 1
-                    and isinstance(condition.comparators[0], ast.Constant)
-                    and condition.comparators[0].value == "__main__"):
-                return True
-        if isinstance(node, ast.Call):
-            function = node.func
-            if ((isinstance(function, ast.Attribute)
-                 and isinstance(function.value, ast.Name)
-                 and function.value.id == "argparse"
-                 and function.attr == "ArgumentParser")
-                    or (isinstance(function, ast.Name)
-                        and function.id == "ArgumentParser")):
-                return True
-    return False
-
-
 def test_plugin_direct_executables_are_explicitly_classified_without_running_them():
-    """A new provider CLI must not silently become an operator 'read-only' tool."""
-    document = DOC.read_text(encoding="utf-8")
-    observed: set[str] = set()
-    for script in (ROOT / "src/plugins").rglob("*.py"):
-        # Pytest contract fixtures are not standalone operator commands.
-        if script.name.startswith("test_"):
-            continue
-        tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
-        if _is_direct_plugin_entrypoint(tree):
-            observed.add(script.relative_to(ROOT).as_posix())
+    """New direct plugin CLIs require an owner-reviewed effect classification."""
+    from cifereca.core.plugin_entrypoint_inventory import CLASSIFIED, inventory
 
-    required = {
-        "src/plugins/provider-numilog/numilog_delivery_diagnose.py",
-        "src/plugins/recommendations/trace_report.py",
-        "src/plugins/epub_optimizer/cifereca_epub_optimizer/cli.py",
-        "src/plugins/epub_optimizer/tests/benchmark_optimizer_cpu.py",
-    }
-    assert observed == required, (
-        f"review_unclassified_plugin_direct_cli: added={sorted(observed-required)} "
-        f"removed={sorted(required-observed)}"
-    )
-    for path in observed:
-        assert f"`{path}`" in document, f"undocumented_plugin_entrypoint:{path}"
+    document = DOC.read_text(encoding="utf-8")
+    report = inventory(ROOT)
+    assert report["status"] == "complete", report
+    assert report["unclassified"] == []
+    assert report["removed"] == []
+    assert len(report["entries"]) == 4
+    assert {row["path"] for row in report["entries"]} == set(CLASSIFIED)
+    assert {row["risk"] for row in report["entries"]} == {"F", "M", "T/M"}
+    for row in report["entries"]:
+        assert f'`{row["path"]}`' in document, row["path"]
+        assert f"**{row['risk']}**" in document, row["risk"]
     for statement in (
         "Points d'entrée directs dans les packages plugins",
         "Benchmark destructeur", "**F**", "**T/M**",
     ):
-        # Retain a human side-effect classification, not a path-only inventory.
         assert statement.lower() in document.lower(), statement
+
+
+def test_plugin_entrypoint_inventory_flags_unknown_command_and_removed_classifier(
+    tmp_path,
+):
+    from cifereca.core.plugin_entrypoint_inventory import inventory
+
+    (tmp_path / "src/plugins/unknown").mkdir(parents=True)
+    fake_cli = tmp_path / "src/plugins/unknown/new_cli.py"
+    fake_cli.write_text(
+        'import argparse\\nif __name__ == "__main__":\\n'
+        '    argparse.ArgumentParser()\\n',
+        encoding="utf-8",
+    )
+    report = inventory(tmp_path)
+    assert report["status"] == "needs_review"
+    assert report["unclassified"] == ["src/plugins/unknown/new_cli.py"]
+    assert report["removed"]
+    assert report["entries"][0]["risk"] == "unclassified"
+    # AST discovery is inert: source code isn't imported or executed.
+    fake_cli.write_text(
+        'raise RuntimeError("NO_EXECUTION_ALLOWED")\\n'
+        'if __name__ == "__main__": pass\\n',
+        encoding="utf-8",
+    )
+    report = inventory(tmp_path)
+    assert report["status"] == "needs_review"
 
 
 def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
