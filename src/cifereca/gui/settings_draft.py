@@ -216,6 +216,14 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         # Current descriptor fields still receive the explicitly edited text.
         credentials: dict[str, Any] = dict(original_credentials)
         for field in descriptor.credential_fields:
+            # A synthetic/stale snapshot cannot bypass the GUI invalid flag.
+            # Do not silently replace a persisted non-text value with the
+            # blank displayed by a text-only editor on an unrelated Save.
+            if (field.key in original_credentials
+                    and type(original_credentials[field.key]) is not str):
+                raise SettingsValidationError(
+                    'Identifiants historiques invalides : recharger les paramètres.'
+                )
             if field.key not in submitted_fields or type(submitted_fields[field.key]) is not str:
                 raise SettingsValidationError(
                     'Schéma des identifiants modifié : recharger les paramètres.'
@@ -256,6 +264,11 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 'Schéma des options modifié : recharger les paramètres.'
             )
         for field in getattr(descriptor, 'account_options', ()):
+            if (field.key in original_options
+                    and type(original_options[field.key]) is not str):
+                raise SettingsValidationError(
+                    'Options du fournisseur invalides : recharger les paramètres.'
+                )
             if field.key not in option_fields:
                 # Legacy editors predate newer descriptor options. Preserve
                 # existing values, but do not activate an account whose new
