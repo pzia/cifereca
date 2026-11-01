@@ -58,23 +58,21 @@ def test_default_controls_preserve_hierarchy_and_labels():
     assert [child.title for child in group.children] == [
         "Niveau de diagnostic",
     ]
-    assert len(interface.children) == 2
-    assert interface.children[0].title == "Interface et actions"
-    assert interface.children[0].children[0].title == "Actions expérimentales"
-    assert view.plugins_button is interface.children[1]
+    assert len(interface.children) == 1
+    assert view.plugins_button is interface.children[0]
     assert view.plugins_button.props["label"] == "Configurer la barre de titre et les actions…"
     assert view.diagnostics_switch is None
-    assert view.experimental_switch is interface.children[0].children[0].suffixes[0]
+    assert not hasattr(view, "experimental_switch")
 
 
-def test_saved_state_and_legacy_detailed_diagnostic_level_are_preserved():
+def test_legacy_experimental_flag_is_not_a_settings_action():
     view, _, _ = _build({
         "diagnostics.enabled": False,
         "experimental_actions": True,
         "diagnostics.level": "detailed",
     })
     assert view.diagnostics_switch is None
-    assert view.experimental_switch.active is True
+    assert not hasattr(view, "experimental_switch")
     assert view.levels == ["errors", "normal", "verbose", "trace"]
     assert view.level_dropdown.options == view.levels
     assert view.level_dropdown.selected == 2
@@ -84,7 +82,7 @@ def test_unknown_level_falls_back_to_normal_and_default_switches():
     view, _, _ = _build({"diagnostics.level": "unsupported"})
     assert view.level_dropdown.selected == 1
     assert view.diagnostics_switch is None
-    assert view.experimental_switch.active is False
+    assert not hasattr(view, "experimental_switch")
 
 
 def test_builder_does_not_connect_widgets_or_persist_configuration():
@@ -108,3 +106,24 @@ def test_effective_runtime_trace_overrides_saved_preference_in_dropdown():
     # A CLI override changes the live presentation, not persistent config.
     view, _, _ = _build({"diagnostics.level": "normal"})
     assert view.level_dropdown.selected == 1
+
+
+
+def test_settings_builder_does_not_even_read_obsolete_experimental_bit():
+    keys = []
+    config = SimpleNamespace(get=lambda key, default=None: (
+        keys.append(key) or {"diagnostics.level": "normal"}.get(key, default)
+    ))
+    diag, interface = Widget(), Widget()
+    gtk = SimpleNamespace(Switch=Widget, DropDown=DropDown, Button=Widget,
+                          Align=SimpleNamespace(CENTER="center"))
+    adw = SimpleNamespace(PreferencesGroup=Widget, ActionRow=Widget)
+    view = build_settings_application_interface(
+        diagnostic_section=diag, interface_section=interface, config=config,
+        Gtk=gtk, Adw=adw,
+    )
+    assert not hasattr(view, "experimental_switch")
+    assert "experimental_actions" not in keys
+    assert [child.props.get("label") for child in interface.children] == [
+        "Configurer la barre de titre et les actions…"
+    ]
