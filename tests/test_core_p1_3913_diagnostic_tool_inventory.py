@@ -117,6 +117,23 @@ def test_offline_analyzers_are_real_and_named_in_inventory():
     )
 
 
+def test_private_gui_capture_zip_has_documented_offline_integrity_validator():
+    source = (ROOT / "src/cifereca/core/capture_session_export.py").read_text(
+        encoding="utf-8"
+    )
+    operator = DOC.read_text(encoding="utf-8")
+    capture = (ROOT / "docs/CORE-P1-4093-GUI-CAPTURE.md").read_text(
+        encoding="utf-8"
+    )
+    command = "python3 -m cifereca.core.capture_session_export --validate"
+    assert command in operator and command in capture
+    assert "def main(argv: list[str] | None = None) -> int:" in source
+    assert "validate_capture_session(args.validate)" in source
+    assert "sans démarrage Core" in operator
+    assert "aucun chemin" in operator
+    assert "N+M" in operator
+
+
 def test_expert_offline_reconciliation_is_not_misidentified_as_mutating_sync():
     source = (ROOT / "src/cifereca/core/library_reconciliation.py").read_text(
         encoding="utf-8"
