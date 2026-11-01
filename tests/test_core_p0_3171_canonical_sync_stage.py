@@ -4,6 +4,7 @@ Real SQLite v14; provider snapshots and PDF bytes synthetic only.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -404,3 +405,88 @@ def test_sessionless_local_source_without_canonical_reader_preserves_exact_resul
     result = synchronize_account_source(service, service.accounts[0])
     assert result == {"provider": "local", "status": "ok"}
     assert refs(db) == ([], 0)
+
+
+def test_981_optional_source_batch_reuses_one_read_for_legacy_and_typed(rig):
+    """One Sync mirrors personal inventory and observes A from one provider GET.
+
+    Test shim models the optional protocol, not a fake global rights TTL.
+    """
+    service, _db, _root = rig
+    state = {"active": False, "rows": None, "gets": 0, "enters": 0}
+
+    def library():
+        if state["active"] and state["rows"] is not None:
+            return list(state["rows"])
+        state["gets"] += 1
+        rows = [object()]
+        if state["active"]:
+            state["rows"] = list(rows)
+        return rows
+
+    @contextmanager
+    def source_sync_inventory(account):
+        assert account is service.account and not state["active"]
+        state["active"] = True
+        state["rows"] = None
+        state["enters"] += 1
+        try:
+            yield
+        finally:
+            state["active"] = False
+            state["rows"] = None
+
+    def rights(_account):
+        library()
+        service.read_calls += 1
+        return service.snapshot
+
+    service.session.library = library
+    service.session.source_sync_inventory = source_sync_inventory
+    service.session.rights_observation_snapshot = rights
+    service._synchronize_account_source_impl = (
+        lambda account, deep=False, control=None: {
+            "provider": account.provider_id,
+            "status": "ok", "library": len(library()),
+        }
+    )
+
+    first = synchronize_account_source(service, service.account)
+    assert first["status"] == "partial"
+    assert first["library"] == 1
+    assert state == {"active": False, "rows": None, "gets": 1, "enters": 1}
+    assert service.read_calls == 1
+
+    second = synchronize_account_source(service, service.account)
+    assert second["library"] == 1
+    assert state == {"active": False, "rows": None, "gets": 2, "enters": 2}
+    assert service.read_calls == 2
+
+
+def test_981_optional_source_batch_closes_on_exception_and_skips_disabled(rig):
+    service, _db, _root = rig
+    counts = {"entered": 0, "exited": 0}
+
+    @contextmanager
+    def source_sync_inventory(account):
+        counts["entered"] += 1
+        try:
+            yield
+        finally:
+            counts["exited"] += 1
+
+    service.session.source_sync_inventory = source_sync_inventory
+
+    def crash(account, deep=False, control=None):
+        raise RuntimeError("fixture sync failure")
+
+    service._synchronize_account_source_impl = crash
+    with pytest.raises(RuntimeError, match="fixture sync failure"):
+        synchronize_account_source(service, service.account)
+    assert counts == {"entered": 1, "exited": 1}
+    service.enabled = False
+    service._synchronize_account_source_impl = (
+        lambda account, deep=False, control=None: {"status": "skipped"}
+    )
+    assert synchronize_account_source(service, service.account)["status"] == "skipped"
+    assert counts == {"entered": 1, "exited": 1}
