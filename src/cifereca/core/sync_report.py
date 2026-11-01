@@ -306,7 +306,10 @@ def _safe_resource_evidence(value: object) -> dict[str, object]:
         if len(rows) > 512:
             result["truncated"] = True
     if "staging_evidence" in value:
-        result["staging_evidence"] = _safe_staging(value["staging_evidence"])
+        staging = _safe_staging(value["staging_evidence"])
+        result["staging_evidence"] = staging
+        if staging.get("coverage") == "truncated":
+            result["truncated"] = True
     return result
 
 
