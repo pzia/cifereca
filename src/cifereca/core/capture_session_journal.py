@@ -38,7 +38,12 @@ class _CaptureHandler(logging.Handler):
         self.addFilter(RedactionFilter())
 
     def emit(self, record: logging.LogRecord) -> None:
-        self._owner._observe(record, self.format)
+        try:
+            self._owner._observe(record, self.format)
+        except Exception:
+            # Diagnostics must not terminate a genuine provider operation.
+            with self._owner._mutex:
+                self._owner._omitted += 1
 
 
 class CaptureSessionJournal:
