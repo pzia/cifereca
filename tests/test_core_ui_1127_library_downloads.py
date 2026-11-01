@@ -136,7 +136,7 @@ def test_main_window_retains_async_saving_and_global_library_row_reference():
     assert "build_library_download_section(" in source
     assert "download_group = download_settings.download_group" in source
     assert "provider_download_editors = download_settings.provider_download_editors" in source
-    assert "library_dir_row = kobo_settings.library_dir_row" in source
+    assert "library_dir_row = sync_settings.library_dir_row" in source
     assert "save_settings" in source
     assert "settings_committer.submit(" in source
     assert "SettingsRevisionState(" in source
