@@ -194,6 +194,89 @@ def parse_suggestions(html: str) -> CatalogPage:
     return CatalogPage(tuple(records.values()), "partial" if partial else "ok")
 
 
+
+def parse_search_page(html: str) -> CatalogPage:
+    """Search actual full catalogue, retaining legacy suggestions compatibility.
+
+    The observed /resources?q= page has a ul.list-details holding
+    li.list-details__item with an article.view-details Book microdata scope.
+    Autocomplete search-results__list is distinct from the full catalogue.
+    """
+    root = _dom(html)
+    lists = [n for n in root.walk() if n.tag == "ul" and n.has_class("list-details")]
+    if not lists:
+        return parse_suggestions(html)
+    if len(lists) != 1 or not lists[0].closed:
+        raise WebParseError("unrecognized_search")
+    cards = [n for n in lists[0].walk()
+             if n.tag == "li" and n.has_class("list-details__item")]
+    if not cards:
+        # No real zero-results DOM has been observed; do not manufacture it.
+        raise WebParseError("unrecognized_search")
+    if len(cards) > MAX_ITEMS:
+        raise WebParseError("item_limit")
+    records = {}
+    partial = False
+    for card in cards:
+        if not card.closed:
+            partial = True
+            continue
+        books = [n for n in card.walk()
+                 if n.tag == "article" and n.has_class("view-details")
+                 and "itemscope" in n.attrs
+                 and any(t in {"http://schema.org/Book", "https://schema.org/Book"}
+                         for t in n.attrs.get("itemtype", "").split())]
+        if len(books) != 1 or not books[0].closed:
+            partial = True
+            continue
+        book = books[0]
+        title_links = []
+        for link in book.walk():
+            if link.tag != "a":
+                continue
+            rid = _id(link.attrs.get("href", ""), "resources")
+            if rid is None:
+                continue
+            for heading in link.walk():
+                if (heading.tag == "h3" and heading.closed
+                        and heading.has_class("details-content__title")
+                        and heading.text()):
+                    title_links.append((rid, heading.text()))
+        if len(title_links) != 1:
+            partial = True
+            continue
+        rid, title = title_links[0]
+        if _links(book, "resources") != {rid}:
+            partial = True
+            continue
+
+        props = _properties(book)
+        descriptions = [n.text() for n in book.walk()
+                        if n.tag == "p" and n.closed
+                        and n.has_class("details-content__body") and n.text()]
+        def single(key):
+            values = props.get(key, ())
+            return values[0] if len(values) == 1 else None
+        if (len(descriptions) > 1 or
+                any(len(props.get(k, ())) > 1
+                    for k in ("publisher", "isbn", "inLanguage"))):
+            partial = True
+        record = CatalogRecord(
+            rid, title, tuple(props.get("author", ())),
+            single("publisher"), single("isbn"), single("inLanguage"),
+            descriptions[0] if len(descriptions) == 1 else None,
+        )
+        if rid in records and records[rid] != record:
+            partial = True
+        else:
+            records[rid] = record
+    if not records:
+        raise WebParseError("unrecognized_search")
+    return CatalogPage(tuple(records.values()), "partial" if partial else "ok",
+                       scope="results")
+
+
+
 def _properties(root):
     result = {}
     allowed = {"name", "author", "publisher", "isbn", "inLanguage", "description"}

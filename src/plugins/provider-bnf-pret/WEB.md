@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.22.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.23.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -629,3 +629,23 @@ les contrôles HTTPS et de provenance.
 Les tests sont synthétiques, en particulier le balisage des cartes et les
 liens de pagination. La réponse réelle du portail (HTTP 200, parsing DOM,
 résultats affichés et éventuelle pagination) reste à valider après déploiement.
+
+## Catalogue HTML réel 0.3.23 — #2055 (01/11/2026)
+
+Le portail répond à la recherche GET /resources?q= avec une page complète
+contenant ul.list-details, li.list-details__item et des articles
+view-details itemscope Book ; le nom est présenté dans un h3
+.details-content__title, et l'auteur dans une microdata Person imbriquée.
+Ces preuves proviennent d'un HTML de recherche réel analysé localement,
+**non commité** parce qu'il contient des données de compte et des jetons CSRF.
+Les anciens sélecteurs search-results__list/search-resource-result désignent
+les fragments d'autocomplétion, pas la page /resources, et restent pris en charge.
+
+Le parseur valide le lien unique de l'édition sous le même domaine,
+l'itemtype Book, la présence d'un titre non ambigu et les bornes de page.
+Les cartes incorrectes produisent une sortie partielle, pas de droit ni
+d'autorisation d'emprunt ; une page inconnue ou vide non attestée échoue
+explicitement. La synchronisation, le prêt et les POST restent inchangés.
+Les tests utilisent exclusivement des HTML fictifs mimant la structure.
+Le parcours HTTP 200 et la pagination réelle demandent une recette après
+déploiement, sans importer la capture privée dans GitHub ou CI.

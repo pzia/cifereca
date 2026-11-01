@@ -19,6 +19,29 @@ def card(rid="synthetic-book", title="Livre synthétique"):
     return f'<li class="search-resource-result"><a href="/resources/{rid}">{title}</a></li>'
 
 
+
+def full_results(cards):
+    # Public HTML topology observed on /resources?q=; ALL values synthetic.
+    return ('<html><head><meta name="csrf-token" content="synthetic-private">'
+            '</head><body><ul class="list-details">' + cards
+            + '</ul></body></html>')
+
+
+def full_card(rid="book-a", title="Titre fictif", href=None, author="Auteure fictive"):
+    href = href or "/resources/" + rid
+    return ('<li class="list-details__item"><article class="view-details" '
+            'itemscope itemtype="http://schema.org/Book">'
+            '<a href="' + href + '"><h3 class="details-content__title">'
+            + title + '</h3></a>'
+            '<span itemprop="author" itemscope itemtype="http://schema.org/Person">'
+            '<span itemprop="name">' + author + '</span></span>'
+            '<p class="details-content__body">Résumé entièrement fictif</p>'
+            '<form method="post" action="/bookings">'
+            '<input type="hidden" name="authenticity_token" value="synthetic-private">'
+            '</form></article></li>')
+
+
+
 def detail(body):
     return '<article itemscope itemtype="https://schema.org/Book">' + body + '</article>'
 
@@ -70,6 +93,58 @@ class WebDOMTests(unittest.TestCase):
         for html in ('<html>Erreur temporaire</html>', '<ul class="search-results__list">' + card()):
             with self.assertRaises(web.WebParseError):
                 web.parse_suggestions(html)
+
+    def test_real_catalogue_topology_18_books_and_authors(self):
+        html = full_results(''.join(
+            full_card("synthetic-" + str(i), "Titre " + str(i)) for i in range(18)))
+        page = web.parse_search_page(html)
+        self.assertEqual(page.scope, "results")
+        self.assertEqual(page.status, "ok")
+        self.assertFalse(page.exhaustive)
+        self.assertEqual(len(page.records), 18)
+        self.assertEqual(page.records[0].resource_id, "synthetic-0")
+        self.assertEqual(page.records[-1].title, "Titre 17")
+        self.assertEqual(page.records[0].authors, ("Auteure fictive",))
+        self.assertEqual(page.records[0].description, "Résumé entièrement fictif")
+        self.assertEqual(page.records[0].availability, "unknown")
+        self.assertNotIn("synthetic-private", repr(page))
+
+    def test_autocomplete_legacy_remains_supported(self):
+        page = web.parse_search_page(suggestions(card("legacy-a")))
+        self.assertEqual(len(page.records), 1)
+        self.assertEqual(page.records[0].title, "Livre synthétique")
+
+    def test_real_catalogue_conflicts_are_partial_not_guessed(self):
+        page = web.parse_search_page(full_results(
+            full_card("safe")
+            + full_card("collision", "Titre A")
+            + full_card("collision", "Titre B")))
+        self.assertEqual(page.status, "partial")
+        self.assertEqual(len(page.records), 2)
+
+    def test_real_catalogue_unknown_or_empty_is_not_success(self):
+        for html in (full_results(""),
+                     full_results('<div>Erreur de service</div>'),
+                     '<html><body><ul class="list-details">' + full_card()[:95]):
+            with self.subTest(case=len(html)):
+                with self.assertRaisesRegex(web.WebParseError, "^unrecognized_search$"):
+                    web.parse_search_page(html)
+
+    def test_real_catalogue_bad_link_does_not_create_record(self):
+        for href in ("https://evil.test/resources/book-a",
+                     "//evil.test/resources/book-a", "/loans/loan-a"):
+            with self.subTest(href=href):
+                html = full_results(full_card(href=href)
+                                    + full_card("safe-b"))
+                page = web.parse_search_page(html)
+                self.assertEqual(page.status, "partial")
+                self.assertEqual([row.resource_id for row in page.records], ["safe-b"])
+
+    def test_real_catalogue_is_no_loan_or_authorization_proof(self):
+        page = web.parse_search_page(full_results(full_card()))
+        row, = page.records
+        self.assertEqual(row.availability, "unknown")
+        self.assertFalse(page.exhaustive)
 
     def test_link_origin_and_routes(self):
         bad = ('https://evil.test/resources/a', '//evil.test/resources/a',

@@ -5,7 +5,7 @@ import re
 import time
 from urllib.parse import urlencode
 from cifereca_bnf_pret_web import (
-    ORIGIN, _dom, parse_suggestions, parse_detail, WebParseError,
+    ORIGIN, _dom, parse_search_page, parse_detail, WebParseError,
 )
 from cifereca_bnf_pret_paging import _params, observed_next_results_url
 from cifereca_bnf_pret_http import ReaderHTTPError
@@ -60,7 +60,7 @@ def read_search(client, query, *, is_current=lambda: True):
             actual.setdefault('page', '1')
             if expected != actual:
                 raise WebParseError('search_redirect_mismatch')
-            parsed = parse_suggestions(html)
+            parsed = parse_search_page(html)
             for record in parsed.records:
                 previous = records.get(record.resource_id)
                 if previous is not None and previous != record:

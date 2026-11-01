@@ -339,6 +339,26 @@ def search_html(ids=('book-a',), following=''):
     return '<ul class="search-results__list">' + cards + '</ul>' + following
 
 
+def full_search_html(ids=("book-a",)):
+    cards = "".join(
+        '<li class="list-details__item"><article class="view-details" '
+        'itemscope itemtype="http://schema.org/Book">'
+        '<a href="/resources/' + rid
+        + '"><h3 class="details-content__title">Titre ' + rid + '</h3></a>'
+        '<span itemprop="author" itemscope itemtype="http://schema.org/Person">'
+        '<span itemprop="name">Auteure fictive</span></span>'
+        '<p class="details-content__body">Résumé fictif</p>'
+        '<div class="availability">1 exemplaire disponible</div>'
+        '<form method="get" action="/media/fake/loans_confirmation">'
+        '<input type="hidden" name="email" value="synthetic@example.invalid">'
+        '</form></article></li>'
+        for rid in ids
+    )
+    return '<html><body><ul class="list-details">' + cards + '</ul></body></html>'
+
+
+
+
 DETAIL = ('<article itemscope itemtype="https://schema.org/Book">'
           '<h1 itemprop="name">Fiche synthétique</h1>'
           '<span itemprop="author">Auteur de la fiche</span>'
@@ -391,6 +411,19 @@ class HTTPCatalogTests(unittest.TestCase):
         self.assertFalse(session.connected)
         self.assertTrue(all(method=='GET' and host=='pret.bnf.fr' for method,host,path in calls))
         self.assertFalse(any('/loans/' in path or '/sso/' in path for _,_,path in calls))
+
+    def test_real_full_catalogue_httpx_search_without_borrow(self):
+        session,calls,state,requests=self.make()
+        state['pages']['1']=full_search_html(("book-a", "book-b"))
+        rows=session.search('révolte')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row.title for row in rows], ['Titre book-a', 'Titre book-b'])
+        self.assertEqual(rows[0].author, "Auteure fictive")
+        self.assertEqual(rows[0].metadata['availability'], "unknown")
+        self.assertFalse(rows[0].downloadable)
+        self.assertIsNone(rows[0].owned)
+        self.assertEqual([(r.method,r.url.path) for r in requests], [('GET','/resources')])
+        self.assertTrue(all(method=='GET' for method,host,path in calls))
 
     def test_only_observed_next_link_is_followed_and_duplicate_is_deduplicated(self):
         session,calls,state,requests=self.make()
