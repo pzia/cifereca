@@ -198,8 +198,6 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
 def test_sync_factory_routes_to_scoped_page_without_global_acquisition():
     ui = NS(**{name: Widget() for name in ('backup_switch', 'backup_dir_row', 'backup_interval_row', 'vault_profile_drop', 'open_sync_button', 'sync_navigation_status')})
     ui.backup_switch.active = True
-    ui.open_sync_button = ui.open_sync_button
-    ui.sync_navigation_status = ui.sync_navigation_status
     host = NS(config={'kobo_backup.enabled': True},
               run_kobo_backup=Mock(), navigate=Mock())
     lifetime, state = SettingsPageLifetime(), SettingsRevisionState(['sync'])
