@@ -54,7 +54,7 @@ def main() -> int:
         "synthetic_only": True,
     }
     gate = report["checks"]
-    state = {"ticks": 0, "closed": False}
+    state = {"ticks": 0, "closed": False, "timeout_fired": False}
     active_app = [None]
     failure = ["capture_gtk_not_started"]
     original_argv = sys.argv
@@ -84,6 +84,7 @@ def main() -> int:
         return True
 
     def hard_timeout():
+        state["timeout_fired"] = True
         if not state["closed"]:
             failure[0] = "capture_gtk_window_timeout"
         elif failure[0] == "capture_gtk_not_closed":
@@ -104,9 +105,11 @@ def main() -> int:
             try:
                 rc = app.main()  # REAL Gtk.Application startup and shutdown
             finally:
-                GLib.source_remove(timeout_id)
+                if not state["timeout_fired"]:
+                    GLib.source_remove(timeout_id)
                 sys.argv = original_argv
-            if not gate["native_window_mapped"] or not state["closed"]:
+            if (state["timeout_fired"] or not gate["native_window_mapped"]
+                    or not state["closed"]):
                 failure[0] = "capture_gtk_window_timeout"
             elif rc != 0:
                 failure[0] = "capture_gtk_app_error"
