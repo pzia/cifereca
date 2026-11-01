@@ -2226,6 +2226,24 @@ class LocalInspection:
             self._missing_pending = (case_key, None)
         return outcome
 
+    def preview_missing_linked_retirement(self, case_key):
+        """CoreUI-only explicit review for attested linked local projections.
+
+        Never silently fall back from a blocked ordinary retirement to a
+        destructive variant. The caller must choose this separate action.
+        """
+        self.cancel_missing_repair()
+        operator = self._missing_operator_for_case(case_key)
+        if operator is None:
+            return {'status': 'blocked', 'reason': 'inspection_scope_unavailable',
+                    'read_only': True}
+        outcome = operator.preview_linked_catalogue_retirement(
+            placement_id=self._missing_case_placements[case_key],
+        )
+        if outcome.get('status') == 'review_required':
+            self._missing_pending = (case_key, None)
+        return outcome
+
     def preview_missing_relocation(self, case_key, file_key):
         """Choose an observed, unlinked physical FileObservation, not a path."""
         self.cancel_missing_repair()
