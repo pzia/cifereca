@@ -5,7 +5,6 @@ import logging
 import threading
 import time
 from concurrent.futures import Future
-from collections.abc import Mapping
 from typing import Any, Callable
 
 from ..task_queue import PriorityExecutor, TaskPriority
@@ -55,6 +54,7 @@ class TaskRunner:
         if kind != "source-sync":
             return "success"
         from cifereca.plugin_api import SyncResult
+        from collections.abc import Mapping
         if not isinstance(value, SyncResult):
             return "success"  # Legacy non-typed worker results are unchanged.
         facts = value.facts
