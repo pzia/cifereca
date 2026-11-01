@@ -183,7 +183,11 @@ def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refr
     assert "acquisition autorisée par compte" in manual.subtitle
     assert "Aucun consentement" in manual.subtitle
     assert all("Ancien réglage global" not in row.title for row in group.children)
-    assert all(not any(type(widget).__name__ == "Switch" for widget in row.suffixes)
+    # The obsolete widget is instantiated only for compatibility; it must
+    # have no GTK parent and cannot appear in the saved Settings surface.
+    controls, _, _ = _build({"kobo_backup.enabled": True})
+    assert all(controls.backup_switch is not row
+               and controls.backup_switch not in row.suffixes
                for row in group.children)
 
 
