@@ -41,8 +41,15 @@ def _public(result: object, *, preview: bool) -> dict[str, object]:
         for c in reason
     ):
         outcome["reason"] = reason
-    if preview and status in {"ready", "review_required"}:
-        outcome["requires_explicit_confirmation"] = True
+    # Direct reference counts are UI diagnostics, *not* evidence that the
+    # unknown operational graph is free of dependencies. Blocked retirement
+    # has no confirmation token and never turns into a writable action.
+    if preview and (
+        status in {"ready", "review_required"}
+        or (status == "blocked" and reason == "dependent_references")
+    ):
+        if status != "blocked":
+            outcome["requires_explicit_confirmation"] = True
         for key in ("catalogue_rows", "backup_rows"):
             count = result.get(key)
             if type(count) is int and 0 <= count <= 128:
