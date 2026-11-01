@@ -1,4 +1,4 @@
-"""P0 #984 — ADEPT-first Paris return, without duplicate mutation or PNB POST."""
+"""P1 #4048 — ADEPT/Paris return retired without loss of historical evidence."""
 from __future__ import annotations
 
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
@@ -89,101 +89,81 @@ def stub_adept(service, *, already_returned=False, failure=False):
     return count
 
 
-def test_adept_return_then_paris_absence_confirmed_without_pnb_post(tmp_path):
+DENIED = {"status": "blocked", "code": "loan_return_removed", "retry": "none"}
+
+
+def test_adept_return_retired_preserves_exact_historical_binding(tmp_path):
     service, loan, paris = setup(tmp_path)
     attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         calls = stub_adept(service)
-        first = service.return_loan_prefer_adept(loan)
-        assert first["status"] == "paris_return_confirmed"
-        assert first["adobe_return_confirmed"] is True
-        assert first["provider_return_confirmed"] is True
-        assert first["paris_verification"] == "provider_absent"
-        assert calls["mutations"] == 1
-        assert paris.posts == 0
-        assert paris.accounts_read == ["linked-123"]
-        assert service.return_loan_prefer_adept(loan) == first
-        assert calls["mutations"] == 1
-        assert paris.posts == 0
-        binding = service.storage.acquisition_get("adept-01")["metadata"]["adept_binding"]
-        assert binding["return_verification"] == "confirmed"
-        assert binding["token_present"] is False
+        before = service.storage.acquisition_get("adept-01")
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.storage.acquisition_get("adept-01") == before
+        assert calls["mutations"] == calls["inventory"] == 0
+        assert paris.posts == 0 and paris.accounts_read == []
     finally:
         service.close()
 
 
-def test_adept_return_paris_still_active_requires_separate_explicit_pnb(tmp_path):
+def test_active_paris_and_adept_never_fall_through_to_pnb(tmp_path):
     service, loan, paris = setup(tmp_path, paris_active=True)
     try:
         calls = stub_adept(service)
-        first = service.return_loan_prefer_adept(loan)
-        assert first["status"] == "partial"
-        assert first["adobe_return_confirmed"] is True
-        assert first["paris_verification"] == "still_present"
-        assert first["retry"] == "provider_action_explicit"
-        assert paris.posts == 0
-        assert service.return_digital(loan)["reason"] == "adobe_return_takes_precedence"
-        assert paris.posts == 0
-        assert service.return_loan_prefer_adept(loan)["status"] == "partial"
-        assert calls["mutations"] == 1
-        assert paris.posts == 0
-        provider = service.return_digital(loan, explicit_retry=True)
-        assert provider["status"] == "still_active"
-        assert paris.posts == 1
-        assert calls["mutations"] == 1
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.return_digital(loan, explicit_retry=True) == DENIED
+        assert service.return_digital(loan) == DENIED
+        assert calls["mutations"] == 0
+        assert paris.posts == 0 and paris.accounts_read == []
     finally:
         service.close()
 
 
-def test_adept_return_verification_unavailable_never_claims_paris_absence(tmp_path):
+def test_incomplete_inventory_does_not_restart_a_retired_return(tmp_path):
     service, loan, paris = setup(tmp_path)
     try:
-        stub_adept(service)
+        calls = stub_adept(service)
         paris.last_loan_errors = [{"upstream": "DILICOM", "error": "timeout"}]
-        result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "partial"
-        assert result["paris_verification"] == "unavailable"
-        assert result["adobe_return_confirmed"] is True
-        assert paris.posts == 0
-        paris.last_loan_errors = []
-        assert service.verify_loan_return(loan)["status"] == "partial"
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.verify_loan_return(loan) == {
+            "status": "verification_unavailable",
+            "code": "loan_return_removed", "retry": "none",
+        }
         attest_paris_dilicom_complete(paris, credential_id="alice-paris")
-        assert service.verify_loan_return(loan)["status"] == "paris_return_confirmed"
-        assert paris.posts == 0
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert calls["mutations"] == 0
+        assert paris.posts == 0 and paris.accounts_read == []
     finally:
         service.close()
 
 
-def test_provider_return_requested_first_blocks_any_adobe_mutation(tmp_path):
+def test_legacy_provider_checkpoint_is_never_replayed_as_adobe_return(tmp_path):
     service, loan, paris = setup(tmp_path)
     try:
         calls = stub_adept(service)
         pnb_key = return_key("paris", "alice-paris", "linked-123", loan.id)
         assert service.storage.loan_return_claim(pnb_key, "pnbsent")[0]
-        result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "partial"
-        assert result["reason"] == "provider_return_already_requested"
-        assert calls["mutations"] == 0
-        assert paris.posts == 0
+        before = service.storage.loan_return_state(pnb_key)
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.storage.loan_return_state(pnb_key) == before
+        assert calls["mutations"] == 0 and paris.posts == 0
     finally:
         service.close()
 
 
-def test_adobe_mutation_failure_persists_and_cannot_be_replayed(tmp_path):
+def test_old_adobe_mutation_failure_is_not_replayed(tmp_path):
     service, loan, paris = setup(tmp_path, paris_active=True)
     try:
         calls = stub_adept(service, failure=True)
-        result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "failed"
-        assert result["adobe_return_confirmed"] is False
-        assert service.return_loan_prefer_adept(loan)["status"] == "failed"
-        assert calls["mutations"] == 1
-        assert paris.posts == 0
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert calls["mutations"] == 0 and paris.posts == 0
     finally:
         service.close()
 
 
-def test_crash_after_adobe_call_recovers_from_inventory_only(tmp_path):
+def test_adobe_checkpoint_survives_without_any_automatic_recovery(tmp_path):
     service, loan, paris = setup(tmp_path)
     attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
@@ -194,98 +174,48 @@ def test_crash_after_adobe_call_recovers_from_inventory_only(tmp_path):
             key, "interrupted", status="adobe_return_requested",
             verification="adobe_pending", adobe_verified=False,
         )
-        outcome = service.return_loan_prefer_adept(loan)
-        assert outcome["status"] == "paris_return_confirmed"
-        assert outcome["adobe_return_confirmed"] is True
-        assert calls["mutations"] == 0
-        assert calls["inventory"] == 1
+        before = service.storage.loan_return_state(key)
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert service.verify_loan_return(loan)["code"] == "loan_return_removed"
+        assert service.storage.loan_return_state(key) == before
+        assert calls["mutations"] == calls["inventory"] == 0
         assert paris.posts == 0
     finally:
         service.close()
 
 
-def test_verify_loan_return_initially_never_mutates_or_creates_checkpoint(tmp_path):
+def test_initial_verification_never_mutates_or_creates_checkpoint(tmp_path):
     service, loan, paris = setup(tmp_path)
     try:
         calls = stub_adept(service)
         assert service.verify_loan_return(loan) == {
-            "status": "not_requested", "scope": "adobe_first_paris",
+            "status": "verification_unavailable",
+            "code": "loan_return_removed", "retry": "none",
         }
         key = adept_return_key("paris", "alice-paris", "linked-123", loan.id)
         assert service.storage.loan_return_state(key) is None
-        assert calls["mutations"] == 0
-        assert paris.posts == 0
+        assert calls["mutations"] == 0 and paris.posts == 0
     finally:
         service.close()
 
 
-def test_loan_with_revoked_borrower_binding_cannot_return(tmp_path):
+def test_revoked_binding_and_non_adept_origin_do_not_enable_return(tmp_path):
     service, loan, paris = setup(tmp_path)
     try:
         calls = stub_adept(service)
         service.storage.paris_borrower_adept_binding_delete(
             credential_id="alice-paris", account_id="linked-123",
         )
-        result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "adept_borrower_binding_required"
-        assert calls["mutations"] == 0
-        assert paris.posts == 0
-    finally:
-        service.close()
-
-
-def test_non_adept_loan_only_offers_distinct_provider_action(tmp_path):
-    service, loan, paris = setup(tmp_path)
-    try:
-        calls = stub_adept(service)
+        assert service.return_loan_prefer_adept(loan) == DENIED
         service.storage.acquisition_update_state("adept-01", "attention_required")
-        result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "provider_action_available"
-        assert result["retry"] == "provider_action_explicit"
-        assert calls["mutations"] == 0
-        assert paris.posts == 0
+        assert service.return_loan_prefer_adept(loan) == DENIED
+        assert calls["mutations"] == 0 and paris.posts == 0
     finally:
         service.close()
 
 
-def test_adobe_and_pnb_returns_cannot_be_claimed_concurrently(tmp_path):
-    service, loan, paris = setup(tmp_path, paris_active=True)
-    started, release = Event(), Event()
-    try:
-        calls = stub_adept(service)
-        original = service.execute_drm_mutation
-
-        def in_flight(request):
-            started.set()
-            assert release.wait(5), "test timed out awaiting release"
-            return original(request)
-
-        service.execute_drm_mutation = in_flight
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            future = pool.submit(service.return_loan_prefer_adept, loan)
-            try:
-                assert started.wait(5), "ADEPT mutation never started"
-                competing = service.return_digital(loan, explicit_retry=True)
-                assert competing == {
-                    "status": "attention_required", "scope": "provider_pnb_only",
-                    "code": "loan_return_busy", "retry": "verification_only",
-                }
-                assert paris.posts == 0
-                assert calls["mutations"] == 0
-            finally:
-                release.set()
-            first = future.result(timeout=10)
-        assert first["status"] == "partial"
-        assert first["adobe_return_confirmed"] is True
-        assert calls["mutations"] == 1
-        assert paris.posts == 0
-    finally:
-        release.set()
-        service.close()
-
-
-def test_other_connection_same_upstream_loan_uses_same_cross_channel_lock(tmp_path):
-    service, loan, paris = setup(tmp_path, paris_active=True)
+def test_other_connection_loan_uses_same_historical_lock_name(tmp_path):
+    service, loan, _paris = setup(tmp_path, paris_active=True)
     try:
         other = replace(loan, source_credential="other-paris", identity_id="bob")
         assert service._return_operation_lock_file(loan) == service._return_operation_lock_file(other)
@@ -295,7 +225,7 @@ def test_other_connection_same_upstream_loan_uses_same_cross_channel_lock(tmp_pa
         service.close()
 
 
-def test_pnb_refuses_shared_loan_from_other_paris_identity_without_post(tmp_path):
+def test_other_identity_cannot_use_retired_pnb_route(tmp_path):
     service, loan, paris = setup(tmp_path, paris_active=True)
     try:
         service.storage.provider_connection_put({
@@ -313,10 +243,8 @@ def test_pnb_refuses_shared_loan_from_other_paris_identity_without_post(tmp_path
             "item_id": loan.record_id, "loan_id": loan.id,
             "entitlement_type": "loan", "state": "active",
         })
-        first = service.return_digital(loan, explicit_retry=True)
-        assert first["status"] == "attention_required"
-        assert first["code"] == "loan_return_identity_conflict"
-        assert paris.posts == 0
+        assert service.return_digital(loan, explicit_retry=True) == DENIED
+        assert paris.posts == 0 and paris.accounts_read == []
         assert service.storage.loan_return_state(
             return_key("paris", "alice-paris", "linked-123", loan.id)
         ) is None
