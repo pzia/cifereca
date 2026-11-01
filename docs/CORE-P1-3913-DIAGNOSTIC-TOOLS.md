@@ -147,6 +147,28 @@ Scripts autonomes identifiés par recherche du code (`__main__` /
 | Simulation / E2E | `simulation/datasetctl.py`, `simulation/e2e_fixtures.py`, `simulation/plugin_coverage.py`, `simulation/plugin_scenarios.py`, `simulation/adept/fake_kobo_adept_cli.py`, `simulation/Epub/gen_fake_epubs.py`, `e2e/run.py` et `e2e/*_probe.py` | **T** : fixtures/services fictifs, captures et recettes GTK ; isolation des données production obligatoire. |
 | Transformation de livres | `src/plugins/epub_optimizer/cifereca_epub_optimizer/cli.py` (`input`, `-o/--output`, `--profile`, `--max-uncompressed-mb`, `--json`) | **M** sur fichier de sortie ; conversion, pas diagnostic d'acquisition. |
 
+## Points d'entrée directs dans les packages plugins — inventaire statique
+
+Le scan des `src/plugins/**/*.py` repère les vrais points d'entrée par garde
+AST `if __name__ == "__main__"` et/ou construction d'un parseur
+`argparse.ArgumentParser`, **sans importer ni exécuter les plugins**.
+Les modules `tests/test_*.py` n'établissent pas à eux seuls une commande
+opérateur. Les quatre exécutables ci-dessous sont classés par leurs effets,
+indépendamment de leur présence dans une installation donnée :
+
+| Chemin effectif | Commande / paramètres | Effet attestable et précautions |
+|---|---|---|
+| `src/plugins/provider-numilog/numilog_delivery_diagnose.py` | `python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py JOURNAL.zip [--task-ref REF] [--json]` | **F** : analyse hors réseau d'une archive **déjà créée**, aucun placement EPUB ni résultat d'emprunt attesté. Les archives sources peuvent contenir des secrets. |
+| `src/plugins/recommendations/trace_report.py` | `python3 src/plugins/recommendations/trace_report.py [LOG|-]` | **F** : lecture de logs de performance (stdin `-` par défaut), statistiques ; **ne pas publier les lignes brutes**. |
+| `src/plugins/epub_optimizer/cifereca_epub_optimizer/cli.py` | `python3 -m cifereca_epub_optimizer.cli INPUT [-o OUTPUT] [--profile ID] [--max-uncompressed-mb N] [--json]` (dans le venv où **cette distribution plugin** est installée) | **M** : lit l'ouvrage d'entrée et écrit un EPUB transformé, avec capacité de consommation CPU/mémoire ; `--json` ne rend **pas** l'opération passive. Aucun prêt/sync déclenché. |
+| `src/plugins/epub_optimizer/tests/benchmark_optimizer_cpu.py` | `python3 src/plugins/epub_optimizer/tests/benchmark_optimizer_cpu.py [--repetitions N] [--heavy-images N] [--width N] [--height N] [--baseline-root DIR] [--baseline-ref REF]` | **T/M** : génère des EPUB/PDF synthétiques, lance des transformations et peut écrire un baseline ; dépendances `Pillow`/`PyMuPDF`. Benchmark destructeur **sur son espace de travail jetable**, pas un audit d'une bibliothèque réelle. `--sample`/`--workers` sont des paramètres internes de processus enfant. |
+
+**Garde de dérive :** `tests/test_core_p1_3913_diagnostic_tool_inventory.py`
+compare les points d'entrée réellement détectés dans les plugins à ce
+registre et exige une classification lors de toute addition/suppression.
+Les nouveaux modules `__main__` doivent être revus pour leur impact réel,
+sans jamais être exécutés automatiquement par le rôle backlog.
+
 ## Scripts shell et wrappers : inventaire des points d'entrée non Python
 
 Les scripts bash ci-dessous sont **outillage de recette ou d'environnement**,
