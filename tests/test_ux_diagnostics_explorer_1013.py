@@ -1,12 +1,10 @@
 """UX P0 #1013: expected Diagnostics log explorer controls.
 
-Source-level regression characterization only; the actual acceptance gate is
+Source-level positive regressions follow the current helper split; acceptance is
 real GTK/Xvfb with anonymized, bounded Core broker events.
 """
 from pathlib import Path
 import ast
-
-import pytest
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/plugins/diagnostics-page/cifereca_diagnostics_page.py"
 
@@ -17,23 +15,46 @@ def _build():
     return next(n for n in plugin.body if isinstance(n, ast.FunctionDef) and n.name == "_build")
 
 
-@pytest.mark.xfail(strict=True, reason="#1013: page does not yet consume Core event feed")
 def test_explorer_consumes_bounded_public_events_broker():
-    calls = [
-        n for n in ast.walk(_build()) if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Attribute) and n.func.attr == "events"
-    ]
-    assert calls, "Use the Core-owned diagnostics.events(...) API; never read log files in plugin"
-    assert any(any(k.arg in {"limit", "offset"} for k in call.keywords) for call in calls), (
-        "The events feed must be explicitly paginated/bounded"
+    # The page delegates its bounded fetch to diagnostics_explorer rather
+    # than calling a Core broker method directly inside _build.
+    build = ast.unparse(_build())
+    assert "fetch_explorer_page(broker, **query)" in build
+    helper = ast.parse(
+        SOURCE.with_name("diagnostics_explorer.py").read_text(encoding="utf-8")
     )
+    fetch = next(node for node in helper.body
+                 if isinstance(node, ast.FunctionDef)
+                 and node.name == "fetch_explorer_page")
+    calls = [
+        node for node in ast.walk(fetch)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "events"
+    ]
+    assert len(calls) == 1
+    assert "PAGE_SIZE" in ast.unparse(fetch)
+    assert '"limit": PAGE_SIZE' in ast.unparse(fetch)
+    assert '"offset": offset' in ast.unparse(fetch)
+    assert "source == 'journal'" in ast.unparse(fetch)
+    assert "query['search'] = search" in ast.unparse(fetch)
 
 
-@pytest.mark.xfail(strict=True, reason="#1013: search and filter widgets missing")
 def test_explorer_exposes_module_severity_period_and_search_filters():
-    source = ast.get_source_segment(SOURCE.read_text(encoding="utf-8"), _build()) or ""
-    for label in ("Journaux", "Source", "Module", "Sévérité", "Période", "Rechercher"):
-        assert label.casefold() in source.casefold(), f"Missing visible control: {label}"
+    source = ast.get_source_segment(
+        SOURCE.read_text(encoding="utf-8"), _build()
+    ) or ""
+    # Real controls use tooltips/dropdowns/placeholder labels rather than
+    # the former static caption texts.
+    for fragment in (
+        '"Journaux"', '"Source des événements"',
+        '"Préfixe module (Entrée pour appliquer)"',
+        '"Niveau de gravité"', '"Période de la consultation"',
+        '"Rechercher dans tous les événements"',
+        'journals_tab.append(filters_top)',
+        'filters_bottom.append(module_filter)',
+        'journals_tab.append(search_filter)',
+    ):
+        assert fragment in source, f"Missing actual explorer control: {fragment}"
 
 
 def test_explorer_distinguishes_missing_sources_from_empty_results():
@@ -80,8 +101,21 @@ def test_explorer_reads_journal_via_core_broker_only():
     assert "broker.export_raw_journal()" in source
 
 
-@pytest.mark.xfail(strict=True, reason="#1013: journal rows missing provenance and timestamp")
 def test_explorer_renders_event_provenance():
-    source = ast.get_source_segment(SOURCE.read_text(encoding="utf-8"), _build()) or ""
-    for attribute in ("timestamp", "source", "module", "severity", "correlation"):
-        assert attribute in source, f"Missing event field: {attribute}"
+    source = ast.get_source_segment(
+        SOURCE.read_text(encoding="utf-8"), _build()
+    ) or ""
+    for fragment in (
+        "local_timestamp_label(row['timestamp'])",
+        "row['severity']",
+        "row['source']",
+        "row['module']",
+        "row['event_id']",
+        "connection_provenance_label(row)",
+        "linked_operation_groups(rows)",
+    ):
+        assert fragment in source, f"Missing explicit published provenance: {fragment}"
+    helper = SOURCE.with_name("diagnostics_explorer.py").read_text(encoding="utf-8")
+    for field in ('"timestamp"', '"source"', '"module"', '"severity"', '"event_id"'):
+        assert field in helper
+    assert "published_task_reference(raw)" in helper
