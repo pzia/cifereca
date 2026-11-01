@@ -165,7 +165,9 @@ def test_shell_scripts_and_environment_launchers_are_classified():
     for path in candidates:
         if not path.is_file():
             continue
-        if not path.read_bytes().startswith(b"#!/usr/bin/env bash"):
+        with path.open("rb") as stream:
+            header = stream.read(32)
+        if not header.startswith(b"#!/usr/bin/env bash"):
             continue
         relative = path.relative_to(ROOT).as_posix()
         found.add(relative)
