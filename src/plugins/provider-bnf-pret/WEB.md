@@ -1,5 +1,7 @@
 # BnF Prêt — fournisseur HTTPX (#2055)
 
+> **Mise à jour normative P0 #2055 (01/11/2026)** — La vérification visuelle par le lecteur sur le site BnF avant confirmation manuelle Cifereca remplace l'exigence bloquante de quatre preuves positives `Pass/quota/exemplaires/permission`. Les observations DOM de cette page sont **informatives P2 #4063**, pas un veto P0. Le Core conserve confirmation de l'utilisateur, compte et notice exacts, claim durable anti-rejeu et unique POST, relecture positive d'un prêt actif. **Le provider 0.3.20 ne publie toujours pas `acquisition.borrow` : emprunt réel désactivé.** Les paragraphes historiques ci-dessous relatifs à la qualification des quatre indicateurs comme prérequis P0 sont supplantés par cette décision. Aucun marqueur n'autorise à lui seul un emprunt.
+
 Depuis la version 0.2.0, le package remplace `ui.page.bnf-pret` par `provider.bnf-pret`, un
 `ProviderPlugin` / `ProviderSession` utilisant `httpx.Client`, comme Paris.
 L'installation et l'activation ne démarrent aucun navigateur et ne nécessitent
