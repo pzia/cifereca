@@ -1534,3 +1534,88 @@ def test_p1_valid_existing_and_new_account_keys_remain_exact(editor):
     assert row["provider"] == "provider.future"
     assert row["label"] == "provider.future"
     assert row["enabled"] is True
+
+
+
+@pytest.mark.parametrize(("kind", "invalid"), [
+    ("credential", 42), ("option", {"not": "text"}),
+])
+def test_declared_corrupt_provider_setting_cannot_be_replaced_by_unrelated_save(
+    editor, kind, invalid,
+):
+    """#3731: GTK's invalid saved snapshot blocks a general Settings commit."""
+    from tests.test_core_ui_1127_provider_account_editor import _render, _url_option
+
+    config, values = editor
+    saved = {
+        "id": "source", "provider": "provider.future",
+        "enabled": False, "identity_id": "alice",
+        "credentials": {"username": invalid if kind == "credential" else "valid"},
+        "options": {"endpoint": invalid if kind == "option" else "https://saved.invalid"},
+    }
+    config.set("providers.accounts", [saved])
+    previous = deepcopy(config.data)
+    provider = descriptor("provider.future")
+    provider.account_options = (
+        AccountOptionField("endpoint", "Endpoint", default="https://default.invalid"),
+    )
+    row, _, _, _ = _render(
+        "provider.future", data=saved,
+        descriptor_fields=[NS(key="username", label="User", secret=False)],
+        descriptor_options=[_url_option("endpoint", "Endpoint", "https://default.invalid")],
+    )
+    values["identities"][0]["label"] = "Changed in another section"
+    values["accounts"] = [{
+        "id": row["id"], "provider": row["provider"],
+        "label": row["label"].text, "identity": row["identity"].text,
+        "enabled": row["enabled"].active,
+        "fields": {key: widget.text for key, widget in row["fields"].items()},
+        "option_fields": {
+            key: widget.text for key, widget in row["option_fields"].items()
+        },
+        "original_account": row["original_account"],
+        "original_credentials": row["original_credentials"],
+        "original_options": row["original_options"],
+        "invalid_saved_snapshot": row["invalid_saved_snapshot"],
+    }]
+    assert row["invalid_saved_snapshot"] is True
+    with pytest.raises(SettingsValidationError, match="Données du compte fournisseur invalides"):
+        validate(editor, descriptors={"provider.future": provider})
+    assert config.data == previous
+    assert not config.path.exists()
+
+
+
+@pytest.mark.parametrize(("kind", "invalid"), [
+    ("credential", None), ("credential", 7), ("credential", ["synthetic"]),
+    ("option", None), ("option", True), ("option", {"value": "synthetic"}),
+])
+def test_p1_synthetic_snapshot_cannot_replace_corrupt_declared_text(
+    editor, kind, invalid,
+):
+    """#3731: validation remains safe even when the GTK invalid flag is absent."""
+    config, values = editor
+    row = account("provider.future")
+    row["enabled"] = False
+    row["original_credentials"] = {
+        "username": invalid if kind == "credential" else "valid"
+    }
+    row["original_options"] = {
+        "endpoint": invalid if kind == "option" else "https://valid.invalid"
+    }
+    row["option_fields"] = {"endpoint": "https://default.invalid"}
+    # Deliberately no invalid_saved_snapshot: direct or stale programmatic input.
+    values["accounts"] = [row]
+    provider = descriptor("provider.future")
+    provider.account_options = (
+        AccountOptionField("endpoint", "Endpoint", default="https://default.invalid"),
+    )
+    original = deepcopy(config.data)
+    with pytest.raises(
+        SettingsValidationError,
+        match="Identifiants historiques invalides" if kind == "credential"
+              else "Options du fournisseur invalides",
+    ):
+        validate(editor, descriptors={"provider.future": provider})
+    assert config.data == original
+    assert not config.path.exists()

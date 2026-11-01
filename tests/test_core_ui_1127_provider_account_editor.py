@@ -392,3 +392,46 @@ def test_p1_valid_existing_provider_owner_is_preserved_without_normalization():
         configured=[{"id": "alice"}, {"id": "bob"}],
     )
     assert editor["identity"].text == "bob"
+
+
+
+@pytest.mark.parametrize(("kind", "invalid"), [
+    ("credential", None), ("credential", False), ("credential", 42),
+    ("credential", ["value"]), ("option", None), ("option", True),
+    ("option", 123), ("option", {"private": "value"}),
+])
+def test_p1_declared_malformed_saved_text_blocks_unrelated_save(kind, invalid):
+    """#3731: malformed persisted text must not be rewritten from a blank UI."""
+    option = _url_option("endpoint", "Provider endpoint", "https://default.invalid")
+    saved = {
+        "id": "existing", "enabled": False, "identity_id": "alice",
+        "credentials": {"card": invalid if kind == "credential" else "card"},
+        "options": {"endpoint": invalid if kind == "option" else "https://saved.invalid"},
+    }
+    editor, _, _, _ = _render(
+        "provider.future", data=saved, descriptor_options=[option],
+    )
+    assert editor["invalid_saved_snapshot"] is True
+    assert editor["enabled"].active is False
+    assert saved["credentials"]["card"] == (
+        invalid if kind == "credential" else "card"
+    )
+    assert saved["options"]["endpoint"] == (
+        invalid if kind == "option" else "https://saved.invalid"
+    )
+
+
+def test_p1_retired_non_text_extensions_do_not_block_editable_fields():
+    """Provider extensions outside the declared descriptor remain opaque."""
+    option = _url_option("endpoint", "Provider endpoint", "")
+    saved = {
+        "id": "existing", "enabled": False,
+        "credentials": {"card": "current", "retired_token": {"opaque": 1}},
+        "options": {"endpoint": "", "retired_setting": [1, 2, 3]},
+    }
+    editor, _, _, _ = _render(
+        "provider.future", data=saved, descriptor_options=[option],
+    )
+    assert editor["invalid_saved_snapshot"] is False
+    assert editor["original_options"]["retired_setting"] == [1, 2, 3]
+    assert editor["original_credentials"]["retired_token"] == {"opaque": 1}
