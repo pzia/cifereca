@@ -641,15 +641,18 @@ def main(argv: list[str] | None = None) -> int:
                             library_root=report_library_root, verify_files=a.verify_files,
                         )
                     except KeyboardInterrupt:
-                        # The run is already admitted; export the observations
-                        # from before the signal with an explicit cancellation.
+                        # Keep the FIRST interrupted phase if cancellation was
+                        # already established during an earlier CLI operation.
+                        # A second SIGINT while collecting the optional final
+                        # snapshot must not erase its original diagnosis.
                         report_after = {"status": "unavailable", "reason": "audit_unavailable"}
-                        result = {"status": "cancelled", "code": "cancelled"}
-                        code = 130
-                        report_events.append({
-                            "phase": "audit_after", "status": "cancelled",
-                            "code": "cancelled",
-                        })
+                        if code != 130:
+                            result = {"status": "cancelled", "code": "cancelled"}
+                            code = 130
+                            report_events.append({
+                                "phase": "audit_after", "status": "cancelled",
+                                "code": "cancelled",
+                            })
                     except Exception:
                         report_after = {"status": "unavailable", "reason": "audit_unavailable"}
                     report_events.append({
