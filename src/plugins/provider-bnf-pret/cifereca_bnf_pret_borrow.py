@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from urllib.parse import parse_qsl, urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit
 
 from cifereca_bnf_pret_web import ORIGIN, WebParseError, _dom, _id
 
@@ -27,6 +27,15 @@ _FORBIDDEN_FIELD = frozenset({
     "password", "samlresponse", "_method", "method", "redirect_to", "return_url",
 })
 _MAX_QUERY = 4096
+_MEDIA_CONFIRMATION = re.compile(r"/media/([A-Za-z0-9_-]{1,512})/loans_confirmation\Z")
+_MEDIA_ACTIVATION = re.compile(r"/media/([A-Za-z0-9_-]{1,512})/loans_activation\Z")
+
+
+def _is_media_confirmation(url: str) -> bool:
+    try:
+        return _MEDIA_CONFIRMATION.fullmatch(urlsplit(url).path) is not None
+    except (TypeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True, repr=False)
@@ -74,16 +83,28 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
                     for segment in target.path.split("/") if segment]
         # /loans/<opaque-id> is a *token retrieval*, not a confirmation GET.
         # A bare "loans" segment must never be enough to authorize a visit.
-        if (not segments or not any(s in _BORROW_INTENT for s in segments)
-                or any(s in _FORBIDDEN_ROUTE for s in segments)):
+        media_confirmation = _MEDIA_CONFIRMATION.fullmatch(target.path)
+        media_activation = _MEDIA_ACTIVATION.fullmatch(target.path)
+        if media_confirmation and (
+                base.path != "/resources/" + resource_id
+                or base.query or base.fragment):
             raise ValueError
-        if (segments[0] not in {"resources", "loans", "borrow", "borrows",
-                               "checkout", "checkouts", "activation",
-                               "confirm", "confirmation"}):
-            raise ValueError
-        if (segments[0] == "resources" and
-                (len(segments) < 3 or target.path.split('/')[2] != resource_id)):
-            raise ValueError
+        if media_activation:
+            prior = _MEDIA_CONFIRMATION.fullmatch(base.path)
+            if (prior is None or media_activation.group(1) != prior.group(1)
+                    or target.query):
+                raise ValueError
+        if not (media_confirmation or media_activation):
+            if (not segments or not any(s in _BORROW_INTENT for s in segments)
+                    or any(s in _FORBIDDEN_ROUTE for s in segments)):
+                raise ValueError
+            if (segments[0] not in {"resources", "loans", "borrow", "borrows",
+                                   "checkout", "checkouts", "activation",
+                                   "confirm", "confirmation"}):
+                raise ValueError
+            if (segments[0] == "resources" and
+                    (len(segments) < 3 or target.path.split('/')[2] != resource_id)):
+                raise ValueError
         # A path naming a *different* resource must never authorize a loan.
         resource_path = re.search(r"(?:^|/)resources/([^/]+)", target.path)
         if resource_path and resource_path.group(1) != resource_id:
@@ -96,10 +117,21 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
             encoding="utf-8", errors="strict", max_num_fields=32,
         ) if target.query else []
         selected = [v for k, v in pairs if k in {
-            "resource_id", "resource", "book_id",
+            "resource_id", "resource", "book_id", "_resource_id",
         }]
         if (len(selected) > 1 or any(v != resource_id for v in selected)):
             raise ValueError
+        if media_confirmation:
+            params = dict(pairs)
+            if (len(pairs) != 3 or len(params) != 3
+                    or set(params) != {"_resource_id", "notify", "email"}
+                    or params["_resource_id"] != resource_id
+                    or params["notify"] != "1"
+                    or not 3 <= len(params["email"]) <= 254
+                    or params["email"].count("@") != 1
+                    or any(ord(c) <= 32 or ord(c) >= 127
+                           for c in params["email"])):
+                raise ValueError
     except (ValueError, TypeError, UnicodeError):
         raise WebParseError("borrow_url_refused") from None
     return url
@@ -129,11 +161,52 @@ def confirmation_link(html: str, *, page_url: str, resource_id: str) -> str:
     if len(controls) != 1:
         raise WebParseError("borrow_action_unverified")
     button = controls[0]
-    if (button.tag != "a" or not button.closed
-            or not button.attrs.get("href") or "disabled" in button.attrs
+    if (not button.closed or "disabled" in button.attrs
             or button.attrs.get("aria-disabled", "").lower() == "true"):
         raise WebParseError("borrow_action_unverified")
-    return _transition_url(page_url, button.attrs["href"], rid)
+    if button.tag == "a":
+        if not button.attrs.get("href"):
+            raise WebParseError("borrow_action_unverified")
+        return _transition_url(page_url, button.attrs["href"], rid)
+    # Observed on pret.bnf.fr: a submit button inside a GET form scoped to
+    # this Book. Read the exact action/hidden fields; never synthesize a route.
+    if (button.tag != "button" or button.attrs.get("type", "").lower() != "submit"
+            or "name" in button.attrs
+            or any(key in button.attrs for key in
+                   ("form", "formaction", "formmethod", "formtarget", "formenctype"))):
+        raise WebParseError("borrow_action_unverified")
+    forms = [node for node in books[0].walk()
+             if node.tag == "form" and node.closed
+             and any(child is button for child in node.walk())]
+    if len(forms) != 1:
+        raise WebParseError("borrow_action_unverified")
+    form = forms[0]
+    if (form.attrs.get("method", "").lower() != "get"
+            or any(key in form.attrs for key in ("target", "enctype"))
+            or form.attrs.get("accept-charset", "UTF-8").upper() != "UTF-8"):
+        raise WebParseError("borrow_action_unverified")
+    fields: dict[str, str] = {}
+    for node in form.walk():
+        if node is form or node is button:
+            continue
+        if node.tag == "input":
+            if (node.attrs.get("type", "").lower() != "hidden"
+                    or "disabled" in node.attrs
+                    or node.attrs.get("name", "") not in
+                    {"_resource_id", "notify", "email"}
+                    or node.attrs["name"] in fields):
+                raise WebParseError("borrow_action_unverified")
+            fields[node.attrs["name"]] = node.attrs.get("value", "")
+        elif node.tag in {"button", "select", "textarea"}:
+            raise WebParseError("borrow_action_unverified")
+    if set(fields) != {"_resource_id", "notify", "email"}:
+        raise WebParseError("borrow_action_unverified")
+    # The route, selected resource and query fields are all checked again
+    # at the transport boundary. Never log/return the raw form object.
+    action = form.attrs.get("action", "")
+    if not action or "?" in action or "#" in action:
+        raise WebParseError("borrow_action_unverified")
+    return _transition_url(page_url, action + "?" + urlencode(fields), rid)
 
 
 def activation_form(html: str, *, page_url: str,

@@ -46,6 +46,55 @@ class BnfBorrowPreflightTests(unittest.TestCase):
         self.assertEqual(repr(form), "BorrowForm(authorization=unverified)")
         self.assertNotIn("SECRET", repr(form))
 
+    def test_exact_observed_bnf_get_form_is_bound_to_book(self):
+        slug = "synthetic-warehouse-publication-9780000000000-epub"
+        action = "/media/" + slug + "/loans_confirmation"
+        html = (
+            '<article itemscope itemtype="https://schema.org/Book">'
+            '<form action="' + action + '" method="get" accept-charset="UTF-8">'
+            '<input type="hidden" name="_resource_id" value="' + RESOURCE + '">'
+            '<input type="hidden" name="notify" value="1">'
+            '<input type="hidden" name="email" value="reader@example.invalid">'
+            '<button type="submit" class="button-borrow button">Emprunter</button>'
+            '</form></article>'
+        )
+        url = confirmation_link(html, page_url=DETAIL_URL, resource_id=RESOURCE)
+        self.assertEqual(
+            url, ORIGIN + action +
+            "?_resource_id=" + RESOURCE + "&notify=1&email=reader%40example.invalid")
+        post = ('<a href="/resources/' + RESOURCE + '">Book</a>'
+                '<form method="post" action="/media/' + slug + '/loans_activation">'
+                '<input type="hidden" name="authenticity_token" value="SYNTHETIC">'
+                '<input type="hidden" name="resource_id" value="' + RESOURCE + '">'
+                '</form>')
+        candidate = activation_form(post, page_url=url, resource_id=RESOURCE)
+        self.assertEqual(candidate.action_url,
+                         ORIGIN + "/media/" + slug + "/loans_activation")
+        self.assertNotIn("reader@", repr(candidate))
+
+        # A media slug cannot redirect the confirmation to another book,
+        # another media operation, or another unapproved path.
+        bad = (
+            html.replace('value="' + RESOURCE + '"', 'value="other"'),
+            html.replace('name="notify" value="1"', 'name="notify" value="0"'),
+            html.replace('name="notify" value="1"', 'name="notify" value="1"'
+                         '><input type="hidden" name="notify" value="1"'),
+            html.replace('name="email"', 'name="token"'),
+            html.replace('method="get"', 'method="post"'),
+            html.replace('action="' + action + '"',
+                         'action="/media/' + slug + '/loans_activation"'),
+            html.replace('<button type="submit"', '<button type="button"'),
+            html.replace('<button type="submit"', '<button formmethod="post" type="submit"'),
+            html.replace('class="button-borrow button"', 'class="button-booking button"'),
+        )
+        for markup in bad:
+            with self.subTest(markup=markup[-140:]):
+                with self.assertRaises(WebParseError):
+                    confirmation_link(markup, page_url=DETAIL_URL,
+                                      resource_id=RESOURCE)
+        with self.assertRaisesRegex(WebParseError, "^borrow_url_refused$"):
+            _transition_url(url, "/media/other/loans_activation", RESOURCE)
+
     def test_catalogue_button_alone_is_never_a_web_action(self):
         for html in (
             DETAIL.replace("<a class=", "<button class=").replace("</a>", "</button>"),

@@ -32,7 +32,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.24.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.25.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -41,9 +41,9 @@ saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
 
-## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.24)
+## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.25)
 
-**Compatibilité :** le signal typé `BorrowRequestNotSubmitted` exige Core Plugin API **1.4.4**. Mettre à jour le Core avant le plugin 0.3.24 ; les corrections de recherche `/resources?q=…` introduites dans 0.3.23 restent en place.
+**Compatibilité :** le signal typé `BorrowRequestNotSubmitted` exige Core Plugin API **1.4.4**. Mettre à jour le Core avant le plugin 0.3.25 ; les corrections de recherche `/resources?q=…` introduites dans 0.3.23 restent en place.
 
 **Arbitrage du 01/11/2026 :** l'utilisateur vérifie sur **pret.bnf.fr**
 que le titre numérique exact semble empruntable pour son compte avant de
@@ -61,10 +61,13 @@ Le parcours Core peut uniquement être appelé après
 `confirmed=True` **et** `site_checked=True`, sur la notice/identité
 exactes avec bail valide et un reçu SQLite de tentative durable.
 
-Transaction : lecture fraîche activité → fiche exacte → lien unique non
-désactivé → GET confirmation/formulaire/CSRF → un POST d'activation sans
-redirect/retry → relecture d'activité et corrélation du prêt actif.
-`HTTP 200` seul n'est pas une confirmation. **Dès l'appel au transport POST**, tout refus HTTP, timeout ou résultat incertain conserve le verrou durable ; aucun deuxième POST, même après redémarrage. L'utilisateur vérifie son compte BnF. **Avant tout POST**, si le provider atteste une défaillance de lecture de l'activité, de la fiche ou du formulaire, le Core libère le verrou uniquement par CAS sur l'opération exacte (`borrow_not_submitted`). Aucune relance automatique : nouvelle vérification visuelle et nouvelle confirmation requises. Aucun téléchargement ACSM/ADEPT implicite et aucune création de prêt depuis la synchronisation.
+Transaction : lecture fraîche activité → fiche exacte → lien/bouton unique non
+désactivé → GET confirmation/formulaire/CSRF → sur formulaire média, relecture
+d'activité intermédiaire → un POST d'activation sans redirect/retry →
+relecture d'activité et corrélation du prêt actif.
+`HTTP 200` seul n'est pas une confirmation. **Dès l'appel au transport GET média ou POST**, tout refus HTTP, timeout ou résultat incertain conserve le verrou durable ; aucun deuxième envoi de mutation, même après redémarrage. L'utilisateur vérifie son compte BnF. **Avant tout GET média et avant tout POST**, si le provider atteste une défaillance de lecture de l'activité ou de la fiche, le Core libère le verrou uniquement par CAS sur l'opération exacte (`borrow_not_submitted`). Aucune relance automatique : nouvelle vérification visuelle et nouvelle confirmation requises. Aucun téléchargement ACSM/ADEPT implicite et aucune création de prêt depuis la synchronisation.
+
+**Formulaire BnF observé en octobre 2026 :** la fiche peut présenter `<form method=get action=/media/{opaque}/loans_confirmation>` avec `_resource_id`, `notify`, `email` et `<button type=submit class=button-borrow>`, au lieu d'un lien `<a href=...>`. Un bouton de réservation `button-booking` ne permet jamais d'emprunter. Le parseur valide exclusivement cette forme GET/route et ses trois champs bornés, avec correspondance exacte `_resource_id`, puis le POST `/media/{même opaque}/loans_activation` sous l'admission Core existante. Le GET de confirmation est traité **conservativement comme une mutation possible** : aucun GET depuis `borrow_preflight` ; après validation humaine, son transport consomme le claim et aucun réarmement automatique n'est permis sur timeout ou résultat incertain. Une relecture de prêts actifs après GET interdit un second POST si le prêt cible apparaît déjà. Une seconde relecture après POST atteste l'état réel, sans que HTTP 200 seul suffise. L'archive Browser Recorder du 31/10 documente GET confirmation 200 → POST activation 200 → GET activité 200, mais ses octets privés ne sont pas versionnés dans le dépôt ; les nouvelles fixtures sont purement synthétiques et cette PR ne vaut pas recette transactionnelle réelle.
 
 Le badge HTML générique `.lb_unavailable` est purement informatif lorsqu'un lien d'emprunt unique et actif est présent sur la fiche exacte. Lien absent, désactivé ou ambigu, confirmation / CSRF incorrect ou édition discordante restent bloquants avant POST.
 
