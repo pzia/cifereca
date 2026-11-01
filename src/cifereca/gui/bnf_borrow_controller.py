@@ -73,7 +73,6 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                 and (item.id, item.record_id, item.docbase, item.medium,
                      item.source_provider, item.source_credential,
                      item.source_collection) == notice_scope
-                and window.service.can_borrow_bnf(selected)
             )
         except Exception:
             return False
@@ -94,7 +93,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
         nonlocal submitted
         if response != "borrow" or submitted:
             return
-        if not current():
+        if not current() or not window.service.can_borrow_bnf(selected):
             window.show_error(
                 "Le compte ou le livre a changé. Sélectionnez de nouveau "
                 "la notice avant toute demande.", "Emprunt BnF",
@@ -103,7 +102,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
         submitted = True
 
         def work():
-            if not current():
+            if not current() or not window.service.can_borrow_bnf(selected):
                 return {"status": "blocked", "reason_code": "borrow_scope_changed"}
             return window.service.borrow_bnf_manual(
                 selected, expected_identity_id=identity_id,
