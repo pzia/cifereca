@@ -542,6 +542,10 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
                 raw = getattr(row, "status", None)
                 issue = words.get(raw) if type(raw) is str else None
                 if issue:
+                    # Post-placement reconciliation/deduplication is maintenance,
+                    # not an authority to deny a positively delivered artifact.
+                    if phase == "reconcile" and issue[0] == "error":
+                        issue = ("warning", "maintenance à vérifier")
                     if information_only and phase == "discover_rights" and raw == "partial":
                         candidates.append(("info", "Notices et droits : couverture partielle (information)"))
                     else:
