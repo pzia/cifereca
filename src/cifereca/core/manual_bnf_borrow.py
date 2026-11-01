@@ -66,7 +66,12 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
                 and a.credential_id == item.source_credential
                 and sum(r is a for r in rows) == 1)
         ]
-        if len(candidates) != 1 or borrow_claim_key(candidates[0], item) is None:
+        if len(candidates) != 1:
+            return False
+        claim_key = borrow_claim_key(candidates[0], item)
+        if claim_key is None or service.storage.metadata_get(claim_key) is not None:
+            # Even a corrupt or uncertain attempt is spent. Never invite
+            # a user to repeat a mutating request on the same edition.
             return False
         if capture_borrow_action_scope(
                 service, item, candidates[0], session,
