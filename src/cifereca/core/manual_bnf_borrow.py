@@ -65,9 +65,12 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
         if len(candidates) != 1:
             return False
         claim_key = borrow_claim_key(candidates[0], item)
-        if claim_key is None or service.storage.loan_borrow_state(claim_key) is not None:
-            # Even a corrupt or uncertain attempt is spent. Never invite
-            # a user to repeat a mutating request on the same edition.
+        # Check raw checkpoint presence, not its decoded semantic state:
+        # loan_borrow_state() returns None for malformed existing rows while
+        # loan_borrow_claim_once() correctly rejects their INSERT. Rendering
+        # a borrow button for such a permanently spent/invalid claim would
+        # invite an impossible second attempt, even though the POST is safe.
+        if claim_key is None or service.storage.metadata_get(claim_key) is not None:
             return False
         if capture_borrow_action_scope(
                 service, item, candidates[0], session,
