@@ -22,7 +22,7 @@ def _params(url):
     try:
         parts = urlsplit(url)
         if (parts.scheme != "https" or parts.netloc != "pret.bnf.fr"
-                or parts.path != "/results" or parts.fragment):
+                or parts.path != "/resources" or parts.fragment):
             raise ValueError("route")
         items = parse_qsl(parts.query, keep_blank_values=True,
                           strict_parsing=True, max_num_fields=12)
