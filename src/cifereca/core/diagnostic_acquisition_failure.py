@@ -36,6 +36,26 @@ for _stage in ("declared_lookup", "indexed_candidates", "physical_candidates", "
         "automatic_acquisition_failure" if _stage == "delivery_or_import" else "local_evidence_failure",
         ("observed_provider_id", "credential_id", "account_id", "loan_id"), None,
     )
+# New #3228 BnF traces deliberately contain NO scoped identifiers or exception.
+# Keep legacy templates above so older journals remain readable, but never
+# reintroduce their private arguments into current Core log production.
+_CLOSED_BNF = {
+    "TRACE bnf_auto code=receipt_file_check_failed":
+        ("unknown", None, "local_evidence_failure", "receipt_file_check_failed"),
+    "TRACE bnf_auto code=acquisition_failed stage=delivery_or_import":
+        ("failed", "delivery_or_import", "automatic_acquisition_failure",
+         "acquisition_failed"),
+}
+for _stage in (
+    "declared_lookup", "declared_revalidation",
+    "indexed_candidates", "physical_candidates",
+):
+    _CLOSED_BNF[
+        f"TRACE bnf_auto code=local_evidence_unavailable stage={_stage}"
+    ] = ("unknown", _stage, "local_evidence_failure",
+         "local_evidence_unavailable")
+
+
 _SECRET_KEYS = (
     r"password|passwd|pwd|passphrase|access[_-]?token|refresh[_-]?token|id[_-]?token|token|"
     r"api[_-]?key|x-api-key|client[_-]?secret|private[_-]?key|activation[_-]?token|"
@@ -82,7 +102,7 @@ def protect_text(value: str) -> str:
 def is_acquisition_failure(record: logging.LogRecord) -> bool:
     return (record.name == "cifereca" and record.levelno >= logging.WARNING
             and type(record.msg) is str
-            and record.msg in {*_TEMPLATES, *_EXTRA, _INNER})
+            and record.msg in {*_TEMPLATES, *_EXTRA, *_CLOSED_BNF, _INNER})
 
 
 def _cause_fields(record: logging.LogRecord) -> dict:
@@ -120,6 +140,31 @@ def failure_payload(record: logging.LogRecord) -> dict | None:
     """Project ONLY values actually supplied on this physical occurrence."""
     if not is_acquisition_failure(record):
         return None
+    if record.msg in _CLOSED_BNF:
+        status, phase, kind, code = _CLOSED_BNF[record.msg]
+        # The new producer never sends arguments or traceback. Ignore any
+        # hostile args/exception on an otherwise matching record entirely:
+        # even protect_text() cannot identify arbitrary private filenames.
+        detail = {
+            "code": code,
+            "observation_kind": kind,
+            "observed_severity": record.levelname,
+            "cause_state": "not_supplied",
+        }
+        if phase:
+            detail["phase"] = phase
+        payload = {
+            "schema_version": 1, "category": "ACQUISITION",
+            "operation": ("local_evidence_cause" if
+                          kind == "local_evidence_failure"
+                          else "loan_download_cause"),
+            "status": status, "message": record.msg, "detail": detail,
+        }
+        reference = diagnostic_task_reference()
+        if reference:
+            payload["task_ref"] = reference
+            detail["task_ref"] = reference
+        return payload
     args = record.args
     expected = len(_EXTRA[record.msg][3]) if record.msg in _EXTRA else 3 if "code=%s" in record.msg else 2
     if type(args) is not tuple or len(args) != expected:
