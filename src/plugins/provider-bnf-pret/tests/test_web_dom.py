@@ -132,7 +132,7 @@ class WebDOMTests(unittest.TestCase):
 
     def test_real_catalogue_bad_link_does_not_create_record(self):
         for href in ("https://evil.test/resources/book-a",
-                     "/resources/other", "/loans/loan-a"):
+                     "//evil.test/resources/book-a", "/loans/loan-a"):
             with self.subTest(href=href):
                 html = full_results(full_card(href=href)
                                     + full_card("safe-b"))
