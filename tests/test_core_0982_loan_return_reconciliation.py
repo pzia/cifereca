@@ -1,4 +1,4 @@
-"""P0 #982: distinguish accepted Paris POST from confirmed borrower inventory.
+"""P1 #4048: retired PNB return, immutable historical SQLite receipts.
 
 All requests are fakes: NO network, Adobe mutation, file deletion, GTK, or
 additional CI workflow. Durable SQLite claims prevent duplicate POSTs across
@@ -74,125 +74,101 @@ def _library(tmp_path, *, session=None):
     return svc
 
 
-def test_accepted_post_but_still_present_does_not_claim_return_or_repeat(tmp_path):
+DENIED = {"status": "blocked", "code": "loan_return_removed", "retry": "none"}
+
+
+def test_active_loan_return_denied_without_network_checkpoint_or_rights(tmp_path):
     loan = _loan()
     session = Session([loan])
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(loan)
-        assert result["status"] == "still_active"
-        assert result["request_accepted"] is True
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [("loan-a", "linked-b")]
-        assert session.checks == ["linked-b"]
-        # Double-click AND a delayed repeat must not send a second POST.
-        assert svc.return_digital(loan)["status"] == "still_active"
-        assert svc.return_digital(loan)["status"] == "still_active"
-        assert len(session.posts) == 1
-        assert svc.loan_return_state(loan) == result
-        # No local rights, library files or catalog rows are ever realized here.
+        before = svc.loan_return_state(loan)
+        for _ in range(3):
+            assert svc.return_digital(loan) == DENIED
+        assert svc.loan_return_state(loan) == before
+        assert session.posts == [] and session.checks == []
         assert svc.storage.entitlements(provider_id="paris") == []
     finally:
         svc.close()
 
 
-def test_provider_absence_from_exact_borrower_confirms_and_survives_restart(tmp_path):
+def test_complete_inventory_does_not_authorize_return_across_restart(tmp_path):
     loan = _loan()
     session = Session([])
     attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(loan)
-        assert result["status"] == "provider_return_confirmed"
-        assert result["verification"] == "provider_absent"
-        assert result["provider_inventory_verified"] is True
-        assert session.posts == [("loan-a", "linked-b")]
-        assert session.checks == ["linked-b"]
+        assert svc.return_digital(loan) == DENIED
+        assert svc.loan_return_state(loan) is None
+        assert session.posts == [] and session.checks == []
     finally:
         svc.close()
-    restarted = _library(tmp_path, session=session)
+    reopened = _library(tmp_path, session=session)
     try:
-        assert restarted.return_digital(loan)["status"] == "provider_return_confirmed"
-        assert restarted.loan_return_state(loan)["verification"] == "provider_absent"
-        assert len(session.posts) == 1
+        assert reopened.return_digital(loan) == DENIED
+        assert reopened.loan_return_state(loan) is None
+        assert session.posts == [] and session.checks == []
     finally:
-        restarted.close()
+        reopened.close()
 
 
-def test_partial_dilicom_failure_never_verifies_absence(tmp_path):
-    loan = _loan()
+def test_partial_dilicom_failure_cannot_start_a_return(tmp_path):
     session = Session([])
     session.last_loan_errors = [{"upstream": "DILICOM", "type": "TimeoutError"}]
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["request_accepted"] is True
-        assert len(session.posts) == 1
+        assert svc.return_digital(_loan()) == DENIED
+        assert session.posts == [] and session.checks == []
         session.last_loan_errors = []
-        # A side-channel reset cannot prove the end of DILICOM pagination.
-        assert svc.verify_return_digital(loan)["status"] == "verification_unavailable"
         attest_paris_dilicom_complete(session, credential_id="paris-a")
-        assert svc.verify_return_digital(loan)["status"] == "provider_return_confirmed"
-        assert len(session.posts) == 1
+        assert svc.return_digital(_loan()) == DENIED
+        assert session.posts == []
     finally:
         svc.close()
 
 
-def test_uncertain_post_or_malformed_ack_is_never_resent_automatically(tmp_path):
-    loan = _loan()
+def test_old_timeout_or_malformed_ack_cannot_trigger_a_new_return(tmp_path):
     session = Session([])
     session.failure = TimeoutError("unknown network delivery")
+    session.response = {"success": object()}
     svc = _library(tmp_path, session=session)
     try:
-        assert svc.return_digital(loan)["status"] == "verification_unavailable"
-        assert svc.return_digital(loan)["status"] == "verification_unavailable"
-        assert len(session.posts) == 1
-        session.failure = None
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        assert svc.verify_return_digital(loan)["status"] == "provider_return_confirmed"
+        assert svc.return_digital(_loan()) == DENIED
+        assert svc.return_digital(_loan()) == DENIED
+        assert session.posts == [] and session.checks == []
     finally:
         svc.close()
 
 
-def test_explicit_retry_checks_first_and_only_reposts_if_still_present(tmp_path):
+@pytest.mark.parametrize("retry", [False, True, 1, "true", {"retry": True}])
+def test_explicit_retry_is_ineffective_after_return_retirement(tmp_path, retry):
     loan = _loan()
     session = Session([loan])
     svc = _library(tmp_path, session=session)
     try:
-        assert svc.return_digital(loan)["status"] == "still_active"
-        # The caller must explicitly request a retry; it performs a fresh read
-        # FIRST, then posts at most once to the same borrower.
-        assert svc.return_digital(loan, explicit_retry=True)["status"] == "still_active"
-        assert len(session.posts) == 2
-        assert len(session.checks) == 3
-        session.inventory = []
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        assert svc.return_digital(loan, explicit_retry=True)["status"] == "provider_return_confirmed"
-        assert len(session.posts) == 2
+        assert svc.return_digital(loan, explicit_retry=retry) == DENIED
+        assert session.posts == [] and session.checks == []
+        assert svc.loan_return_state(loan) is None
     finally:
         svc.close()
 
 
-def test_unknown_borrower_or_session_never_posts(tmp_path):
+def test_foreign_borrower_or_missing_session_cannot_start_a_return(tmp_path):
     session = Session([])
     svc = _library(tmp_path, session=session)
     try:
-        with pytest.raises(AttentionRequired) as err:
-            svc.return_digital(replace(_loan(), source_account_id=None))
-        assert err.value.code == "loan_return_borrower_unproven"
-        with pytest.raises(Exception):
-            svc.return_digital(replace(_loan(), source_account_id="unknown"))
-        with pytest.raises(Exception):
-            svc.return_digital(_loan(credential="absent-connection"))
-        assert session.posts == []
-        assert not session.posts
+        for variant in (
+            replace(_loan(), source_account_id=None),
+            replace(_loan(), source_account_id="unknown"),
+            _loan(credential="absent-connection"),
+        ):
+            assert svc.return_digital(variant) == DENIED
+        assert session.posts == [] and session.checks == []
     finally:
         svc.close()
 
 
-def test_atomic_sqlite_claim_only_one_winner(tmp_path):
+def test_historical_sqlite_claim_is_still_readable_and_at_most_once(tmp_path):
     db = Storage(tmp_path / "parallel.sqlite3")
     from cifereca.core.loan_return_guard import return_key
     key = return_key("paris", "paris-a", "linked-b", "loan-a")
@@ -213,22 +189,20 @@ def test_atomic_sqlite_claim_only_one_winner(tmp_path):
         db.close()
 
 
-def test_return_guard_preserves_local_file_and_is_provider_only(tmp_path):
+def test_retired_return_preserves_existing_local_file_and_sqlite(tmp_path):
     library = tmp_path / "existing.epub"
     library.write_text("unmodified")
     svc = _library(tmp_path, session=Session([]))
     try:
-        result = svc.return_digital(_loan())
-        assert result["scope"] == "provider_pnb_only"
+        assert svc.return_digital(_loan()) == DENIED
         assert library.read_text() == "unmodified"
-        assert not result.get("adept_return_confirmed")
+        assert svc.loan_return_state(_loan()) is None
     finally:
         svc.close()
 
-def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path):
-    """Simulate crash after reservation/dispatch but before HTTP response."""
+
+def test_stale_inflight_checkpoint_survives_restart_without_return_or_post(tmp_path):
     from cifereca.core.loan_return_guard import return_key
-    import json
 
     loan = _loan()
     session = Session([])
@@ -237,24 +211,17 @@ def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path
     try:
         claimed, _ = svc.storage.loan_return_claim(key, "inflight-op")
         assert claimed
-        # Simulate persisted checkpoint from a process that died >3 min ago.
         record = svc.storage.loan_return_state(key)
-        record["requested_at"] = "2026-01-01T00:00:00+00:00"
-        svc.storage.metadata_set(key, json.dumps(record))
+        assert record["status"] == "request_sent"
     finally:
         svc.close()
 
-    next_session = Session([])
-    attest_paris_dilicom_complete(next_session, credential_id="paris-a")
-    reopened = _library(tmp_path, session=next_session)
+    reopened = _library(tmp_path, session=session)
     try:
-        # A second button click cannot POST; explicit verification can read.
-        assert reopened.return_digital(loan)["status"] == "request_sent"
-        verified = reopened.verify_return_digital(loan)
-        assert verified["status"] == "provider_return_confirmed"
-        assert verified["verification"] == "provider_absent"
-        assert next_session.posts == []
-        assert next_session.checks == ["linked-b"]
+        before = reopened.storage.loan_return_state(key)
+        assert reopened.return_digital(loan) == DENIED
+        assert reopened.storage.loan_return_state(key) == before
+        assert session.posts == [] and session.checks == []
     finally:
         reopened.close()
 
@@ -269,7 +236,6 @@ def test_recent_inflight_does_not_race_with_first_post(tmp_path):
         assert svc.storage.loan_return_claim(key, "inflight")[0]
         result = svc.verify_return_digital(loan)
         assert result["status"] == "request_sent"
-        assert session.checks == []
-        assert session.posts == []
+        assert session.checks == [] and session.posts == []
     finally:
         svc.close()

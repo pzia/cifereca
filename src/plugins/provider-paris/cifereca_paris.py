@@ -105,7 +105,6 @@ DESCRIPTOR = ProviderDescriptor(
         # Preserve the existing authorized Paris opening-sync path only.
         # Newly installed lenders remain default-deny until explicit opt-in.
         opening_loan_auto_acquisition=True,
-        return_loan=True,
         renew_loan=True,
     ),
     search_capabilities=ProviderSearchCapabilities(
@@ -994,7 +993,8 @@ class ParisProviderSession(ProviderSession):
         return self.client.renew_loan(loan, "" if account.is_primary else account.unique_id)
 
     def return_digital(self, loan: Loan, account: Account) -> dict[str, Any]:
-        return self.client.return_digital_loan(loan, "" if account.is_primary else account.unique_id)
+        # Retired capability: a direct plugin invocation must not reach Paris.
+        raise ProviderCapabilityError("loan_return_removed")
 
     def digital_preferences(self, account: Account) -> dict[str, Any]:
         return self.client.pnb_preferences()

@@ -25,25 +25,20 @@ def test_inventory_exception_class_name_is_not_persisted_or_replayed(tmp_path):
     svc = _library(tmp_path, session=session)
     loan = _loan()
     try:
-        first = svc.return_digital(loan)
-        assert first["status"] == "provider_return_confirmed"
-        # Re-check after an already accepted return, without another POST.
-        # The confirmed state is terminal; force a fresh state in a new loan.
         other = _loan(loan_id="loan-failed-inventory")
         def failed_inventory(_account):
             raise HostileInventoryFailure(PRIVATE)
         session.loans = failed_inventory
-        result = svc.return_digital(other)
-        assert result["status"] == "verification_unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert len(session.posts) == 2
-        assert svc.return_digital(other)["status"] == "verification_unavailable"
-        assert len(session.posts) == 2
+        for selected in (loan, other):
+            result = svc.return_digital(selected)
+            assert result == {
+                "status": "blocked", "code": "loan_return_removed", "retry": "none",
+            }
+            assert PRIVATE not in json.dumps(result)
+        assert session.posts == [] and session.checks == []
         from cifereca.core.loan_return_guard import return_key
         key = return_key("paris", "paris-a", "linked-b", other.id)
-        state = svc.storage.loan_return_state(key)
-        assert state["error_type"] == "provider_inventory_unavailable"
-        assert PRIVATE not in json.dumps(state) + json.dumps(result)
+        assert svc.storage.loan_return_state(key) is None
     finally:
         svc.close()
 
@@ -62,9 +57,8 @@ def test_dilicom_incomplete_inventory_blocks_confirmation_without_coercing_objec
             {"upstream": "DILICOM"},
         ]
         result = svc.return_digital(_loan())
-        assert result["status"] == "verification_unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [("loan-a", "linked-b")]
-        assert session.checks == ["linked-b"]
+        assert result["status"] == "blocked"
+        assert result["code"] == "loan_return_removed"
+        assert session.posts == [] and session.checks == []
     finally:
         svc.close()

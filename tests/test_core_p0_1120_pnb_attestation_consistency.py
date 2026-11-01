@@ -107,7 +107,9 @@ def test_conflicting_durable_success_rechecked_in_inventory_only(
         assert session.checks == ["linked-b"]
         assert session.posts == []
         assert service.storage.loan_return_state(key)["verification"] == "provider_absent"
-        assert service.return_digital(loan)["provider_inventory_verified"] is True
+        assert service.return_digital(loan) == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert session.posts == []
     finally:
         service.close()

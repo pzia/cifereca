@@ -1,4 +1,4 @@
-"""#2975/#3119: Paris return verification consumes atomic source coverage.
+"""#2975/#3119: Retired return cannot dispatch even with positive typed source coverage.
 
 Provider reads are synthetic. No actual PNB POST, ADEPT call or rights changes.
 """
@@ -56,15 +56,10 @@ def test_empty_typed_read_never_proves_return_without_complete_dilicom(
     service = _library(tmp_path, session=session)
     try:
         result = service.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [(loan.id, "linked-b")]
-        assert calls == ["linked-b"]
-        again = service.verify_return_digital(loan)
-        assert again["status"] == "verification_unavailable"
-        assert calls == ["linked-b", "linked-b"]
-        assert len(session.posts) == 1
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert session.posts == [] and calls == []
     finally:
         service.close()
 
@@ -76,11 +71,9 @@ def test_exact_positive_typed_loan_remains_active_despite_partial_sibling_branch
     service = _library(tmp_path, session=session)
     try:
         outcome = service.return_digital(loan)
-        assert outcome["status"] == "still_active"
-        assert outcome["verification"] == "still_present"
-        assert outcome["provider_inventory_verified"] is False
-        assert calls == ["linked-b"]
-        assert len(session.posts) == 1
+        assert outcome["code"] == "loan_return_removed"
+        assert outcome["status"] == "blocked"
+        assert calls == [] and session.posts == []
     finally:
         service.close()
 
@@ -92,11 +85,9 @@ def test_explicit_complete_typed_dilicom_branch_can_attest_absence(tmp_path):
     service = _library(tmp_path, session=session)
     try:
         result = service.return_digital(loan)
-        assert result["status"] == "provider_return_confirmed"
-        assert result["provider_inventory_verified"] is True
-        assert result["verification"] == "provider_absent"
-        assert calls == ["linked-b"]
-        assert len(session.posts) == 1
+        assert result["code"] == "loan_return_removed"
+        assert result["status"] == "blocked"
+        assert calls == [] and session.posts == []
     finally:
         service.close()
 
@@ -137,10 +128,11 @@ def test_inflight_typed_return_rejects_changed_context_before_confirming_absence
     session.loans = lambda _: pytest.fail("legacy second read forbidden")
     try:
         result = service.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert calls == ["linked-b"]
-        assert session.posts == [(loan.id, "linked-b")]
+        assert result["status"] == "blocked"
+        assert result["code"] == "loan_return_removed"
+        assert calls == [] and session.posts == []
+        assert service._sessions["paris::paris-a"] is original_session
+        assert service.accounts is original_accounts
     finally:
         service._sessions["paris::paris-a"] = original_session
         service.accounts = original_accounts

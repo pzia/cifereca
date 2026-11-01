@@ -19,8 +19,6 @@ from tests.test_core_0984_adept_first_paris_reconcile import setup as adept_setu
 
 def test_pnb_same_id_in_syracuse_does_not_confirm_dilicom_return(tmp_path):
     loan = _loan()
-    # Exact upstream provider borrower/credential and loan ID, but a
-    # DIFFERENT supplier branch. The inventory does not identify this right.
     other_branch = replace(
         loan, provider="SYRACUSE", medium="physical",
         title="PRIVATE_SYRACUSE_TITLE",
@@ -29,30 +27,14 @@ def test_pnb_same_id_in_syracuse_does_not_confirm_dilicom_return(tmp_path):
     service = _library(tmp_path, session=session)
     try:
         result = service.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b"]
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        assert session.posts == [] and session.checks == []
         assert "PRIVATE_SYRACUSE_TITLE" not in json.dumps(result)
-        # Retry is verification-only, never a second borrower POST.
-        again = service.verify_return_digital(loan)
-        assert again["status"] == "verification_unavailable"
-        assert again["provider_inventory_verified"] is False
-        assert len(session.posts) == 1
-        # Later exact positive evidence establishes presence without POST.
-        session.inventory = [loan, other_branch]
-        current = service.verify_return_digital(loan)
-        assert current["status"] == "still_active"
-        assert len(session.posts) == 1
-        # A typed DILICOM pagination attestation is required before
-        # an unrelated row can prove the requested loan absent.
-        session.inventory = [replace(loan, id="unrelated")]
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        confirmed = service.verify_return_digital(loan)
-        assert confirmed["status"] == "provider_return_confirmed"
-        assert confirmed["provider_inventory_verified"] is True
-        assert len(session.posts) == 1
+        # The read-only exact branch matcher is still independent of returns.
+        assert _paris_loan_presence([other_branch], loan) is None
+        assert _paris_loan_presence([loan, other_branch], loan) is True
     finally:
         service.close()
 
@@ -107,17 +89,13 @@ def test_pnb_same_id_and_provider_but_other_medium_is_not_presence(tmp_path):
     service = _library(tmp_path, session=session)
     try:
         result = service.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["provider_inventory_verified"] is False
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert "SYNTHETIC_PHYSICAL_ONLY" not in json.dumps(result)
-        assert session.posts == [(loan.id, "linked-b")]
-        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
-        assert len(session.posts) == 1
-        # An exact digital observation supersedes only the same branch.
-        session.inventory = [other_medium, loan]
-        assert service.verify_return_digital(loan)["status"] == "still_active"
-        assert len(session.posts) == 1
+        assert session.posts == [] and session.checks == []
+        assert _paris_loan_presence([other_medium], loan) is None
+        assert _paris_loan_presence([other_medium, loan], loan) is True
     finally:
         service.close()
 

@@ -59,98 +59,55 @@ def _loan(*, returned: bool, token_present: bool, expired: bool = False):
     }
 
 
-def test_confirmed_return_refreshes_public_inventory_before_reporting_success(tmp_path: Path):
+@pytest.mark.parametrize("inventory", [
+    {"loans": [_loan(returned=False, token_present=True)]},
+    {"loans": [_loan(returned=True, token_present=False)]},
+    {"loans": [_loan(returned=True, token_present=True)]},
+])
+def test_retired_adept_return_never_dispatches_or_modifies_binding(tmp_path: Path, inventory):
     service = _service(tmp_path)
     acquisition_id = _acquisition(service, tmp_path)
-    reads = iter([
-        {"loans": [_loan(returned=False, token_present=True)]},
-        {"loans": [_loan(returned=True, token_present=False)]},
-    ])
-    calls = []
-    runtime = SimpleNamespace(loans=lambda profile: (calls.append(profile) or next(reads)))
-    service._kobo_adapter = lambda: runtime
-    service.execute_drm_mutation = lambda request: {
-        "ok": True,
-        "metadata": {"runtime_result": {
-            "ok": True,
-            "operation": "loan_return",
-            "loan_id": "registry-id",
-            "profile": "hb",
-        }},
-    }
-    try:
-        result = service.return_adept_acquisition(acquisition_id)
-
-        assert result["ok"] is True
-        assert result["verification"] == "confirmed"
-        assert calls == ["hb", "hb"]
-        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
-        assert binding["loan_state"] == "returned"
-        assert binding["token_present"] is False
-        assert binding["return_verification"] == "confirmed"
-        assert binding["return_available"] is False
-    finally:
-        service.close()
-
-
-def test_refresh_failure_after_return_never_reports_success(tmp_path: Path):
-    service = _service(tmp_path)
-    acquisition_id = _acquisition(service, tmp_path)
-    calls = []
-
-    def loans(profile):
-        calls.append(profile)
-        if len(calls) == 1:
-            return {"loans": [_loan(returned=False, token_present=True)]}
-        raise RuntimeError("inventory unavailable")
-
-    service._kobo_adapter = lambda: SimpleNamespace(loans=loans)
-    service.execute_drm_mutation = lambda request: {
-        "ok": True,
-        "metadata": {"runtime_result": {
-            "ok": True,
-            "operation": "loan_return",
-            "loan_id": "registry-id",
-            "profile": "hb",
-        }},
-    }
-    try:
-        with pytest.raises(AttentionRequired) as exc:
-            service.return_adept_acquisition(acquisition_id)
-
-        assert exc.value.code == "adept_return_verification_required"
-        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
-        assert binding["return_verification"] == "verification_failed"
-        assert binding["return_available"] is False
-    finally:
-        service.close()
-
-
-def test_unverified_return_state_is_explicit(tmp_path: Path):
-    service = _service(tmp_path)
-    acquisition_id = _acquisition(service, tmp_path)
-    service._kobo_adapter = lambda: SimpleNamespace(
-        loans=lambda profile: {"loans": [_loan(returned=True, token_present=True)]}
+    before = service.storage.acquisition_get(acquisition_id)
+    artifact = Path(before["metadata"]["path"])
+    content = artifact.read_bytes()
+    accessed = []
+    service._kobo_adapter = lambda: accessed.append("adapter") or SimpleNamespace(
+        loans=lambda profile: inventory,
     )
+    service.execute_drm_mutation = lambda _: pytest.fail("ADEPT mutation forbidden")
     try:
         with pytest.raises(AttentionRequired) as exc:
             service.return_adept_acquisition(acquisition_id)
-
-        assert exc.value.code == "adept_return_token_conflict"
-        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
-        assert binding["loan_state"] == "returned"
-        assert binding["return_verification"] == "verification_failed"
-        assert binding["return_available"] is False
+        assert exc.value.code == "loan_return_removed"
+        assert accessed == []
+        assert service.storage.acquisition_get(acquisition_id) == before
+        assert artifact.read_bytes() == content
     finally:
         service.close()
 
 
-def test_unknown_acquisition_is_refused(tmp_path: Path):
+def test_missing_or_foreign_acquisition_never_reaches_storage_or_adept(tmp_path: Path):
     service = _service(tmp_path)
     try:
+        service._kobo_adapter = lambda: pytest.fail("ADEPT adapter forbidden")
         with pytest.raises(AttentionRequired) as exc:
             service.return_adept_acquisition("missing")
+        assert exc.value.code == "loan_return_removed"
+        assert service.storage.acquisitions(provider_id="paris") == []
+    finally:
+        service.close()
 
-        assert exc.value.code == "adept_acquisition_unknown"
+
+def test_repeat_return_cannot_resume_historical_adept_checkpoint(tmp_path: Path):
+    service = _service(tmp_path)
+    aid = _acquisition(service, tmp_path)
+    try:
+        before = service.storage.acquisition_get(aid)
+        for _ in range(2):
+            with pytest.raises(AttentionRequired) as exc:
+                service.return_adept_acquisition(aid)
+            assert exc.value.code == "loan_return_removed"
+        assert service.storage.acquisition_get(aid) == before
+        assert Path(before["metadata"]["path"]).read_bytes() == b"existing-local-artifact"
     finally:
         service.close()

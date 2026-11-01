@@ -39,20 +39,14 @@ def test_pnb_return_never_confirms_absence_from_foreign_scope(
     session = Session([foreign])
     svc = _library(tmp_path, session=session)
     try:
+        before = svc.loan_return_state(target)
         result = svc.return_digital(target)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert result["retry"] == "verification_first"
-        assert session.posts == [(target.id, "linked-b")]
-        assert session.checks == ["linked-b"]
+        assert result == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert PRIVATE not in json.dumps(result)
-        # Reverification is *inventory only*, even after restart/retry.
-        again = svc.verify_return_digital(target)
-        assert again["status"] == "verification_unavailable"
-        assert again["provider_inventory_verified"] is False
-        assert session.posts == [(target.id, "linked-b")]
-        assert session.checks == ["linked-b", "linked-b"]
+        assert session.posts == [] and session.checks == []
+        assert svc.loan_return_state(target) == before
     finally:
         svc.close()
 
@@ -87,16 +81,14 @@ def test_mixed_exact_and_foreign_rows_cannot_be_used_as_exhaustive_inventory(
     tmp_path,
 ):
     target = _loan()
-    other = replace(
-        target, id="different-loan", source_account_id=PRIVATE,
-    )
+    other = replace(target, id="different-loan", source_account_id=PRIVATE)
     session = Session([target, other])
     svc = _library(tmp_path, session=session)
     try:
         result = svc.return_digital(target)
-        assert result["status"] == "verification_unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [(target.id, "linked-b")]
+        assert result["code"] == "loan_return_removed"
+        assert result["status"] == "blocked"
+        assert session.posts == [] and session.checks == []
         assert PRIVATE not in json.dumps(result)
     finally:
         svc.close()
@@ -106,19 +98,17 @@ def test_complete_exact_borrower_rows_allow_absence_only_for_selected_loan(
     tmp_path,
 ):
     target = _loan()
-    # Other titles of the SAME borrower do not make this loan still active.
-    # Typed pagination coverage must carry the account's exact identity.
     other = replace(_loan(loan_id="other-loan"), identity_id=target.identity_id)
     session = Session([other])
     attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(target)
-        assert result["status"] == "provider_return_confirmed"
-        assert result["verification"] == "provider_absent"
-        assert result["provider_inventory_verified"] is True
-        assert session.posts == [(target.id, "linked-b")]
-        assert session.checks == ["linked-b"]
+        # Complete inventory remains useful as read-only evidence.
+        observation = svc.verify_paris_return_inventory(target)
+        assert observation["status"] == "provider_return_confirmed"
+        denied = svc.return_digital(target)
+        assert denied["code"] == "loan_return_removed"
+        assert session.posts == []
     finally:
         svc.close()
 
@@ -129,15 +119,14 @@ def test_paris_primary_account_sentinel_is_exact_borrower_not_missing(tmp_path):
     attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(loan)
-        assert result["status"] == "provider_return_confirmed"
-        assert result["provider_inventory_verified"] is True
-        assert session.posts == [(loan.id, "")]
-        assert session.checks == [""]
-        primary = next(a for a in svc.accounts if a.is_primary and a.credential_id == "paris-a")
+        assert svc.return_digital(loan)["code"] == "loan_return_removed"
+        assert session.posts == [] and session.checks == []
+        primary = next(a for a in svc.accounts
+                       if a.is_primary and a.credential_id == "paris-a")
         assert _paris_inventory_exact_borrower(session.inventory, primary)
         assert not _paris_inventory_exact_borrower(
-            session.inventory, next(a for a in svc.accounts if not a.is_primary),
+            session.inventory,
+            next(a for a in svc.accounts if not a.is_primary),
         )
     finally:
         svc.close()
@@ -155,8 +144,7 @@ def test_malformed_inventory_row_types_fail_without_coercion(tmp_path):
     svc = _library(tmp_path, session=session)
     try:
         result = svc.return_digital(_loan())
-        assert result["status"] == "verification_unavailable"
-        assert not result["provider_inventory_verified"]
-        assert session.posts == [("loan-a", "linked-b")]
+        assert result["code"] == "loan_return_removed"
+        assert session.posts == [] and session.checks == []
     finally:
         svc.close()

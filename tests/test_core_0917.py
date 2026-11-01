@@ -133,16 +133,24 @@ class Core0917(unittest.TestCase):
         self.service.execute_drm_mutation=Mock(return_value=result)
         self.service._kobo_adapter=Mock(return_value=NS(loans=lambda name:{"loans":[{"id":"exact-adept","expired":False,"token_present":not bool(self.service.execute_drm_mutation.call_count),"returned":bool(self.service.execute_drm_mutation.call_count)}]}))
         return aid,path,result
-    def test_return_resolves_original_profile_and_keeps_file(self):
-        aid,path,result=self.returned_fixture();self.assertTrue(self.service.return_adept_acquisition(aid)['ok'])
-        req=self.service.execute_drm_mutation.call_args.args[0]
-        self.assertEqual(req.metadata['adept_loan_id'],'exact-adept');self.assertEqual(req.metadata['adept_profile_name'],'renamed-profile')
-        self.assertTrue(path.is_file());self.assertEqual(self.storage.acquisition_get(aid)['metadata']['adept_binding']['loan_state'],'returned')
-        self.service.return_adept_acquisition(aid);self.service.execute_drm_mutation.assert_called_once()
-    def test_unconfirmed_return_leaves_state_and_file(self):
+    def test_retired_return_preserves_original_profile_and_local_file(self):
+        aid,path,result=self.returned_fixture()
+        before=self.storage.acquisition_get(aid)
+        with self.assertRaises(AttentionRequired) as failure:
+            self.service.return_adept_acquisition(aid)
+        self.assertEqual(failure.exception.code,'loan_return_removed')
+        self.assertTrue(path.is_file())
+        self.assertEqual(self.storage.acquisition_get(aid),before)
+        self.service.execute_drm_mutation.assert_not_called()
+    def test_unconfirmed_old_return_response_is_not_consulted(self):
         aid,path,result=self.returned_fixture();result['metadata']['runtime_result']['loan_id']='other'
-        with self.assertRaises(ProviderConfigurationError):self.service.return_adept_acquisition(aid)
-        self.assertEqual(self.storage.acquisition_get(aid)['metadata']['adept_binding']['loan_state'],'active');self.assertTrue(path.is_file())
+        before=self.storage.acquisition_get(aid)
+        with self.assertRaises(AttentionRequired) as failure:
+            self.service.return_adept_acquisition(aid)
+        self.assertEqual(failure.exception.code,'loan_return_removed')
+        self.assertEqual(self.storage.acquisition_get(aid),before)
+        self.assertTrue(path.is_file())
+        self.service.execute_drm_mutation.assert_not_called()
     def test_missing_origin_profile_prevents_return(self):
         aid,path,result=self.returned_fixture();self.service.kobo_profiles.return_value=[]
         with self.assertRaises(AttentionRequired):self.service.return_adept_acquisition(aid)

@@ -53,7 +53,7 @@ def test_explicit_pnb_action_does_not_trust_bare_adobe_boolean(
         assert public_state(adobe)["adobe_return_confirmed"] is False
         outcome = svc.return_digital(loan, explicit_retry=True)
         assert outcome == {
-            **public_state(adobe), "reason": "adobe_return_takes_precedence",
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
         }
         assert paris.posts == []
         assert paris.checks == []
@@ -77,32 +77,36 @@ def test_verified_adobe_phase_keeps_separate_explicit_pnb_action(tmp_path):
         )
         assert adobe_return_attested(adobe)
         blocked = svc.return_digital(loan, explicit_retry=False)
-        assert blocked["reason"] == "adobe_return_takes_precedence"
+        assert blocked == {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
         assert paris.posts == [] and paris.checks == []
         # Only a deliberate True with fresh proof of a still-active Paris
         # loan may perform the provider return. Never re-run Adobe.
         result = svc.return_digital(loan, explicit_retry=True)
-        assert result["status"] == "still_active"
-        assert len(paris.posts) == 1
-        assert len(paris.checks) == 2
+        assert result["status"] == "blocked"
+        assert result["code"] == "loan_return_removed"
+        assert paris.posts == [] and paris.checks == []
+        assert svc.storage.loan_return_state(
+            adept_return_key("paris", "paris-a", "linked-b", loan.id),
+        ) == adobe
     finally:
         svc.close()
 
 
-def test_provider_gate_reuses_exact_core_adobe_attestation_predicate():
+def test_retired_provider_helper_has_no_adobe_attestation_or_mutation_path():
     path = (Path(__file__).resolve().parents[1] /
             "src/cifereca/core/provider_loan_return.py")
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    operation = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                     and node.name == "return_digital")
-    calls = {ast.unparse(node.func): node.lineno for node in ast.walk(operation)
-             if isinstance(node, ast.Call)
-             and ast.unparse(node.func) in {
-                 "adobe_return_attested", "self.verify_paris_return_inventory",
-                 "self.storage.loan_return_claim", "session.return_digital",
-             }}
-    assert (calls["adobe_return_attested"]
-            < calls["self.verify_paris_return_inventory"]
-            < calls["self.storage.loan_return_claim"]
-            < calls["session.return_digital"])
-    assert "adobe.get('adobe_verified')" not in ast.unparse(operation)
+    operation = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "return_digital"
+    )
+    body = ast.unparse(operation)
+    assert "loan_return_removed" in body
+    for forbidden in (
+        "adobe_return_attested", "self.verify_paris_return_inventory",
+        "self.storage.loan_return_claim", "session.return_digital",
+        "ReturnDigitalLoan",
+    ):
+        assert forbidden not in body

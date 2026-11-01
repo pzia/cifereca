@@ -97,36 +97,20 @@ def test_acsm_stages_preserve_admission_provider_adept_index_receipt_order():
     )
 
 
-def test_return_facades_keep_lock_and_distinct_mutation_seams():
-    for name, delegated in (
-        ("return_loan_prefer_adept", "self._return_loan_prefer_adept_guarded"),
-        ("return_digital", "self._return_digital_guarded"),
+def test_retired_return_facades_have_no_lock_or_mutation_seams():
+    for name in (
+        "return_loan_prefer_adept", "return_digital", "return_adept_acquisition",
     ):
-        facade = _method(name)
-        calls = _calls(facade)
-        assert "InterProcessLock" in calls
-        assert delegated in calls
-        # The non-Paris return path intentionally bypasses the Paris lock.
-        # Verify that the *Paris* delegated call remains inside its lock.
-        guarded = [
-            node for node in ast.walk(facade)
-            if isinstance(node, ast.With) and any(
-                isinstance(item.context_expr, ast.Call)
-                and ast.unparse(item.context_expr.func) == "InterProcessLock"
-                for item in node.items
-            )
-        ]
-        assert len(guarded) == 1
-        assert delegated in _calls(guarded[0])
-    assert "return_adept_orchestrator.return_loan_prefer_adept" in _calls(
-        _method("_return_loan_prefer_adept_guarded")
-    )
-    assert "provider_loan_return.return_digital" in _calls(
-        _method("_return_digital_guarded")
-    )
-    assert "return_adept_orchestrator.return_loan_prefer_adept" not in _calls(
-        _method("return_digital")
-    )
+        calls = _calls(_method(name))
+        for forbidden in (
+            "InterProcessLock", "self._return_digital_guarded",
+            "self._return_loan_prefer_adept_guarded",
+            "self._return_adept_acquisition", "self.storage.loan_return_claim",
+        ):
+            assert forbidden not in calls
+        assert "loan_return_removed" in ast.unparse(_method(name))
+    body = ast.unparse(_method("execute_drm_mutation"))
+    assert 'operation' in body and 'loan_return_removed' in body
 
 
 def test_unbound_paris_borrower_fails_before_provider_and_ledger(tmp_path, monkeypatch):
@@ -147,56 +131,43 @@ def test_unbound_paris_borrower_fails_before_provider_and_ledger(tmp_path, monke
         service.close()
 
 
-def test_adept_first_repeated_reads_and_nonboolean_retry_never_repost(tmp_path):
+def test_adept_and_pnb_return_are_inert_under_retries(tmp_path):
     service, loan, paris = adobe_setup(tmp_path, paris_active=True)
     try:
         counts = stub_adept(service)
-        first = service.return_loan_prefer_adept(loan)
-        assert first["status"] == "partial"
-        assert first["adobe_return_confirmed"] is True
-        assert counts["mutations"] == 1 and paris.posts == 0
-        assert service.return_loan_prefer_adept(loan)["status"] == "partial"
-        assert service.verify_loan_return(loan)["status"] == "partial"
-        assert service.return_digital(loan)["reason"] == (
-            "adobe_return_takes_precedence"
-        )
-        assert service.return_digital(loan, explicit_retry="true")["reason"] == (
-            "adobe_return_takes_precedence"
-        )
-        assert counts["mutations"] == 1 and paris.posts == 0
-        assert service.return_digital(loan, explicit_retry=True)["status"] == (
-            "still_active"
-        )
-        assert counts["mutations"] == 1 and paris.posts == 1
-        # A non-explicit second request prioritizes the Adobe checkpoint,
-        # not the local PNB still-active status; no second POST is possible.
-        repeat = service.return_digital(loan)
-        assert repeat["status"] == "partial"
-        assert repeat["reason"] == "adobe_return_takes_precedence"
-        assert paris.posts == 1
+        denied = {
+            "status": "blocked", "code": "loan_return_removed", "retry": "none",
+        }
+        for retry in (None, "true", True):
+            assert service.return_loan_prefer_adept(loan) == denied
+            if retry is None:
+                assert service.return_digital(loan) == denied
+            else:
+                assert service.return_digital(loan, explicit_retry=retry) == denied
+        assert service.verify_loan_return(loan) == {
+            "status": "verification_unavailable",
+            "code": "loan_return_removed", "retry": "none",
+        }
+        assert counts["mutations"] == counts["inventory"] == 0
+        assert paris.posts == 0 and paris.accounts_read == []
     finally:
         service.close()
 
 
-def test_failed_adept_mutation_checkpoint_survives_retry_without_pnb(tmp_path):
+def test_no_failed_adept_mutation_checkpoint_is_created_after_retirement(tmp_path):
     service, loan, paris = adobe_setup(tmp_path, paris_active=True)
     try:
         counts = stub_adept(service, failure=True)
-        first = service.return_loan_prefer_adept(loan)
-        assert first["status"] == "failed"
-        assert first["adobe_return_confirmed"] is False
-        assert counts["mutations"] == 1 and paris.posts == 0
-        assert service.return_loan_prefer_adept(loan)["status"] == "failed"
-        assert service.verify_loan_return(loan)["status"] == "failed"
-        assert counts["mutations"] == 1 and paris.posts == 0
         key = adept_return_key(
             loan.source_provider, loan.source_credential,
             loan.source_account_id, loan.id,
         )
-        assert service.storage.loan_return_state(key)["status"] == "failed"
-        assert service.storage.loan_return_state(return_key(
-            loan.source_provider, loan.source_credential,
-            loan.source_account_id, loan.id,
-        )) is None
+        assert service.storage.loan_return_state(key) is None
+        for _ in range(2):
+            assert service.return_loan_prefer_adept(loan)["code"] == "loan_return_removed"
+        assert service.verify_loan_return(loan)["code"] == "loan_return_removed"
+        assert service.storage.loan_return_state(key) is None
+        assert counts["mutations"] == counts["inventory"] == 0
+        assert paris.posts == 0
     finally:
         service.close()

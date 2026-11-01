@@ -1,4 +1,4 @@
-"""P0 #979: ADEPT return command arguments and vendor errors are a privacy boundary.
+"""P1 #4048: legacy ADEPT return rejects any input before CLI or vendor I/O.
 
 All scenarios are synthetic: no real Adobe identity, loan, file, CLI or network.
 """
@@ -42,7 +42,7 @@ def test_return_binding_rejects_unqualified_argv_before_any_cli(bad, field):
     metadata[field] = bad
     with pytest.raises(AttentionRequired) as caught:
         r.execute({"operation": "return", "metadata": metadata})
-    assert caught.value.code == "adept_return_binding_required"
+    assert caught.value.code == "loan_return_removed"
     assert SECRET not in str(caught.value)
 
 
@@ -52,7 +52,7 @@ def test_return_binding_rejects_unqualified_argv_before_any_cli(bad, field):
 def test_missing_or_hostile_metadata_shape_fails_with_fixed_error(metadata):
     with pytest.raises(AttentionRequired) as caught:
         runtime().execute({"operation": "return", "metadata": metadata})
-    assert caught.value.code == "adept_return_binding_required"
+    assert caught.value.code == "loan_return_removed"
 
 
 def test_valid_opaque_loan_and_profile_names_preserved_exactly():
@@ -68,26 +68,20 @@ def test_valid_opaque_loan_and_profile_names_preserved_exactly():
 def test_vendor_inventory_exception_is_not_chained_into_public_traceback():
     r = runtime()
     r._available = lambda *args: True
-    r.run_json = lambda *args, **kwargs: {
-        "ok": True, "operation": "loan_return",
-        "loan_id": "loan-10", "profile": "Original profile",
-    }
+    r.run_json = lambda *args, **kwargs: pytest.fail("Retired return must never invoke CLI")
 
     def private_inventory(_name):
-        raise RuntimeError("raw vendor error " + SECRET
-                           + " <fulfillmentToken>PRIVATE_LICENSE</fulfillmentToken>")
+        pytest.fail("Retired return must never consult vendor inventory")
 
     r.loans = private_inventory
     with pytest.raises(KoboAdeptError) as caught:
         r.return_loan("loan-10", "Original profile")
 
     error = caught.value
-    assert error.code == "adept_return_verification_unavailable"
+    assert error.code == "loan_return_removed"
     assert error.retryable is False
-    assert error.__cause__ is None
-    assert error.__suppress_context__ is True
     public_traceback = "".join(traceback.format_exception(error))
     assert SECRET not in public_traceback
     assert "PRIVATE_LICENSE" not in public_traceback
-    assert r.return_diagnostic()["phase"] == "failed"
-    assert r.return_diagnostic()["cli_confirmed"] is True
+    # Return is denied before a CLI or vendor inventory is consulted.
+    assert r.return_diagnostic().get("cli_confirmed") is not True
