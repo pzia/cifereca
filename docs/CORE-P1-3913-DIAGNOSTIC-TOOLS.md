@@ -84,6 +84,34 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 Paris/ADEPT ; `kobo-audit` et `kobo-resume-preview` sont les entrées Kobo
 historiques. Ces noms ne créent pas de deuxième moteur générique de Sync.
 
+## Expert : réconciliation de bibliothèque hors réseau
+
+**Point d'entrée Core non installé comme commande shell :**
+`python3 -m cifereca.core.library_reconciliation --database /chemin/library.sqlite3 --root 'IDENTITE=/chemin/EBooks'`
+(plusieurs `--root IDENTITE=REPERTOIRE_ABSOLU` permis).
+**Classe O**, sans ouverture des sessions fournisseurs, sans réparation ni
+acquisition ; effectue un scan FS explicitement autorisé, inspecte un
+instantané SQLite local (y compris capture WAL isolée lorsque disponible)
+et renvoie sur stdout un JSON **fermé** : inventaire, groupes de preuves,
+chemins persistés et candidats bibliographiques classés. Une absence issue
+d'un inventaire incomplet n'atteste pas un fichier définitivement manquant.
+
+L'option **`--private-report /chemin/rapport.json`** passe en **O+E** :
+création exclusive 0600 d'un JSON local contenant **chemins, titres,
+identifiants et SHA**, qui ne doit pas être publié automatiquement. Ce
+fichier est distinct du ZIP fermé `sync run --report` et du ZIP du journal.
+Le module `src/cifereca/core/library_wal_image.py` est un **enfant
+technique interne** de capture WAL (arguments positionnels internes et octets
+privés sur stdout) : **ne pas l'invoquer comme outil opérateur**. Il peut
+ouvrir des descripteurs et prendre des verrous de capture éphémères mais ne
+répare pas la base de la bibliothèque.
+
+**Préférence :** commencer par `cifereca-cli acquisition-audit` pour une
+source connue et exacte. Mobiliser l'exploration experte seulement pour une
+analyse transversale des origines / fichiers orphelins nécessitant des
+racines explicitement autorisées ; ne jamais déduire une permission Adobe ou
+un OriginLink du seul titre/SHA.
+
 ## Autres points d'entrée : hors cible du diagnostic de bibliothèque
 
 Les **cinq** scripts installés dans `pyproject.toml` sont `cifereca`
@@ -111,6 +139,7 @@ Scripts autonomes identifiés par recherche du code (`__main__` /
 | Core, DB, plugins ne démarrent pas | `cifereca-cli doctor --json` | Rapport technique + version/commit ; **ne pas** déclencher de sync comme sonde. |
 | Fournisseur ou compte invisible / source OFF | `cifereca-cli sync list --provider P --identity I --json` | Statut de liaison et de consentement. Aucun GET ni preuve de catalogue complet. |
 | Fichier déclaré local mais manquant | `cifereca-cli acquisition-audit --provider P --identity I --verify-files --json` | Classification exacte et SHA/Placement/OriginLink, sans réparation automatique. |
+| Fichiers orphelins ou incohérence **entre** plusieurs sources/profils | `python3 -m cifereca.core.library_reconciliation --database BDD --root 'I=/chemin/autorisé'` | Observation experte hors réseau : JSON fermé. `--private-report FICHIER.json` ajoute un export privé contenant chemins/titres/SHA ; ne pas publier. Jamais de réparation implicite. |
 | Sync réellement demandée ; bilan avant/après | `cifereca-cli sync run --provider P --identity I --confirm --report ./sync.zip --json` | ZIP de rapport **fermé**. Demander seulement le rapport nécessaire, pas de trace brute par défaut. |
 | Refus HTTP persistant identifié sur une source choisie | Refaire **uniquement avec consentement**, ajouter `--trace-export ./http.zip --confirm-trace-export` à `sync run` | ZIP HTTP brut local privé : **ne pas transmettre** avant vérification des credentials/URL signées et décision de partage. La trace HTTP ne certifie pas la finalisation. |
 | Numilog : refus ou preflight ancien dans un journal déjà disponible | `python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py JOURNAL.zip --json` | Codes et actions de livraison ; poursuivre avec `acquisition-audit` pour les fichiers physiques. |
@@ -129,7 +158,7 @@ Scripts autonomes identifiés par recherche du code (`__main__` /
 5. **Périmètre encore ouvert #3913** : preuve d'exhaustivité des autres scripts/outils de plugins ; harmonisation versionnée du contrat ZIP dans un module partagé ; diagnostics Core post-staging de bout en bout #3909. Aucune suppression de wrapper historique ou modification du moteur par ce registre.
 
 **Code de référence :** `src/cifereca/cli.py`, `src/cifereca/support_diagnostic.py`,
-`src/cifereca/core/{acquisition_audit,sync_report,diagnostic_journal_zip}.py`,
+`src/cifereca/core/{acquisition_audit,sync_report,diagnostic_journal_zip,library_reconciliation,library_wal_image}.py`,
 `src/plugins/provider-numilog/numilog_delivery_diagnose.py`,
 `scripts/numilog_html_shape.py`, `src/plugins/recommendations/trace_report.py`,
 `pyproject.toml`. Requalifier la classe d'effets après toute mutation des

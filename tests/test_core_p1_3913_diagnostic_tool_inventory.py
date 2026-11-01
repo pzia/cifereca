@@ -115,3 +115,40 @@ def test_offline_analyzers_are_real_and_named_in_inventory():
     assert "lance rien" in BACKLOG.read_text(encoding="utf-8") or (
         "Le rôle backlog **ne lance pas**" in BACKLOG.read_text(encoding="utf-8")
     )
+
+
+def test_expert_offline_reconciliation_is_not_misidentified_as_mutating_sync():
+    source = (ROOT / "src/cifereca/core/library_reconciliation.py").read_text(
+        encoding="utf-8"
+    )
+    wal = (ROOT / "src/cifereca/core/library_wal_image.py").read_text(
+        encoding="utf-8"
+    )
+    document = DOC.read_text(encoding="utf-8")
+    for argument in ("--database", "--root", "--private-report"):
+        assert f"parser.add_argument('{argument}'" in source
+        assert argument in document
+    assert "def main(argv=None):" in source
+    assert "acquisition_authorized': False" in source
+    assert "os.O_EXCL" in source and "0o600" in source
+    assert "library_wal_image.py" in document
+    assert "enfant" in document
+    assert "def _main():" in wal
+    assert "python3 -m cifereca.core.library_reconciliation" in document
+
+
+def test_direct_scripts_with_main_or_argparse_are_present_in_inventory():
+    """Fail if a new direct scripts/ CLI bypasses the #3913 risk classification."""
+    document = DOC.read_text(encoding="utf-8")
+    candidates = 0
+    for path in sorted((ROOT / "scripts").glob("*.py")):
+        # A pytest test module is not an operator CLI even if it includes
+        # examples of ArgumentParser or an __main__ guard in a fixture.
+        if path.name.startswith("test_"):
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "__main__" not in source and "ArgumentParser" not in source:
+            continue
+        candidates += 1
+        assert path.name in document, f"unclassified_scripts_entrypoint:{path.name}"
+    assert candidates >= 30
