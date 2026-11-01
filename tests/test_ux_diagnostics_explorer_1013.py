@@ -33,8 +33,8 @@ def test_explorer_consumes_bounded_public_events_broker():
     ]
     assert len(calls) == 1
     assert "PAGE_SIZE" in ast.unparse(fetch)
-    assert '"limit": PAGE_SIZE' in ast.unparse(fetch)
-    assert '"offset": offset' in ast.unparse(fetch)
+    assert "'limit': PAGE_SIZE" in ast.unparse(fetch)
+    assert "'offset': offset" in ast.unparse(fetch)
     assert "source == 'journal'" in ast.unparse(fetch)
     assert "query['search'] = search" in ast.unparse(fetch)
 
