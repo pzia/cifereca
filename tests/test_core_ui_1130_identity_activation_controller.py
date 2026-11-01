@@ -91,6 +91,19 @@ def _window(*, widgets=True, route="library", current="alice"):
     )
     window._dispose_maintenance_lines = lambda: events.append(("dispose",))
     window._refresh_tools_page = lambda: events.append(("tools",))
+    window._sync_page_token = object()
+    window._sync_preview_generation = 4
+
+    def refresh_sync():
+        # The real Sync UI invalidates late previews and scopes the new rows
+        # to the selected identity; assert the coordinator's transition order.
+        assert service.current_identity is not None
+        assert window._identity_context_generation >= 8
+        window._sync_preview_generation += 1
+        events.append(("sync", service.current_identity.identity_id,
+                       window._identity_context_generation))
+
+    window._refresh_sync_page = refresh_sync
     window._populate_accounts = lambda: events.append(("accounts",))
     window._render_dashboard = lambda: events.append(("dashboard",))
     window._populate_account_dropdown = lambda identity: events.append(("delegation", identity))
@@ -297,6 +310,58 @@ def test_identity_switch_on_tools_refreshes_tools_exactly_once():
     assert events.count(("tools",)) == 1
     assert events.index(("dispose",)) < events.index(("tools",))
     assert len(window.runner.submitted) == 1
+
+
+def test_switch_on_sync_reprojects_new_identity_once_before_async_load():
+    window, events = _window(route="sync")
+    activate_identity(window, "bob")
+    assert events.count(("sync", "bob", 8)) == 1
+    assert events.index(("select", "bob")) < events.index(("sync", "bob", 8))
+    assert events.index(("dispose",)) < events.index(("sync", "bob", 8))
+    assert events.index(("sync", "bob", 8)) < next(
+        i for i, item in enumerate(events) if item[0] == "submit"
+    )
+    window.runner.submitted[-1].done(["new bob loan"])
+    assert events.count(("sync", "bob", 8)) == 1
+    assert ("tools",) not in events
+
+
+def test_sync_switch_a_b_a_rejects_old_scope_and_late_callbacks():
+    from cifereca.gui.sync_action_scope import (
+        capture_sync_action_scope, sync_action_scope_current,
+    )
+
+    window, events = _window(route="sync")
+    old_alice = capture_sync_action_scope(
+        window, page_token=window._sync_page_token,
+        preview_generation=window._sync_preview_generation,
+    )
+    assert sync_action_scope_current(window, old_alice)
+    activate_identity(window, "bob")
+    old_bob = capture_sync_action_scope(
+        window, page_token=window._sync_page_token,
+        preview_generation=window._sync_preview_generation,
+    )
+    assert not sync_action_scope_current(window, old_alice)
+    assert sync_action_scope_current(window, old_bob)
+    stale_callback = window.runner.submitted[-1].done
+    activate_identity(window, "alice")
+    assert not sync_action_scope_current(window, old_bob)
+    assert not sync_action_scope_current(window, old_alice)
+    assert events.count(("sync", "bob", 8)) == 1
+    assert events.count(("sync", "alice", 9)) == 1
+    events.clear()
+    stale_callback(["wrong identity loan"])
+    assert events == []
+
+
+def test_sync_switch_with_missing_identity_does_not_reproject():
+    window, events = _window(route="sync")
+    with pytest.raises(ValueError, match="Identité inconnue"):
+        activate_identity(window, "unknown")
+    assert not any(event[0] == "sync" for event in events)
+    activate_identity(window, "alice")
+    assert events == []
 
 
 def test_identity_switch_does_not_rebuild_identity_dropdown_from_its_notification():
