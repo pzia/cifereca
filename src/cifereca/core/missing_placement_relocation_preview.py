@@ -37,6 +37,9 @@ def preview_missing_placement_relocation(
     if (not isinstance(library_root, Path) or not library_root.is_absolute()
             or not isinstance(candidate_path, Path)
             or not candidate_path.is_absolute()
+            # A lexical "alice/../bob" alias must never count as bytes
+            # under alice even when a downstream re-hash succeeds.
+            or ".." in candidate_path.parts
             or type(identity_id) is not str or not 0 < len(identity_id) <= 256
             or type(placement_id) is not str or not 0 < len(placement_id) <= 256):
         return _blocked("invalid_scope")
