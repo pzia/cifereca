@@ -137,7 +137,8 @@ def read_raw_journal_zip(
     except JournalZipError:
         raise
     except (OSError, zipfile.BadZipFile, UnicodeError, json.JSONDecodeError,
-            RuntimeError, EOFError, ValueError, NotImplementedError) as exc:
+            RuntimeError, RecursionError, EOFError, ValueError,
+            NotImplementedError) as exc:
         raise JournalZipError("unreadable_journal") from exc
     if (type(document) is not dict
             or document.get("format") != RAW_JOURNAL_FORMAT
