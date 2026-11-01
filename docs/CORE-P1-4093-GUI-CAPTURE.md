@@ -72,8 +72,18 @@ ne manipulent que des données synthétiques.
 - Unité : début/fin exacts du handler, isolation d'autres journaux/processus,
   logs multi-lignes, quotas, ZIP et SHA, gzip/charset, HTML partiel, symlink,
   lancement GUI simulé.
-- **Reste une recette GTK + fournisseur HTTPX réel** : test d'une session
-  d'interface avec recherche/emprunt/synchronisation puis fermeture.
+- Scénario **GTK réel hors compte fournisseur** :
+  `capture-session-gtk-1366` via le harnais existant
+  `e2e/run.py --scenario capture-session-gtk-1366`. Sous Xvfb,
+  démarre `cifereca --capture --no-plugins`, attend une fenêtre GTK
+  mappée, demande sa fermeture normale avec `Gtk.Window.close()`,
+  valide hors réseau le ZIP 0600, son manifeste et le journal de
+  démarrage/arrêt. Le ZIP contenant des données brutes reste exclusivement
+  dans un répertoire temporaire **détruit avant la publication CI** ;
+  seuls des booléens et codes d'échec fermés sont exportés.
+- **Reste une recette GTK + fournisseur HTTPX authentifié réel** :
+  test d'une session d'interface avec recherche/emprunt/synchronisation
+  puis fermeture, avec consentement et revue de confidentialité.
 - Aucun changement aux contrats `--trace`, Browser Recorder, diagnostics
   journaliers et `cifereca-cli sync run --trace-export`. Pas de release
   automatique.
