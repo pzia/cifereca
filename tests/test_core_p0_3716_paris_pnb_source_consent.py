@@ -87,7 +87,7 @@ def test_paris_pnb_on_covers_unknown_and_missing_right_without_second_get(source
     assert on["enabled"] and on["revision"] != off["revision"]
     result = synchronize_account_source(service, service.account)
     assert result["canonical_execution"]["downloaded"] == 2
-    assert calls == ["offer", "delivery", "offer", "delivery"]
+    assert calls == ["offer", "offer", "delivery", "delivery"]
     assert db.entitlements() == []
     assert refs(db)[1] == 2
     placements = db.placements()
@@ -100,7 +100,7 @@ def test_paris_pnb_on_covers_unknown_and_missing_right_without_second_get(source
     repeated = synchronize_account_source(service, service.account)
     assert repeated["canonical_execution"]["present_attested"] == 2
     assert repeated["canonical_execution"]["downloaded"] == 0
-    assert calls == ["offer", "delivery", "offer", "delivery"]
+    assert calls == ["offer", "offer", "delivery", "delivery"]
     assert db.placements() == placements
 
     # Another Paris borrower on a different identity cannot inherit this ON.
