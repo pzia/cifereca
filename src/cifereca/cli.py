@@ -565,6 +565,13 @@ def main(argv: list[str] | None = None) -> int:
                         trace_outcome = "export_failed"
                     finally:
                         set_diagnostics_level(trace_previous_level)
+            # The report's exit_code must equal the command's eventual exit,
+            # including an independently requested raw HTTP trace export failure.
+            # Trace bytes remain outside the redacted report regardless.
+            if trace_requested:
+                result["http_trace"] = trace_outcome
+                if trace_outcome == "export_failed":
+                    code = 2
             if a.sync_cmd == "run" and a.report is not None and report_account is not None:
                 from .core.sync_report import audit_source_counts, write_sync_report
                 try:
@@ -583,10 +590,6 @@ def main(argv: list[str] | None = None) -> int:
                     result["report"] = "created"
                 except Exception:
                     result["report"] = "export_failed"
-                    code = 2
-            if trace_requested:
-                result["http_trace"] = trace_outcome
-                if trace_outcome == "export_failed":
                     code = 2
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return code
