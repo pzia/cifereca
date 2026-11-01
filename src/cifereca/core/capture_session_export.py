@@ -31,7 +31,7 @@ _DESCRIPTION = (
     "tokens, URLs signees, HTML prive). Aucun anonymisation appliquee.\n"
     "Ce fichier peut etre synchronise par le dossier Telechargements de "
     "votre poste. Ne pas le televerser ou partager sans revue.\n"
-    "logs/journal.log contient seulement les lignes de cette instance entre "
+    "logs/journal.jsonl contient seulement les lignes de cette instance entre "
     "activation et arret de la capture.\n"
     "http/index.json et http/bodies/ contiennent les observations HTTPX "
     "instrumentees, pas tous les transports applicatifs.\n"
@@ -210,7 +210,7 @@ def export_capture_session(
             or type(app_exit_code) is not int):
         raise ValueError("capture_journal_snapshot_invalid")
     members, http_incomplete, omitted, count, html_count, html_unavailable = _http_members(http_snapshot)
-    members["logs/journal.log"] = journal["raw"]
+    members["logs/journal.jsonl"] = journal["raw"]
     members["README.txt"] = _DESCRIPTION.encode("utf-8")
     now = datetime.now().astimezone()
     started = journal["started_at_utc"]
@@ -291,7 +291,7 @@ def validate_capture_session(path: Path) -> dict[str, object]:
                            or stat.S_IFMT(item.external_attr >> 16) == stat.S_IFLNK
                            for item in infos)):
                 raise ValueError("capture_archive_invalid")
-            if not {"manifest.json", "logs/journal.log", "http/index.json",
+            if not {"manifest.json", "logs/journal.jsonl", "http/index.json",
                     "README.txt"}.issubset(names):
                 raise ValueError("capture_archive_invalid")
             manifest_info = archive.getinfo("manifest.json")
