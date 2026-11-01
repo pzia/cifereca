@@ -39,6 +39,8 @@ _DESCRIPTION = (
     "entierement observees. Les corps transport restent dans http/bodies/.\n"
     "manifest.json fournit les SHA-256 des autres membres. Les preuves HTTP "
     "n'attestent ni un emprunt ni une acquisition finalisee.\n"
+    "Verifier hors reseau : python3 -m cifereca.core.capture_session_export "
+    "--validate ARCHIVE.zip --json (verdict ferme, jamais le contenu).\n"
 )
 
 
@@ -416,9 +418,67 @@ def validate_capture_session(path: Path) -> dict[str, object]:
                 if digest.hexdigest() != expected["sha256"]:
                     raise ValueError("capture_archive_invalid")
             _crosscheck_capture_index(archive, set(names), manifest)
+            # The CLI renders coverage in both JSON and plain text. A ZIP
+            # reconstructed with fresh SHA values is not a trusted source
+            # of text for terminal output; allow only the emitted enum.
+            coverage = manifest.get("coverage")
+            if type(coverage) is not str or coverage not in (
+                "partial", "instrumented_only",
+            ):
+                raise ValueError("capture_archive_invalid")
             return {"format": _FORMAT, "status": "valid",
-                    "coverage": manifest.get("coverage"),
-                    "members": len(names)}
+                    "coverage": coverage, "members": len(names)}
     except (OSError, zipfile.BadZipFile, json.JSONDecodeError, EOFError,
             RuntimeError, KeyError, TypeError) as exc:
         raise ValueError("capture_archive_invalid") from exc
+
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Verify a previously exported private ZIP without opening Cifereca Core.
+
+    Never include paths, event text, URLs, headers or exception details in
+    stdout/stderr. A verifier verdict is integrity-only, not acquisition proof.
+    """
+    import argparse
+
+    class _ClosedArgumentParser(argparse.ArgumentParser):
+        def error(self, message: str) -> None:
+            # argparse otherwise echoes unknown raw arguments/paths to stderr.
+            # This tool must keep even *malformed* invocations confidential.
+            self.exit(2, "capture_validator_invalid_arguments\n")
+
+    parser = _ClosedArgumentParser(
+        description="Contrôle hors réseau d'un ZIP privé de session --capture."
+    )
+    parser.add_argument("--validate", required=True, type=Path, metavar="ZIP")
+    parser.add_argument("--json", action="store_true",
+                        help="Verdict fermé JSON, sans données du journal/HTTP.")
+    args = parser.parse_args(argv)
+    try:
+        result = validate_capture_session(args.validate)
+    except Exception:
+        # Corrupt/unreadable archives can carry untrusted metadata and paths.
+        # Never reveal exception repr or artifact bytes via the CLI.
+        result = {
+            "format": _FORMAT,
+            "status": "invalid",
+            "code": "capture_archive_invalid",
+        }
+        rc = 2
+    else:
+        rc = 0
+    if args.json:
+        print(_as_json(result).decode("utf-8").rstrip("\n"))
+    elif rc == 0:
+        print(
+            "capture_archive_valid "
+            f"coverage={result['coverage']} members={result['members']}"
+        )
+    else:
+        print("capture_archive_invalid")
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

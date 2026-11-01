@@ -52,6 +52,24 @@ aucun remplacement. Un chemin `capture_zip: ...` est affiché sur stderr ;
 `validate_capture_session(path)` contrôle hors réseau le format, les membres
 et leurs empreintes, sans extraction des données.
 
+### Vérifier localement le ZIP sans relancer l'application
+
+```sh
+python3 -m cifereca.core.capture_session_export --validate '/chemin/vers/cifereca-capture-....zip' --json
+```
+
+La commande autonome (**classe F**) utilise uniquement le validateur Core
+installé et lit le ZIP déjà présent : **aucun Core ouvert, aucun plugin,
+aucune requête réseau et aucune écriture**. Sur succès, code retour `0` et
+JSON fermé (`status=valid`, `coverage`, `members`, `format`). Sur erreur,
+code retour `2`, `status=invalid`, `code=capture_archive_invalid` ; elle
+n'affiche **jamais** le chemin, les headers, URLs, cookies, journaux, HTML,
+ni les messages d'exception. Sans `--json`, verdict texte succinct.
+La validation prouve la **cohérence interne** et les SHA des membres, pas
+l'authenticité cryptographique d'un ZIP pouvant être reconstruit, ni la
+réussite d'un emprunt ou d'une synchronisation. Ne pas communiquer le ZIP
+brut en réponse au seul verdict « valid ».
+
 **Limite de couverture :** le diagnostic documente les échanges HTTPX
 instrumentés seulement, jamais les navigateurs externes ou transports
 `requests`/`urllib`. Un ZIP ne prouve pas qu'une ressource a été empruntée,

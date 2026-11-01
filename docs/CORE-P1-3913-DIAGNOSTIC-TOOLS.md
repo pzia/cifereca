@@ -82,6 +82,19 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 | `python3 scripts/benchmark_task_admission.py [--rounds N] [--jobs-per-pool N] [--io-ms N]` | Attentes synthétiques | **T** ; mesure concurrence de pools, pas diagnostic terrain des syncs. |
 | `cifereca-plugin-test PACKAGE [--tests CHEMIN]` | Manifest + scan imports privés ; éventuellement exécute pytest dans XDG temporaire | **T** ; résultat JSON de contrat plugin/test, pas acquisition réelle. |
 
+**Validation privée autonome de `--capture` (P1 #4093) :**
+`python3 -m cifereca.core.capture_session_export --validate /chemin/capture.zip --json`
+— **F**, lecture seule, hors réseau, **sans démarrage Core** ni ouverture
+de compte. Verdict fermé `valid`/`invalid`, membres et couverture si valide,
+code retour `0`/`2` ; aucun chemin, contenu HTTP/HTML, jeton, ligne de journal
+ou exception dans la sortie. La commande ne crée **aucun ZIP** : la capture
+elle-même se déclenche explicitement avec `cifereca --capture`, active Trace
+pour cette session, et publie après fermeture une archive brute 0600 dans
+Téléchargements XDG (ou `--capture-dir DIR`). La GUI reste une application
+interactive : les actions utilisateur peuvent être **N+M** ; la validation
+séparée du fichier n'est jamais une commande de synchronisation ou une preuve
+de prêt. Cf. `docs/CORE-P1-4093-GUI-CAPTURE.md`.
+
 **Accès spécialisé** : `cifereca-cli paris-adept ...` est la façade audit
 Paris/ADEPT ; `kobo-audit` et `kobo-resume-preview` sont les entrées Kobo
 historiques. Ces noms ne créent pas de deuxième moteur générique de Sync.
