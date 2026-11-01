@@ -10,6 +10,9 @@ from .paths import log_file
 
 
 _diagnostic_level = "normal"
+# Monotonic process-only trace coverage marker for GUI session archives.
+# It contains no personal data or raw observations; it is never persisted.
+_trace_disable_generation = 0
 
 # The persistent log and its console mirror carry the ORIGINAL event values.
 # Only the Diagnostics GTK presentation may pseudonymize login/password.
@@ -58,12 +61,24 @@ def diagnostics_level() -> str:
     return _diagnostic_level
 
 
+def trace_disable_generation() -> int:
+    """Count transitions away from active HTTP Trace in this process.
+
+    A GUI capture samples this counter after enabling Trace and at shutdown.
+    Even an OFF -> ON cycle with a final "trace" level then marks its HTTP
+    coverage partial. The marker does not store any captured content.
+    """
+    return _trace_disable_generation
+
+
 def set_diagnostics_level(level):
     """Switch the effective file/console logger verbosity without restart."""
-    global _diagnostic_level
+    global _diagnostic_level, _trace_disable_generation
     level = "verbose" if level == "detailed" else level
     if level not in {"errors", "normal", "verbose", "trace"}:
         raise ValueError("Niveau de diagnostic inconnu")
+    if _diagnostic_level == "trace" and level != "trace":
+        _trace_disable_generation += 1
     _diagnostic_level = level
     logger = logging.getLogger("cifereca")
     logger.setLevel(logging.DEBUG if level in {"verbose", "trace"} else logging.INFO)
