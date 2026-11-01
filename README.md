@@ -31,6 +31,20 @@ des fichiers de configuration/journal. **Ne pas utiliser `sync run` comme
 simple sonde** : `--confirm` autorise la synchronisation et les mutations.
 Le ZIP `--report` n'est pas une trace HTTP. Les traces et journaux bruts
 peuvent contenir des credentials ; aucune publication automatique.
+
+Pour diagnostiquer un parcours **graphique** complet, lancer volontairement
+`cifereca --capture` ; à la fermeture, un ZIP brut privé de la session est
+créé dans Téléchargements XDG (option `--capture-dir DIR`). Avant de
+partager quoi que ce soit, vérifier **localement** sa cohérence, sans réseau
+ni ouverture de compte :
+
+```sh
+python3 -m cifereca.core.capture_session_export --validate '/chemin/cifereca-capture-....zip' --json
+```
+
+Le verdict ne contient aucun journal/HTML/secret ; un ZIP valide ne prouve
+ni réussite d'emprunt ni synchronisation. Voir la
+[procédure de capture](docs/CORE-P1-4093-GUI-CAPTURE.md).
 > Les sections de versions ci-dessous sont **historiques**, ne priment pas sur le contrat #3171 et n'attestent pas les fonctionnalités non fusionnées.
 
 ---
