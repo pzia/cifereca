@@ -24,7 +24,7 @@ def core_staging_receipt_observations(
     db, *, coords: tuple[str, str, str, str],
     library_root: Path | None, verify_files: bool,
     reference, limit: int,
-) -> tuple[list[dict[str, object]], bool]:
+) -> tuple[list[tuple[str, dict[str, object]]], bool]:
     """Inspect the exact account's pending Core receipts, with bounded rows.
 
     Files are hashed only under the registered profile's isolated Core
@@ -71,7 +71,7 @@ def core_staging_receipt_observations(
                 if other or root.is_symlink() or profile.is_symlink():
                     profile = None
 
-    observations: list[dict[str, object]] = []
+    observations: list[tuple[str, dict[str, object]]] = []
     for operation_id, artifact_id, raw in found:
         entry: dict[str, object] = {
             "receipt_ref": reference(operation_id),
@@ -80,7 +80,9 @@ def core_staging_receipt_observations(
             "staging_sha_verified": False,
             "origin_proven_by_receipt": False,
         }
-        observations.append(entry)
+        # The raw operation ID is internal to the caller's dict key only;
+        # no real identifier may appear in a returned audit observation.
+        observations.append((operation_id, entry))
         if type(raw) is not str or len(raw) > _MAX_JSON or artifact_id is not None:
             continue
         try:

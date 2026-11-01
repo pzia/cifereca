@@ -133,6 +133,76 @@ def test_untrusted_receipts_or_bytes_never_become_verified_core_staging(
     assert db.placements() == []
 
 
+def test_receipt_counts_remain_distinct_when_report_uses_one_placeholder(
+    rig, monkeypatch,
+):
+    from cifereca.core.canonical_recovery import _stage_id
+    from cifereca.core.source_convergence import SourceKey
+    from cifereca.plugin_api.provider_rights_observation import ProviderRightsScope
+
+    service, db, root, _ = _failed_after_delivery(rig, monkeypatch)
+    with db._lock, db._connect() as sql:
+        old_id, raw = sql.execute(
+            "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
+            "WHERE status='canonical_receipt_staged'",
+        ).fetchone()
+        payload = json.loads(raw)
+        coords = payload["source"]
+        key = SourceKey(
+            ProviderRightsScope(*coords[:4]),
+            coords[5], coords[6], coords[7], coords[4],
+        )
+        payload["offer_id"] = "second-synthetic-offer"
+        payload["receipt"] = "core-delivery:" + "a" * 64
+        second_id = _stage_id(key, payload["offer_id"])
+        assert second_id != old_id
+        sql.execute(
+            "INSERT INTO acquisition_ledger("
+            "acquisition_id,identity_id,provider_id,credential_id,"
+            "account_id,item_id,status,metadata_json,created_at,updated_at) "
+            "SELECT ?,identity_id,provider_id,credential_id,account_id,"
+            "item_id,status,?,created_at,updated_at "
+            "FROM acquisition_ledger WHERE acquisition_id=?",
+            (second_id, json.dumps(payload), old_id),
+        )
+
+    stage = _scan(service, db, root)
+    assert stage["staged_verified"] == 2
+    assert len(stage["observations"]) == 2
+    report = audit_source_counts(
+        db, service.account, library_root=root, verify_files=True,
+    )
+    # audit_source_counts intentionally passes the same private placeholder
+    # for every receipt. Internal dedup MUST use the operation ID instead.
+    assert report["staged_sha_verified_count"] == 2
+    assert report["staged_visible_in_library_count"] == 0
+    assert db.placements() == []
+
+
+def test_committed_b_with_unfinished_receipt_never_claims_unpublished(
+    rig, monkeypatch,
+):
+    import cifereca.core.convergence_execution as executor
+
+    service, db, root, requests = _drive(rig)
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("PRIVATE_PROVIDER_TOKEN")
+
+    monkeypatch.setattr(executor, "mark_completed_delivery_published", refuse)
+    monkeypatch.setattr(executor, "cleanup_published_staging", refuse)
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 1
+    assert requests == ["signed-right-offer"]
+    assert len(db.placements()) == 1
+    stage = _scan(service, db, root)
+    assert stage["staged_verified"] == 1
+    item, = stage["observations"]
+    assert item["staging_state"] == "core_staged_origin_recorded"
+    assert item["staging_sha_verified"] is True
+    assert item["origin_proven_by_receipt"] is False
+
+
 def test_failed_promotion_then_actual_recovery_is_not_staged_unpublished(
     rig, monkeypatch,
 ):

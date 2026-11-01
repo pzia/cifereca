@@ -142,13 +142,11 @@ def receipt_staging_evidence(
     if core_truncated:
         return {"coverage": "truncated", "staged_visible_in_library": 0,
                 "staged_verified": 0, "observations": []}
-    for entry in core:
-        # Every row is keyed by the same HMAC pseudonym, never a private
-        # receipt/operation ID. Prefer strict Core validation over a broad
-        # legacy Artifact join for this exact ledger operation.
-        matching = [key for key, item in output.items()
-                    if item["receipt_ref"] == entry["receipt_ref"]]
-        output[matching[0] if matching else entry["receipt_ref"]] = entry
+    for operation_id, entry in core:
+        # Do not match on the display pseudonym: the internal counts path
+        # intentionally supplies a shared placeholder for every receipt.
+        # Only the exact private operation ID (never exported) is a key.
+        output[operation_id] = entry
     observations = list(output.values())
     return {
         "coverage": ("indexed_and_core_receipts" if core else
