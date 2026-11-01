@@ -36,6 +36,31 @@ for _stage in ("declared_lookup", "indexed_candidates", "physical_candidates", "
         "automatic_acquisition_failure" if _stage == "delivery_or_import" else "local_evidence_failure",
         ("observed_provider_id", "credential_id", "account_id", "loan_id"), None,
     )
+# The BnF legacy worker keeps the observed exception in the private raw
+# journal per #2888, but no longer emits identity, credential or account IDs.
+# Old log templates above remain readable for archival compatibility.
+_EXTRA[
+    "TRACE bnf auto receipt file check failed provider_id=%s"
+] = (
+    "unknown", None, "local_evidence_failure",
+    ("observed_provider_id",), "receipt_file_check_failed",
+)
+for _stage in (
+    "declared_lookup", "indexed_candidates",
+    "physical_candidates", "declared_revalidation", "delivery_or_import",
+):
+    _kind = "acquisition" if _stage == "delivery_or_import" else "local evidence"
+    _EXTRA[
+        f"TRACE bnf auto {_kind} failed stage={_stage} "
+        "provider_id=%s loan_id=%s"
+    ] = (
+        "failed" if _stage == "delivery_or_import" else "unknown",
+        _stage, "automatic_acquisition_failure"
+        if _stage == "delivery_or_import" else "local_evidence_failure",
+        ("observed_provider_id", "loan_id"), None,
+    )
+
+
 _SECRET_KEYS = (
     r"password|passwd|pwd|passphrase|access[_-]?token|refresh[_-]?token|id[_-]?token|token|"
     r"api[_-]?key|x-api-key|client[_-]?secret|private[_-]?key|activation[_-]?token|"

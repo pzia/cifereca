@@ -45,6 +45,9 @@ def test_bnf_download_failure_logs_original_cause_without_new_attempt(
     assert "stage=delivery_or_import" in caplog.text
     assert "provider_id=bnf-pret" in caplog.text
     assert loan.id in caplog.text and SENTINEL in caplog.text
+    assert account.credential_id not in caplog.text
+    assert account.identity_id not in caplog.text
+    assert account.unique_id not in caplog.text
     assert SENTINEL not in repr(outcome)
     assert service.storage.acquisitions(provider_id="manual") == []
 
@@ -80,6 +83,9 @@ def test_bnf_local_preflight_failure_logs_raw_cause_without_get(
     }
     assert f"stage={stage}" in caplog.text
     assert SENTINEL in caplog.text and loan.id in caplog.text
+    assert account.credential_id not in caplog.text
+    assert account.identity_id not in caplog.text
+    assert account.unique_id not in caplog.text
     assert not attempted and not downloaded
     assert SENTINEL not in repr(outcome)
 

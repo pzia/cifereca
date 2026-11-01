@@ -103,10 +103,8 @@ def _receipt_local_file_verified(service, account: Account, row: dict, path: Pat
         return True
     except (OSError, ValueError, TypeError, KeyError):
         _TRACE_LOG.warning(
-            "TRACE bnf auto receipt file check failed provider_id=%s "
-            "identity_id=%s credential_id=%s",
-            account.provider_id, account.identity_id, account.credential_id,
-            exc_info=True,
+            "TRACE bnf auto receipt file check failed provider_id=%s",
+            account.provider_id, exc_info=True,
         )
         return False
 
@@ -209,9 +207,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     except Exception:
         _TRACE_LOG.warning(
             "TRACE bnf auto local evidence failed stage=declared_lookup "
-            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-            loan.source_provider, account.credential_id,
-            account.unique_id, loan.id, exc_info=True,
+            "provider_id=%s loan_id=%s",
+            loan.source_provider, loan.id, exc_info=True,
         )
         return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
     if not current():
@@ -227,11 +224,10 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             raise
         except Exception:
             _TRACE_LOG.warning(
-                "TRACE bnf auto local evidence failed stage=declared_revalidation "
-                "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-                loan.source_provider, account.credential_id,
-                account.unique_id, loan.id, exc_info=True,
-            )
+            "TRACE bnf auto local evidence failed stage=declared_revalidation "
+            "provider_id=%s loan_id=%s",
+            loan.source_provider, loan.id, exc_info=True,
+        )
             return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
@@ -269,9 +265,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     except Exception:
         _TRACE_LOG.warning(
             "TRACE bnf auto local evidence failed stage=indexed_candidates "
-            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-            loan.source_provider, account.credential_id,
-            account.unique_id, loan.id, exc_info=True,
+            "provider_id=%s loan_id=%s",
+            loan.source_provider, loan.id, exc_info=True,
         )
         return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
     if not current():
@@ -284,9 +279,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                     'code': 'bnf_local_evidence_unavailable'}
         _TRACE_LOG.info(
             "TRACE bnf local bibliographic hint is not a Sync veto "
-            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-            account.provider_id, account.credential_id,
-            account.unique_id, loan.id,
+            "provider_id=%s loan_id=%s",
+            account.provider_id, loan.id,
         )
 
     # An old manually imported EPUB may not have any SQLite reference.
@@ -319,9 +313,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     except Exception:
         _TRACE_LOG.warning(
             "TRACE bnf auto local evidence failed stage=physical_candidates "
-            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-            loan.source_provider, account.credential_id,
-            account.unique_id, loan.id, exc_info=True,
+            "provider_id=%s loan_id=%s",
+            loan.source_provider, loan.id, exc_info=True,
         )
         return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
     if not current():
@@ -337,9 +330,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         # to adopt, unlink, relocate or delete the historical manual EPUB.
         _TRACE_LOG.info(
             "TRACE bnf local OPF hint is not a Sync veto "
-            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-            account.provider_id, account.credential_id,
-            account.unique_id, loan.id,
+            "provider_id=%s loan_id=%s",
+            account.provider_id, loan.id,
         )
     # A signed ACSM is a private short-lived candidate. If admission fails
     # before ADEPT is invoked, it must not linger in acquisition-work.
@@ -411,9 +403,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     except Exception:
         _TRACE_LOG.warning(
             "TRACE bnf auto acquisition failed stage=delivery_or_import "
-            "provider_id=%s credential_id=%s account_id=%s loan_id=%s",
-            loan.source_provider, account.credential_id,
-            account.unique_id, loan.id, exc_info=True,
+            "provider_id=%s loan_id=%s",
+            loan.source_provider, loan.id, exc_info=True,
         )
         return {'status': 'attention_required', 'code': 'bnf_auto_acquisition_failed'}
     finally:
