@@ -78,16 +78,29 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
 
     # Historical canonical receipts are the independent, per-source proof of
     # delivery; origin by SHA alone cannot bind a particular physical copy.
+    # A legacy purchase can leave many unrelated operation rows for the
+    # same exact edition and Artifact. The previous un-ordered LIMIT 32
+    # could hide the only genuine canonical-intake receipt and permanently
+    # block promotion of an already published staging Placement. Never use
+    # a legacy receipt as authority: only Core's deterministic namespace can
+    # ever match _stage_id(source, offer).
+    #
+    # Read up to 513 canonical candidates and refuse unbounded/ambiguous
+    # snapshots, rather than silently ignoring a genuine proof. This is
+    # a read-only SELECT under the already-held acquisition lock.
     journals = db.execute(
         "SELECT acquisition_id,metadata_json FROM acquisition_ledger "
         "WHERE identity_id=? AND provider_id=? AND credential_id=? "
         "AND account_id=? AND item_id=? "
+        "AND acquisition_id LIKE 'canonical-intake:%' "
         "AND ((status='complete' AND artifact_id=?) OR "
         "(status='canonical_receipt_staged' AND artifact_id IS NULL)) "
-        "LIMIT 32",
+        "ORDER BY acquisition_id LIMIT 513",
         (scope.identity_id, scope.provider_id, scope.credential_id,
          scope.account_id, source.edition_id, row[2]),
     ).fetchall()
+    if len(journals) > 512:
+        raise ValueError("canonical_stock_receipt_missing_or_ambiguous")
     admissible = []
     for record_id, serialized in journals:
         if type(serialized) is not str or len(serialized) > 65536:
