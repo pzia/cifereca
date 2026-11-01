@@ -1679,7 +1679,9 @@ class MainWindow(Adw.ApplicationWindow):
                 else:
                     self.show_error(detail, "Téléchargement non terminé")
                 return
-            suffix = " · restitution ADEPT disponible" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
+            # ADEPT binding is useful for recovery, but return is retired (#4048).
+            # Never advertise voluntary return after a successful download.
+            suffix = "" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
             result_message = "Livre récupéré" + suffix
             reporter = getattr(self, "_activity_result", None)
             if callable(reporter):

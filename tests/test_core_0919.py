@@ -121,7 +121,7 @@ class Core0919(unittest.TestCase):
   w=NS(service=NS(reacquire_digital_loan=Mock(return_value={'status':'complete','adept_return_available':True})),runner=Mock(),refresh_library=Mock(),refresh_recent=Mock(),_render_dashboard=Mock(),loan_page=NS(detail=NS(show_loan=Mock())),toast=Mock(),show_error=Mock())
   self.extract('prepare_pnb_for_loan')(w,self.loan);args=w.runner.submit.call_args.args
   result=args[1]();args[2](result);w.service.reacquire_digital_loan.assert_called_once_with(self.loan)
-  w.loan_page.detail.show_loan.assert_called_once_with(self.loan);self.assertIn('restitution ADEPT disponible',w.toast.call_args.args[0])
+  w.loan_page.detail.show_loan.assert_called_once_with(self.loan);self.assertIn('Livre récupéré',w.toast.call_args.args[0]);self.assertNotIn('restitution',w.toast.call_args.args[0])
  def test_return_ui_uses_exact_acquisition_and_keeps_file(self):
   w=NS(service=NS(return_adept_acquisition=Mock(return_value={'ok':True})),runner=Mock(),refresh_library=Mock(),toast=Mock(),show_error=Mock())
   self.extract('return_adept_from_detail')(w,'binding-id',Mock());args=w.runner.submit.call_args.args;args[2](args[1]())
