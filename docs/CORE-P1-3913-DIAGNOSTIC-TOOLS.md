@@ -56,6 +56,7 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 | `kobo-resume-preview --credential C --refresh-manifest` | **N** | **Exception** : lecture explicite du manifeste distant ; ne plus classer cette variante « hors réseau ». Pas de téléchargement de livre par la seule preview. |
 | `paris-adept list [--credential C]` ; `paris-adept audit [--credential C]` | O | Liaisons et prêts historiques locaux ; aucune autorité Adobe déduite d'une coïncidence. |
 | `paris-adept audit-origin --loan-id L --item-id B` ; `audit-canonical --loan-id L --item-id B` ; `audit-transaction --loan-id L --item-id B` | O | Constat local exact des preuves historiques/canoniques ; ni retour Adobe ni transfert de permission. Les sous-commandes prennent le préfixe `cifereca-cli paris-adept`. |
+| `paris-adept validate-resolution-snapshot --loan-id L --item-id B --fingerprint SHA256` | O | Contrôle local d'un snapshot de preview ADEPT sans mutation ni attestation Adobe serveur ; une empreinte égale ne crée pas d'autorisation. Fusion #3826. |
 | `paris-adept preview-resolution --loan-id L --item-id B --source-reference-id R --acquisition-ref H` | O | Preview sans mutation, identités et références exactes requises ; revalidation locale, pas de « droit Adobe » nouveau. |
 | `paris-adept accounts` | **N** | Connexion Paris configurée avant restitution des comptes visibles ; ne pas présenter comme lecture SQLite seule. |
 | `diagnose` ; `loans` ; `history` ; `search TERME [--scope all|physical|digital|unknown] [--provider P] [--field all|title|author|isbn|subject]` | **N** | Parcours historiques susceptibles de `connect_configured()` / rafraîchissement ou recherche réseau. **Préférer** `doctor` / `sync list` / audit ciblé pour diagnostic local. |
@@ -132,6 +133,35 @@ Scripts autonomes identifiés par recherche du code (`__main__` /
 | Simulation / E2E | `simulation/datasetctl.py`, `simulation/e2e_fixtures.py`, `simulation/plugin_coverage.py`, `simulation/plugin_scenarios.py`, `simulation/adept/fake_kobo_adept_cli.py`, `simulation/Epub/gen_fake_epubs.py`, `e2e/run.py` et `e2e/*_probe.py` | **T** : fixtures/services fictifs, captures et recettes GTK ; isolation des données production obligatoire. |
 | Transformation de livres | `src/plugins/epub_optimizer/cifereca_epub_optimizer/cli.py` (`input`, `-o/--output`, `--profile`, `--max-uncompressed-mb`, `--json`) | **M** sur fichier de sortie ; conversion, pas diagnostic d'acquisition. |
 
+## Scripts shell et wrappers : inventaire des points d'entrée non Python
+
+Les scripts bash ci-dessous sont **outillage de recette ou d'environnement**,
+pas des commandes de diagnostic du catalogue utilisateur. Les seuls exemples
+réutilisables en lecture seule depuis les aides ci-dessus sont `doctor`,
+`sync list`, `acquisition-audit`, les analyseurs de fichiers explicitement
+identifiés et l'audit expert SQLite. Aucun wrapper ci-dessous n'accorde une
+autorisation d'acquisition.
+
+| Script / wrapper | Effet et garde |
+|---|---|
+| `scripts/ci-smoke-installed-wheel.sh` | **T/M** : crée un venv, installe un wheel, exerce les commandes installées, nettoie ; `CIFERECA_SMOKE_VENV` peut désigner un venv existant **effacé**. |
+| `scripts/ci-install-gtk-e2e-runtime.sh` | **M hôte privilégiée** : peut appeler `sudo apt-get install/update` ; **interdit comme simple contrôle de bibliothèque** ou sur VM sans autorisation d'installation. |
+| `scripts/ci-plugins-only-runtime-gate.sh` | **T/M** sur XDG jetable : `rm -rf` de sa racine de gate, véritable installation Core/update ; `CIFERECA_P0_GATE_ROOT` à garder isolée. |
+| `scripts/ci-plugins-only-historical-core-gate.sh` | **T/M** sur XDG jetable et tag historique ; détruit/recrée sa racine et installe Core de test, sans effet sur données utilisateur si le gate reste isolé. |
+| `scripts/ci-run-plugin-tests.sh` | **T** : lance pytest sur les plugins ou cibles fournies ; tests susceptibles de créer des artefacts jetables. |
+| `environnements/chatgpt-work/work` | **T/M** : bootstrap d'un venv de travail ou exécution d'un outil ; dépend de `env.sh` et de l'environnement isolé. |
+| `environnements/chatgpt-work/run-cifereca` | **N/M possibles** : lance la **vraie application** sous HOME jetable, suivant sa configuration et `CIFERECA_CMD`; n'est pas un audit passif. |
+| `environnements/openai-chat-debian/headless` | **T** : wrapper du lanceur GTK Python pour recettes headless. |
+| `environnements/openai-chat-debian/gtk-python` | **T** : adapte l'environnement Python/GTK avec `env.sh` ; exécute les arguments passés, dont les effets dépendent de l'exécutable. |
+| `environnements/openai-chat-debian/capture-app` | **T** : lance capture GTK/fixtures ; captures et artefacts de test restent à protéger selon leur contenu. |
+| `environnements/openai-chat-debian/run-cifereca` | **N/M possibles** : lance Cifereca sous HOME de runtime, sans transformer ses actions en lecture seule. |
+
+Les fragments shell intégrés aux **workflows** CI ne sont pas une interface
+CLI stable : leurs permissions et effets sont définis par chaque job et par
+ses secrets, non par un simple `--help`. Les scripts d'administration de
+branches Git restent classés **destructeurs** dans la table précédente.
+Les wrappers environnementaux ne doivent pas être exécutés par le rôle backlog.
+
 ## Matrice de triage : une commande, un type de preuve
 
 | Symptomatique | Première étape recommandée | Preuve nécessaire ensuite, si l'étape ne suffit pas |
@@ -155,7 +185,7 @@ Scripts autonomes identifiés par recherche du code (`__main__` /
 2. **Lecture d'une source ≠ exhaustivité** : inventaire partiel, une page HTML, un HTTP 200, un ACSM ou un fichier de staging n'attestent ni droit complet, ni EPUB vérifié, ni OriginLink.
 3. **Rapport ZIP ≠ journal brut ZIP ≠ trace HTTP ZIP** : producteur et schéma différents. Le lecteur Numilog accepte spécifiquement **le journal brut canonique**, **pas** `sync --report` ni `--trace-export`.
 4. **Backlog ne lance rien** : il choisit l'outil déjà livré, fournit la commande et les précautions au propriétaire/à l'utilisateur, puis qualifie les preuves reçues. Un outil de correction ne devient pas un audit par son nom.
-5. **Périmètre encore ouvert #3913** : preuve d'exhaustivité des autres scripts/outils de plugins ; harmonisation versionnée du contrat ZIP dans un module partagé ; diagnostics Core post-staging de bout en bout #3909. Aucune suppression de wrapper historique ou modification du moteur par ce registre.
+5. **Frontière de clôture #3913** : les scripts Python directs de `scripts/`, les wrappers shell CI/environnements identifiés et les points d'entrée installés sont classés et couverts par un garde de dérive. Le contrat ZIP v1 producteur/lecteur est partagé depuis #4003 et #4004 ; le test end-to-end #4009 vérifie sa délégation réelle. La **preuve métier** post-staging → Placement → OriginLink relève du **ticket P0 #3909**, qui demeure ouvert et interdit d'annoncer une publication sans attestation. Aucune suppression de wrapper historique ni changement de moteur par ce registre.
 
 **Code de référence :** `src/cifereca/cli.py`, `src/cifereca/support_diagnostic.py`,
 `src/cifereca/core/{acquisition_audit,sync_report,diagnostic_journal_zip,library_reconciliation,library_wal_image}.py`,
