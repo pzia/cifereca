@@ -14,9 +14,12 @@ ni le résultat de synchronisation ni le journal d'actions existant.
 | `phase`, `status`, `code` | Couples phase/statut et codes fermés | Oui | Oui | Oui | Idem |
 | `duration_ms` | Temps monotone entier, 0–86 400 000, terminal uniquement | Si observée | Si observée | Si observée | Idem |
 | `loans`, `library` | Compteurs entiers observés, 0–1 000 000 | Si observés | Si observés | Si observés | Idem |
+| `canonical_downloaded/recovered/present_attested/pending/blocked/failed/cancelled/skipped_archived/inactive` | Résultat terminal des 9 compteurs du moteur Core A→B, **jamais inventé lorsque ce moteur n'a pas exécuté** ; entiers 0–1 000 000, ensemble complet seulement | Si exécuté sur terminal success/partial | Si observé | Si observé | Idem |
 | `task_ref` | Contexte réel du worker, référence aléatoire créée à la première émission | Si contexte disponible | Si publiée par le consommateur | Si contexte disponible | Idem |
 | Code fournisseur, HTTP status, `retryable` | Non attestés par ce producteur | Absents | Absents | Absents | Absents |
 | Compte, identité, source privée, titre, chemin, URL, token, exception, XML | Données non admises par ce schéma | Interdit | Interdit | Interdit | Interdit |
+
+**Extension P0 #3171 (01/11/2026).** La décision terminale rapporte désormais les **verdicts Core d'exécution canonique A→B** lorsqu'ils ont été réellement calculés. `canonical_downloaded` constate une acquisition publiée par le moteur canonique ; `canonical_present_attested` constate la présence locale vérifiée, et `canonical_pending/blocked/failed` distinguent les demandes non finalisées. Le seul chiffre `library` ou un HTTP 200 n'atteste pas une publication. L'ensemble de neuf compteurs est obligatoire ou absent ; il n'est émis que sur un événement terminal success/partial et ne contient aucun compte, item, URL ou chemin. Une synchronisation sans exécuteur canonique n'émet **pas** neuf zéros fabriqués. **Limite** : ce bilan agrégé ne fournit pas la chronologie `offer → GET → staging → SHA → Placement/OriginLink → recovery` par ressource ; cette recette de fin de chaîne reste requise par #3171 et #3909. Les anciennes lignes restent valides sans ces champs.
 
 Les codes sont `source_sync_started`, `source_sync_complete`,
 `source_sync_partial` (inventaire Paris numérique incomplet),
