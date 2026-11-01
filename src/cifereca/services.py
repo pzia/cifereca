@@ -273,6 +273,24 @@ class LibraryService:
     def can_download_loan(self, loan: Loan) -> bool:
         return self.loan_download_eligibility(loan)["available"] is True
 
+    def can_borrow_bnf(self, item: SearchResult) -> bool:
+        """Inert BnF action visibility, never a borrower permission."""
+        from .core.manual_bnf_borrow import manual_bnf_borrow_available
+        return manual_bnf_borrow_available(self, item)
+
+    def borrow_bnf_manual(
+        self, item: SearchResult, *, expected_identity_id: str,
+        confirmed: bool = False, expected_context_epoch: int | None = None,
+        expected_account: Account | None = None,
+    ) -> dict[str, object]:
+        """Core-owned explicit BnF action; never use the legacy borrow()."""
+        from .core.manual_bnf_borrow import manual_bnf_borrow
+        return manual_bnf_borrow(
+            self, item, expected_identity_id=expected_identity_id,
+            confirmed=confirmed, expected_context_epoch=expected_context_epoch,
+            expected_account=expected_account,
+        )
+
     def stage_bnf_loan_acsm(
         self, loan: Loan, *, confirmed: bool = False,
         expected_identity_id: str = "",

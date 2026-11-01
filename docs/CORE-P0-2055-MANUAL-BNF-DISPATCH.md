@@ -25,6 +25,32 @@ Ce garde doit rester jusqu'à l'ajout d'une vraie confirmation GTK BnF
 aboutissant exclusivement au dispatcher Core vérifié. Les autres sources
 conservent leur comportement historique.
 
+## Raccordement CoreUI sous confirmation dédiée (tranche suivante)
+
+Le `LibraryService` expose `can_borrow_bnf` et `borrow_bnf_manual`
+uniquement via le Core. La disponibilité UI vérifie sans I/O fournisseur :
+capability réelle du PluginManager, descripteur, session et compte primaire
+exact, bail et présence d'une méthode fournisseur de preuve positive.
+**Elle n'est pas l'éligibilité** : le contrôleur délègue toujours l'admission
+réelle à `manual_bnf_borrow` après consentement.
+
+`gui/bnf_borrow_controller.py` construit un dialogue explicite distinct de
+l'ancien `session.borrow()`. Son geste « Confirmer l'emprunt » est lié
+à l'instance de compte, aux coordonnées de notice et aux générations
+identité/compte/recherche ainsi qu'à l'epoch Core. Le worker revérifie
+ces scellés au démarrage, puis passe `expected_account` et
+`expected_context_epoch` au dispatcher Core ; toute mutation ou ABA est
+refusée, sans préemption d'un claim. Une seule réponse du dialogue peut
+enregistrer une tâche. Résultat positif uniquement si Core renvoie
+`confirmed + provider_verified`, suivi de l'actualisation des emprunts.
+Résultat inconnu : message demandant de vérifier le portail et précisant
+l'absence de rejeu automatique ; aucune exception privée n'est rendue.
+
+La visibilité du bouton générique BnF demeure **fausse** avec le manifeste
+actuel. Le contrôleur BnF remplace seulement son ancien rejet lorsque le
+Core validera la capability et les faits de permission ; le chemin direct
+`session.borrow` demeure interdit.
+
 ## Non-activation explicite
 
 Ce code n'est **pas** une nouvelle API d'emprunt disponible : le manifeste BnF et `capabilities.borrow` restent négatifs, `borrower_eligibility_for` manque, et aucun composant UI/sync ne l'invoque. Les tests utilisent un faux fournisseur ayant *fictivement* publié la capability et les quatre preuves métier pour tester l'orchestration ; ils ne simulent pas une autorisation BnF réelle.
