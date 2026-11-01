@@ -42,6 +42,9 @@ def _counts(**changes):
 
 def test_real_core_sync_reports_download_then_attested_local_presence(v2):
     service, db, root, calls = v2
+    # The generic v2 fixture has an inert diagnostics sink; attach the real
+    # production collector for this observable terminal contract.
+    service.diagnostics = Diagnostics()
     first = synchronize_account_source(service, service.account)
     assert first["canonical_execution"]["downloaded"] == 1
     event = _terminal(service)
