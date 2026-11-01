@@ -96,3 +96,24 @@ def test_coreui_facades_no_longer_publish_voluntary_return_callbacks():
         source = (gui / filename).read_text(encoding="utf-8")
         assert "return_adept_from_detail(" not in source
         assert "confirm_return(" not in source
+
+
+
+def test_legacy_lending_return_is_never_capability_or_admissible_action():
+    from cifereca.plugin_api.lending_actions import assess_lending_action
+    from cifereca.plugin_api.lending_capabilities import assess_lending_operation
+    # Do not even instantiate a provider: retirement must be decided before
+    # any descriptor/session getter, loan raw field, or account lookup.
+    operation = assess_lending_operation(
+        "loan.return", manifest_capabilities=["lending.return"],
+        descriptor=NoSideEffects(), session=NoSideEffects(),
+        account=NoSideEffects(),
+    )
+    assert operation.availability == "unknown"
+    assert operation.reason_code == "operation_unknown"
+    admission = assess_lending_action(
+        "loan.return", fact=operation, target=NoSideEffects(),
+        account=NoSideEffects(), confirmed=True, permission_attested=True,
+    )
+    assert admission.status == "unsupported"
+    assert admission.reason_code == "operation_unavailable"
