@@ -188,7 +188,16 @@ DESCRIPTOR = ProviderDescriptor(
         ),
     ),
     credential_fields=(CredentialField("api_token", "Token API Kobo-Vault", secret=True),),
-    account_options=(AccountOptionField("base_url", "URL API Kobo-Vault"),),
+    account_options=(
+        AccountOptionField("base_url", "URL API Kobo-Vault"),
+        # The session already consumes account.options["display_profile"].
+        # The global Kobo setting is a read-only migration fallback; CoreUI
+        # never needs a Kobo-specific widget or enables acquisition by saving.
+        AccountOptionField(
+            "display_profile", "DisplayProfile Kobo-Vault (Android/Desktop)",
+            default="Android", legacy_config_key="kobo_backup.display_profile",
+        ),
+    ),
     max_accounts_per_identity=1,
     account_note=(
         "Connexion indirecte au compte Kobo",
