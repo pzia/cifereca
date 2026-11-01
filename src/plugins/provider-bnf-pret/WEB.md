@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.15.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.16.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -73,7 +73,7 @@ contrôle de credential, l'epoch et les gardes après GET restent inchangés.
 La façade legacy sans broker reste en lecture positive seule, sans preuve
 négative. Les tests sont synthétiques, sans compte BnF réel.
 
-## Préqualification d'un nouvel emprunt (#2055, tranche lecture seule)
+## Préqualification d'un nouvel emprunt (#2055, 0.3.16 — tranche lecture seule)
 
 Le parcours humain réel est documenté dans l'issue #2055 : fiche → écran de
 confirmation → POST Web unique avec `authenticity_token` → vérification dans
