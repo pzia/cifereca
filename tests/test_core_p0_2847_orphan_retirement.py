@@ -144,6 +144,21 @@ def test_active_catalogue_and_backup_keep_sqlite_history(rig):
     assert storage.placement_get(pid) is not None
 
 
+def test_checkpoint_referencing_only_placement_id_blocks_retirement(rig):
+    storage, _root, path, pid = rig
+    plan = prepare(rig)
+    assert plan["status"] == "ready"
+    # A restart marker need not embed the old path. Its exact ID is enough
+    # to make retirement unsafe, even when the leaf is still absent.
+    storage.metadata_set("core.synthetic.pending-placement", {
+        "pending": {"placement_id": pid},
+    })
+    assert prepare(rig)["reason"] == "dependent_references"
+    assert retire(rig, plan["plan_token"])["reason"] == "dependent_references"
+    assert storage.placement_get(pid) is not None
+    assert not path.exists()
+
+
 def test_scope_parent_missing_and_cross_profile_are_blocked(rig, tmp_path):
     storage, root, path, pid = rig
     assert prepare(rig, identity="bob")["reason"] == "identity_mismatch"
