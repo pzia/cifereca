@@ -31,7 +31,10 @@ aucun remplacement. Un chemin `capture_zip: ...` est affiché sur stderr ;
   message d'arrêt. Aucun scan du journal du jour ni des rotations ; les
   événements antérieurs/postérieurs et des autres instances sont exclus par
   construction. Quota de 32 Mio et 100 000 lignes, couverture `partial`
-  en cas d'omission.
+  en cas d'omission. Une exception non traitée pendant le démarrage GUI est
+  conservée **avec sa traceback brute** dans ce journal privé (code
+  `capture_runtime_failed`, sortie non nulle) ; le texte de l'exception
+  n'est jamais imprimé par le miroir console Trace du mode `--capture`.
 - Si le niveau Trace est désactivé à n'importe quel moment de la session,
   même s'il est réactivé avant la fermeture, le manifeste indique
   `trace_interrupted=true` et `http_coverage=partial`. Les échanges survenus
