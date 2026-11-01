@@ -64,12 +64,13 @@ def test_capture_cli_marks_off_then_on_as_partial_even_when_trace_active_at_exit
         "cifereca", "--capture", "--capture-dir", str(tmp_path),
     ])
     monkeypatch.setattr(app, "build_identity", lambda: {"status": "unavailable"})
-    from cifereca.http_trace import HTTP_TRACE
-    monkeypatch.setattr(HTTP_TRACE, "snapshot", _http)
-    monkeypatch.setattr(HTTP_TRACE, "status", lambda: {
-        "session_ref": "b" * 32, "exchanges": 0,
-        "used_bytes": 0, "omitted_exchanges": 0,
-    })
+    from cifereca.http_trace import HTTP_TRACE, HTTPTraceCapture
+    # Use the producer's complete status/snapshot contract, including
+    # session budgets and representation. Hand-built partial mocks can hide
+    # mismatch between the two correlated counters.
+    synthetic_trace = HTTPTraceCapture()
+    monkeypatch.setattr(HTTP_TRACE, "snapshot", synthetic_trace.snapshot)
+    monkeypatch.setattr(HTTP_TRACE, "status", synthetic_trace.status)
 
     def fake_run(*, capture_mode=False):
         assert capture_mode is True
