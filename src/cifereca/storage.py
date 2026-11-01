@@ -199,6 +199,129 @@ class Storage:
             )
             return previous
 
+    @staticmethod
+    def _loan_borrow_checkpoint_key_valid(key: object) -> bool:
+        return (
+            type(key) is str and key.startswith("loan.borrow.v1:")
+            and len(key) == len("loan.borrow.v1:") + 64
+            and all(char in "0123456789abcdef"
+                    for char in key[len("loan.borrow.v1:"):])
+        )
+
+    def loan_borrow_state(self, key: str) -> dict[str, Any] | None:
+        """Durable manual borrow attempt, NOT a loan entitlement or consent."""
+        if not self._loan_borrow_checkpoint_key_valid(key):
+            return None
+        raw = self.metadata_get(key)
+        if type(raw) is not str or not 0 < len(raw) <= 4096:
+            return None
+        try:
+            row = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if (type(row) is not dict or row.get("schema") != 1
+                or row.get("operation") != "loan.borrow"
+                or row.get("status") not in {
+                    "request_sent", "submitted", "confirmed",
+                    "verification_unavailable", "blocked",
+                }
+                or type(row.get("operation_id")) is not str
+                or not row["operation_id"]):
+            return None
+        return row
+
+    def loan_borrow_claim_once(
+        self, key: str, operation_id: str,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Claim before *any* remote POST, atomically across processes.
+
+        This storage primitive does not validate UI consent or lender rights:
+        the Core caller MUST enforce both independently. Never reopen a claim
+        after an uncertain timeout, an HTML error, or a partial/empty inventory.
+        """
+        from datetime import datetime, timezone
+        if (not self._loan_borrow_checkpoint_key_valid(key)
+                or type(operation_id) is not str or not 0 < len(operation_id) <= 128
+                or any(ord(ch) < 33 or ord(ch) > 126 for ch in operation_id)):
+            raise ValueError("loan_borrow_claim_invalid")
+        row = {
+            "schema": 1, "operation": "loan.borrow",
+            "status": "request_sent", "operation_id": operation_id,
+            "request_accepted": False, "verification": "not_checked",
+            "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO NOTHING",
+                (key, json.dumps(row, sort_keys=True, separators=(",", ":"))),
+            )
+            if cursor.rowcount == 1:
+                return True, row
+            # Existing or corrupt checkpoint -> no remote retry, even across
+            # profiles, processes or a restart with fresh SSO cookies.
+            return False, {"status": "verification_unavailable"}
+
+    def loan_borrow_finish(
+        self, key: str, operation_id: str, *, status: str,
+        accepted: bool = False, verified_loan_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """CAS completion after POST/independent verification.
+
+        A 'confirmed' status requires positive evidence of a distinct loan
+        identifier supplied by the Core caller; it is never inferred here.
+        """
+        from datetime import datetime, timezone
+        if (not self._loan_borrow_checkpoint_key_valid(key)
+                or type(operation_id) is not str
+                or type(status) is not str
+                or status not in {
+                    "submitted", "confirmed", "verification_unavailable", "blocked",
+                }
+                or type(accepted) is not bool
+                or ((status == "confirmed") != (
+                    accepted and type(verified_loan_id) is str
+                    and 0 < len(verified_loan_id) <= 128
+                    and all(c.isascii() and (c.isalnum() or c in "_-")
+                            for c in verified_loan_id)
+                ))
+                or (status == "submitted" and not accepted)
+                or (status == "blocked" and accepted)):
+            raise ValueError("loan_borrow_transition_invalid")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            if existing is None or type(existing[0]) is not str or len(existing[0]) > 4096:
+                return None
+            try:
+                row = json.loads(existing[0])
+            except (TypeError, ValueError):
+                return None
+            if (type(row) is not dict or row.get("schema") != 1
+                    or row.get("operation") != "loan.borrow"
+                    or row.get("operation_id") != operation_id
+                    or row.get("status") != "request_sent"):
+                return None
+            row["status"] = status
+            row["request_accepted"] = accepted
+            row["verification"] = (
+                "positive_active_loan" if status == "confirmed"
+                else "not_checked" if status == "submitted" else "unavailable"
+            )
+            if status == "confirmed":
+                row["verified_loan_id"] = verified_loan_id
+            row["checked_at"] = datetime.now(timezone.utc).isoformat(
+                timespec="seconds",
+            )
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (json.dumps(row, sort_keys=True, separators=(",", ":")), key),
+            )
+            return row
+
     def loan_return_state(self, key: str) -> dict[str, Any] | None:
         """Read a bounded operation checkpoint; invalid bytes never authorize POST."""
         raw = self.metadata_get(key)
