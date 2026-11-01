@@ -67,12 +67,12 @@ def require_exact_sync_account(accounts: list[Any], **selectors: str) -> Any:
 
 
 def require_unique_sync_account(accounts: list[Any], **selectors: str) -> Any:
-    """Resolve exactly one persisted source with identity as minimum selector.
+    """Resolve exactly one persisted source with provider and identity required.
 
     No missing credential, provider or upstream account ID is guessed if
     multiple bindings match. This operation must run BEFORE connection/network.
     """
-    if not selectors.get("identity"):
+    if not selectors.get("identity") or not selectors.get("provider"):
         raise SyncSelectionError("source_scope_required")
     try:
         selected = select_sync_accounts(accounts, **selectors)

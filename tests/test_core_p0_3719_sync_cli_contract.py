@@ -73,9 +73,9 @@ def test_empty_primary_account_id_requires_explicit_selection():
                                       identity="p1", credential="c1", account_id="") is accounts[0]
 
 
-def test_unique_source_selection_needs_only_identity_when_unambiguous():
+def test_unique_source_selection_needs_provider_and_identity():
     accounts = [_account(identity="p1"), _account(identity="p2")]
-    assert require_unique_sync_account(accounts, identity="p1") is accounts[0]
+    assert require_unique_sync_account(accounts, identity="p1", provider="future-provider") is accounts[0]
     assert require_unique_sync_account(
         accounts, identity="p2", provider="future-provider",
     ) is accounts[1]
@@ -84,9 +84,9 @@ def test_unique_source_selection_needs_only_identity_when_unambiguous():
 def test_identity_only_refuses_ambiguous_sources_without_guessing_ids():
     accounts = [_account(), _account(credential="c2"), _account(identity="p2")]
     with pytest.raises(SyncSelectionError, match="account_ambiguous"):
-        require_unique_sync_account(accounts, identity="p1")
+        require_unique_sync_account(accounts, identity="p1", provider="future-provider")
     assert require_unique_sync_account(
-        accounts, identity="p1", credential="c2",
+        accounts, identity="p1", provider="future-provider", credential="c2",
     ) is accounts[1]
 
 
@@ -94,14 +94,23 @@ def test_no_identity_and_missing_source_fail_closed():
     with pytest.raises(SyncSelectionError, match="source_scope_required"):
         require_unique_sync_account([_account()], provider="future-provider")
     with pytest.raises(SyncSelectionError, match="source_not_configured"):
-        require_unique_sync_account([_account()], identity="missing")
+        require_unique_sync_account([_account()], identity="missing", provider="future-provider")
 
 
 def test_duplicate_identity_account_binding_is_not_auto_selected():
     with pytest.raises(SyncSelectionError, match="account_ambiguous"):
-        require_unique_sync_account([_account(), _account()], identity="p1")
+        require_unique_sync_account([_account(), _account()], identity="p1", provider="future-provider")
 
 
 def test_empty_upstream_account_id_can_be_auto_selected_when_unique():
     account = _account(account="")
-    assert require_unique_sync_account([account], identity="p1") is account
+    assert require_unique_sync_account([account], identity="p1", provider="future-provider") is account
+
+
+def test_missing_provider_is_never_inferred_from_single_identity_binding():
+    account = _account()
+    with pytest.raises(SyncSelectionError, match="source_scope_required"):
+        require_unique_sync_account([account], identity="p1")
+    assert require_unique_sync_account(
+        [account], identity="p1", provider="future-provider",
+    ) is account

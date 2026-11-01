@@ -43,12 +43,12 @@ def make_cli_core(monkeypatch, accounts):
     return observed
 
 
-def test_identity_only_unique_run(monkeypatch, capsys):
+def test_provider_and_identity_unique_run(monkeypatch, capsys):
     observed = make_cli_core(monkeypatch, [
         ("profile-a", "provider-a", "credential-a", "account-a", True),
         ("profile-b", "provider-b", "credential-b", "account-b", True),
     ])
-    assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 0
+    assert cli.main(["sync", "run", "--provider", "provider-a", "--identity", "profile-a", "--confirm"]) == 0
     assert len(observed["runs"]) == observed["connects"] == 1
     assert observed["runs"][0].credential_id == "credential-a"
     assert observed["scope"] == ("profile-a", "provider-a", "credential-a")
@@ -58,9 +58,9 @@ def test_identity_only_unique_run(monkeypatch, capsys):
 def test_ambiguous_identity_refuses_network(monkeypatch, capsys):
     observed = make_cli_core(monkeypatch, [
         ("profile-a", "provider-a", "credential-a", "account-a", True),
-        ("profile-a", "provider-b", "credential-b", "account-b", True),
+        ("profile-a", "provider-a", "credential-b", "account-b", True),
     ])
-    assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 2
+    assert cli.main(["sync", "run", "--provider", "provider-a", "--identity", "profile-a", "--confirm"]) == 2
     assert observed["connects"] == 0 and not observed["runs"]
     assert json.loads(capsys.readouterr().out)["code"] == "account_ambiguous"
 
@@ -69,7 +69,7 @@ def test_disabled_source_cannot_be_auto_selected(monkeypatch, capsys):
     observed = make_cli_core(monkeypatch, [
         ("profile-a", "provider-a", "credential-a", "account-a", False),
     ])
-    assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 2
+    assert cli.main(["sync", "run", "--provider", "provider-a", "--identity", "profile-a", "--confirm"]) == 2
     assert observed["connects"] == 0 and not observed["runs"]
     assert json.loads(capsys.readouterr().out)["code"] == "source_not_configured"
 
@@ -78,7 +78,7 @@ def test_identity_run_still_needs_explicit_confirmation(monkeypatch, capsys):
     observed = make_cli_core(monkeypatch, [
         ("profile-a", "provider-a", "credential-a", "account-a", True),
     ])
-    assert cli.main(["sync", "run", "--identity", "profile-a"]) == 2
+    assert cli.main(["sync", "run", "--provider", "provider-a", "--identity", "profile-a"]) == 2
     assert observed["connects"] == 0 and not observed["runs"]
     assert json.loads(capsys.readouterr().out)["code"] == "explicit_run_confirmation_required"
 
@@ -115,3 +115,12 @@ def test_unconfigured_provider_is_rejected_without_network(monkeypatch, capsys):
     ]) == 2
     assert json.loads(capsys.readouterr().out)["code"] == "source_not_configured"
     assert observed["connects"] == 0 and observed["runs"] == []
+
+
+def test_missing_provider_fails_before_opening_core(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("unexpected Core startup")),
+    )
+    assert cli.main(["sync", "run", "--identity", "profile-a", "--confirm"]) == 2
+    assert json.loads(capsys.readouterr().out)["code"] == "source_scope_required"

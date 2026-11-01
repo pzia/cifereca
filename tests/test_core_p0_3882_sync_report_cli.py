@@ -39,7 +39,7 @@ def test_existing_report_refused_before_any_core(monkeypatch, tmp_path, capsys):
         lambda **kw: (_ for _ in ()).throw(AssertionError("Core must not open")),
     )
     rc = cli.main([
-        "sync", "run", "--identity", "profile-a", "--confirm",
+        "sync", "run", "--identity", "profile-a", "--provider", "numilog", "--confirm",
         "--report", str(path),
     ])
     assert rc == 2
@@ -133,7 +133,7 @@ def test_raw_http_export_cannot_alias_redacted_report(monkeypatch, tmp_path, cap
     )
     destination = tmp_path / "only-one.zip"
     rc = cli.main([
-        "sync", "run", "--identity", "profile-a", "--confirm",
+        "sync", "run", "--identity", "profile-a", "--provider", "numilog", "--confirm",
         "--report", str(destination),
         "--trace-export", str(destination), "--confirm-trace-export",
     ])
@@ -148,7 +148,7 @@ def test_file_verification_needs_report_destination(monkeypatch, capsys):
         lambda **kw: (_ for _ in ()).throw(AssertionError("no Core before preflight")),
     )
     assert cli.main([
-        "sync", "run", "--identity", "profile-a",
+        "sync", "run", "--identity", "profile-a", "--provider", "numilog",
         "--confirm", "--verify-files",
     ]) == 2
     assert json.loads(capsys.readouterr().out)["code"] == "report_required_for_file_verification"

@@ -56,7 +56,7 @@ def test_existing_audit_refused_before_opening_core(monkeypatch, tmp_path, capsy
         lambda **kw: (_ for _ in ()).throw(AssertionError("must be offline preflight")),
     )
     assert cli.main([
-        "acquisition-audit", "--identity", "any",
+        "acquisition-audit", "--identity", "any", "--provider", "numilog",
         "--output", str(target),
     ]) == 2
     assert json.loads(capsys.readouterr().out)["code"] == "audit_destination_exists"
