@@ -92,7 +92,7 @@ def test_combined_zip_has_session_only_log_raw_http_and_html_utf8(tmp_path):
         names = archive.namelist()
         manifest = json.loads(archive.read("manifest.json"))
         trace_index = json.loads(archive.read("http/index.json"))
-        assert archive.read("logs/journal.log") == expected_log
+        assert archive.read("logs/journal.jsonl") == expected_log
         assert archive.read("http/bodies/" + "a" * 32 + "-response.bin") == compressed
         assert archive.read("html/" + "a" * 32 + ".html") == html.decode("latin-1").encode("utf-8")
         assert "html/" + "b" * 32 + ".html" not in names
@@ -156,7 +156,7 @@ def test_capture_export_hash_integrity_detects_tampered_member(tmp_path):
     )
     with zipfile.ZipFile(result) as archive:
         content = {name: archive.read(name) for name in archive.namelist()}
-    content["logs/journal.log"] = b"PRIVATE_TAMPERED"
+    content["logs/journal.jsonl"] = b"PRIVATE_TAMPERED"
     damaged = tmp_path / "changed.zip"
     with zipfile.ZipFile(damaged, "w") as archive:
         for name, payload in content.items():
@@ -183,7 +183,7 @@ def test_gui_entry_creates_zip_without_real_gtk(monkeypatch, tmp_path, capsys):
     assert called == [(True, ["cifereca", "--no-plugins"])]
     archive_path, = tmp_path.glob("cifereca-capture-*.zip")
     with zipfile.ZipFile(archive_path) as archive:
-        log = archive.read("logs/journal.log")
+        log = archive.read("logs/journal.jsonl")
     assert b"PRIVATE_SYNTHETIC_STARTUP" in log
     assert b"PRIVATE_SYNTHETIC_SHUTDOWN" in log
     err = capsys.readouterr().err
