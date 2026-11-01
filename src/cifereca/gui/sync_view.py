@@ -569,13 +569,16 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
         # A non-finished run needs visibility even without provider details
         # or a phase projection. It must never launch a retry automatically.
         candidates.append(("warning", "Synchronisation : interrompue"))
+    elif status == "skipped":
+        # Broker: revoked source between admission and inventory; no success.
+        candidates.append(("warning", "Synchronisation : non exécutée"))
     elif status == "partial":
         candidates.append((
             ("info", "Synchronisation : couverture partielle (information)")
             if information_only
             else ("warning", "Synchronisation : résultat partiel")
         ))
-    elif status not in {"success", "idle", "running", "cancelled"}:
+    elif status not in {"ok", "success", "idle", "running", "cancelled"}:
         # Unknown/untyped Core states are not proof of a clean run.
         candidates.append(("warning", "Synchronisation : état non confirmé"))
     if getattr(source, "enabled", None) is True and getattr(source, "connected", None) is False:
@@ -635,7 +638,9 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         sync_label = "Annulée"
     elif status == "interrupted":
         sync_label = "Interrompue"
-    elif status not in {"success", "idle"}:
+    elif status == "skipped":
+        sync_label = "Non exécutée"
+    elif status not in {"ok", "success", "idle"}:
         # Never convert an unknown/invalid terminal state into an old success.
         sync_label = "État non confirmé"
     elif last_success:
@@ -701,9 +706,9 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         summary += "\nLes fichiers disponibles sont reçus selon l’autorisation de ce compte et les capacités de la source."
     # Previous success is historical context, not the current run's state.
     if (status in {"partial", "error", "failed", "blocked",
-                   "attention_required", "cancelled", "interrupted"}
+                   "attention_required", "cancelled", "interrupted", "skipped"}
             or (alert is not None and alert[0] == "error")
-            or status not in {"success", "idle"}) and last_success:
+            or status not in {"ok", "success", "idle"}) and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
         summary += f"\nAction indisponible : {disabled_reason}"
