@@ -495,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
                             except Exception:
                                 report_library_root = None
                         report_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                        report_active_phase = "audit_before"
                         try:
                             report_before = audit_source_counts(
                                 core.storage, resolved, pseudonym_key=report_secret,
@@ -569,6 +570,19 @@ def main(argv: list[str] | None = None) -> int:
                         })
                         report_active_phase = None
                     code = 0 if result["status"] in ("success", "complete") else 2
+            except KeyboardInterrupt:
+                # An explicit run interrupted before source admission retains
+                # the original shell interruption and does not publish a ZIP.
+                if report_account is None:
+                    raise
+                result = {"status": "cancelled", "code": "cancelled"}
+                code = 130
+                if report_active_phase is not None:
+                    report_events.append({
+                        "phase": report_active_phase, "status": "cancelled",
+                        "code": "cancelled",
+                    })
+                    report_active_phase = None
             except SyncSelectionError as exc:
                 result = {"status": "failed", "code": str(exc)}
                 code = 2
@@ -593,6 +607,12 @@ def main(argv: list[str] | None = None) -> int:
                         # Capture is opt-in and never uploaded or echoed.
                         HTTP_TRACE.export(a.trace_export)
                         trace_outcome = "created"
+                    except KeyboardInterrupt:
+                        trace_outcome = "cancelled"
+                        if report_account is None:
+                            raise
+                        result = {"status": "cancelled", "code": "cancelled"}
+                        code = 130
                     except Exception:
                         trace_outcome = "export_failed"
                     finally:
@@ -600,14 +620,17 @@ def main(argv: list[str] | None = None) -> int:
                     if report_account is not None:
                         report_events.append({
                             "phase": "trace_export",
-                            "status": "success" if trace_outcome == "created" else "failed",
+                            "status": (
+                                "cancelled" if trace_outcome == "cancelled"
+                                else "success" if trace_outcome == "created" else "failed"
+                            ),
                         })
             # The report's exit_code must equal the command's eventual exit,
             # including an independently requested raw HTTP trace export failure.
             # Trace bytes remain outside the redacted report regardless.
             if trace_requested:
                 result["http_trace"] = trace_outcome
-                if trace_outcome == "export_failed":
+                if trace_outcome == "export_failed" and code != 130:
                     code = 2
             if a.sync_cmd == "run" and a.report is not None and report_account is not None:
                 from .core.sync_report import audit_source_counts, write_sync_report
@@ -617,6 +640,19 @@ def main(argv: list[str] | None = None) -> int:
                             core.storage, report_account, pseudonym_key=report_secret,
                             library_root=report_library_root, verify_files=a.verify_files,
                         )
+                    except KeyboardInterrupt:
+                        # Keep the FIRST interrupted phase if cancellation was
+                        # already established during an earlier CLI operation.
+                        # A second SIGINT while collecting the optional final
+                        # snapshot must not erase its original diagnosis.
+                        report_after = {"status": "unavailable", "reason": "audit_unavailable"}
+                        if code != 130:
+                            result = {"status": "cancelled", "code": "cancelled"}
+                            code = 130
+                            report_events.append({
+                                "phase": "audit_after", "status": "cancelled",
+                                "code": "cancelled",
+                            })
                     except Exception:
                         report_after = {"status": "unavailable", "reason": "audit_unavailable"}
                     report_events.append({
