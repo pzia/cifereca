@@ -25,6 +25,7 @@ from ..plugin_api.provider_rights_observation import (
 )
 from .canonical_publication import publish_completed_acquisition
 from .canonical_promotion import promote_completed_delivery, cleanup_published_staging
+from .canonical_flow_trace import CanonicalFlowTrace
 from .canonical_staging_stock import repair_exact_published_staging
 from .canonical_recovery import (
     mark_completed_delivery_published,
@@ -288,11 +289,13 @@ def execute_admitted_convergence(
     )
     plan_by_source = {decision.source: decision for decision in plan.decisions}
     results: list[ConvergenceOutcome] = []
+    trace = CanonicalFlowTrace()
     for row in snapshot.rights:
         key = SourceKey(
             scope, row.edition_id, row.right_id, row.kind, snapshot.branch,
         )
         decision = plan_by_source[key]
+        trace.emit(key, "observed", "ok")
         if cancelled():
             results.append(ConvergenceOutcome(key, "cancelled", "cancelled"))
             break
@@ -382,6 +385,7 @@ def execute_admitted_convergence(
 
         phase = "recovery"
         try:
+            trace.emit(key, "recovery", "start")
             completed = recover_completed_delivery(
                 initial_storage, source=key, offer_id=row.delivery_offer_id,
                 library_root=library_root, shared_lock=shared_lock,
@@ -393,8 +397,10 @@ def execute_admitted_convergence(
             if completed is not None and completed.receipt_ref == row.evidence_ref:
                 completed = None
             was_recovered = completed is not None
+            trace.emit(key, "recovery", "ok" if was_recovered else "miss")
             if completed is None:
                 phase = "delivery"
+                trace.emit(key, "delivery", "start")
                 completed = deliver(key, row)
             if (type(completed) is not CompletedDelivery
                     or completed.source != key
@@ -403,6 +409,8 @@ def execute_admitted_convergence(
                     or not completed.receipt_ref
                     or completed.receipt_ref == row.evidence_ref):
                 raise ValueError("invalid_completed_delivery_binding")
+            if not was_recovered:
+                trace.emit(key, "delivery", "ok")
             # The adapter can have replaced an account, credential, session or
             # switched identity during its GET. Never publish under its old A.
             if cancelled():
@@ -423,11 +431,13 @@ def execute_admitted_convergence(
             # retry the same authorized Sync without re-downloading.
             if not was_recovered:
                 phase = "receipt"
+                trace.emit(key, "receipt", "start")
                 record_completed_delivery_for_recovery(
                     initial_storage, source=key,
                     offer_id=row.delivery_offer_id, completed=completed,
                     library_root=library_root, shared_lock=shared_lock,
                 )
+                trace.emit(key, "receipt", "ok")
             if cancelled():
                 results.append(ConvergenceOutcome(key, "cancelled", "cancelled_after_receipt"))
                 break
@@ -438,10 +448,12 @@ def execute_admitted_convergence(
             # bytes. Copy and fsync a verified final path BEFORE committing
             # B, so a crash can resume without a second GET.
             phase = "promotion"
+            trace.emit(key, "promotion", "start")
             publication_path = promote_completed_delivery(
                 initial_storage, source=key, completed=completed,
                 library_root=library_root,
             )
+            trace.emit(key, "promotion", "ok")
             if cancelled():
                 results.append(ConvergenceOutcome(key, "cancelled", "cancelled_after_promotion"))
                 break
@@ -449,6 +461,7 @@ def execute_admitted_convergence(
                 results.append(ConvergenceOutcome(key, "blocked", "scope_or_consent_after_promotion"))
                 break
             phase = "publication"
+            trace.emit(key, "publication", "start")
             published = publish_completed_acquisition(
                 initial_storage,
                 library_root=library_root,
@@ -465,6 +478,7 @@ def execute_admitted_convergence(
                     if publication_guard is not None else None
                 ),
             )
+            trace.emit(key, "publication", "ok")
             try:
                 mark_completed_delivery_published(
                     initial_storage, source=key, offer_id=row.delivery_offer_id,
@@ -514,9 +528,11 @@ def execute_admitted_convergence(
                 published.artifact_id,
             ))
         except Cancelled:
+            trace.emit(key, phase, "failed")
             results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
             break
         except Exception:
+            trace.emit(key, phase, "failed")
             # A transport/ACSM exception may contain signed URLs, tokens
             # or subscriber identifiers. Neither the message nor traceback
             # crosses the Core log boundary; the outcome stays fail-closed.
@@ -526,4 +542,9 @@ def execute_admitted_convergence(
                 key, "failed", "canonical_promotion_failed"
                 if phase == "promotion" else "delivery_or_commit_failed",
             ))
+    # Every terminal result is correlated to the same ephemeral item handle.
+    # Emit only after the transaction: no callback or logging can create B.
+    for outcome in results:
+        trace.emit(outcome.source, "terminal", outcome.status,
+                   reason=outcome.reason)
     return tuple(results)
