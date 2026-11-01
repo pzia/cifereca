@@ -118,7 +118,7 @@ def inspect_exact_source(
         links = {}
         for ref_id, _kind, _state in refs[:_MAX_ROWS]:
             links[ref_id] = db.execute(
-                "SELECT o.artifact_id,p.placement_id,p.path,p.state "
+                "SELECT o.origin_link_id,o.artifact_id,p.placement_id,p.path,p.state "
                 "FROM origin_links AS o LEFT JOIN placements AS p "
                 "ON p.artifact_id=o.artifact_id AND p.identity_id=o.identity_id "
                 "WHERE o.source_reference_id=? AND o.identity_id=?",
@@ -145,8 +145,12 @@ def inspect_exact_source(
     multipath_truncated = False
     for ref_id, kind, state in refs[:_MAX_ROWS]:
         matched = links[ref_id]
+        # Joining origin_links to placements yields one row per
+        # (origin, placement) pair. Count DISTINCT provenance records,
+        # not multiplied rows, even when one artifact has many placements.
+        origin_count = len({row[0] for row in matched})
         physical = {
-            row[1]: (row[0], row[2], row[3]) for row in matched if row[1] is not None
+            row[2]: (row[1], row[3], row[4]) for row in matched if row[2] is not None
         }
         if not matched:
             classification = "source_unlinked"
@@ -205,7 +209,7 @@ def inspect_exact_source(
             "kind": kind if kind in _RIGHT_TYPES else "other",
             "right_state": state if state in _RIGHT_STATES else "unknown",
             "classification": classification,
-            "origin_link_count": min(len(matched), _MAX_ROWS),
+            "origin_link_count": min(origin_count, _MAX_ROWS),
             "placement_count": min(len(physical), _MAX_ROWS),
             "file_verification": check,
         }
