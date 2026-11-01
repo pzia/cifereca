@@ -303,12 +303,15 @@ def execute_admitted_convergence(
             results.append(ConvergenceOutcome(key, "blocked", "scope_rebound"))
             break
         if decision.provider_satisfied:
+            trace.emit(key, "presence", "start")
             # A historical Core receipt may have been committed with its
             # staging path as the final Placement (#3909). Preserve current
             # positive presence, but relocate ONLY when the exact durable
             # source receipt and current physical SHA can both be verified.
             # Final placements do not require new authorization or any write.
             repaired = False
+            if decision.placement_ids:
+                trace.emit(key, "stock_recovery", "start")
             try:
                 for placement_id in decision.placement_ids:
                     if repair_exact_published_staging(
@@ -324,6 +327,7 @@ def execute_admitted_convergence(
                     ):
                         repaired = True
             except Exception as exc:
+                trace.emit(key, "stock_recovery", "failed")
                 # Never render arbitrary exception text: it may contain
                 # paths, private account IDs, tokens or journal contents.
                 # Only exact allowlisted Core error codes are diagnostic.
@@ -349,6 +353,9 @@ def execute_admitted_convergence(
                 _LOG.warning("TRACE convergence code=%s", code)
                 results.append(ConvergenceOutcome(key, "failed", code))
                 continue
+            if decision.placement_ids:
+                trace.emit(key, "stock_recovery", "ok" if repaired else "miss")
+            trace.emit(key, "presence", "ok")
             # A fully verified provider presence prevents a second GET, but
             # must not skip a previously deferred, post-B duplicate probe.
             if decision.placement_ids:
