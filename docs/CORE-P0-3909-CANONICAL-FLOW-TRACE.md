@@ -8,6 +8,8 @@ d'un GET ne certifient pas la réception/publi­cation. Cette tranche ajoute des
 événements **`TRACE canonical_flow`** sur le trajet *réel de l'exécuteur* :
 
 - `observed/ok` : référence A traitée par Core, **pas** un GET ;
+- `presence/start|ok` : vérification d'une présence déjà attestée (ne fait pas de nouveau GET) ;
+- `stock_recovery/start|miss|ok|failed` : réparation éventuelle d'un ancien Placement pointant encore vers un staging historiquement publié, sans nouveau GET ;
 - `recovery/start|miss|ok` : tentative de récupération d'un reçu exact ;
 - `delivery/start|ok|failed` : invocation du candidat et contrôle de son
   binding (un `ok` est **avant** le commit B) ;
