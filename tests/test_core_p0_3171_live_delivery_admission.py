@@ -8,6 +8,8 @@ from __future__ import annotations
 import pytest
 
 from cifereca.core.sync_coordination import synchronize_account_source
+from tests.test_core_p0_3171_canonical_sync_stage import rig
+from tests.test_core_p0_3719_v2_execution import v2
 from tests.test_core_p0_3719_source_sync_consent import source, change
 
 
