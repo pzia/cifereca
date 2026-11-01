@@ -183,7 +183,7 @@ def complete_selected_delivery(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
                 "selected_offer_id": offer.delivery_offer_id}
-               if reader_name == "downloadable_selected_delivery_candidate"
+               if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}
                else {"right_id": source.right_id,
                      "delivery_offer_id": offer.delivery_offer_id}),
             kind=source.kind, branch=source.branch,
