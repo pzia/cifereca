@@ -24,8 +24,8 @@ ne prouvent ni droit de prêt, ni consentement, ni succès fournisseur réel.
 | Exhaustivité / disparition du prêt | **unverified** | **unsupported** | Paris DILICOM/SYRACUSE ne déclarent pas une fin complète de pagination ; BnF est partiel même à zéro |
 | Multi-comptes/lecteurs | **supported** | **unsupported** | Paris : compte primaire et comptes liés ; BnF : une session lecteur |
 | Catalogue public recherche/détail | **partial** | **partial** | Paris `all` seulement, branches indépendantes ; BnF pages HTML bornées à 5 |
-| Emprunt public (`loan.borrow`) | **partial** | **unsupported** | Paris : manifest+méthode, droits/consentement et recette live à vérifier ; BnF : rien d'annoncé |
-| Restitution (`loan.return`) | **partial** | **unsupported** | Paris : méthode legacy, manifest `lending.return` absent ; confirmation distante distincte |
+| Emprunt public (`loan.borrow`) | **partial** | **unverified** | Paris : déclaré ; BnF : `acquisition.borrow` maintenant déclaré (#2055), `borrow()` legacy refuse l'appel direct, parcours Core manuel soumis au contrôle visuel/consentement et à une qualification distincte |
+| Restitution volontaire (`loan.return`) | **unsupported** | **unsupported** | Retirée du contrat public et des capacités (#4073), même sur un prêt actif ; suppression des anciennes routes mutationnelles Core/Plugins en cours dans #4059 (non livrée) |
 | Renouvellement (`loan.renew`) | **partial** | **unsupported** | Paris : méthode legacy, manifest `lending.renew` absent |
 | Récupération de jeton (`loan.download_token`) | **partial** | **unsupported** | Paris : manifest+méthode ; BnF : méthode interne, aucune capacité publique |
 | Staging ACSM privé après double accord | **unverified** | **partial** | BnF : chemin protégé, candidats locaux, résultat réel encore à qualifier |
@@ -55,11 +55,16 @@ revalidation session/epoch, et preuve de résultat distant.
 
 ## Recettes restant ouvertes
 
-- Paris : disponibilité/permission précise d'emprunt/retour/renouvellement,
+- Paris : disponibilité/permission précise d'emprunt/prolongation physique,
   vérification réellement complète des branches et absence sur PNB.
 - BnF : connexion et prêts visibles ne suffisent pas à valider les dates,
-  pagination complète, jeton ACSM réel, ADEPT et restitution.
+  pagination complète, jeton ACSM réel et fulfillment ADEPT ; aucune restitution volontaire.
 - Boutons GTK, cache/offline, rollback de packages réels, et preuve de
   non-régression côté utilisateurs restent à vérifier avant fermeture #3122.
 - Les transitions destructrices des droits restent régies par **#2975 P0** ;
   ce lot n'y apporte aucune autorisation nouvelle.
+
+**Portée temporelle :** tableau initial du 25/10/2026, amendé le
+01/11/2026 pour #2055 et #4048. Une capability BnF annoncée ne prouve
+ni droit de prêt disponible, ni autorisation d'un POST. La décision de
+retrait de `loan.return` n'efface pas les états historiques de retour.
