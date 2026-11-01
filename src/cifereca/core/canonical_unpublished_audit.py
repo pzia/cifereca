@@ -37,13 +37,14 @@ def core_staging_receipt_observations(
         return [], bool(db.execute(
             "SELECT 1 FROM acquisition_ledger WHERE identity_id=? "
             "AND provider_id=? AND credential_id=? AND account_id=? "
-            "AND status='canonical_receipt_staged' LIMIT 1", coords,
+            "AND status='canonical_receipt_staged' AND artifact_id IS NULL "
+            "LIMIT 1", coords,
         ).fetchone())
     found = db.execute(
         "SELECT acquisition_id,artifact_id,metadata_json FROM acquisition_ledger "
         "WHERE identity_id=? AND provider_id=? AND credential_id=? "
         "AND account_id=? AND status='canonical_receipt_staged' "
-        "ORDER BY acquisition_id LIMIT ?",
+        "AND artifact_id IS NULL ORDER BY acquisition_id LIMIT ?",
         (*coords, limit + 1),
     ).fetchall()
     if len(found) > limit:
