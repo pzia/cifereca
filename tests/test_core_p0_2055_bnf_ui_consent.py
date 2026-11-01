@@ -39,6 +39,8 @@ class DialogApi:
         @staticmethod
         def new(window, title, body):
             assert "BnF" in title and "qu'une seule fois" in body
+            assert "vérifiez visuellement" in body
+            assert "BnF peut" in body
             dialog = Dialog()
             DialogApi.instance = dialog
             return dialog
@@ -106,6 +108,7 @@ def test_future_positive_bnf_requires_dialog_confirm_one_time_only(tmp_path):
         dialog = request(window, item)
         assert dialog is not None and dialog.present_count == 1
         assert len(dialog.responses) == 2
+        assert "J’ai vérifié sur BnF Prêt" in dialog.responses["borrow"]
         assert session.dispatches == session.reads == []
         dialog.respond("cancel")
         assert not window.runner.tasks
