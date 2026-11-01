@@ -985,6 +985,149 @@ class BnfProviderSession(ProviderSession):
             except (ReaderHTTPError, WebParseError) as error:
                 raise ProviderError(self._report_failure('borrow_preflight', error)) from None
 
+    def borrow_explicit_with_claim(
+        self, item: SearchResult, account: Account, *,
+        admission, claimed_receipt, confirmed=False,
+        core_scope_current=None,
+    ) -> Loan:
+        """Dormant BnF manual transaction; requires a *Core-owned* claim.
+
+        This is NOT ProviderSession.borrow(), nor a published acquisition.
+        The caller MUST prove independent borrower permission, true human
+        consent and the durable claim before invoking this method. A passed
+        admission/claim shape is not a capability or a trusted permission.
+        No retry is allowed after the claimed POST, even if verification fails.
+        """
+        from cifereca.plugin_api import LendingActionAdmission
+        from cifereca_bnf_pret_borrow import (
+            confirmation_link, activation_form, verify_borrow_activation,
+        )
+        if (confirmed is not True
+                or type(admission) is not LendingActionAdmission
+                or admission.operation != 'loan.borrow'
+                or admission.origin != 'manual'
+                or admission.status != 'admitted'
+                or type(claimed_receipt) is not dict
+                or claimed_receipt.get('schema') != 1
+                or claimed_receipt.get('operation') != 'loan.borrow'
+                or claimed_receipt.get('status') != 'request_sent'
+                or type(claimed_receipt.get('operation_id')) is not str
+                or not 0 < len(claimed_receipt['operation_id']) <= 128
+                or not callable(core_scope_current)):
+            raise ProviderCapabilityError('borrow_not_authorized')
+        with self._lock:
+            if (type(item) is not SearchResult
+                    or item.source_provider != self.provider_id
+                    or item.source_credential != self.credential_id
+                    or item.docbase != 'BNF_PRET' or item.medium != 'digital'
+                    or type(item.record_id) is not str
+                    or not self.connected or self._closed
+                    or type(account) is not Account
+                    or len(self._accounts) != 1 or account is not self._accounts[0]):
+                raise ProviderConfigurationError('account_scope_mismatch')
+            epoch = self._epoch
+            reference = (item.id, item.record_id, item.docbase, item.medium,
+                         item.source_provider, item.source_credential,
+                         item.source_collection)
+            borrower = (account.unique_id, account.identity_id,
+                        account.provider_id, account.credential_id,
+                        account.is_primary)
+            broker = self.identity_broker
+            owner = (self._core_owner_binding(borrower[0], borrower[1])
+                     if broker is not None else None)
+
+            def current():
+                try:
+                    return (not self._closed and self.connected is True
+                            and self._epoch == epoch
+                            and self.provider_id == borrower[2]
+                            and self.credential_id == borrower[3]
+                            and borrower[1]
+                            and len(self._accounts) == 1
+                            and self._accounts[0] is account
+                            and (account.unique_id, account.identity_id,
+                                 account.provider_id, account.credential_id,
+                                 account.is_primary) == borrower
+                            and (item.id, item.record_id, item.docbase,
+                                 item.medium, item.source_provider,
+                                 item.source_credential, item.source_collection)
+                            == reference
+                            and self.identity_broker is broker
+                            and (broker is None or (
+                                owner is not None and owner[1] == (borrower[1],)
+                                and self._core_owner_binding(
+                                    borrower[0], borrower[1]) == owner))
+                            and core_scope_current() is True)
+                except Exception:
+                    return False
+
+            if not current():
+                raise ProviderConfigurationError('account_scope_mismatch')
+            try:
+                before = self._snapshot(self.client.activity())
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                # An observed active loan is positive proof not to repeat.
+                # An omitted loan on a partial page proves NOTHING.
+                if any(row.resource_id == reference[1] for row in before.loans):
+                    raise ProviderCapabilityError('borrow_existing_loan')
+                page_url, page_html = self.client.request(
+                    'GET', resource_url(reference[1]))
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                link = confirmation_link(
+                    page_html, page_url=page_url, resource_id=reference[1])
+                confirm_url, confirm_html = self.client.borrow_confirmation(
+                    link, resource_id=reference[1])
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                form = activation_form(
+                    confirm_html, page_url=confirm_url, resource_id=reference[1])
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                # The durable claim was already reserved by Core. There is
+                # exactly one POST from this path and no implicit retry.
+                receipt_html = self.client.borrow_activation_once(
+                    form, confirmation_url=confirm_url,
+                    resource_id=reference[1], admission=admission,
+                    claimed_receipt=claimed_receipt, confirmed=True,
+                )
+                if not current():
+                    # A scope change after the POST is indeterminate, NOT a
+                    # reason to repeat the POST or publish a new right.
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                after_html = self.client.activity()
+                fresh = self._snapshot(after_html)
+                if not current():
+                    raise ProviderConfigurationError('account_scope_mismatch')
+                proof = verify_borrow_activation(
+                    receipt_html, after_html,
+                    resource_id=reference[1],
+                    before=before, expected_scope=fresh.scope,
+                )
+                matches = [row for row in fresh.loans if
+                           row.loan_id == proof.loan_id
+                           and row.resource_id == proof.resource_id]
+                if len(matches) != 1 or not current():
+                    raise ProviderCapabilityError('borrow_receipt_unverified')
+                row = matches[0]
+                self._observed_loans[row.loan_id] = row.resource_id
+                return Loan(
+                    id=row.loan_id, provider='BNF_PRET', medium='digital',
+                    record_id=row.resource_id, title=row.title or item.title,
+                    author=', '.join(row.authors) or None,
+                    thumbnail_url=row.thumbnail_url,
+                    document_type='Prêt numérique', state='active',
+                    source_provider=self.provider_id,
+                    source_credential=self.credential_id,
+                    source_account_id=account.unique_id,
+                    identity_id=account.identity_id,
+                    raw={'inventory_exhaustive': False},
+                )
+            except (ReaderHTTPError, WebParseError) as error:
+                raise ProviderError(
+                    self._report_failure('borrow', error)) from None
+
     def close(self):
         # Invalidate in-flight work before waiting for the bounded HTTP operation.
         self._closed = True
