@@ -144,6 +144,8 @@ _AUDIT_FILE_STATES = frozenset({
     "not_requested", "scope_unavailable", "missing_file",
     "invalid_placement", "file_changed", "sha_mismatch",
     "file_unavailable", "verified_sha256",
+    "multiple_placements_unverified", "multiple_placements_all_verified",
+    "multiple_placements_mixed", "multiple_placements_none_verified",
 })
 _AUDIT_STAGING_STATES = frozenset({
     "not_attested", "indexed_staging_unverified", "verified_staging_file",
@@ -310,6 +312,36 @@ def _safe_resource_evidence(value: object) -> dict[str, object]:
                     count = _safe_count(row.get(count_key))
                     if count is not None:
                         item[count_key] = count
+                if item["file_verification"].startswith("multiple_placements_"):
+                    # The three bounded aggregate counters are a unit; do
+                    # not export contradictory or incomplete physical proof.
+                    fields = (
+                        "verified_placement_count", "missing_placement_count",
+                        "unverified_placement_count",
+                    )
+                    amounts = [_safe_count(row.get(field)) for field in fields]
+                    total = item.get("placement_count")
+                    valid = (
+                        value.get("verify_files") is True
+                        and type(total) is int and total > 1
+                        and all(amount is not None for amount in amounts)
+                        and sum(amounts) == total
+                        and (
+                            (item["file_verification"] == "multiple_placements_unverified"
+                             and amounts == [0, 0, total])
+                            or (item["file_verification"] == "multiple_placements_all_verified"
+                                and amounts == [total, 0, 0])
+                            or (item["file_verification"] == "multiple_placements_mixed"
+                                and 0 < amounts[0] < total)
+                            or (item["file_verification"] == "multiple_placements_none_verified"
+                                and amounts[0] == 0)
+                        )
+                    )
+                    if valid:
+                        item.update(zip(fields, amounts))
+                    else:
+                        item["file_verification"] = "multiple_placements_unverified"
+                        result["truncated"] = True
             else:
                 item["status"] = _safe_enum(row.get("status"), _LEDGER | {"other"}, "other")
             records.append(item)
