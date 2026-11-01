@@ -200,7 +200,8 @@ def main() -> int:
     from .core.capture_session_journal import CaptureSessionJournal
     from .http_trace import HTTP_TRACE
     from .install_paths import downloads_dir
-    from .logging_utils import diagnostics_level, trace_disable_generation
+    from .logging_utils import diagnostics_level, trace_disable_generation, set_diagnostics_level
+    import logging
 
     directory = Path(directory_arg).expanduser() if directory_arg is not None else downloads_dir()
     try:
@@ -212,6 +213,12 @@ def main() -> int:
     # Force Trace only for this process. Keep the persistent user preference.
     # Raw console mirroring in a terminal would print sensitive cookies/URLs;
     # mute that optional mirror only for this opt-in capture session.
+    previous_level = diagnostics_level()
+    previous_argv = sys.argv
+    preexisting_console = {
+        handler for handler in logging.getLogger("cifereca").handlers
+        if getattr(handler, "_cifereca_trace_console", False)
+    }
     logger = configure_logging(verbose=True)
     # Snapshot only AFTER enabling Trace for this session. The marker also
     # detects OFF -> ON transitions when Trace happens to be active at exit.
@@ -264,4 +271,13 @@ def main() -> int:
         finally:
             for handler in mirrors:
                 handler.removeFilter(mute)
+                if handler not in preexisting_console:
+                    # This raw mirror belongs to --capture only, never to
+                    # another invocation in the same interpreter.
+                    logger.removeHandler(handler)
+                    handler.close()
+            # Restore process state after collecting the Trace coverage
+            # snapshot. Existing settings remain untouched on disk.
+            set_diagnostics_level(previous_level)
+            sys.argv = previous_argv
     return 2 if export_failed and rc == 0 else rc
