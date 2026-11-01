@@ -92,7 +92,10 @@ class BnfBorrowPreflightTests(unittest.TestCase):
                 with self.assertRaises(WebParseError):
                     confirmation_link(markup, page_url=DETAIL_URL,
                                       resource_id=RESOURCE)
-        with self.assertRaisesRegex(WebParseError, '^borrow_url_refused
+        with self.assertRaisesRegex(WebParseError, "^borrow_url_refused$"):
+            _transition_url(url, "/media/other/loans_activation", RESOURCE)
+
+    def test_catalogue_button_alone_is_never_a_web_action(self):
         for html in (
             DETAIL.replace("<a class=", "<button class=").replace("</a>", "</button>"),
             DETAIL.replace('href="/resources/syntheticR1/loans/new"', ""),
