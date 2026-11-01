@@ -7,10 +7,10 @@ from .settings_draft import build_settings_draft, SettingsValidationError
 
 def bind_settings_commit(self, *, page_lifetime, settings_state,
                          identity_editors, account_editors, descriptors, public_ids,
-                         download_settings, application_ui, kobo_settings,
+                         download_settings, application_ui, sync_settings,
                          settings_bars, ai_ui, ai_cfg, capture_ai_settings,
                          refresh_text, track_all_settings_widgets,
-                         update_settings_actions, refresh_kobo_backup_status):
+                         update_settings_actions, refresh_sync_navigation):
     global_dir_row = download_settings.global_dir_row
     global_ebook_row = download_settings.global_ebook_row
     global_audio_row = download_settings.global_audio_row
@@ -19,7 +19,7 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
     provider_download_editors = download_settings.provider_download_editors
     level_drop = application_ui.level_dropdown
     levels = application_ui.levels
-    library_dir_row = kobo_settings.library_dir_row
+    library_dir_row = sync_settings.library_dir_row
     save, reconnect = settings_bars.save, settings_bars.reconnect
     ai_status = ai_ui.status
     settings_committer = SettingsCommitController(
@@ -128,7 +128,7 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             settings_state.commit(staged_settings_revisions)
             track_all_settings_widgets()
             update_settings_actions()
-            refresh_kobo_backup_status()
+            refresh_sync_navigation()
             if reconnect_after:
                 self.reconnect_sources()
         return settings_committer.submit(

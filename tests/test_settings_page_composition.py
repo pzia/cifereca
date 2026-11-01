@@ -61,7 +61,7 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         return Mock(), Mock(), lambda: events.append('track'), actions
     def sync(window, **kwargs):
         assert events == ['track']
-        assert kwargs['kobo_settings'] is kobo
+        assert kwargs['sync_settings'] is kobo
         return Mock()
     save, reconnect, refresh = Mock(return_value=True), Mock(), Mock()
     def commit(window, **kwargs):
@@ -198,10 +198,12 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
 def test_sync_factory_routes_to_scoped_page_without_global_acquisition():
     ui = NS(**{name: Widget() for name in ('backup_switch', 'backup_dir_row', 'backup_interval_row', 'vault_profile_drop', 'run_backup_now', 'backup_status')})
     ui.backup_switch.active = True
+    ui.open_sync_button = ui.run_backup_now
+    ui.sync_navigation_status = ui.backup_status
     host = NS(config={'kobo_backup.enabled': True},
               run_kobo_backup=Mock(), navigate=Mock())
     lifetime, state = SettingsPageLifetime(), SettingsRevisionState(['sync'])
-    refresh = bind_settings_sync_actions(host, page_lifetime=lifetime, settings_state=state, kobo_settings=ui)
+    refresh = bind_settings_sync_actions(host, page_lifetime=lifetime, settings_state=state, sync_settings=ui)
     host.run_kobo_backup.assert_not_called()
     ui.run_backup_now.emit('clicked')
     host.navigate.assert_called_once_with('sync')

@@ -47,6 +47,8 @@ def _case(configured=True):
             "run_backup_now", "backup_status",
         )
     })
+    controls.open_sync_button = controls.run_backup_now
+    controls.sync_navigation_status = controls.backup_status
     host = NS(
         _closed=False,
         config={"kobo_backup.enabled": configured},
@@ -57,7 +59,7 @@ def _case(configured=True):
     changes = SettingsRevisionState(["sync"])
     refresh = bind_settings_sync_actions(
         host, page_lifetime=lifetime, settings_state=changes,
-        kobo_settings=controls,
+        sync_settings=controls,
     )
     return host, controls, lifetime, changes, refresh
 

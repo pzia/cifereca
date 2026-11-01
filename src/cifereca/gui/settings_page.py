@@ -67,7 +67,7 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
     identity_editors, account_editors = build_settings_editors(
         self, box=box, descriptors=descriptors, public_ids=public_ids,
         mark_settings_dirty=mark_settings_dirty,
-        library_directory=lambda: kobo_settings.library_dir_row.get_text(),
+        library_directory=lambda: sync_settings.library_dir_row.get_text(),
         Gtk=Gtk, Adw=Adw, add_css=add_css,
     )
 
@@ -91,7 +91,7 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         "clicked", lambda _b: self.navigate("plugins"),
     )
 
-    kobo_settings = build_sync_settings_section(
+    sync_settings = build_sync_settings_section(
         section=sections["sync"], download_group=download_group,
         config=self.config, Gtk=Gtk, Adw=Adw,
     )
@@ -125,9 +125,9 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
 
     tabs.connect("notify::visible-child-name", update_settings_actions)
     track_all_settings_widgets()
-    refresh_kobo_backup_status = bind_settings_sync_actions(
+    refresh_sync_navigation = bind_settings_sync_actions(
         self, page_lifetime=page_lifetime,
-        settings_state=settings_state, kobo_settings=kobo_settings,
+        settings_state=settings_state, sync_settings=sync_settings,
     )
     update_settings_actions()
 
@@ -146,11 +146,11 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         identity_editors=identity_editors, account_editors=account_editors,
         descriptors=descriptors, public_ids=public_ids,
         download_settings=download_settings, application_ui=application_ui,
-        kobo_settings=kobo_settings, settings_bars=settings_bars,
+        sync_settings=sync_settings, settings_bars=settings_bars,
         ai_ui=ai_ui, ai_cfg=ai_cfg, capture_ai_settings=capture_ai_settings,
         refresh_text=refresh_text, track_all_settings_widgets=track_all_settings_widgets,
         update_settings_actions=update_settings_actions,
-        refresh_kobo_backup_status=refresh_kobo_backup_status,
+        refresh_sync_navigation=refresh_sync_navigation,
     )
     for button in (settings_bars.save, settings_bars.save_bottom):
         button.connect("clicked", save_settings)

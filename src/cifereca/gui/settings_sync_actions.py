@@ -1,39 +1,38 @@
 """Provider-neutral Settings → Synchronisation navigation; never acquire files."""
 from __future__ import annotations
 
-from .settings_legacy_kobo_section import kobo_backup_action_state
 
-
-def bind_settings_sync_actions(self, *, page_lifetime, settings_state, kobo_settings):
-    kobo_run_now = kobo_settings.run_backup_now
-    kobo_status = kobo_settings.backup_status
-    def refresh_kobo_backup_status(*_args) -> None:
+def bind_settings_sync_actions(self, *, page_lifetime, settings_state, sync_settings):
+    # Consume only neutral view ports. Legacy attribute aliases are isolated
+    # in the compatibility-facing controls, never used by the active binder.
+    sync_button = sync_settings.open_sync_button
+    sync_status = sync_settings.sync_navigation_status
+    def refresh_sync_navigation(*_args) -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
-        # Source consent is managed by the Sync broker, never by the
-        # obsolete global kobo_backup.enabled bit. This Settings row is
-        # navigation only and must not present the old flag as active.
+        # Source consent is managed by the Sync broker, never by retired
+        # global flags. This row is navigation only.
         dirty = settings_state.dirty("sync")
-        kobo_status.set_subtitle(
+        sync_status.set_subtitle(
             "Modifications à enregistrer avant d'ouvrir Synchronisation."
             if dirty else
             "Activation, révocation et suivi des synchronisations par source."
         )
-        kobo_run_now.set_sensitive(not settings_state.dirty("sync"))
+        sync_button.set_sensitive(not settings_state.dirty("sync"))
 
-    def open_kobo_sync_page(_button) -> None:
+    def open_sync_page(_button) -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
         # Never launch a global download batch from Settings. An identity-
         # scoped inventory refresh and per-source read-only local previews
         # live on Synchronisation; local materialization requires a separate
         # reviewed and explicitly authorized workflow (#1347).
-        # Navigation is a CoreUI route, not a Kobo download authorization.
+        # Navigation is a CoreUI route, not an acquisition authorization.
         # No provider-specific flag may grant or deny access to Sync.
         ready = not settings_state.dirty("sync")
         if ready and page_lifetime.alive and not getattr(self, "_closed", False):
             self.navigate("sync")
 
-    kobo_run_now.connect("clicked", open_kobo_sync_page)
-    refresh_kobo_backup_status()
-    return refresh_kobo_backup_status
+    sync_button.connect("clicked", open_sync_page)
+    refresh_sync_navigation()
+    return refresh_sync_navigation
