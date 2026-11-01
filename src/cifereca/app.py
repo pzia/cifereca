@@ -200,7 +200,7 @@ def main() -> int:
     from .core.capture_session_journal import CaptureSessionJournal
     from .http_trace import HTTP_TRACE
     from .install_paths import downloads_dir
-    from .logging_utils import diagnostics_level
+    from .logging_utils import diagnostics_level, trace_disable_generation
 
     directory = Path(directory_arg).expanduser() if directory_arg is not None else downloads_dir()
     try:
@@ -213,6 +213,9 @@ def main() -> int:
     # Raw console mirroring in a terminal would print sensitive cookies/URLs;
     # mute that optional mirror only for this opt-in capture session.
     logger = configure_logging(verbose=True)
+    # Snapshot only AFTER enabling Trace for this session. The marker also
+    # detects OFF -> ON transitions when Trace happens to be active at exit.
+    trace_disable_at_start = trace_disable_generation()
 
     class _NoRawConsole:
         def filter(self, _record):
@@ -250,6 +253,9 @@ def main() -> int:
                 http_snapshot=HTTP_TRACE.snapshot(), app_exit_code=rc,
                 build_identity=build_identity(),
                 trace_active_at_finish=(diagnostics_level() == "trace"),
+                trace_uninterrupted=(
+                    trace_disable_generation() == trace_disable_at_start
+                ),
             )
             print(f"capture_zip: {published}", file=sys.stderr)
         except Exception:
