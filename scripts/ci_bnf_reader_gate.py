@@ -27,7 +27,8 @@ def selected(paths, root=ROOT, *, full=False):
         return False
     relevant = full or any(
         path.startswith(PACKAGE)
-        or path in {'scripts/ci_bnf_reader_gate.py', 'tests/test_ci_bnf_reader_gate.py',
+        or path in {'scripts/ci_bnf_reader_gate.py', 'scripts/bnf_borrow_dom_probe.py',
+                    'tests/test_ci_bnf_reader_gate.py',
                     '.github/workflows/pr-ci.yml', 'tests/test_bnf_pret_web_dom.py'}
         for path in paths
     )
