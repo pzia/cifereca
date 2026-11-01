@@ -86,7 +86,9 @@ def test_unsaved_switch_blocks_navigation_and_global_download():
     host, ui, _, state, refresh = _case(True)
     state.mark_dirty("sync")
     ui.backup_switch.active = False
-    ui.backup_switch.emit("notify::active")
+    # The retired global switch no longer participates in navigation signals.
+    # Settings dirty tracking owns the gate on the neutral navigation row.
+    refresh()
     assert ui.run_backup_now.sensitive is False
     assert "enregistrer" in ui.backup_status.subtitle
     ui.run_backup_now.emit("clicked")
