@@ -2902,10 +2902,16 @@ def main() -> int:
                 row.get_title() == "Répertoire global"
                 for row in settings_rows(section, Adw.EntryRow)
             ),
-            "sync": lambda: any(
-                row.get_title() == "Ancien réglage global Kobo (compatibilité)"
-                and "ne lance plus de téléchargements" in row.get_subtitle()
-                for row in settings_rows(section, Adw.ActionRow)
+            "sync": lambda: (
+                any(
+                    row.get_title() == "Synchronisation — sources et autorisations"
+                    and "par source" in row.get_subtitle()
+                    for row in settings_rows(section, Adw.ActionRow)
+                )
+                and all(
+                    "Ancien réglage global Kobo" not in row.get_title()
+                    for row in settings_rows(section, Adw.ActionRow)
+                )
             ),
             "interface": lambda: any(
                 row.get_title() == "Actions expérimentales"
