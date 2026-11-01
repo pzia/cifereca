@@ -50,6 +50,7 @@ def test_exact_current_scoped_borrow_without_remote_read(connected_core):
 
 @pytest.mark.parametrize("change", [
     "notice_id", "record_id", "provider", "credential", "docbase",
+    "source_collection",
     "account_borrower", "account_identity", "account_primary",
     "account_credential", "account_provider", "session_credential",
     "session_replaced", "registered_account_replaced",
@@ -71,6 +72,8 @@ def test_identity_or_selected_notice_change_revokes_scope(connected_core, change
         item.source_credential = "other"
     elif change == "docbase":
         item.docbase = "OTHER"
+    elif change == "source_collection":
+        item.source_collection = "other-collection"
     elif change == "account_borrower":
         account.unique_id = "different"
     elif change == "account_identity":
