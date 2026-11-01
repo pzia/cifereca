@@ -1,4 +1,4 @@
-"""P0 #979 / #1120: Core must never receive opaque vendor success JSON.
+"""P1 #4048: retired ADEPT return never reaches Core; fulfill stays scoped.
 
 The runtime's return/download seams are simulated, with no subprocess,
 account, Adobe identity, real license, device or filesystem mutations.
@@ -83,30 +83,28 @@ def assert_no_vendor_private_metadata(value):
     assert "certificate" not in published
 
 
-def test_return_proves_exact_loan_and_origin_but_discards_vendor_json():
+def test_retired_return_never_dispatches_or_projects_forged_vendor_json():
     r = runtime()
-    output = returned(r, valid_return())
-    assert output.ok is True and output.operation == "return"
-    assert output.artifact is None
-    assert output.metadata == {
-        "runtime_result": {
-            "ok": True, "operation": "loan_return",
-            "loan_id": "loan-17", "profile": "original-profile",
-        },
-        "adept_loan_id": "loan-17", "adept_profile_name": "original-profile",
-        "loan_state": "returned", "artifact_preserved": True,
-    }
-    assert_no_vendor_private_metadata(output)
+    r.return_loan = MethodType(
+        lambda self, loan, profile: pytest.fail("ADEPT return was invoked"), r,
+    )
+    with pytest.raises(KoboAdeptError) as exc:
+        returned(r, valid_return())
+    assert exc.value.code == "loan_return_removed"
+    assert "PRIVATE_LICENSE" not in str(exc.value)
+    assert "PRIVATE_SESSION" not in str(exc.value)
 
 
 @pytest.mark.parametrize(("wrong_field", "replacement"), [
     ("ok", False), ("ok", "true"), ("operation", "download"),
     ("loan_id", "another-loan"), ("profile", "another-profile"),
 ])
-def test_return_never_claims_success_for_a_contradictory_receipt(wrong_field, replacement):
-    with pytest.raises(KoboAdeptError, match="incohérent") as exc:
+def test_retired_return_rejects_even_malformed_historical_vendor_receipts(
+    wrong_field, replacement,
+):
+    with pytest.raises(KoboAdeptError) as exc:
         returned(runtime(), valid_return(**{wrong_field: replacement}))
-    assert exc.value.code == "kobo_adept_invalid_response"
+    assert exc.value.code == "loan_return_removed"
     assert "PRIVATE_LICENSE" not in str(exc.value)
 
 
