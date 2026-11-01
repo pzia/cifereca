@@ -18,7 +18,7 @@ import stat
 
 from ..catalog import LocalCatalog
 from .canonical_publication import _physical_target, _same_file
-from .canonical_recovery import _path_verified
+from .canonical_recovery import _path_verified, _stage_id
 from .source_convergence import SourceKey
 
 
@@ -235,7 +235,47 @@ def cleanup_published_staging(
     # Never delete if the namespace has been replaced or redirected.
     if attempt.is_symlink() or not attempt.is_dir():
         return
-    shutil.rmtree(attempt)
+    # A Core delivery attempt is private, but legacy import/index tools may
+    # still have registered another physical or operational reference under
+    # it. Never turn those rows into dangling paths as a cleanup side effect.
+    #
+    # BEGIN IMMEDIATE protects the read+unlink decision from concurrent SQLite
+    # writers. The acquisition lock is already held by both Core call sites.
+    # A conservative metadata hit defers deletion, never publication or GET.
+    prefix = str(attempt) + os.sep
+    marker = str(attempt)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        for table, column in (
+            ("placements", "path"),
+            ("backup_items", "local_path"),
+        ):
+            if db.execute(
+                f"SELECT 1 FROM {table} WHERE {column}=? "
+                f"OR substr({column},1,?)=? LIMIT 1",
+                (marker, len(prefix), prefix),
+            ).fetchone():
+                return
+        # Path references in catalogue or other operation checkpoints are
+        # operational until reconciled. No JSON structure is trusted here:
+        # searching the serialized text also catches nested path fields.
+        if db.execute(
+            "SELECT 1 FROM catalog_entries "
+            "WHERE instr(metadata_json,?)>0 LIMIT 1",
+            (marker,),
+        ).fetchone():
+            return
+        current_operation = _stage_id(source, completed.delivery_offer_id)
+        if db.execute(
+            "SELECT 1 FROM acquisition_ledger "
+            "WHERE acquisition_id<>? AND instr(metadata_json,?)>0 LIMIT 1",
+            (current_operation, marker),
+        ).fetchone():
+            return
+        # Preserve the original receipt until B is already committed (caller
+        # contract), but only remove a private run with no other registered
+        # consumer. Any error leaves the staging bytes in place.
+        shutil.rmtree(attempt)
 
 
 __all__ = ["promote_completed_delivery", "cleanup_published_staging"]
