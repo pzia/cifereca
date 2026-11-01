@@ -1,5 +1,15 @@
 # Restitution numérique Paris : licence ADEPT puis vérification PNB
 
+> **Archivage fonctionnel — décision #4048 (01/11/2026).** Les commandes de
+> restitution volontaire PNB/Paris et ADEPT décrites ci-dessous sont un
+> **historique technique**, non une procédure à suivre. Leur retrait complet
+> du Core et des plugins est suivi par [#4059](https://github.com/pzia/cifereca/pull/4059)
+> (**draft, non livré**). Les états de prêt et l'origine ADEPT restent
+> consultables en lecture seule. Voir
+> [contrat de retrait](CORE-P1-4048-RETURN-RETIREMENT.md).
+>
+
+
 ## Parcours dans « Mes emprunts »
 
 Le Core privilégie la restitution de la **licence Adobe effectivement activée**
