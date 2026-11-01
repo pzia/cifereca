@@ -44,11 +44,9 @@ def _case(configured=True):
         for key in (
             "backup_switch", "backup_dir_row",
             "backup_interval_row", "vault_profile_drop",
-            "run_backup_now", "backup_status",
+            "open_sync_button", "sync_navigation_status",
         )
     })
-    controls.open_sync_button = controls.run_backup_now
-    controls.sync_navigation_status = controls.backup_status
     host = NS(
         _closed=False,
         config={"kobo_backup.enabled": configured},
@@ -67,8 +65,8 @@ def _case(configured=True):
 @pytest.mark.parametrize("configured", [True, False])
 def test_navigation_to_sync_does_not_materialize_even_when_backup_enabled(configured):
     host, ui, _, _, _ = _case(configured)
-    assert ui.run_backup_now.sensitive is True
-    ui.run_backup_now.emit("clicked")
+    assert ui.open_sync_button.sensitive is True
+    ui.open_sync_button.emit("clicked")
     host.navigate.assert_called_once_with("sync")
     host.run_kobo_backup.assert_not_called()
 
@@ -77,7 +75,7 @@ def test_navigation_to_sync_does_not_materialize_even_when_backup_enabled(config
 def test_corrupt_opt_in_never_authorizes_local_download_or_changes_settings(corrupt):
     host, ui, _, _, _ = _case(corrupt)
     previous = host.config["kobo_backup.enabled"]
-    ui.run_backup_now.emit("clicked")
+    ui.open_sync_button.emit("clicked")
     # The destination is always the per-identity read-only-capable Sync page.
     host.navigate.assert_called_once_with("sync")
     host.run_kobo_backup.assert_not_called()
@@ -91,31 +89,31 @@ def test_unsaved_switch_blocks_navigation_and_global_download():
     # The retired global switch no longer participates in navigation signals.
     # Settings dirty tracking owns the gate on the neutral navigation row.
     refresh()
-    assert ui.run_backup_now.sensitive is False
-    assert "enregistrer" in ui.backup_status.subtitle
-    ui.run_backup_now.emit("clicked")
+    assert ui.open_sync_button.sensitive is False
+    assert "enregistrer" in ui.sync_navigation_status.subtitle
+    ui.open_sync_button.emit("clicked")
     host.navigate.assert_not_called()
     host.run_kobo_backup.assert_not_called()
     refresh()
-    assert ui.run_backup_now.sensitive is False
+    assert ui.open_sync_button.sensitive is False
 
 
 def test_disposed_page_rejects_late_click_and_refresh():
     host, ui, lifetime, _, refresh = _case(True)
     lifetime.dispose()
-    before = ui.backup_status.subtitle
-    ui.run_backup_now.emit("clicked")
+    before = ui.sync_navigation_status.subtitle
+    ui.open_sync_button.emit("clicked")
     refresh()
-    assert ui.backup_status.subtitle == before
+    assert ui.sync_navigation_status.subtitle == before
     host.navigate.assert_not_called()
     host.run_kobo_backup.assert_not_called()
 
 
 def test_closed_window_rejects_navigation_even_if_button_was_enabled():
     host, ui, _, _, _ = _case(True)
-    assert ui.run_backup_now.sensitive is True
+    assert ui.open_sync_button.sensitive is True
     host._closed = True
-    ui.run_backup_now.emit("clicked")
+    ui.open_sync_button.emit("clicked")
     host.navigate.assert_not_called()
     host.run_kobo_backup.assert_not_called()
 
@@ -123,8 +121,8 @@ def test_closed_window_rejects_navigation_even_if_button_was_enabled():
 def test_navigation_reentrant_disposal_never_starts_background_work():
     host, ui, lifetime, _, _ = _case(True)
     host.navigate.side_effect = lambda route: lifetime.dispose()
-    ui.run_backup_now.emit("clicked")
-    ui.run_backup_now.emit("clicked")
+    ui.open_sync_button.emit("clicked")
+    ui.open_sync_button.emit("clicked")
     host.navigate.assert_called_once_with("sync")
     host.run_kobo_backup.assert_not_called()
 
@@ -149,8 +147,8 @@ def test_sync_navigation_does_not_depend_on_obsolete_kobo_switch_value():
     host, ui, _, _, refresh = _case(True)
     ui.backup_switch.active = False  # stale legacy display, no unsaved change
     refresh()
-    assert ui.run_backup_now.sensitive is True
-    ui.run_backup_now.emit("clicked")
+    assert ui.open_sync_button.sensitive is True
+    ui.open_sync_button.emit("clicked")
     host.navigate.assert_called_once_with("sync")
     host.run_kobo_backup.assert_not_called()
     assert host.config["kobo_backup.enabled"] is True
@@ -159,6 +157,6 @@ def test_sync_navigation_does_not_depend_on_obsolete_kobo_switch_value():
 def test_sync_navigation_never_starts_download_for_unknown_provider():
     host, ui, _, _, _ = _case(False)
     host.config = {"providers.accounts": [{"id": "future", "provider": "future-v2", "enabled": False}]}
-    ui.run_backup_now.emit("clicked")
+    ui.open_sync_button.emit("clicked")
     host.navigate.assert_called_once_with("sync")
     host.run_kobo_backup.assert_not_called()

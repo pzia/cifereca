@@ -65,8 +65,8 @@ def test_active_settings_sync_page_is_vendor_neutral_even_with_old_consent_on():
     assert row.title == "Synchronisation — sources et autorisations"
     assert "Aucun consentement" in row.subtitle
     assert controls.open_sync_button in row.suffixes
-    assert controls.run_backup_now is controls.open_sync_button
-    assert controls.backup_status is controls.sync_navigation_status
+    assert not hasattr(controls, "run_backup_now")
+    assert not hasattr(controls, "backup_status")
     assert controls.library_dir_row in downloads.children
     assert controls.library_dir_row.text == "/tmp/books"
     assert not any("Kobo" in child.title for child in group.children)
@@ -84,19 +84,19 @@ def test_navigation_requires_live_page_and_never_runs_global_acquisition():
         host, page_lifetime=lifetime,
         settings_state=state, sync_settings=controls,
     )
-    controls.run_backup_now.click()
+    controls.open_sync_button.click()
     assert calls == ["sync"]
     state.mark_dirty("sync")
     refresh()
-    assert controls.run_backup_now.sensitive is False
-    assert "enregistrer" in controls.backup_status.subtitle
-    controls.run_backup_now.click()
+    assert controls.open_sync_button.sensitive is False
+    assert "enregistrer" in controls.sync_navigation_status.subtitle
+    controls.open_sync_button.click()
     assert calls == ["sync"]
     state.commit(state.snapshot())
     refresh()
-    assert controls.run_backup_now.sensitive
+    assert controls.open_sync_button.sensitive
     lifetime.dispose()
-    controls.run_backup_now.click()
+    controls.open_sync_button.click()
     assert calls == ["sync"]
 
 
@@ -111,4 +111,4 @@ def test_unknown_provider_requires_no_settings_special_case_or_network():
     assert "Synchronisation" in row.title
     assert not hasattr(controls, "backup_interval_row")
     assert not hasattr(controls, "backup_dir_row")
-    assert row.suffixes == [controls.run_backup_now]
+    assert row.suffixes == [controls.open_sync_button]
