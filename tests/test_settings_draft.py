@@ -1583,3 +1583,39 @@ def test_declared_corrupt_provider_setting_cannot_be_replaced_by_unrelated_save(
         validate(editor, descriptors={"provider.future": provider})
     assert config.data == previous
     assert not config.path.exists()
+
+
+
+@pytest.mark.parametrize(("kind", "invalid"), [
+    ("credential", None), ("credential", 7), ("credential", ["synthetic"]),
+    ("option", None), ("option", True), ("option", {"value": "synthetic"}),
+])
+def test_p1_synthetic_snapshot_cannot_replace_corrupt_declared_text(
+    editor, kind, invalid,
+):
+    """#3731: validation remains safe even when the GTK invalid flag is absent."""
+    config, values = editor
+    row = account("provider.future")
+    row["enabled"] = False
+    row["original_credentials"] = {
+        "username": invalid if kind == "credential" else "valid"
+    }
+    row["original_options"] = {
+        "endpoint": invalid if kind == "option" else "https://valid.invalid"
+    }
+    row["option_fields"] = {"endpoint": "https://default.invalid"}
+    # Deliberately no invalid_saved_snapshot: direct or stale programmatic input.
+    values["accounts"] = [row]
+    provider = descriptor("provider.future")
+    provider.account_options = (
+        AccountOptionField("endpoint", "Endpoint", default="https://default.invalid"),
+    )
+    original = deepcopy(config.data)
+    with pytest.raises(
+        SettingsValidationError,
+        match="Identifiants historiques invalides" if kind == "credential"
+              else "Options du fournisseur invalides",
+    ):
+        validate(editor, descriptors={"provider.future": provider})
+    assert config.data == original
+    assert not config.path.exists()
