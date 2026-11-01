@@ -52,6 +52,19 @@ def _typed_paris_source_scope(row: Mapping[str, Any]) -> tuple[str, str, str] | 
     return (coordinates[0], coordinates[1], coordinates[2])
 
 
+def _selectable_acquisition_ref(acquisition_id: Any) -> str | None:
+    """Only a real persisted exact ID may be used as an operator selector.
+
+    Malformed legacy records remain observable, but cannot be selected for
+    a future reconciliation by the hash of a Python/JSON representation.
+    """
+    if (type(acquisition_id) is not str or not acquisition_id
+            or acquisition_id != acquisition_id.strip()
+            or any(char in acquisition_id for char in ("\x00", "\r", "\n"))):
+        return None
+    return _opaque_ref("acquisition", acquisition_id)
+
+
 def _artifact_state(metadata: Mapping[str, Any], artifact_inspector: Callable[[Path], Any]) -> str:
     text = str(metadata.get("path") or "").strip()
     if not text:
@@ -189,7 +202,7 @@ def inspect_paris_adept_origins(
                 "persisted_entitlement" if recorded_source in recorded_source_keys
                 else "acquisition_only"
             ),
-            "acquisition_ref": _opaque_ref("acquisition", row.get("acquisition_id")),
+            "acquisition_ref": _selectable_acquisition_ref(row.get("acquisition_id")),
             "recorded_adept_profile_id": profile or None,
             "recorded_adept_loan_ref": (
                 _opaque_ref("adept-loan", binding["adept_loan_id"])
@@ -218,7 +231,7 @@ def inspect_paris_adept_origins(
         )
         for row in rights
     }, key=lambda row: (row[0], row[1], row[2] or ""))
-    origins.sort(key=lambda row: (row["source_ref"], row["acquisition_ref"]))
+    origins.sort(key=lambda row: (row["source_ref"], row["acquisition_ref"] or ""))
     profiles = {row["recorded_adept_profile_id"] for row in origins if row["recorded_adept_profile_id"]}
     strengths = {row["evidence"] for row in origins}
     # Both profile and historical ADEPT loan reference identify the recorded
@@ -247,6 +260,10 @@ def inspect_paris_adept_origins(
     # Keep the legacy status contract but expose resolution separately.
     if len(profiles) > 1 or loan_reference_disagreement or state_disagreement:
         origin_resolution = "conflicting_records"
+    elif any(row["acquisition_ref"] is None for row in origins):
+        # Recorded inventory may be a useful historical clue, but without
+        # an exact acquisition ID it cannot be an unambiguous selected fact.
+        origin_resolution = "unknown"
     elif len(profiles) == 1 and any(
         not row["recorded_adept_profile_id"]
         or not row["recorded_adept_loan_ref"]
@@ -281,6 +298,9 @@ def inspect_paris_adept_origins(
         "adept_loan_reference_disagreement": loan_reference_disagreement,
         "adobe_loan_state_disagreement": state_disagreement,
         "origin_resolution": origin_resolution,
+        "unselectable_historical_acquisition_count": sum(
+            row["acquisition_ref"] is None for row in origins
+        ),
         "sources": [
             {"library_identity_id": identity, "source_ref": ref,
              "paris_borrower_ref": borrower_ref}

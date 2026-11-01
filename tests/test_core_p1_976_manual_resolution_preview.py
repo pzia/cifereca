@@ -313,3 +313,24 @@ def test_another_paris_borrower_receipt_does_not_block_selected_exact_source(tmp
         _no_permission(report)
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("invalid_id", [None, 42, ["PRIVATE"], {"ref": "PRIVATE"}])
+def test_preview_cannot_select_historical_record_with_nontext_acquisition_id(
+    tmp_path, invalid_id,
+):
+    historical = _historical_acq()
+    historical["acquisition_id"] = invalid_id
+    db, store = _setup(tmp_path, acquisitions=[historical])
+    try:
+        old_opaque = _opaque_ref("acquisition", invalid_id)
+        result = _preview(store, acquisition=old_opaque)
+        assert result["status"] == "selection_missing"
+        assert result["review_reasons"] == [
+            "exact_source_or_acquisition_missing"
+        ]
+        assert result["acquisition_ref"] is None
+        _no_permission(result)
+        assert "PRIVATE" not in repr(result)
+    finally:
+        db.close()
