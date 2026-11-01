@@ -643,11 +643,15 @@ class DetailPanel(Gtk.Box):
                 ret_adept.set_tooltip_text("Utilise la liaison ADEPT et le profil d’origine ; conserve les fichiers locaux.")
                 ret_adept.connect("clicked", lambda _b: self.window.return_adept_from_detail(binding["acquisition_id"], ret_adept))
                 buttons.append(ret_adept)
-        experimental = bool(self.window.config.get("experimental_actions", False))
-        if experimental and loan.renewable:
+        # #4047: only physical Paris renewal is offered; no experimental
+        # toggle can grant a digital or cross-provider mutation.
+        # Local import also keeps the historical isolated show_loan adapter safe.
+        from cifereca.gui.loan_renewal_visibility import paris_physical_renewal_visible
+        if paris_physical_renewal_visible(loan):
             renew = Gtk.Button(label="Prolonger")
             renew.connect("clicked", lambda _b: self.window.confirm_renew(loan, renew))
             buttons.append(renew)
+        experimental = bool(self.window.config.get("experimental_actions", False))
         if experimental and loan.can_return:
             ret = Gtk.Button(label="Rendre maintenant")
             ret.add_css_class("destructive-action")
