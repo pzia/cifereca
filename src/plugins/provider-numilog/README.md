@@ -1847,6 +1847,15 @@ Commande : `python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py CH
 (option `--task-ref REF` pour une tâche exacte). Le script reste en lecture
 seule, n'ouvre aucune session ni réseau, et ne modifie ni le ZIP ni la bibliothèque.
 
+Quand la primitive publique `cifereca.plugin_api.journal_zip` est
+présente, l'analyseur réutilise son lecteur standard v1 et ses contrôles
+bornés. Sur une installation Core antérieure ou en exécution isolée sans
+Core, l'analyseur conserve automatiquement son lecteur historique purement
+Python stdlib : **pas de nouvelle dépendance obligatoire**. Les deux
+chemins retournent les mêmes rapports fermés et ne publient jamais le ZIP
+brut. La présence d'une version plus récente ne convertit pas un rapport de
+Sync ou une trace HTTP en journal canonique.
+
 Il accepte deux formats : les anciens ZIP à **un seul membre JSON** et les
 exports Diagnostics du jour générés par Core, composés exactement de
 `cifereca-journal-brut.json`, `manifest.json` et `README.txt`. Il valide
