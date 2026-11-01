@@ -66,6 +66,10 @@ def test_capture_cli_marks_off_then_on_as_partial_even_when_trace_active_at_exit
     monkeypatch.setattr(app, "build_identity", lambda: {"status": "unavailable"})
     from cifereca.http_trace import HTTP_TRACE
     monkeypatch.setattr(HTTP_TRACE, "snapshot", _http)
+    monkeypatch.setattr(HTTP_TRACE, "status", lambda: {
+        "session_ref": "b" * 32, "exchanges": 0,
+        "used_bytes": 0, "omitted_exchanges": 0,
+    })
 
     def fake_run(*, capture_mode=False):
         assert capture_mode is True
