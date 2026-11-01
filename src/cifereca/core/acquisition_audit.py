@@ -130,6 +130,7 @@ def inspect_exact_source(
             if isinstance(getattr(storage, "path", None), Path) else None,
             verify_files=verify_files,
             reference=lambda value: _reference(secret, "receipt", value),
+            canonical_root=library_root,
         )
     directory = None
     if verify_files:

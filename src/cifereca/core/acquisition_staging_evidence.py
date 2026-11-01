@@ -15,11 +15,12 @@ _MAX_ROWS = 512
 _MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 
 
-def _verify_staged(path_value: Any, root: Path, sha: str, size: int) -> str:
+def _verify_staged(path_value: Any, root: Path, sha: str, size: int | None) -> str:
     """Hash an indexed staging file without following symlinks."""
     if (type(path_value) is not str or type(sha) is not str
             or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha)
-            or type(size) is not int or not 0 < size <= _MAX_FILE_BYTES):
+            or (size is not None
+                and (type(size) is not int or not 0 < size <= _MAX_FILE_BYTES))):
         return "unavailable"
     try:
         p = Path(path_value)
@@ -44,7 +45,9 @@ def _verify_staged(path_value: Any, root: Path, sha: str, size: int) -> str:
         fd = os.open(path, flags)
         try:
             before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_size != size:
+            if (not stat.S_ISREG(before.st_mode)
+                    or not 0 < before.st_size <= _MAX_FILE_BYTES
+                    or (size is not None and before.st_size != size)):
                 return "size_mismatch"
             digest = hashlib.sha256()
             while True:
@@ -68,7 +71,7 @@ def _verify_staged(path_value: Any, root: Path, sha: str, size: int) -> str:
 
 def receipt_staging_evidence(
     db: Any, *, coords: tuple[str, str, str, str], staging_root: Path | None,
-    verify_files: bool, reference,
+    verify_files: bool, reference, canonical_root: Path | None = None,
 ) -> dict[str, Any]:
     """Collect receipt-local staging observations from a single SQLite snapshot.
 
@@ -127,9 +130,28 @@ def receipt_staging_evidence(
                 "staging_file_missing" if state == "missing"
                 else "staging_unavailable"
             )
+    # The legacy acquisition-work projection only sees already-indexed
+    # Artifact/Placement pairs. Core receipts can be valid *before* any
+    # Placement exists; inspect them separately, scoped to the exact source.
+    from .canonical_unpublished_audit import core_staging_receipt_observations
+    core, core_truncated = core_staging_receipt_observations(
+        db, coords=coords, library_root=canonical_root,
+        verify_files=verify_files, reference=reference,
+        limit=max(0, _MAX_ROWS - len(rows)),
+    )
+    if core_truncated:
+        return {"coverage": "truncated", "staged_visible_in_library": 0,
+                "staged_verified": 0, "observations": []}
+    for operation_id, entry in core:
+        # Do not match on the display pseudonym: the internal counts path
+        # intentionally supplies a shared placeholder for every receipt.
+        # Only the exact private operation ID (never exported) is a key.
+        output[operation_id] = entry
     observations = list(output.values())
     return {
-        "coverage": "indexed_account_receipts_only" if root is not None else "unavailable",
+        "coverage": ("indexed_and_core_receipts" if core else
+                     "indexed_account_receipts_only" if root is not None
+                     else "unavailable"),
         "staged_visible_in_library": sum(r["staged_visible_in_library"] for r in observations),
         "staged_verified": sum(r["staging_sha_verified"] for r in observations),
         "observations": observations,

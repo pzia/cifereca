@@ -90,6 +90,7 @@ def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None,
             db, coords=coords, staging_root=(storage.path.parent / "acquisition-work")
             if isinstance(getattr(storage, "path", None), Path) else None,
             verify_files=True, reference=lambda _ref: "private",
+            canonical_root=library_root,
         )
     from .acquisition_audit import inspect_exact_source
     per_resource = inspect_exact_source(
@@ -144,9 +145,13 @@ _AUDIT_FILE_STATES = frozenset({
 _AUDIT_STAGING_STATES = frozenset({
     "not_attested", "indexed_staging_unverified", "verified_staging_file",
     "staging_file_missing", "staging_unavailable",
+    "core_staged_unverified", "core_staged_untrusted",
+    "core_staged_missing", "core_staged_present_unpublished",
+    "core_staged_origin_recorded",
 })
 _AUDIT_STAGING_COVERAGE = frozenset({
-    "indexed_account_receipts_only", "unavailable", "truncated",
+    "indexed_account_receipts_only", "indexed_and_core_receipts",
+    "unavailable", "truncated",
 })
 
 
@@ -214,7 +219,10 @@ def _safe_staging(value: object) -> dict[str, object]:
             truncated = True
         verified = row.get("staging_sha_verified") is True
         visible = row.get("staged_visible_in_library") is True
-        if verified and state != "verified_staging_file":
+        if verified and state not in (
+            "verified_staging_file", "core_staged_present_unpublished",
+            "core_staged_origin_recorded",
+        ):
             verified = False
             truncated = True
         if visible and not verified:
