@@ -416,6 +416,11 @@ class LocalInspection:
         self._manual_service = service
         self._manual_identity = identity_id
         self._manual_pending = None
+        # Private mapping from case keys observed in THIS scoped audit. The
+        # UI never supplies raw Placement IDs or filesystem paths for repair.
+        self._missing_case_placements = {}
+        self._missing_operator = None
+        self._missing_pending = None
         self._manual_undo = None
         self._manual_undo_pending = None
         # Optional, one-time private cache guard installed only on a verified
@@ -1220,6 +1225,10 @@ class LocalInspection:
                 label + ' ' + _text(placements[index].get('placement_id'))[:128]
                 + ' ' + _text(placements[index].get('path'))[-256:]
             )[:3200]
+            if state == 'stored_path_missing' and sqlite_state == 'missing':
+                placement_id = placements[index].get('placement_id')
+                if type(placement_id) is str and 0 < len(placement_id) <= 256:
+                    self._missing_case_placements[f'path:{index}'] = placement_id
             if state == 'stored_path_missing':
                 self._path_missing_by_sqlite_state[bucket] += 1
         if not self.valid():
@@ -1238,6 +1247,11 @@ class LocalInspection:
         return bool(valid)
 
     def close(self):
+        self.cancel_missing_repair()
+        if self._missing_operator is not None:
+            self._missing_operator.close()
+        self._missing_operator = None
+        self._missing_case_placements.clear()
         self._cases.clear()
         self._case_search.clear()
         self._from_audit_cache = False
@@ -1580,6 +1594,7 @@ class LocalInspection:
 
     def revoke_manual_attachment_preview(self):
         """A changed selection invalidates pending and in-flight previews."""
+        self.cancel_missing_repair()
         self._manual_preview_generation += 1
         self._manual_pending = None
         self._manual_undo_pending = None
@@ -2171,6 +2186,88 @@ class LocalInspection:
             ),
         ) for key in self._title_only_file_keys.get(right_key, ())
             if key in self._cases)
+
+    def cancel_missing_repair(self):
+        """Changing inspected selection consumes any pending repair consent."""
+        self._missing_pending = None
+        if self._missing_operator is not None:
+            self._missing_operator.cancel()
+
+    def _missing_operator_for_case(self, case_key):
+        if (not self.valid() or not self._manual_audit_complete
+                or self._manual_service is None
+                or type(case_key) is not str
+                or case_key not in self._missing_case_placements):
+            return None
+        case = self._cases.get(case_key)
+        if (case is None or 'stored_path_missing_historical' not in case.states
+                or not case.key.startswith('path:')):
+            return None
+        if self._missing_operator is None:
+            from .missing_placement_operator import MissingPlacementOperatorSession
+            self._missing_operator = MissingPlacementOperatorSession(
+                self._manual_service, identity_id=self._manual_identity,
+                scope_valid=lambda: self.valid(),
+                inspection_complete=self._manual_audit_complete,
+            )
+        return self._missing_operator
+
+    def preview_missing_retirement(self, case_key):
+        """CoreUI-only read-only preview for a historical path in this audit."""
+        self.cancel_missing_repair()
+        operator = self._missing_operator_for_case(case_key)
+        if operator is None:
+            return {'status': 'blocked', 'reason': 'inspection_scope_unavailable',
+                    'read_only': True}
+        outcome = operator.preview_retirement(
+            placement_id=self._missing_case_placements[case_key],
+        )
+        if outcome.get('status') == 'ready':
+            self._missing_pending = (case_key, None)
+        return outcome
+
+    def preview_missing_relocation(self, case_key, file_key):
+        """Choose an observed, unlinked physical FileObservation, not a path."""
+        self.cancel_missing_repair()
+        operator = self._missing_operator_for_case(case_key)
+        if (operator is None or type(file_key) is not str
+                or not file_key.startswith('file:') or file_key not in self._cases):
+            return {'status': 'blocked', 'reason': 'inspection_scope_unavailable',
+                    'read_only': True}
+        observation = self._manual_file_observations.get(file_key)
+        if (observation is None or observation.identity_id != self._manual_identity
+                or type(observation.path) is not str or not observation.path
+                or not Path(observation.path).is_absolute()):
+            return {'status': 'blocked', 'reason': 'file_not_observed',
+                    'read_only': True}
+        outcome = operator.preview_relocation(
+            placement_id=self._missing_case_placements[case_key],
+            candidate_path=Path(observation.path),
+        )
+        if outcome.get('status') == 'review_required':
+            self._missing_pending = (case_key, file_key)
+        return outcome
+
+    def confirm_missing_repair(self, case_key, file_key=None, *,
+                               user_confirmed=False):
+        """One-shot confirmation of the same selected path and file keys."""
+        pending, self._missing_pending = self._missing_pending, None
+        operator = self._missing_operator
+        if (user_confirmed is not True or operator is None
+                or pending is None or pending != (case_key, file_key)):
+            self.cancel_missing_repair()
+            return {'status': 'blocked', 'reason': 'confirmation_required',
+                    'read_only': True}
+        if not self.valid():
+            self.cancel_missing_repair()
+            return {'status': 'blocked', 'reason': 'inspection_scope_unavailable',
+                    'read_only': True}
+        outcome = operator.confirm(user_confirmed=True)
+        # A successful SQLite write invalidates the audit stamp. The UI must
+        # close/reopen this inspection instead of displaying stale evidence.
+        if outcome.get('status') in ('relocated', 'retired'):
+            self.close()
+        return outcome
 
     def detail(self, key):
         if not self.valid() or type(key) is not str:
