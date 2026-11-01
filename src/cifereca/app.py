@@ -26,22 +26,24 @@ Puis relancez :
     return 3
 
 
-def main() -> int:
+def _run_application(*, capture_mode: bool = False) -> int:
     if "--version" in sys.argv[1:]:
         print(f"cifereca {__version__}")
         return 0
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(
-            "Usage: cifereca [--trace] [--no-plugins] [--force-plugin ID]\n"
+            "Usage: cifereca [--trace] [--capture [--capture-dir DIR]] [--no-plugins] [--force-plugin ID]\n"
             "       cifereca [--help | --version]\n\n"
             "  --trace         Activer le niveau Trace dans le Core et l'interface\n"
             "  --debug         Alias de --trace (compatibilité)\n"
             "  --verbose       Alias de --trace (compatibilité)\n"
+            "  --capture       Journal et HTTP/HTML de cette session (ZIP privé)\n"
+            "  --capture-dir   Dossier du ZIP (défaut : Téléchargements XDG)\n"
             "  --no-plugins    Désactiver les plugins au lancement\n"
             "  --force-plugin  Activer le plugin indiqué (répétable)"
         )
         return 0
-    verbose = any(arg in {"--trace", "--verbose", "--debug"} for arg in sys.argv[1:])
+    verbose = capture_mode or any(arg in {"--trace", "--verbose", "--debug"} for arg in sys.argv[1:])
     no_plugins = "--no-plugins" in sys.argv[1:]
     force_plugins: list[str] = []
     cleaned = [sys.argv[0]]
@@ -151,3 +153,109 @@ def main() -> int:
         # credentials. Never forward an untrusted exception to application logs.
         logger.error("Fatal GTK GUI error code=gtk_runtime_failed")
         return 1
+
+
+def main() -> int:
+    """GUI entry: --capture is a session-only opt-in to a private local ZIP."""
+    arguments = sys.argv[1:]
+    if "--help" in arguments or "-h" in arguments or "--version" in arguments:
+        return _run_application()
+
+    capture = "--capture" in arguments
+    directory_arg: str | None = None
+    cleaned = [sys.argv[0]]
+    idx = 0
+    while idx < len(arguments):
+        arg = arguments[idx]
+        if arg == "--capture":
+            idx += 1
+            continue
+        if arg == "--capture-dir":
+            if idx + 1 == len(arguments) or not arguments[idx + 1].strip():
+                print("capture_directory_required", file=sys.stderr)
+                return 2
+            if directory_arg is not None:
+                print("capture_directory_duplicate", file=sys.stderr)
+                return 2
+            directory_arg = arguments[idx + 1]
+            idx += 2
+            continue
+        if arg.startswith("--capture-dir="):
+            if directory_arg is not None or not arg.split("=", 1)[1]:
+                print("capture_directory_invalid", file=sys.stderr)
+                return 2
+            directory_arg = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        cleaned.append(arg)
+        idx += 1
+    if directory_arg is not None and not capture:
+        print("capture_directory_requires_capture", file=sys.stderr)
+        return 2
+    if not capture:
+        return _run_application()
+
+    from pathlib import Path
+    from .core.capture_session_export import _safe_destination, export_capture_session
+    from .core.capture_session_journal import CaptureSessionJournal
+    from .http_trace import HTTP_TRACE
+    from .install_paths import downloads_dir
+    from .logging_utils import diagnostics_level
+
+    directory = Path(directory_arg).expanduser() if directory_arg is not None else downloads_dir()
+    try:
+        _safe_destination(directory)
+    except (OSError, ValueError):
+        print(f"capture_directory_unavailable: {directory}", file=sys.stderr)
+        return 2
+
+    # Force Trace only for this process. Keep the persistent user preference.
+    # Raw console mirroring in a terminal would print sensitive cookies/URLs;
+    # mute that optional mirror only for this opt-in capture session.
+    logger = configure_logging(verbose=True)
+
+    class _NoRawConsole:
+        def filter(self, _record):
+            return False
+
+    mute = _NoRawConsole()
+    mirrors = [
+        handler for handler in logger.handlers
+        if getattr(handler, "_cifereca_trace_console", False)
+    ]
+    for handler in mirrors:
+        handler.addFilter(mute)
+    journal = CaptureSessionJournal()
+    journal.start(logger)
+    sys.argv = cleaned
+    print(
+        "ATTENTION : --capture conserve des données BRUTES privées "
+        "(cookies, tokens, URLs, HTML, journaux). Le dossier Téléchargements "
+        "peut être synchronisé par un service externe. Aucun envoi automatique.",
+        file=sys.stderr,
+    )
+    rc = 1
+    export_failed = False
+    try:
+        try:
+            rc = _run_application(capture_mode=True)
+        except KeyboardInterrupt:
+            logger.warning("TRACE capture interrupted by operator")
+            rc = 130
+    finally:
+        try:
+            journal.finish()
+            published = export_capture_session(
+                directory, journal=journal.snapshot(),
+                http_snapshot=HTTP_TRACE.snapshot(), app_exit_code=rc,
+                build_identity=build_identity(),
+                trace_active_at_finish=(diagnostics_level() == "trace"),
+            )
+            print(f"capture_zip: {published}", file=sys.stderr)
+        except Exception:
+            export_failed = True
+            print(f"capture_export_failed: {directory}", file=sys.stderr)
+        finally:
+            for handler in mirrors:
+                handler.removeFilter(mute)
+    return 2 if export_failed and rc == 0 else rc
