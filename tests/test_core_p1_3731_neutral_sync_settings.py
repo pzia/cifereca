@@ -47,8 +47,8 @@ def test_active_sync_settings_contains_only_neutral_navigation_and_library_direc
     assert row.title == "Synchronisation — sources et autorisations"
     assert "Aucun consentement" in row.subtitle
     assert row.suffixes == [controls.open_sync_button]
-    assert controls.open_sync_button is controls.open_sync_button
-    assert controls.sync_navigation_status is controls.sync_navigation_status
+    assert not hasattr(controls, "run_backup_now")
+    assert not hasattr(controls, "backup_status")
     assert controls.open_sync_button.label == "Ouvrir Synchronisation…"
     assert controls.sync_navigation_status is row
     assert len(downloads.children) == 1
