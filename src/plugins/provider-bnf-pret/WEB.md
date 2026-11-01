@@ -97,6 +97,16 @@ puis relit la fiche et la confirmation sous le même scope. Son seul résultat
 positif est `status=unverified, reason_code=borrow_confirmation_observed` :
 **ce n'est ni une éligibilité attestée, ni une création de prêt**.
 
+La vérification pure `verify_borrow_activation` exige **deux preuves positives
+distinctes** après une éventuelle mutation : un lien de prêt unique dans
+la page d'activation, puis le même `loan_id + resource_id` dans une
+relecture de la section des prêts actifs de la même session. Toute page
+tronquée/ambiguë, un lien différent, un reçu sans prêt ou une confusion
+de compte sont des refus. Elle ne déduit **pas** qu'il s'agit d'un prêt
+nouvellement créé : l'inventaire BnF est partiel et un prêt préexistant
+pourrait avoir été absent de la première page. Aucun GET ni POST n'est
+déclenché par ce vérificateur pur.
+
 **Inactif en production** : le manifeste n'annonce toujours pas
 `acquisition.borrow`, `ProviderCapabilities.borrow` reste faux, aucune UI
 n'appelle ce préflight, et aucun POST métier n'a été ajouté au transport.
