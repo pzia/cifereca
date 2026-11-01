@@ -18,6 +18,27 @@ from tests.test_core_p0_3909_atomic_promotion import (
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
 
 
+@pytest.fixture(autouse=True)
+def _unexpected_postcommit_exception_must_fail_test(monkeypatch):
+    # The production caller deliberately protects an already committed B
+    # from maintenance errors. In these controlled new scenarios, however,
+    # all input is known: expose unexpected exceptions as test failures.
+    original = convergence_execution.reconcile_committed_staging
+
+    def checked(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        except Exception as exc:
+            pytest.fail(
+                "unexpected_postcommit_exception:"
+                + type(exc).__name__ + ":" + str(exc),
+            )
+
+    monkeypatch.setattr(
+        convergence_execution, "reconcile_committed_staging", checked,
+    )
+
+
 def _published_with_deferred_cleanup(rig, monkeypatch):
     service, db, root, gets = _drive(rig)
 
