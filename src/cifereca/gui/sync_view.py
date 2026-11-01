@@ -597,29 +597,40 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     # status text and its attention icon. A failed local GET/placement phase
     # must never sit under a misleading "Dernier succès" headline.
     alert = sync_source_attention(source) if capable else None
-    status = str(getattr(source, "status", "") or "idle").strip().casefold()
+    raw_status = getattr(source, "status", None)
+    status = (
+        raw_status.strip().casefold()
+        if type(raw_status) is str and len(raw_status) <= 64 else "unknown"
+    )
     last_success = _timestamp_label(getattr(source, "last_success", ""))
     last_attempt = _timestamp_label(getattr(source, "last_attempt", ""))
 
     if not capable:
         sync_label = "Non prise en charge"
     elif alert is not None and alert[0] == "error":
-        # Applies to source-wide failures AND failed/blocked phase projections.
-        # The fixed Core inventory-partial marker remains informational if the
-        # independent local phase has no observed failure.
+        # Failed/blocked Core phases win over source-wide historical success.
         sync_label = "Échec"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
-        # A Core-attested incomplete notices/rights inventory with a positive
-        # independent local phase is information, not an actionable failure.
-        # Keep the provenance in the detail; do not imply file publication.
+        # Incomplete inventory with positive local phase is information only.
         prefix = (
             "Couverture partielle (information)"
             if alert is not None and alert[0] == "info"
             else "Partielle"
         )
         sync_label = prefix + (f" · {last_attempt}" if last_attempt else "")
+    elif status == "blocked":
+        sync_label = "Bloquée"
+    elif status == "attention_required":
+        sync_label = "Action nécessaire"
+    elif status == "cancelled":
+        sync_label = "Annulée"
+    elif status == "interrupted":
+        sync_label = "Interrompue"
+    elif status not in {"success", "idle"}:
+        # Never convert an unknown/invalid terminal state into an old success.
+        sync_label = "État non confirmé"
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
@@ -681,8 +692,11 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         )
     if canonical and capable:
         summary += "\nLes fichiers disponibles sont reçus selon l’autorisation de ce compte et les capacités de la source."
-    if (status in {"partial", "error", "failed"}
-            or alert is not None and alert[0] == "error") and last_success:
+    # Previous success is historical context, not the current run's state.
+    if (status in {"partial", "error", "failed", "blocked",
+                   "attention_required", "cancelled", "interrupted"}
+            or (alert is not None and alert[0] == "error")
+            or status not in {"success", "idle"}) and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
         summary += f"\nAction indisponible : {disabled_reason}"
