@@ -62,15 +62,39 @@ class BnfBorrowPreflightTests(unittest.TestCase):
         self.assertEqual(
             url, ORIGIN + action +
             "?_resource_id=" + RESOURCE + "&notify=1&email=reader%40example.invalid")
+        # Captured 01/11: POST action preserves ALL GET coordinates in its
+        # query; its only POST body input is the fresh CSRF token.
+        post_action = (
+            "/media/" + slug + "/loans_activation"
+            "?email=reader%40example.invalid&notify=1&_resource_id=" + RESOURCE
+        )
         post = ('<a href="/resources/' + RESOURCE + '">Book</a>'
-                '<form method="post" action="/media/' + slug + '/loans_activation">'
+                '<form method="post" action="' + post_action.replace("&", "&amp;") + '">'
                 '<input type="hidden" name="authenticity_token" value="SYNTHETIC">'
-                '<input type="hidden" name="resource_id" value="' + RESOURCE + '">'
+                '<button class="button-borrow" type="submit">Confirmer</button>'
                 '</form>')
         candidate = activation_form(post, page_url=url, resource_id=RESOURCE)
-        self.assertEqual(candidate.action_url,
-                         ORIGIN + "/media/" + slug + "/loans_activation")
+        self.assertEqual(candidate.action_url, ORIGIN + post_action)
+        self.assertEqual(dict(candidate.fields), {"authenticity_token": "SYNTHETIC"})
         self.assertNotIn("reader@", repr(candidate))
+        for bad_action in (
+            "/media/" + slug + "/loans_activation",  # Missing query
+            post_action.replace(RESOURCE, "other"),  # Other edition
+            post_action.replace("notify=1", "notify=0"),
+            post_action.replace("example.invalid", "other.invalid"),
+            post_action + "&extra=1",
+            post_action + "&notify=1",  # Duplicate
+            post_action.replace("loans_activation", "loans_confirmation"),
+            post_action.replace(slug, "different-media"),
+            "https://evil.invalid" + post_action,
+        ):
+            with self.subTest(action=bad_action.split("?")[0]):
+                poisoned = post.replace(
+                    post_action.replace("&", "&amp;"),
+                    bad_action.replace("&", "&amp;"),
+                )
+                with self.assertRaises(WebParseError):
+                    activation_form(poisoned, page_url=url, resource_id=RESOURCE)
 
         # A media slug cannot redirect the confirmation to another book,
         # another media operation, or another unapproved path.

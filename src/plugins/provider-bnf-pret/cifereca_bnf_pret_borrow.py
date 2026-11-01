@@ -92,7 +92,26 @@ def _transition_url(current_url: str, href: str, resource_id: str) -> str:
         if media_activation:
             prior = _MEDIA_CONFIRMATION.fullmatch(base.path)
             if (prior is None or media_activation.group(1) != prior.group(1)
-                    or target.query):
+                    or not base.query or not target.query):
+                raise ValueError
+            # The actual BnF confirmation HTML carries the three GET query
+            # coordinates into the POST form action. Accept only the exact
+            # same values, including edition and email, with no duplicate or
+            # extra fields. URL encodings/parameter order may legitimately
+            # differ between the GET and the HTML form action.
+            previous = parse_qsl(
+                base.query, keep_blank_values=True, strict_parsing=True,
+                encoding="utf-8", errors="strict", max_num_fields=3,
+            )
+            activation = parse_qsl(
+                target.query, keep_blank_values=True, strict_parsing=True,
+                encoding="utf-8", errors="strict", max_num_fields=3,
+            )
+            keys = {"_resource_id", "notify", "email"}
+            if (len(previous) != 3 or len(activation) != 3
+                    or {name for name, _ in previous} != keys
+                    or {name for name, _ in activation} != keys
+                    or sorted(previous) != sorted(activation)):
                 raise ValueError
         if not (media_confirmation or media_activation):
             if (not segments or not any(s in _BORROW_INTENT for s in segments)
