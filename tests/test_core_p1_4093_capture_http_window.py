@@ -47,6 +47,7 @@ def test_second_gui_capture_never_includes_first_run_http_evidence(
     fresh = HTTPTraceCapture()
     monkeypatch.setattr(http_trace, "HTTP_TRACE", fresh)
     monkeypatch.setattr(app, "build_identity", lambda: {"status": "unavailable"})
+    created_archives = []
     for number in (1, 2):
         label = f"PRIVATE_RUN_{number}"
 
@@ -76,10 +77,13 @@ def test_second_gui_capture_never_includes_first_run_http_evidence(
             "cifereca", "--capture", "--capture-dir", str(tmp_path),
         ])
         assert app.main() == 0
+        archives_now = set(tmp_path.glob("cifereca-capture-*.zip"))
+        new_archives = archives_now - set(created_archives)
+        assert len(new_archives) == 1
+        created_archives.extend(new_archives)
 
-    archives = sorted(tmp_path.glob("cifereca-capture-*.zip"))
-    assert len(archives) == 2
-    with zipfile.ZipFile(archives[-1]) as zip_new:
+    assert len(created_archives) == 2
+    with zipfile.ZipFile(created_archives[-1]) as zip_new:
         last_index = json.loads(zip_new.read("http/index.json"))
         raw = b"".join(zip_new.read(path) for path in zip_new.namelist())
         assert last_index["exchanges"] and len(last_index["exchanges"]) == 1
