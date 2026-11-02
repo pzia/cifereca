@@ -433,6 +433,7 @@ class NumilogSession(ProviderSession):
             seen_pages = set()
             seen_items = set()
             ambiguous_rights = set()
+            all_pages_attested = True
             for page_index in range(100):
                 if not read_scope_current():
                     raise ProviderCapabilityError(
@@ -462,10 +463,12 @@ class NumilogSession(ProviderSession):
                     self._session_event('library_redirect')
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')
                 structural = {} if include_delivery else None
+                inventory_evidence = {} if rights_observation else None
                 page_rows,next_url = parse_library_page(
                     text,final_url,cover_origins=self.allowed_origins,
                     delivery_evidence=include_delivery,
                     delivery_diagnostics=structural,
+                    inventory_diagnostics=inventory_evidence,
                     delivery_selector=(
                         (lambda row: self._id(row) == delivery_record_id)
                         if include_delivery else None
@@ -475,6 +478,11 @@ class NumilogSession(ProviderSession):
                         if enrichment_record_id is not None else None
                     ),
                 )
+                if rights_observation:
+                    all_pages_attested = (
+                        all_pages_attested
+                        and inventory_evidence.get('complete') is True
+                    )
                 if include_delivery:
                     # Fixed enum + bounded numeric structure only; enough to
                     # distinguish an out-of-card JS object from a bound one,
@@ -519,7 +527,7 @@ class NumilogSession(ProviderSession):
                     # a complete private inventory and rows excluded as
                     # ambiguous: discarded editions MUST keep coverage partial.
                     # The legacy library() API still returns only its list.
-                    return (rows, not ambiguous_rights) if rights_observation else rows
+                    return (rows, all_pages_attested and not ambiguous_rights) if rights_observation else rows
                 url=next_url
             raise ProviderError('Numilog : bibliothèque trop paginée (>100 pages)')
         except ParseError as exc:
