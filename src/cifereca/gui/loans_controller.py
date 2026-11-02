@@ -28,7 +28,6 @@ from .detail_model import fr_date
 def _build_loans_page(self) -> MasterDetailPage:
     page = MasterDetailPage(self, "Mes emprunts", "Prêts physiques et numériques", "Aucun emprunt affiché", "Vérifiez l’identité et les filtres, puis actualisez les emprunts. Une liste vide ne prouve pas l’absence de prêts chez le fournisseur.")
     history = Gtk.Button(label="Historique"); history.connect("clicked", lambda _b: self.navigate("history")); page.header_actions.append(history)
-    bookings = Gtk.Button(label="Réservations"); bookings.connect("clicked", lambda _b: self.navigate("bookings")); page.header_actions.append(bookings)
     # Open on every loan medium: the digital-only default hid physical loans.
     self.loan_filter = "all"
     segment = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
