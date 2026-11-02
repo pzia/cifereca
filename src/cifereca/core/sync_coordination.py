@@ -335,7 +335,11 @@ def _run_observed_canonical_convergence(
         from .source_sync_consent import read_policy
         source_policy = read_policy(self.storage, admitted_snapshots[0].scope)
         if source_policy.configured and source_policy.mode != "on":
-            return {status: (1 if status == "pending" else 0)
+            # A revoked/invalid whole-source policy withholds every observed
+            # resource. Never invent one pending item for an empty inventory.
+            # This is pure accounting: no selected offers or provider GET.
+            withheld = len(admitted_snapshots[0].rights)
+            return {status: (withheld if status == "pending" else 0)
                     for status in ("downloaded", "recovered", "present_attested",
                                    "pending", "blocked", "failed", "cancelled",
                                    "skipped_archived", "inactive")}
