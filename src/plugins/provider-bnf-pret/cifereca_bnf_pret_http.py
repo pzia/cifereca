@@ -4,7 +4,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 import logging
+from pathlib import Path
 import re
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 import time
 from urllib.parse import urljoin, urlsplit
@@ -358,12 +360,13 @@ class ReaderHTTPClient:
         except (httpx.HTTPError, UnicodeError):
             raise ReaderHTTPError("transport_unavailable") from None
 
-    def loan_token(self, loan_id: str, signed_url: str) -> bytes:
-        """One non-retried GET for a loan previously checked by its session.
+    def loan_token(self, loan_id: str, signed_url: str, *, admission_current=None) -> bytes:
+        """Fetch the fresh authenticated loan action, then safe public redirects.
 
-        Unlike HTML requests, this never follows a redirect (even to BnF).
-        The response is bounded before buffering and independently inspected
-        as an ADEPT loan token by the caller; no private URL is returned.
+        The first GET retains BnF's private session. A 3xx is not a new loan:
+        follow only its HTTPS GET delivery link with the Core public-peer-
+        pinned, cookie-free and bounded staging transport. The caller still
+        validates the final ACSM and must recheck identity before publication.
         """
         from cifereca_bnf_pret_download import MAX_TOKEN_BYTES, exact_loan_id
         loan_id = exact_loan_id(loan_id)
@@ -374,13 +377,62 @@ class ReaderHTTPClient:
         if url is None or url != signed_url:
             raise ReaderHTTPError('url_refused')
         deadline = time.monotonic() + 30
+
+        def admitted():
+            if admission_current is None:
+                return True  # Legacy explicit GET remains session-guarded by caller.
+            try:
+                return admission_current() is True
+            except Exception:
+                return False
+
+        if not admitted():
+            raise ReaderHTTPError('download_redirect_refused')
         try:
             with self._stream(
                 'GET', url, logical_endpoint='loan_token', headers={'Accept': 'application/vnd.adobe.adept+xml, application/octet-stream'},
                 timeout=min(15, max(0.1, deadline - time.monotonic())),
             ) as response:
                 if 300 <= response.status_code < 400:
-                    raise ReaderHTTPError('download_redirect_refused')
+                    # A redirect from a *fresh* signed ACSM GET is a content
+                    # transfer, not permission to traverse BnF login or SSO.
+                    # No original session cookie or auth header reaches its
+                    # destination (including any later redirected hop).
+                    location = response.headers.get('location') or ''
+                    if response.status_code not in {301, 302, 303, 307, 308}:
+                        raise ReaderHTTPError('download_redirect_refused')
+                    if (not location or len(location) > 16384
+                            or any(ord(c) < 33 or ord(c) == 127
+                                   or c == '\\' or c.isspace() for c in location)):
+                        raise ReaderHTTPError('download_redirect_refused')
+                    next_url = urljoin(str(response.url), location)
+                    parsed = urlsplit(next_url)
+                    if (parsed.hostname == 'pret.bnf.fr'
+                            and (parsed.path.startswith('/my_profile/')
+                                 or parsed.path.startswith('/sso/'))):
+                        raise ReaderHTTPError('download_redirect_refused')
+                    if not admitted():
+                        raise ReaderHTTPError('download_redirect_refused')
+                    try:
+                        # Isolated 0700 directory; no private BnF client,
+                        # headers, cookie jar or credentials cross the hop.
+                        with TemporaryDirectory(prefix='cifereca-bnf-acsm-') as private:
+                            candidate = Path(private) / 'token.acsm'
+                            receipt = HTTPX_TRANSPORT.attested_https_download(
+                                producer='provider.bnf-pret.delivery',
+                                url=next_url, target=candidate,
+                                admission_current=admitted,
+                                headers={'Accept': 'application/vnd.adobe.adept+xml, application/octet-stream'},
+                                timeout=min(15, max(0.1, deadline - time.monotonic())),
+                                max_bytes=MAX_TOKEN_BYTES, max_redirects=8,
+                                max_duration=max(0.001, deadline - time.monotonic()),
+                            )
+                            if not admitted() or time.monotonic() >= deadline:
+                                raise ReaderHTTPError('download_redirect_refused')
+                            return receipt.path.read_bytes()
+                    except (ValueError, OSError, httpx.HTTPError):
+                        # Never expose signed URL, host, tokens or staging path.
+                        raise ReaderHTTPError('download_redirect_refused') from None
                 if response.status_code != 200:
                     code = {401: 'auth_required', 403: 'access_denied',
                             429: 'rate_limited'}.get(response.status_code, 'http_unavailable')
