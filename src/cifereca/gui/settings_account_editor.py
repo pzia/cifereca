@@ -9,13 +9,14 @@ from __future__ import annotations
 from typing import Any
 
 from .borrower_scoped_options import linked_borrower_choices
+from .settings_loan_observation import loan_cache_observations
 
 
 def build_provider_account_editor(
     *, data: dict[str, Any], provider_id: str, account_id: str,
     descriptor: Any, configured_identities: list[dict[str, Any]],
     accounts_container: Any, config: Any, Gtk: Any, Adw: Any,
-    observed_borrowers: Any = (),
+    observed_borrowers: Any = (), observed_loans: Any = (),
 ) -> tuple[dict[str, Any], Any]:
     """Create descriptor-driven provider rows and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
@@ -137,6 +138,20 @@ def build_provider_account_editor(
         note.set_title(account_note[0])
         note.set_subtitle(account_note[1])
         group.add(note)
+    # Settings projects positive local observations only. Existing loans may
+    # belong to other identities or credentials; never infer a provider quota,
+    # a zero-loan account or a remaining allowance from this cached list.
+    # The text is read-only and never participates in the settings draft.
+    if getattr(getattr(descriptor, "capabilities", None), "loans", None) is True:
+        for title, subtitle in loan_cache_observations(
+            provider_id=provider_id, credential_id=account_id,
+            identity_id=chosen_owner, observed_borrowers=observed_borrowers,
+            cached_loans=observed_loans,
+        ):
+            observation = Adw.ActionRow()
+            observation.set_title(title)
+            observation.set_subtitle(subtitle)
+            group.add(observation)
     delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
     delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
     editor = {
