@@ -102,15 +102,29 @@ def plan_existing_verified_presence(
 
     scope = snapshot.scope
     with storage._lock, storage._connect() as db:
-        dirs = db.execute(
-            "SELECT identity_id,directory_name FROM identities"
-        ).fetchall()
-        owner = [name for identity, name in dirs if identity == scope.identity_id]
-        # A missing/ambiguous identity folder cannot attest this placement.
-        owner_dir = owner[0] if len(owner) == 1 else ""
-        reserved_dirs = frozenset(
-            name for _, name in dirs if type(name) is str and name
+        # Exact local B presence must belong to this identity's registered
+        # physical directory. The full identity registry can be arbitrarily
+        # large and is irrelevant to one provider/source plan. A duplicate
+        # directory in imported/corrupt SQLite must fail closed even if an
+        # OriginLink and SHA are otherwise valid.
+        owner_row = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (scope.identity_id,),
+        ).fetchone()
+        owner_dir = (
+            owner_row[0]
+            if owner_row is not None and type(owner_row[0]) is str and owner_row[0]
+            else ""
         )
+        if owner_dir and db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (owner_dir, scope.identity_id),
+        ).fetchone() is not None:
+            owner_dir = ""
+        # _verified_copy checks the exact owner folder as the first path
+        # component, and only needs that owner's name in this membership set.
+        reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
         binding = db.execute(
             "SELECT identity_id,enabled FROM provider_connections "
             "WHERE provider_id=? AND credential_id=?",
