@@ -915,7 +915,7 @@ class ParisClient:
                 "PNB redirect refused site=%s reason=invalid_https_destination",
                 public_site(url),
             )
-            raise ParisRedirectError(public_site(url)) from None
+            raise ParisRedirectError(host) from None
 
     @staticmethod
     def _pnb_trace_path(url: str) -> str:
