@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from cifereca.plugin_api import (
-    Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult,
+    Account, HistoryItem, ItemDetail, Loan, SearchResult,
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
@@ -98,7 +98,7 @@ DESCRIPTOR = ProviderDescriptor(
         search=True,
         loans=True,
         history=True,
-        bookings=True,
+        bookings=False,
         holdings=True,
         borrow=True,
         digital_download=True,
@@ -898,9 +898,6 @@ class ParisProviderSession(ProviderSession):
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
 
-    def bookings(self, account: Account) -> list[Booking]:
-        return self._decorate(self.client.all_bookings(account.unique_id), self.provider_id, self.credential_id)
-
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         # An unsupported field/scope is a new failed attempt, not a reason
         # to keep a previous partial Syracuse branch warning visible.
@@ -1006,9 +1003,6 @@ class ParisProviderSession(ProviderSession):
         state["pairings"] = dict(self.pairing_status)
         state["history_errors"] = [
             dict(row) for row in getattr(self.client, "last_history_errors", ()) if isinstance(row, dict)
-        ]
-        state["booking_errors"] = [
-            dict(row) for row in getattr(self.client, "last_booking_errors", ()) if isinstance(row, dict)
         ]
         # Observed response-page descriptors only. Never an active server
         # search filter or property attached to an individual book.

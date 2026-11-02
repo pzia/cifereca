@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-from cifereca.plugin_api import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
+from cifereca.plugin_api import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 
 DATE_RE = re.compile(r"^/Date\((-?\d+)(?:[+-]\d{4})?\)/$")
 TAG_RE = re.compile(r"<[^>]+>")
@@ -91,23 +91,6 @@ def normalize_history(raw: dict[str, Any], provider: str) -> HistoryItem:
         document_type=raw.get("TypeOfDocument"),
         borrowed_at=borrowed,
         returned_at=returned,
-    )
-
-
-def normalize_booking(raw: dict[str, Any], provider: str) -> Booking:
-    return Booking(
-        id=str(raw.get("Id") or raw.get("HoldingId") or raw.get("RecordId") or uuid.uuid4()),
-        provider=provider,  # type: ignore[arg-type]
-        medium="digital" if provider == "DILICOM" else "physical",
-        title=str(raw.get("Title") or "Sans titre"),
-        record_id=str(raw["RecordId"]) if raw.get("RecordId") is not None else None,
-        booking_date=microsoft_date_to_iso(raw.get("BookingDate")),
-        availability_date=microsoft_date_to_iso(raw.get("AvailabilityDate")),
-        available_until=microsoft_date_to_iso(raw.get("AvailableUntilDate")),
-        location=raw.get("LocationLabel") or raw.get("Location"),
-        rank=str(raw.get("Rank")) if raw.get("Rank") is not None else None,
-        state=raw.get("State"),
-        raw=raw,
     )
 
 

@@ -15,12 +15,12 @@ from typing import Any, Iterable, Callable
 from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
-from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
+from cifereca.plugin_api import Account, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
 from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
-from cifereca_paris_normalize import normalize_booking, normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
+from cifereca_paris_normalize import normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
 from cifereca_paris_bibliography import project_search_response_facets
 
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
@@ -152,7 +152,6 @@ class ParisClient:
         self._last_scenario_facet_observation: tuple[str, int, list[dict[str, Any]]] | None = None
         self.last_pairing_errors: list[dict[str, str]] = []
         self.last_history_errors: list[dict[str, str]] = []
-        self.last_booking_errors: list[dict[str, str]] = []
         self.last_pnb_borrow: dict[str, Any] = {"phase": "idle"}
 
     def _create_http_client(self, profile: str = "browser") -> httpx.Client:
@@ -490,8 +489,6 @@ class ParisClient:
                 errors.append({"upstream": provider, "type": type(exc).__name__})
         if operation == "history":
             self.last_history_errors = errors
-        elif operation == "bookings":
-            self.last_booking_errors = errors
         if len(errors) == 2 and not rows:
             kinds = ",".join(sorted({row["type"] for row in errors}))
             raise ParisError(f"{operation} indisponible: {kinds}")
@@ -501,18 +498,6 @@ class ParisClient:
         self.last_history_errors = []
         rows = self._aggregate_account_rows("history", self.history, uid)
         return sorted(rows, key=lambda x: x.borrowed_at or x.returned_at or "", reverse=True)
-
-    def bookings(self, provider: str, uid: str = "") -> list[Booking]:
-        def work():
-            r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/ListBookings", params=self._params(provider, uid), headers=self._api_headers())
-            data = self._json(r, f"bookings {provider}")
-            rows = ((data.get("d") or {}).get("Bookings") or [])
-            return [normalize_booking(x, provider) for x in rows if isinstance(x, dict)]
-        return self._timed("API", f"bookings {provider}", work)
-
-    def all_bookings(self, uid: str = "") -> list[Booking]:
-        self.last_booking_errors = []
-        return self._aggregate_account_rows("bookings", self.bookings, uid)
 
     def pairings(self) -> list[Account]:
         def work():
@@ -1100,18 +1085,6 @@ class ParisClient:
             return value
         return self._timed("PNB", "download digital document", work)
 
-
-    def cancel_booking(self, booking: Booking, uid: str = "") -> dict[str, Any]:
-        if not booking.raw:
-            raise ParisError("L'objet réservation Syracuse brut est requis pour l'annulation")
-        def work():
-            r = self.client.post(
-                f"{self.base_url}{ACCOUNT_SERVICE}/CancelBookings",
-                headers={**self._api_headers(), "Content-Type": "application/json; charset=UTF-8"},
-                json={"bookings": [booking.raw], "userUniqueIdentifier": uid},
-            )
-            return self._json(r, "cancel booking")
-        return self._timed("ACTION", "cancel booking", work)
 
     def save_pnb_preferences(self, passphrase: str, hint: str, reader_id: str, reader_app_name: str, uid: str = "") -> dict[str, Any]:
         """Interface Syracuse découverte dans le JS officiel.
