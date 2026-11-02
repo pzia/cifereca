@@ -142,33 +142,27 @@ def complete_selected_delivery(
 
     if not current():
         raise ValueError("canonical_delivery_source_rebound")
-    identities = [x for x in storage.identities()
-                  if x.get("identity_id") == scope.identity_id]
-    if len(identities) != 1:
+    directory, exclusive_owner = storage.exact_profile_directory_binding(
+        scope.identity_id,
+    )
+    if directory is None:
         raise ValueError("canonical_delivery_identity_unknown")
-    directory = identities[0].get("directory_name")
-    if (type(directory) is not str or not directory
-            or directory in (".", "..") or "/" in directory or "\\" in directory):
+    if (not directory or directory in (".", "..")
+            or "/" in directory or chr(92) in directory):
         raise ValueError("canonical_delivery_profile_path_invalid")
 
     def physical_owner_unique() -> bool:
-        # An imported/corrupt SQLite registry can map two identities onto
-        # one folder even if the modern schema has a UNIQUE index. A remote
-        # GET would then stage private bytes in the other user's namespace.
+        # Verify the same exact folder owner after GET and during the
+        # selected delivery, without loading all identities per chunk.
         try:
-            registered = storage.identities()
-            return (sum(
-                item.get("directory_name") == directory
-                for item in registered
-            ) == 1 and any(
-                item.get("identity_id") == scope.identity_id
-                and item.get("directory_name") == directory
-                for item in registered
-            ))
+            current_directory, unique = storage.exact_profile_directory_binding(
+                scope.identity_id,
+            )
+            return unique and current_directory == directory
         except Exception:
             return False
 
-    if not physical_owner_unique():
+    if not exclusive_owner or not physical_owner_unique():
         raise ValueError("canonical_delivery_profile_directory_ambiguous")
 
     # Create a new, isolated private namespace for this one request. Do not
