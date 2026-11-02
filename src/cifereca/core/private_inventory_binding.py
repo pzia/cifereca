@@ -64,7 +64,19 @@ def private_inventory_binding_current(service, account, session, *, scope, epoch
         bindings = [row for row in service.storage.provider_connections(identity_id=identity)
                     if row.get("provider_id") == provider
                     and row.get("credential_id") == credential]
-        return (len(bindings) == 1 and bindings[0].get("enabled") is True
-                and memory_current())
+        # The connection only attests an identity. An upstream borrower can
+        # be removed or reassigned independently while that credential stays
+        # connected. Require the exact persisted account-to-connection join
+        # before AND after every private library read; no legacy fallback
+        # based on a sole in-memory account or on the selected UI profile.
+        return (
+            len(bindings) == 1
+            and bindings[0].get("enabled") is True
+            and service.storage.provider_scope_account_bound(
+                identity_id=identity, provider_id=provider,
+                credential_id=credential, account_id=scope[3],
+            ) is True
+            and memory_current()
+        )
     except Exception:
         return False
