@@ -61,10 +61,12 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(names, ["provider"])
         self.assertIn("test modules", reason)
         # Non-README assets and deletions still trigger exhaustive checks.
-        self.assertEqual(self.names([
+        names, reason = self.names([
             ("M", "src/plugins/provider/tests/test_local.py"),
             ("M", "src/plugins/consumer/notes.md"),
-        ])[0], [])
+        ])
+        self.assertEqual(names, ["consumer", "leaf", "provider"])
+        self.assertIn("dependency closure", reason)
         self.assertEqual(self.names([("D", "src/plugins/consumer/README.md")])[0], [])
         self.assertIn("deletion", self.names([("D", "src/plugins/consumer/README.md")])[1])
         self.assertEqual(self.names([("M", "src/plugins/consumer/README.md")])[1],
