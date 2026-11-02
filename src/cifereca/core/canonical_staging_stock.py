@@ -233,6 +233,21 @@ def repair_exact_published_staging(
         raise ValueError("canonical_stock_consent_changed")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # The physical profile directory was resolved before copying bytes.
+        # An imported or concurrently rebound registry can map this same
+        # directory to another identity. In that case, a staging repair must
+        # never rewrite the Placement (even when all SHA/receipt facts match).
+        owner_directory = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (source.scope.identity_id,),
+        ).fetchone()
+        foreign_owner = db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (profile.name, source.scope.identity_id),
+        ).fetchone()
+        if owner_directory != (profile.name,) or foreign_owner is not None:
+            raise ValueError("canonical_stock_profile_ambiguous")
         current, confirmed = _record(db, source, placement_id)
         if current != original or confirmed != proof:
             raise ValueError("canonical_stock_evidence_changed")
