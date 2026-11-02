@@ -2532,6 +2532,10 @@ class Storage:
                 or not identity_id or not provider_id or not credential_id):
             return False
         with self._lock, self._connect() as db:
+            # Both cardinality checks must use the same read snapshot:
+            # a concurrent owner rebind cannot mix an old connection with
+            # a newly registered borrower.
+            db.execute("BEGIN")
             connections = db.execute(
                 "SELECT connection_id,identity_id,enabled "
                 "FROM provider_connections WHERE provider_id=? "
