@@ -553,3 +553,36 @@ def test_reconnect_restarts_synthetic_inventory_failure_budget():
         assert session.rights_observation_snapshot(fresh).rights == ()
     finally:
         session.close()
+
+
+
+def test_selected_offer_never_replays_across_session_recreation_and_id_reuse(
+    tmp_path, monkeypatch,
+):
+    """Equal account/epoch and reused Python IDs cannot revive an old offer."""
+    import cifereca_reference as reference
+
+    # Emulate allocator reuse between plugin activation cycles. Without a
+    # session lifetime nonce, both otherwise identical sessions issued the
+    # exact same SHA-256 selected-offer ID.
+    monkeypatch.setattr(reference, "id", lambda _obj: 42, raising=False)
+    first, (owner, _other) = fixture()
+    second = None
+    try:
+        previous = qualify(first, owner, "epub-001").rights[0].delivery_offer_id
+        second, (same_owner, _same_other) = fixture()
+        current = qualify(second, same_owner, "epub-001").rights[0].delivery_offer_id
+        assert previous.startswith("reference.offer:")
+        assert current.startswith("reference.offer:")
+        assert previous != current
+        with pytest.raises(ProviderCapabilityError, match="reference_offer_unavailable"):
+            second.rights_selected_delivery_candidate(
+                same_owner, edition_id="epub-001", right_id="right-epub-001",
+                kind="purchase", branch=BRANCH, delivery_offer_id=previous,
+                target_dir=tmp_path, explicit_user_action=True,
+            )
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        first.close()
+        if second is not None:
+            second.close()

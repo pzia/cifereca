@@ -13,6 +13,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import secrets
 from threading import RLock
 
 from cifereca.plugin_api import (
@@ -46,6 +47,10 @@ class ReferenceSession(ProviderSession):
         self.identity_broker = identity_broker
         self._lock = RLock()
         self._epoch = 0
+        # One unguessable lifetime tag per selected-offer session. Python
+        # object IDs can be recycled across plugin reloads, even if account
+        # strings and the initial epoch are identical.
+        self._offer_nonce = secrets.token_hex(16)
         self._closed = False
         self._interrupted: set[tuple[str, str, str]] = set()
         # Explicit, deterministic negative fixture: every account/page may
@@ -72,6 +77,7 @@ class ReferenceSession(ProviderSession):
     def connect(self) -> list[Account]:
         with self._lock:
             self._epoch += 1
+            self._offer_nonce = secrets.token_hex(16)
             self._closed = False
             self._interrupted.clear()
             self._inventory_attempts.clear()
@@ -158,7 +164,8 @@ class ReferenceSession(ProviderSession):
         # the previous offer: this live session object is not the old owner.
         live = next(a for a in self._accounts if self._coords(a) == self._coords(account))
         payload = "\x00".join((*self._coords(account), BRANCH, row.edition_id,
-                                row.kind, str(self._epoch), str(id(live))))
+                                row.kind, str(self._epoch), self._offer_nonce,
+                                str(id(live))))
         return "reference.offer:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _observation(self, row, *, account, observed, qualified=False):
