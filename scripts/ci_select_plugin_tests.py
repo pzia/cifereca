@@ -98,12 +98,14 @@ def affected_packages(changed: set[str], graph: dict[str, set[str]]) -> list[str
 def select(changes: list[tuple[str, str]], root: Path) -> tuple[list[str], str]:
     direct_tests: set[str] = set()
     product: set[str] = set()
+    readme_seen = False
     for status, path in changes:
         if path.startswith(("docs/", ".agents/")) or path == "AGENTS.md":
             continue
         # README edits do not alter the executable plugin contract. All other
         # assets, README deletions and renames retain the fail-closed fallback.
         if status in {"A", "M"} and PLUGIN_README.fullmatch(path):
+            readme_seen = True
             continue
         match = PACKAGE_PATH.fullmatch(path)
         if status not in {"A", "M"} or not match:
@@ -121,6 +123,8 @@ def select(changes: list[tuple[str, str]], root: Path) -> tuple[list[str], str]:
         else:
             product.add(package)
     if not direct_tests and not product:
+        if readme_seen:
+            return [], "skip: only plugin README edits"
         return [], "full: no isolated plugin target"
     try:
         graph, audited = dependency_graph(root)
@@ -170,12 +174,14 @@ def main() -> int:
         targets, reason = select(git_changes(args.root, args.base, args.head, args.event), args.root)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         targets, reason = [], "full: diff unavailable or ambiguous (" + type(error).__name__ + ")"
-    print(json.dumps({"mode": "targeted" if targets else "full", "targets": targets, "reason": reason}))
+    mode = "skip" if reason.startswith("skip:") else ("targeted" if targets else "full")
+    print(json.dumps({"mode": mode, "targets": targets, "reason": reason}))
     if args.targets_file:
         args.targets_file.write_text(" ".join(targets), encoding="utf-8")
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:
             output.write("plugin_targets=" + " ".join(targets) + "\n")
+            output.write("plugin_mode=" + mode + "\n")
     return 0
 
 

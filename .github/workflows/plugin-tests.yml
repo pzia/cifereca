@@ -6,9 +6,6 @@ on:
     branches: [main]
     paths:
       - 'src/plugins/**'
-      # Keep the push job scoped to executable or shared plugin changes.
-      - '!src/plugins/README.md'
-      - '!src/plugins/*/README.md'
       - 'src/cifereca/**'
       - '!src/cifereca/gui/**'
       - '!src/cifereca/builtin_ui/**'
@@ -48,15 +45,18 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v6
+        if: steps.scope.outputs.plugin_mode != 'skip'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Install test dependencies
+        if: steps.scope.outputs.plugin_mode != 'skip'
         run: python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12" "PyMuPDF>=1.26,<2"
 
       - name: Run plugin tests
+        if: steps.scope.outputs.plugin_mode != 'skip'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}

@@ -126,6 +126,14 @@ def test_mixed_changes_keep_exhaustive_validation(tmp_path, extra):
         assert selected[flag] == "true", extra
 
 
+def test_pr_readme_skip_detects_deletions_and_renames():
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert 'git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA" -- src/plugins/' in source
+    assert "grep -Ev '^[AM][[:space:]]'" in source
+    assert "if plugin_runtime_changes; then" in source
+    assert "packaging=true" in source
+
+
 def test_required_ci_context_and_manual_dispatch_are_unchanged():
     source = WORKFLOW.read_text(encoding="utf-8")
     assert "  pull_request:\n" in source

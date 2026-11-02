@@ -68,7 +68,12 @@ jobs:
           }
 
           plugin_runtime_changes() {
-            # README-only edits should not launch a complete plugin test run.
+            # Only added/modified READMEs are inert. Deletions, type changes
+            # and renames remain fail-closed (no reliance on --name-only).
+            if git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA" -- src/plugins/ | \
+               grep -Ev '^[AM][[:space:]]' | grep -q .; then
+              return 0
+            fi
             grep -E '^src/plugins/' "$changed_file" | \
               grep -Ev '^src/plugins/([^/]+/)?README\.md$' >/dev/null
           }
