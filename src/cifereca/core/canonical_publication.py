@@ -198,16 +198,17 @@ def publish_completed_acquisition(
         if transaction_guard is not None and transaction_guard(db) is not True:
             raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.
-        owner = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
+        connections = db.execute(
+            "SELECT connection_id,identity_id,enabled FROM provider_connections "
+            "WHERE provider_id=? AND credential_id=? LIMIT 2",
             (scope.provider_id, scope.credential_id),
-        ).fetchone()
+        ).fetchall()
         registered_profile = db.execute(
             "SELECT directory_name FROM identities WHERE identity_id=?",
             (scope.identity_id,),
         ).fetchone()
-        if (owner != (scope.identity_id, 1)
+        if (len(connections) != 1
+                or connections[0][1:] != (scope.identity_id, 1)
                 or registered_profile != (directory,)):
             raise ValueError("canonical_connection_or_profile_rebound")
         # A legacy/imported SQLite registry can contain two identities that
@@ -227,10 +228,10 @@ def publish_completed_acquisition(
         # borrower's identifier inside its write transaction.
         account_rows = db.execute(
             "SELECT 1 FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=? "
-            "AND account_id=? LIMIT 2",
-            (scope.identity_id, scope.provider_id, scope.credential_id,
-             scope.account_id),
+            "WHERE connection_id=? AND identity_id=? AND provider_id=? "
+            "AND credential_id=? AND account_id=? LIMIT 2",
+            (connections[0][0], scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id),
         ).fetchall()
         if len(account_rows) != 1:
             raise ValueError("canonical_account_not_registered")
