@@ -50,7 +50,7 @@ def test_expiry_uses_only_owner_directory_under_many_unrelated_profiles(
     assert module.clear_checkpoint_if_no_duplicates(
         store, library_root=root, placement_id=first.placement_id,
     ) is True
-    assert allowed == [frozenset({"A"})]
+    assert allowed == [frozenset({"A"}), frozenset({"A"})]
     assert store.metadata_get(key) is None
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
     assert store.placement_get(foreign.placement_id)["state"] == "present"
@@ -134,3 +134,43 @@ def test_owner_collision_between_hash_and_metadata_delete_never_expires_marker(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_directory_name "
                 "ON identities(directory_name)"
             )
+
+
+
+def test_keeper_corrupted_after_initial_hash_cannot_erase_pending_advisory(
+    store, tmp_path, monkeypatch,
+):
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original_marker = store.metadata_get(key)
+    assert original_marker is not None
+    real = module._verified_copy
+    probes = []
+
+    def corrupt_after_first_proof(path, **kwargs):
+        verified = real(path, **kwargs)
+        probes.append(verified)
+        if len(probes) == 1:
+            # Synthetic external filesystem writer runs between the initial
+            # unlocked SHA proof and the final BEGIN IMMEDIATE cleanup.
+            assert verified
+            paths[0].write_bytes(b"X" * len(BYTES))
+        return verified
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "_verified_copy", corrupt_after_first_proof)
+        assert module.clear_checkpoint_if_no_duplicates(
+            store, library_root=root, placement_id=first.placement_id,
+        ) is False
+
+    assert probes == [True, False]
+    assert store.metadata_get(key) == original_marker
+    assert store.placement_get(first.placement_id)["state"] == "present"
+    assert paths[0].read_bytes() != BYTES
+    # Fixing the synthetic corruption allows a fresh verified expiry, with
+    # unchanged SQL history and no destructive file operation by Core.
+    paths[0].write_bytes(BYTES)
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is True
+    assert store.metadata_get(key) is None
+    assert paths[0].read_bytes() == BYTES

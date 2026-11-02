@@ -333,6 +333,16 @@ def clear_checkpoint_if_no_duplicates(
             (placement_id, identity, artifact, path),
         ).fetchone() is None:
             return False
+        # An external writer can replace/corrupt the keeper after the
+        # unlocked preliminary hash but before BEGIN IMMEDIATE. Expiring the
+        # advisory without a still-valid physical keeper loses the operator's
+        # last cleanup signal. This rare maintenance-only path deliberately
+        # rehashes inside the final transaction, immediately before DELETE.
+        if not _verified_copy(
+            path, root=library_root, owner_directory=owner_dir,
+            registered_directories=reserved, size=size, sha256=digest,
+        ):
+            return False
         result = db.execute(
             "DELETE FROM metadata WHERE key=? AND value=?",
             (key, marked[0]),
