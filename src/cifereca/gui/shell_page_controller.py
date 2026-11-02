@@ -69,7 +69,9 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
         contributed = list(fallback)
     # Management pages remain reachable to recover from broken/disabled UI.
     contributed += [p for p in fallback if p.route in {"plugins", "settings"} and all(x.route != p.route for x in contributed)]
-    resolved = resolve_pages(contributed)
+    # Retired product route: older installed UI plugins cannot resurrect it.
+    # Filter before invoking an untrusted factory to prevent bookings I/O.
+    resolved = [page for page in resolve_pages(contributed) if page.route != "bookings"]
     if not is_current():
         return
     window._pages = {}
