@@ -487,8 +487,34 @@ class LoanSnapshot:
     scope: ProfileScope
     loans: tuple[LoanRecord, ...]
     status: str
-    # A single page is never evidence of complete server inventory/deletions.
+    # Validated active-loans widget coverage is scoped to this borrower;
+    # never authorizes a return, expiry or deletion by itself.
     exhaustive: bool = False
+
+
+def _active_loans_may_be_truncated(section: _Node) -> bool:
+    """Reject positive completeness if this exact loan widget can load more.
+
+    This is deliberately narrower than the catalogue paginator: search
+    recommendations elsewhere on the page must not affect this inventory.
+    """
+    paging_classes = {
+        "pagination", "pager", "load-more", "show-more", "infinite-scroll",
+        "spinner", "loading", "skeleton", "js-pagination", "js-load-more",
+    }
+    for node in section.walk():
+        attrs = node.attrs
+        if attrs.get("aria-busy", "").lower() == "true":
+            return True
+        if attrs.get("data-has-more", "").lower() in {"true", "1", "yes"}:
+            return True
+        if attrs.get("data-next-page") or attrs.get("data-next-url"):
+            return True
+        if paging_classes.intersection(attrs.get("class", "").split()):
+            return True
+        if "next" in attrs.get("rel", "").split():
+            return True
+    return False
 
 
 def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
@@ -552,8 +578,16 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
             else:
                 loan = previous
         loans[loan.loan_id] = loan
-    # Empty section may mean pagination, incomplete HTML or loading state.
-    return LoanSnapshot(expected, tuple(loans.values()), "partial" if partial or not loans else "observed")
+    # Product decision #4142: a validated, nonempty official active-loans
+    # section is the bounded inventory of this authenticated borrower ONLY.
+    # Never treat a blank widget, broken card, or pagination/lazy-load signal
+    # as proof of negative absence. Rights/mutations remain separate.
+    exhaustive = bool(loans) and not partial and not _active_loans_may_be_truncated(sections[0])
+    return LoanSnapshot(
+        expected, tuple(loans.values()),
+        "observed" if loans and not partial else "partial",
+        exhaustive=exhaustive,
+    )
 
 
 def merge_observed_loans(previous: LoanSnapshot, current: LoanSnapshot) -> LoanSnapshot:
