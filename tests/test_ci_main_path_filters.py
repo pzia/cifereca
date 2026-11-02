@@ -62,6 +62,18 @@ def test_docs_handoffs_release_triggers_run_zero_heavy_suites():
     assert route("docs/notes.md", "AGENTS.md") == set()
 
 
+def test_readme_push_keeps_lightweight_selection_but_skips_test_execution():
+    # The workflow must still start for status-aware selection: deleting or
+    # renaming README must never be hidden by GitHub paths (no status filter).
+    for path in ("src/plugins/README.md", "src/plugins/provider-kobo/README.md"):
+        assert route(path) == {"plugins"}, path
+    workflow = WORKFLOWS["plugins"].read_text(encoding="utf-8")
+    assert "plugin_mode != 'skip'" in workflow
+    assert workflow.count("if: steps.scope.outputs.plugin_mode != 'skip'") == 3
+    assert route("src/plugins/provider-kobo/README.md",
+                 "src/plugins/provider-kobo/plugin.py") == {"plugins"}
+
+
 def test_plugin_only_runs_plugin_suite_not_core_or_wheel():
     for path in (
         "src/plugins/youth-catalog/youth_page.py",

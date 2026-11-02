@@ -52,6 +52,26 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(names, ["leaf", "provider"])
         self.assertIn("test modules", reason)
 
+    def test_readme_changes_do_not_expand_isolated_test_changes(self):
+        names, reason = self.names([
+            ("M", "src/plugins/provider/tests/test_local.py"),
+            ("M", "src/plugins/consumer/README.md"),
+            ("A", "src/plugins/README.md"),
+        ])
+        self.assertEqual(names, ["provider"])
+        self.assertIn("test modules", reason)
+        # Non-README assets and deletions still trigger exhaustive checks.
+        names, reason = self.names([
+            ("M", "src/plugins/provider/tests/test_local.py"),
+            ("M", "src/plugins/consumer/notes.md"),
+        ])
+        self.assertEqual(names, ["consumer", "leaf", "provider"])
+        self.assertIn("dependency closure", reason)
+        self.assertEqual(self.names([("D", "src/plugins/consumer/README.md")])[0], [])
+        self.assertIn("deletion", self.names([("D", "src/plugins/consumer/README.md")])[1])
+        self.assertEqual(self.names([("M", "src/plugins/consumer/README.md")])[1],
+                         "skip: only plugin README edits")
+
     def test_product_change_includes_direct_and_transitive_consumers(self):
         names, reason = self.names([("M", "src/plugins/provider/module.py")])
         self.assertEqual(names, ["consumer", "leaf", "optional", "provider"])
@@ -134,6 +154,27 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(selector.select(selector.git_changes(self.root, head, renamed, "push"), self.root)[0], [])
         with self.assertRaises(ValueError):
             selector.git_changes(self.root, base, head, "push")
+
+    def test_readme_only_selection_reports_skip_in_cli(self):
+        # Synthetic Git history rather than trusting a path-only filter.
+        self.git("init")
+        self.git("config", "user.name", "Test")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("add", ".")
+        self.git("commit", "-m", "base")
+        base = self.git("rev-parse", "HEAD")
+        readme = self.root / "src/plugins/provider/README.md"
+        readme.write_text("plugin documentation\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "docs")
+        head = self.git("rev-parse", "HEAD")
+        output = self.root / "result.txt"
+        run = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root),
+                              "--event", "push", "--base", base, "--head", head,
+                              "--github-output", str(output)],
+                             capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(run.stdout)["mode"], "skip")
+        self.assertIn("plugin_mode=skip", output.read_text(encoding="utf-8"))
 
     def test_manual_missing_and_zero_sha_cli_fall_back(self):
         for event, base in (("workflow_dispatch", ""), ("push", "0" * 40), ("push", "f" * 40)):
