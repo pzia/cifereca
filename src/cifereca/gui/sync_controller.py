@@ -24,7 +24,6 @@ from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_source_details import add_sync_detail
-from .sync_source_controls_overview import sync_axes_dashboard_summary
 
 
 def _build_sync_page(self):
@@ -255,6 +254,8 @@ def _refresh_sync_page(self) -> None:
     row_titles = sync_source_row_labels(rows)
     actionable = any(item.action_enabled for item in presentations)
     if summary is not None:
+        # Also imported in the standalone AST-based GTK controller harness.
+        from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
         summary.set_label(
             f"{len(rows)} source(s) · "
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
