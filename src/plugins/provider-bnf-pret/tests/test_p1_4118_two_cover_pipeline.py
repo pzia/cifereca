@@ -47,9 +47,9 @@ def _png(rgb: tuple[int, int, int]) -> bytes:
 
 def _card(resource: str, title: str, cover: str) -> str:
     return (
-        '<li class="list-details__item"><article itemscope '
+        '<li class="list-details__item"><article class="view-details" itemscope '
         'itemtype="https://schema.org/Book">'
-        f'<a href="/resources/{resource}"><h3>{title}</h3></a>'
+        f'<a href="/resources/{resource}"><h3 class="details-content__title">{title}</h3></a>'
         f'<img class="cover" src="{cover}"></article></li>'
     )
 
