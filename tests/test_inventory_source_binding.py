@@ -26,7 +26,12 @@ def rig(provider):
         return state.enabled
     storage = NS(metadata_get=metadata_get,
                  identity_for_connection=lambda p, c: state.owner,
-                 provider_connections=lambda **kw: state.connections)
+                 provider_connections=lambda **kw: state.connections,
+                 provider_scope_account_bound=lambda **kw: (
+                     kw == dict(identity_id='alice', provider_id=provider,
+                                credential_id='credential-a', account_id='account-a')
+                     and state.owner == 'alice' and connection['enabled'] is True
+                 ))
     service = NS(accounts=[account], _sessions={(provider, account.credential_id): session},
                  _session_key=lambda p, c: (p, c), storage=storage,
                  identity_by_id=lambda identity: NS(identity_id=identity) if state.identity else None,
