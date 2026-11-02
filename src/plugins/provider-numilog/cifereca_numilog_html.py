@@ -284,7 +284,7 @@ def _scoped_confirmation_href(card, links, base_url):
     return next(iter(chosen)) if chosen else None
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None, strict_public_enrichment_selector=None):
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None, strict_public_enrichment_selector=None, inventory_diagnostics=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -298,6 +298,19 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
 
     items, keys = [], set()
     cards = _scoped_library_cards(tables[0])
+    if inventory_diagnostics is not None:
+        # A card with no download link is not represented in the legacy
+        # parsed list. A successful HTTP page must not silently turn that
+        # dropped title into an exhaustive purchased-book observation.
+        all_titles = {
+            id(node) for node in tables[0].walk()
+            if 'pTitle' in classes(node) and node.text()
+        }
+        scoped_titles = {
+            id(node) for card in cards for node in card.walk()
+            if 'pTitle' in classes(node) and node.text()
+        }
+        inventory_diagnostics['complete'] = all_titles == scoped_titles
     if delivery_evidence and delivery_diagnostics is not None:
         scoped_scripts = {
             id(n) for card in cards for n in card.walk() if n.tag == 'script'
@@ -319,8 +332,12 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         nodes = list(card.walk())
         links = [n for n in nodes if n.tag == 'a' and 'LnkDownloadBook' in classes(n)]
         if not links:
+            if inventory_diagnostics is not None:
+                inventory_diagnostics['complete'] = False
             continue
         title_nodes = [n for n in nodes if 'pTitle' in classes(n) and n.text()]
+        if inventory_diagnostics is not None and len(title_nodes) != 1:
+            inventory_diagnostics['complete'] = False
         if delivery_evidence and len(title_nodes) > 1:
             # A single readBook link under multiple title nodes cannot
             # establish which product the delivery card is advertising.
@@ -357,6 +374,8 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
             variant = tuple((k,tuple(params[k])) for k in ('m','format','FormatId','FORMAT_ID') if k in params)
             key = (lid[0],variant)
             if key in keys:
+                if inventory_diagnostics is not None:
+                    inventory_diagnostics['complete'] = False
                 # Multiple distinct cards with the same download ID can
                 # present competing ProductId/copy/order data. Inventory may
                 # deduplicate legacy pages, but an EXPLICIT acquisition must
