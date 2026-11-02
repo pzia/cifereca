@@ -990,8 +990,14 @@ class ParisClient:
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
             "Referer": f"{self.base_url}/numerique/",
         }
+        visited_urls: set[str] = set()
         for hop in range(max_redirects):
             self._validate_pnb_redirect_url(current)
+            if current in visited_urls:
+                # Never replay a signed supplier URL in a redirect cycle.
+                # The URL can contain a bearer token: never echo it.
+                raise ParisError("Boucle de redirections PNB détectée")
+            visited_urls.add(current)
             parsed = urlparse(current)
             _TRACE_LOG.info(
                 "TRACE paris pnb-loan redirect-request hop=%s site=%s",
