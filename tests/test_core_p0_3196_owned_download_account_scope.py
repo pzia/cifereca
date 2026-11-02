@@ -40,9 +40,10 @@ def _old_completed_receipt(case, *, account: str):
 
 
 def _lookup(case, **options):
-    return case.service.local_placement_for_source(
-        provider_id="kobo", credential_id="vault-1", item_id="book-1",
-        identity_id="default", **options,
+    from cifereca.core.library_projection import local_placement_for_source
+    return local_placement_for_source(
+        case.service, provider_id="kobo", credential_id="vault-1",
+        item_id="book-1", identity_id="default", **options,
     )
 
 
@@ -53,6 +54,11 @@ def test_completed_other_borrower_receipt_does_not_veto_exact_owned_kobo_right(
     before = case.service.storage.entitlements()
     # Historical consumers intentionally retain their old four-key lookup.
     assert _lookup(case) is not None
+    # The public LibraryService facade preserves its exact legacy signature.
+    assert case.service.local_placement_for_source(
+        provider_id="kobo", credential_id="vault-1", item_id="book-1",
+        identity_id="default",
+    ) is not None
     assert _lookup(case, account_id="account") is None
     assert _lookup(case, account_id="other-borrower") is not None
     target = case.service.owned_library_download_target(case.entry)
