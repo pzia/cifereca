@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-from cifereca.plugin_api import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
+from cifereca.plugin_api import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 
 DATE_RE = re.compile(r"^/Date\((-?\d+)(?:[+-]\d{4})?\)/$")
 TAG_RE = re.compile(r"<[^>]+>")
