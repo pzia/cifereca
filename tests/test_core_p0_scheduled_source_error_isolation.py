@@ -44,9 +44,14 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
             provider_id=second_provider, credential_id="vault-second",
             connected=True, capabilities=NS(personal_library=True, backup=False),
         )
-        service.storage.provider_connection_put({
+        second_connection = service.storage.provider_connection_put({
             "identity_id": "alice", "provider_id": second_provider,
             "credential_id": "vault-second", "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": second_connection, "identity_id": other.identity_id,
+            "provider_id": other.provider_id, "credential_id": other.credential_id,
+            "account_id": other.unique_id,
         })
         broker = SynchronizationBrokerImpl(service)
         for account in service.accounts:
@@ -138,9 +143,14 @@ def test_cancellation_is_not_swallowed_or_followed_by_sibling_refresh(
             provider_id="numilog", credential_id="vault-other",
             connected=True, capabilities=NS(personal_library=True, backup=False),
         )
-        service.storage.provider_connection_put({
+        second_connection = service.storage.provider_connection_put({
             "identity_id": "alice", "provider_id": "numilog",
             "credential_id": "vault-other", "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": second_connection, "identity_id": second.identity_id,
+            "provider_id": second.provider_id, "credential_id": second.credential_id,
+            "account_id": second.unique_id,
         })
         broker = SynchronizationBrokerImpl(service)
         for current in (account, second):
