@@ -1,142 +1,34 @@
-"""P0 #984: only verified provider inventory may produce a success notification."""
+"""P1 #4048: obsolete GUI return notifications are no longer executable.
+
+The old P0 #984 return-feedback oracle was for a GUI mutation withdrawn by
+product decision. The retired implementation and tests remain in git history.
+Retirement must not remove existing read-only ADEPT/loan diagnostics.
+"""
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
-import pytest
 
-from cifereca.gui.return_feedback import loan_return_feedback
-
-
-@pytest.mark.parametrize(
-    ("value", "channel", "expected", "text"),
-    [
-        (
-            {
-                "status": "paris_return_confirmed",
-                "adobe_return_confirmed": True,
-                "provider_return_confirmed": True,
-                "paris_verification": "provider_absent",
-            },
-            "adept", "confirmed", "absent du compte Paris",
-        ),
-        (
-            {
-                "status": "partial", "adobe_return_confirmed": True,
-                "paris_verification": "still_present",
-            },
-            "adept", "attention", "reste actif à Paris",
-        ),
-        (
-            {
-                "status": "partial", "adobe_return_confirmed": True,
-                "paris_verification": "unavailable",
-            },
-            "adept", "attention", "n’a pas pu être confirmée",
-        ),
-        (
-            {"status": "partial", "adobe_return_confirmed": False},
-            "adept", "attention", "ambiguë",
-        ),
-        (
-            {"status": "provider_action_available"},
-            "adept", "attention", "Restituer à Paris (PNB)",
-        ),
-        (
-            {"status": "failed", "code": "adept_return_verification_required"},
-            "adept", "attention", "rejouée",
-        ),
-        (
-            {"status": "adobe_return_requested"},
-            "adept", "attention", "pas confirmée",
-        ),
-        (
-            {"status": "adept_borrower_binding_required"},
-            "adept", "attention", "ambiguë",
-        ),
-        (
-            {"status": "paris_return_confirmed", "adobe_return_confirmed": True,
-             "paris_verification": "provider_absent"},
-            "adept", "attention", "n’a pas pu être confirmée",
-        ),
-        (
-            {"status": "provider_return_confirmed", "provider_inventory_verified": True},
-            "pnb", "confirmed", "absent",
-        ),
-        (
-            {"status": "provider_return_confirmed", "provider_inventory_verified": False},
-            "pnb", "attention", "non confirmée",
-        ),
-        (
-            {"status": "pending_verification", "request_accepted": True},
-            "pnb", "attention", "non confirmé",
-        ),
-        (
-            {"status": "verification_unavailable", "request_accepted": True},
-            "pnb", "attention", "non confirmé",
-        ),
-        (
-            {"status": "still_active"},
-            "pnb", "attention", "reste actif",
-        ),
-        (
-            {"scope": "adobe_first_paris", "status": "partial",
-             "adobe_return_confirmed": True,
-             "reason": "adobe_return_takes_precedence"},
-            "pnb", "attention", "ADEPT est déjà engagée",
-        ),
-        (
-            {"success": True},
-            "pnb", "attention", "n’a pas été vérifiée",
-        ),
-        (
-            {"status": "failed"},
-            "pnb", "attention", "non confirmée",
-        ),
-        (
-            {"status": "attention_required", "code": "loan_return_busy"},
-            "adept", "attention", "déjà en cours",
-        ),
-        (
-            {"status": "attention_required", "code": "loan_return_busy"},
-            "pnb", "attention", "déjà en cours",
-        ),
-        (
-            {"status": "attention_required", "code": "loan_return_identity_conflict"},
-            "pnb", "attention", "plusieurs identités Paris",
-        ),
-        (
-            None, "adept", "attention", "incomplet",
-        ),
-        (
-            [], "pnb", "attention", "incomplet",
-        ),
-    ],
-)
-def test_no_false_confirmed_return(value, channel, expected, text):
-    kind, message = loan_return_feedback(value, channel=channel)
-    assert kind == expected
-    assert text in message
-    if kind == "confirmed":
-        assert (
-            (channel == "adept" and value.get("provider_return_confirmed") is True)
-            or (channel == "pnb" and value.get("provider_inventory_verified") is True)
-        )
+GUI = Path(__file__).resolve().parents[1] / "src" / "cifereca" / "gui"
 
 
-def test_unknown_channel_cannot_accidentally_claim_success():
-    with pytest.raises(ValueError, match="unknown return channel"):
-        loan_return_feedback({"status": "provider_return_confirmed"}, channel="other")
+def test_obsolete_return_notifier_is_not_importable_or_used_by_gtk():
+    assert not (GUI / "return_feedback.py").exists()
+    for module in ("main_window.py", "loans_controller.py", "detail_panel.py"):
+        source = (GUI / module).read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        assert "loan_return_feedback" not in {
+            node.id for node in ast.walk(parsed) if isinstance(node, ast.Name)
+        }
+        assert "from .return_feedback import" not in source
+        assert "Restituer à Paris (PNB)" not in source
 
 
-def test_gui_no_longer_imports_or_dispatches_historical_return_feedback():
-    # The old feedback formatter remains an inert historical projection until
-    # its API compatibility is retired separately. No GUI may invoke it.
-    gui = (Path(__file__).parents[1] / "src" / "cifereca" / "gui"
-           / "loans_controller.py").read_text(encoding="utf-8")
-    assert "loan_return_feedback" not in gui
-    assert "def confirm_return(" not in gui
-    assert "def _return_loan(" not in gui
-    assert "def _return_loan_pnb(" not in gui
-    assert "return_digital(loan" not in gui
-    assert "return_loan_prefer_adept(loan" not in gui
+def test_loan_renewal_still_has_its_own_feedback_without_return_mutation():
+    assert (GUI / "loan_renewal_feedback.py").is_file()
+    controller = (GUI / "loans_controller.py").read_text(encoding="utf-8")
+    assert "loan_renewal_feedback(result)" in controller
+    assert "self.service.renew(loan, confirmed=True)" in controller
+    assert "self.service.return_digital(" not in controller
+    assert "self.service.return_loan_prefer_adept(" not in controller
