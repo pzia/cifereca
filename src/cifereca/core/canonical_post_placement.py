@@ -296,6 +296,19 @@ def clear_checkpoint_if_no_duplicates(
         return False
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # The owner directory could have changed while the keeper was being
+        # SHA-verified outside SQLite. Recheck it under the deletion lock;
+        # a stale owner proof can never erase a pending advisory.
+        owner_now = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (identity,),
+        ).fetchone()
+        if owner_now != (owner_dir,) or db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (owner_dir, identity),
+        ).fetchone() is not None:
+            return False
         # Never erase a pending marker when a second physical Placement
         # remains, even if its bytes no longer match the stored artifact SHA.
         present = db.execute(
