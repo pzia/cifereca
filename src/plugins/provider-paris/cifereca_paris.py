@@ -898,9 +898,6 @@ class ParisProviderSession(ProviderSession):
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
 
-    def bookings(self, account: Account) -> list[Booking]:
-        return self._decorate(self.client.all_bookings(account.unique_id), self.provider_id, self.credential_id)
-
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         # An unsupported field/scope is a new failed attempt, not a reason
         # to keep a previous partial Syracuse branch warning visible.
