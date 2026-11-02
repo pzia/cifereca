@@ -231,7 +231,9 @@ def test_postcommit_cleanup_never_deletes_rebound_staging_namespace(
         replacement_parent = base
     else:
         saved = base.with_name(".canonical-delivery-detached")
-        replacement_parent = foreign
+        replacement_parent = (
+            foreign if replacement == "symlink_parent" else base
+        )
 
     def swap_after_dependency(db, *, table, marker, current_operation=""):
         result = original_dependency(
