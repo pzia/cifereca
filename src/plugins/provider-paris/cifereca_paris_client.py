@@ -886,7 +886,7 @@ class ParisClient:
         """
         try:
             if (type(url) is not str or not 0 < len(url) <= 16384
-                    or any(ord(c) < 33 or ord(c) == 127 or c == "\\\\" or c.isspace()
+                    or any(ord(c) < 33 or ord(c) == 127 or c == chr(92) or c.isspace()
                            for c in url)):
                 raise ValueError
             parsed = urlparse(url)
