@@ -188,6 +188,9 @@ def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
     from cifereca.plugin_api import ProviderError
     session, account, reads, right = _direct_epub_session()
     calls = []
+    # The helper builds a ZIP with the current DOS timestamp. Generate
+    # only once: a one-second boundary must not change the expected bytes.
+    payload = fake_epub_bytes()
     failing = {"value": True}
     def handler(request):
         calls.append(str(request.url))
@@ -196,7 +199,7 @@ def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
                 503, content=b"SYNTHETIC_PRIVATE_BODY_NEVER_LOGGED",
             )
         return httpx.Response(
-            200, content=fake_epub_bytes(),
+            200, content=payload,
             headers={"content-type": "application/epub+zip"},
         )
     session.client.close()
@@ -219,7 +222,7 @@ def test_selected_epub_failed_http_then_explicit_retry_uses_fresh_scope(
             account, **selected(right, tmp_path),
         )
         assert staged.is_file() and staged.suffix == ".epub"
-        assert staged.read_bytes() == fake_epub_bytes()
+        assert staged.read_bytes() == payload
         assert calls == [SIGNED_EPUB, SIGNED_EPUB]
         assert len(reads) > first_reads  # no reuse of stale signed evidence
         assert len(list(tmp_path.iterdir())) == 1
