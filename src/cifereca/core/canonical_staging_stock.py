@@ -24,7 +24,8 @@ from .canonical_promotion import (
     _profile, _stage_parts, cleanup_published_staging, promote_completed_delivery,
 )
 from .canonical_recovery import (
-    _path_verified, _scope, _stage_id, _unique_checkpoint_fields,
+    _exact_borrower_bound_in_db, _path_verified, _scope, _stage_id,
+    _unique_checkpoint_fields,
 )
 from .source_convergence import SourceKey
 
@@ -46,18 +47,11 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
             or row[2] != "sha256:" + row[4]
             or type(row[5]) is not int or row[5] <= 0):
         raise ValueError("canonical_stock_placement_unverified")
-    owner = db.execute(
-        "SELECT identity_id,enabled FROM provider_connections "
-        "WHERE provider_id=? AND credential_id=?",
-        (scope.provider_id, scope.credential_id),
-    ).fetchone()
-    accounts = db.execute(
-        "SELECT account_id FROM provider_accounts WHERE identity_id=? "
-        "AND provider_id=? AND credential_id=?",
-        (scope.identity_id, scope.provider_id, scope.credential_id),
-    ).fetchall()
-    if (owner != (scope.identity_id, 1)
-            or sum(x[0] == scope.account_id for x in accounts) != 1):
+    # The caller already owns the Core Storage transaction. Reuse the exact,
+    # bounded connection+borrower proof from the completed-delivery journal:
+    # an unrelated account roster or a stale foreign connection is not an
+    # authorization to promote historical staging bytes.
+    if not _exact_borrower_bound_in_db(db, scope):
         raise ValueError("canonical_stock_account_unbound")
     references = db.execute(
         "SELECT o.evidence_ref FROM origin_links AS o "
