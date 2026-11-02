@@ -97,6 +97,14 @@ def adept_guidance_for_event(row: object) -> str:
     code = detail.get("code")
     if type(code) is not str:
         return ""
+    # The license/ACSM-specific guidance applies only to the runtime's
+    # request family. An unrelated profile/loan probe's failure is not
+    # evidence that an ACSM activation or another Adobe user was involved.
+    if code in {
+        "invalid_acsm", "adept_license_already_fulfilled_by_another_user",
+        "kobo_adept_timeout",
+    } and operation != "download request":
+        return ""
     advice = _ADVICE.get(code)
     if advice is None:
         return ""
