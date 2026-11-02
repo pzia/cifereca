@@ -24,9 +24,14 @@ def _numilog(tmp_path):
     session.credential_id = account.credential_id
     session.capabilities.direct_download = True  # not inventory consent
     service._sessions = {"numilog::fake-numilog-credential": session}
-    service.storage.provider_connection_put({
+    connection_id = service.storage.provider_connection_put({
         "identity_id": "alice", "provider_id": "numilog",
         "credential_id": account.credential_id, "enabled": True,
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection_id, "identity_id": "alice",
+        "provider_id": "numilog", "credential_id": account.credential_id,
+        "account_id": account.unique_id,
     })
     service.identity_by_id = lambda identifier: (
         NS(identity_id=identifier) if identifier in {"alice", "bob"} else None
@@ -255,9 +260,14 @@ def test_numilog_is_scoped_to_each_consented_identity_not_all_accounts(tmp_path)
             capabilities=NS(personal_library=True, direct_download=True),
         )
         service._sessions["numilog::fake-bob-credential"] = second_session
-        service.storage.provider_connection_put({
+        second_connection = service.storage.provider_connection_put({
             "identity_id": "bob", "provider_id": "numilog",
             "credential_id": second.credential_id, "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": second_connection, "identity_id": "bob",
+            "provider_id": "numilog", "credential_id": second.credential_id,
+            "account_id": second.unique_id,
         })
         broker = SynchronizationBrokerImpl(service)
         first_sid, second_sid = broker._source_id(account), broker._source_id(second)
