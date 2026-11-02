@@ -204,3 +204,108 @@ def test_paris_selected_delivery_redirect_cycle_never_publishes(tmp_path, monkey
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+def test_public_supplier_200_is_bounded_while_preserving_candidate_bytes(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    from cifereca_paris_client import _MAX_PNB_PUBLIC_BODY_BYTES
+    public_requests = []
+
+    def factory(*, producer, timeout):
+        def respond(request):
+            public_requests.append(request)
+            return httpx.Response(
+                200, headers={"Content-Type": "application/vnd.adobe.adept+xml"},
+                content=b"<fulfillment>synthetic</fulfillment>",
+            )
+        return httpx.Client(transport=httpx.MockTransport(respond), trust_env=False)
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        response = client._get_pnb_response(FOREIGN)
+        assert response.status_code == 200
+        assert response.content == b"<fulfillment>synthetic</fulfillment>"
+        assert str(response.url) == FOREIGN
+        assert len(public_requests) == 1
+        assert _MAX_PNB_PUBLIC_BODY_BYTES == 128 * 1024 * 1024
+    finally:
+        client.close()
+
+
+def test_public_supplier_rejects_oversize_stream_without_leaking_signed_url(monkeypatch):
+    import cifereca_paris_client as module
+    client = ParisClient("https://bibliotheques.paris.fr")
+    signed = "https://new-supplier.example/file.acsm?token=PRIVATE_SIGNATURE"
+
+    def factory(*, producer, timeout):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b"X" * 17)
+        ), trust_env=False)
+
+    monkeypatch.setattr(module, "_MAX_PNB_PUBLIC_BODY_BYTES", 16)
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        with pytest.raises(module.ParisError, match="trop volumineuse") as error:
+            client._get_pnb_response(signed)
+        assert "PRIVATE_SIGNATURE" not in str(error.value)
+        assert "new-supplier.example" not in str(error.value)
+    finally:
+        client.close()
+
+
+def test_public_supplier_refuses_announced_oversize_before_reading_body(monkeypatch):
+    import cifereca_paris_client as module
+    client = ParisClient("https://bibliotheques.paris.fr")
+    seen = []
+
+    class MustNotRead(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("read")
+            raise AssertionError("oversized response body must not be consumed")
+        def close(self):
+            pass
+
+    def factory(*, producer, timeout):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"Content-Length": "17"}, stream=MustNotRead(),
+            )
+        ), trust_env=False)
+
+    monkeypatch.setattr(module, "_MAX_PNB_PUBLIC_BODY_BYTES", 16)
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        with pytest.raises(module.ParisError, match="trop volumineuse"):
+            client._get_pnb_response(FOREIGN)
+        assert seen == []
+    finally:
+        client.close()
+
+
+def test_public_supplier_redirect_body_is_never_read(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    seen = []
+
+    class MustNotRead(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("read")
+            raise AssertionError("redirect body must not be consumed")
+        def close(self):
+            pass
+
+    def factory(*, producer, timeout):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                307, headers={"Location": FINAL}, stream=MustNotRead(),
+            )
+        ), trust_env=False)
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        response = client._get_pnb_response(FOREIGN)
+        assert response.status_code == 307
+        assert response.headers["location"] == FINAL
+        assert response.content == b""
+        assert seen == []
+    finally:
+        client.close()
