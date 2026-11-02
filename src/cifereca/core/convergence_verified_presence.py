@@ -18,6 +18,12 @@ from ..catalog import LocalCatalog
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 
 
+# A SourceKey/Placement read must never allocate an unlimited SQLite result.
+# Overflow blocks this plan before an executor can interpret missing evidence
+# as permission to attempt an unnecessary download.
+_MAX_EVIDENCE_ROWS = 100_000
+
+
 def _verified_copy(
     path_text: str, *, root: Path, owner_directory: str,
     registered_directories: frozenset[str], size: int, sha256: str,
@@ -102,6 +108,9 @@ def plan_existing_verified_presence(
 
     scope = snapshot.scope
     with storage._lock, storage._connect() as db:
+        # Owner, source receipts and physical placements must be observed in
+        # one consistent SQLite read snapshot, even across other processes.
+        db.execute("BEGIN")
         # Exact local B presence must belong to this identity's registered
         # physical directory. The full identity registry can be arbitrarily
         # large and is irrelevant to one provider/source plan. A duplicate
@@ -150,19 +159,41 @@ def plan_existing_verified_presence(
             "WHERE o.origin_kind='provider' AND o.identity_id=? "
             "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
             "AND s.account_id=? AND s.branch_id=? "
-            "AND s.evidence_kind='provider_response'",
+            "AND s.evidence_kind='provider_response' "
+            "ORDER BY o.origin_link_id LIMIT ?",
             (scope.identity_id, scope.identity_id, scope.provider_id,
-             scope.credential_id, scope.account_id, snapshot.branch),
+             scope.credential_id, scope.account_id, snapshot.branch,
+             _MAX_EVIDENCE_ROWS + 1),
         ).fetchall()
-        # Read B with the same SQLite snapshot. Do not use an unbounded scan
-        # or an unverified placement to invent a provider link.
+        if len(origins_raw) > _MAX_EVIDENCE_ROWS:
+            # Never turn truncated local proof into an apparent absence that
+            # could send an otherwise satisfied source back into acquisition.
+            raise ValueError("canonical_presence_evidence_over_budget")
+        # Read B inside the same SQLite snapshot, but ONLY for an Artifact
+        # linked to this exact source account and branch. EXISTS avoids the
+        # OriginLink x Placement multiplication when many rights or physical
+        # copies share one Artifact. Foreign-profile/local-only Placements
+        # must not consume this source's finite verification budget.
         placements_raw = db.execute(
             "SELECT p.placement_id,p.path,p.identity_id,p.state,"
             "a.sha256,a.size FROM placements AS p "
             "JOIN artifacts AS a ON a.artifact_id=p.artifact_id "
-            "WHERE p.identity_id=? AND p.state='present'",
-            (scope.identity_id,),
+            "WHERE p.identity_id=? AND p.state='present' AND EXISTS ("
+            "SELECT 1 FROM origin_links AS o "
+            "JOIN source_references AS s "
+            "ON s.source_reference_id=o.source_reference_id "
+            "WHERE o.artifact_id=p.artifact_id AND o.identity_id=p.identity_id "
+            "AND o.origin_kind='provider' AND s.identity_id=? "
+            "AND s.provider_id=? AND s.credential_id=? "
+            "AND s.account_id=? AND s.branch_id=? "
+            "AND s.evidence_kind='provider_response') "
+            "ORDER BY p.placement_id LIMIT ?",
+            (scope.identity_id, scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id, snapshot.branch,
+             _MAX_EVIDENCE_ROWS + 1),
         ).fetchall()
+        if len(placements_raw) > _MAX_EVIDENCE_ROWS:
+            raise ValueError("canonical_presence_evidence_over_budget")
 
     origins = []
     hashes: set[str] = set()
