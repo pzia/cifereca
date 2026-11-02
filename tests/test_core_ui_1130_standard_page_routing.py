@@ -15,7 +15,7 @@ MAIN = ROOT / "main_window.py"
 OWNER = ROOT / "shell_page_controller.py"
 
 ROUTES = (
-    "dashboard", "loans", "search", "history", "bookings", "library",
+    "dashboard", "loans", "search", "history", "library",
     "recent", "sync", "tools", "settings",
 )
 
