@@ -40,9 +40,13 @@ def _resolve(service, entitlement_id, identity_id):
     for key in ("credential_id", "account_id", "item_id", "revision_id"):
         _require(type(right.get(key)) is str and 0 < len(right[key]) <= 1024
                  and right[key] == right[key].strip() and not any(c in right[key] for c in "\0\r\n"))
-    # Multiple active editions/accounts are not a choice this button can make.
+    # Only competing rights for THIS exact borrower are ambiguous. Separate
+    # Kobo accounts can independently own the same provider edition; they
+    # must not disable each other's already-selected Library possession.
     duplicates = [row for row in service.storage.entitlements(provider_id="kobo", state="active")
                   if row.get("identity_id") == identity_id and row.get("item_id") == right["item_id"]
+                  and row.get("credential_id") == right["credential_id"]
+                  and row.get("account_id") == right["account_id"]
                   and row.get("entitlement_type") == "owned"]
     # A 0.7 backup_put compatibility mirror produces an additional active
     # entitlement with a synthetic ID. It is NOT a second attested purchase
