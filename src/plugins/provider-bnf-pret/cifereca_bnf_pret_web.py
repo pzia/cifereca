@@ -502,7 +502,12 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
         "pagination", "pager", "load-more", "show-more", "infinite-scroll",
         "spinner", "loading", "skeleton", "js-pagination", "js-load-more",
     }
-    for node in section.walk():
+    # Inspect hidden descendants too: a collapsed paginator or lazy loader
+    # may not appear in the public presentation but still truncates coverage.
+    pending = [section]
+    while pending:
+        node = pending.pop()
+        pending.extend(child for child in node.children if isinstance(child, _Node))
         attrs = node.attrs
         if attrs.get("aria-busy", "").lower() == "true":
             return True
