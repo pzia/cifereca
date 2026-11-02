@@ -104,3 +104,14 @@ def test_missing_values_keep_declarative_default_but_never_write_config():
         ))
     finally:
         session.close()
+
+
+def test_paris_linked_options_are_declarative_and_disjoint_from_primary():
+    (spec,) = DESCRIPTOR.borrower_scoped_options
+    assert spec.key == "manual_loan_limits_linked"
+    assert spec.default == "4"
+    assert (spec.min_value, spec.max_value) == (0, 99)
+    assert spec.branches == (("digital", "Numérique · DILICOM"),
+                             ("physical", "Physique · SYRACUSE"))
+    assert "droits" in spec.help_text and "synchronisation" in spec.help_text
+    assert all(option.key != spec.key for option in DESCRIPTOR.account_options)
