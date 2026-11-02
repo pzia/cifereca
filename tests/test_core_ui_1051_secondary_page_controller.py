@@ -1,4 +1,4 @@
-"""P0 #1051: GTK-free History and Bookings page composition contracts."""
+"""#1051/#4147: GTK-free History page builder and retired Bookings route."""
 from __future__ import annotations
 
 import ast
@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui.secondary_page_controller import (
-    build_history_page, build_bookings_page,
+    build_history_page,
 )
 from cifereca.language import language_label
 
@@ -86,10 +86,8 @@ def _window():
     window = NS(
         _closed=False,
         refresh_history=lambda force, control: calls.append(("history", force, control)),
-        refresh_bookings=lambda force, control: calls.append(("bookings", force, control)),
         _rerender_history=lambda: calls.append(("languages",)),
         _history_selected=lambda row: calls.append(("selected_history", row)),
-        _booking_selected=lambda row: calls.append(("selected_booking", row)),
         _history_scroll_changed=lambda adjustment: calls.append(("scroll", adjustment)),
     )
     return window, calls
@@ -101,12 +99,6 @@ def _history(window):
     )
 
 
-def _bookings(window):
-    return build_bookings_page(
-        window, Gtk=Gtk, MasterDetailPage=Page,
-    )
-
-
 def test_imports_are_headless_and_mainwindow_facades_preserve_signatures():
     tree = ast.parse(OWNER.read_text(encoding="utf-8"))
     imports = [ast.unparse(node) for node in ast.walk(tree)
@@ -115,14 +107,14 @@ def test_imports_are_headless_and_mainwindow_facades_preserve_signatures():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(node for node in tree.body
                if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    for facade, target in (
-        ("_build_history_page", "build_history_page"),
-        ("_build_bookings_page", "build_bookings_page"),
-    ):
+    for facade, target in (("_build_history_page", "build_history_page"),):
         method = next(node for node in cls.body
                       if isinstance(node, ast.FunctionDef) and node.name == facade)
         assert [arg.arg for arg in method.args.args] == ["self"]
         assert f"secondary_page_controller.{target}" in ast.unparse(method)
+    assert not any(isinstance(node, ast.FunctionDef) and node.name == "_build_bookings_page" for node in cls.body)
+    source = ast.parse(OWNER.read_text(encoding="utf-8"))
+    assert not any(isinstance(node, ast.FunctionDef) and node.name == "build_bookings_page" for node in source.body)
 
 
 def test_history_page_retains_business_total_mode_and_original_descriptions():
@@ -140,20 +132,6 @@ def test_history_page_retains_business_total_mode_and_original_descriptions():
     assert calls == []
 
 
-def test_bookings_page_does_not_force_progressive_business_total_count():
-    window, calls = _window()
-    page = _bookings(window)
-    assert page.window is window
-    assert page.args == (
-        "Réservations", "Réservations physiques et numériques",
-        "Aucune réservation", "Vos réservations apparaîtront ici.",
-    )
-    assert page.total_only is None
-    assert len(page.header_actions.children) == 1
-    assert page.toolbar.children == []
-    assert calls == []
-
-
 def test_history_refresh_is_explicit_and_reuses_exact_clicked_control():
     window, calls = _window()
     page = _history(window)
@@ -164,20 +142,9 @@ def test_history_refresh_is_explicit_and_reuses_exact_clicked_control():
     assert calls == [("history", True, refresh)]
 
 
-def test_bookings_refresh_is_explicit_and_reuses_exact_clicked_control():
-    window, calls = _window()
-    page = _bookings(window)
-    refresh = page.header_actions.children[0]
-    assert refresh.icon == "view-refresh-symbolic"
-    assert refresh.tooltip == "Actualiser les réservations"
-    refresh.click()
-    assert calls == [("bookings", True, refresh)]
-
-
 def test_no_refresh_is_implicitly_submitted_when_page_constructed():
     window, calls = _window()
     _history(window)
-    _bookings(window)
     assert calls == []
     assert not hasattr(window, "runner")
     assert not hasattr(window, "service")
@@ -203,14 +170,6 @@ def test_history_selection_forwards_exact_item_identity():
     assert calls == [("selected_history", row)]
 
 
-def test_bookings_selection_forwards_exact_item_identity():
-    window, calls = _window()
-    page = _bookings(window)
-    row = object()
-    page.on_selected(row)
-    assert calls == [("selected_booking", row)]
-
-
 def test_history_scroll_observes_only_its_own_adjustment():
     window, calls = _window()
     page = _history(window)
@@ -219,22 +178,12 @@ def test_history_scroll_observes_only_its_own_adjustment():
     assert calls == [("scroll", page.adjustment)]
 
 
-def test_bookings_does_not_attach_unnecessary_history_scroll_or_filter():
-    window, calls = _window()
-    page = _bookings(window)
-    assert page.adjustment.handlers == {}
-    assert not hasattr(window, "history_languages")
-
-
-@pytest.mark.parametrize("builder", [_history, _bookings])
+@pytest.mark.parametrize("builder", [_history])
 def test_closed_window_does_not_construct_or_touch_widgets(builder):
     builder(NS(_closed=True))
 
 
-@pytest.mark.parametrize("builder,event_name", [
-    (_history, "history"),
-    (_bookings, "bookings"),
-])
+@pytest.mark.parametrize("builder,event_name", [(_history, "history")])
 def test_late_refresh_click_after_parent_closed_does_not_queue_private_work(builder, event_name):
     window, calls = _window()
     page = builder(window)
@@ -243,11 +192,3 @@ def test_late_refresh_click_after_parent_closed_does_not_queue_private_work(buil
     assert not any(item[0] == event_name for item in calls)
 
 
-def test_two_pages_use_separate_refresh_buttons_and_listeners():
-    window, calls = _window()
-    history = _history(window)
-    bookings = _bookings(window)
-    assert history.header_actions.children[0] is not bookings.header_actions.children[0]
-    history.header_actions.children[0].click()
-    bookings.header_actions.children[0].click()
-    assert [event[0] for event in calls] == ["history", "bookings"]

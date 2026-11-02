@@ -1,8 +1,7 @@
-"""GTK-independent constructors for History and Bookings shell pages (#1051).
+"""GTK-independent History page builder (#1051; retired Bookings #4147).
 
-Both pages use the existing MasterDetailPage; the window retains service,
-callbacks and ownership. Gtk, MasterDetailPage, MultiSelect are injected.
-No eager provider connection, scan, or subscription is introduced.
+The window owns service, callbacks and widgets. No provider request,
+reservation route, or implicit history fetch is introduced here.
 """
 from __future__ import annotations
 
@@ -42,19 +41,3 @@ def build_history_page(window, *, Gtk, MasterDetailPage, MultiSelect):
     return page
 
 
-def build_bookings_page(window, *, Gtk, MasterDetailPage):
-    if getattr(window, "_closed", False):
-        return None
-    page = MasterDetailPage(
-        window, "Réservations", "Réservations physiques et numériques",
-        "Aucune réservation", "Vos réservations apparaîtront ici.",
-    )
-    refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-    refresh.set_tooltip_text("Actualiser les réservations")
-    refresh.connect("clicked", lambda _b: (
-        window.refresh_bookings(True, refresh)
-        if not getattr(window, "_closed", False) else None
-    ))
-    page.header_actions.append(refresh)
-    page.connect_selected(window._booking_selected)
-    return page
