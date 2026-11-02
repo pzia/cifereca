@@ -551,7 +551,7 @@ def _refresh_sync_page(self) -> None:
                     + ("\n" + remainder if separator else "")
                 )
             # Preserve the full evidence for the optional disclosure, but
-            # show no more than three lines in the account header. This keeps
+            # show no more than two lines in the account header. This keeps
             # the problem and its next step ahead of diagnostic phase text.
             from cifereca.gui.sync_source_card_guidance import (
                 sync_source_card_guidance,
@@ -562,7 +562,7 @@ def _refresh_sync_page(self) -> None:
                 + (next_step + "\n" if next_step else "")
                 + display_summary
             )
-            row.set_subtitle_lines(3)
+            row.set_subtitle_lines(2)
             # Full closed-state details remain available on hover/focus,
             # without inserting a new child into any source card. Legacy
             # GTK and E2E consumers rely on the existing controls' order.
