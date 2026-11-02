@@ -226,17 +226,52 @@ def test_provider_cancelled_exception_is_distinct_from_provider_failure(caplog):
     assert "rights snapshot read failed" not in caplog.text
 
 
-def test_raw_original_failure_is_logged_and_status_is_closed(caplog):
-    service, account, session = rig()
+def test_provider_failure_logs_closed_reason_without_private_values(caplog):
+    service, account, session = rig(
+        provider="provider-private", owner="PRIVATE_IDENTITY",
+        credential="PRIVATE_CREDENTIAL", buyer="PRIVATE_BORROWER",
+    )
+    signed = "https://delivery.example.invalid/PRIVATE_SIGNED?key=SECRET"
     session.reader = lambda _: (_ for _ in ()).throw(
-        ValueError("synthetic-provider-error?url=/exact-route&status=403")
+        ValueError("provider failure: " + signed)
     )
     with caplog.at_level("WARNING", logger="cifereca"):
         result = read_account_rights_snapshot(service, account)
     assert result.status == "failed" and result.rights == ()
-    assert "synthetic-provider-error?url=/exact-route&status=403" in caplog.text
-    assert "account_id=buyer-A" in caplog.text
+    assert "rights snapshot read failed code=provider_error" in caplog.text
+    assert "reader_kind=rights_observation_snapshot" in caplog.text
+    for secret in (
+        signed, "PRIVATE_IDENTITY", "PRIVATE_CREDENTIAL", "PRIVATE_BORROWER",
+        "PRIVATE_SIGNED", "SECRET", "provider failure:",
+    ):
+        assert secret not in caplog.text
     assert session.calls == 1
+
+
+def test_pagination_failure_keeps_positive_prefix_and_redacts_provider_error(caplog):
+    service, account, session = rig()
+    private_error = "https://supplier.example.invalid/SIGNED?secret=PRIVATE_TOKEN"
+    observed = ProviderSession(
+        session.provider_id, session.credential_id,
+    ).rights_observation_snapshot(account)
+
+    def paged(selected, *, resume_cursor=""):
+        if resume_cursor:
+            raise RuntimeError(private_error)
+        assert selected is account
+        return replace(observed, resume_cursor="PRIVATE_CURSOR")
+
+    session.rights_observation_snapshot = paged
+    with caplog.at_level("WARNING", logger="cifereca"):
+        result = read_account_rights_snapshot(service, account)
+    assert result.status == result.coverage == "partial"
+    assert len(result.rights) == 1
+    assert result.resume_cursor == "PRIVATE_CURSOR"
+    assert "TRACE rights pagination code=page_unavailable" in caplog.text
+    assert private_error not in caplog.text
+    assert "PRIVATE_TOKEN" not in caplog.text
+    assert "PRIVATE_CURSOR" not in caplog.text
+    assert "buyer-A" not in caplog.text
 
 
 def test_bounded_positive_cardinality_zero_and_n():
