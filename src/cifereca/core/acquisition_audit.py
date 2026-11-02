@@ -115,15 +115,27 @@ def inspect_exact_source(
             "AND account_id=? ORDER BY acquisition_id LIMIT ?",
             (*coords, _MAX_ROWS + 1),
         ).fetchall()
+        # Keep OriginLinks and Placements as two independently bounded
+        # inventories. Their SQL join would multiply N origins by M copies.
         links = {}
+        placements = {}
         for ref_id, _kind, _state in refs[:_MAX_ROWS]:
-            links[ref_id] = db.execute(
-                "SELECT o.origin_link_id,o.artifact_id,p.placement_id,p.path,p.state "
-                "FROM origin_links AS o LEFT JOIN placements AS p "
-                "ON p.artifact_id=o.artifact_id AND p.identity_id=o.identity_id "
-                "WHERE o.source_reference_id=? AND o.identity_id=?",
-                (ref_id, coords[0]),
+            origins = db.execute(
+                "SELECT origin_link_id FROM origin_links "
+                "WHERE source_reference_id=? AND identity_id=? "
+                "ORDER BY origin_link_id LIMIT ?",
+                (ref_id, coords[0], _MAX_ROWS + 1),
             ).fetchall()
+            links[ref_id] = origins
+            placements[ref_id] = db.execute(
+                "SELECT p.placement_id,p.artifact_id,p.path,p.state "
+                "FROM placements AS p WHERE p.identity_id=? AND EXISTS ("
+                "SELECT 1 FROM origin_links AS o "
+                "WHERE o.source_reference_id=? AND o.identity_id=p.identity_id "
+                "AND o.artifact_id=p.artifact_id) "
+                "ORDER BY p.placement_id LIMIT ?",
+                (coords[0], ref_id, _MAX_ROWS + 1),
+            ).fetchall() if origins else []
         staging = receipt_staging_evidence(
             db, coords=coords,
             staging_root=(storage.path.parent / "acquisition-work")
@@ -142,17 +154,17 @@ def inspect_exact_source(
         except Exception:
             pass
     rights_out = []
-    multipath_truncated = False
+    related_truncated = False
     for ref_id, kind, state in refs[:_MAX_ROWS]:
-        matched = links[ref_id]
-        # Joining origin_links to placements yields one row per
-        # (origin, placement) pair. Count DISTINCT provenance records,
-        # not multiplied rows, even when one artifact has many placements.
-        origin_count = len({row[0] for row in matched})
+        origin_count = len(links[ref_id])
+        physical_rows = placements[ref_id]
+        if origin_count > _MAX_ROWS or len(physical_rows) > _MAX_ROWS:
+            related_truncated = True
         physical = {
-            row[2]: (row[1], row[3], row[4]) for row in matched if row[2] is not None
+            row[0]: (row[1], row[2], row[3])
+            for row in physical_rows[:_MAX_ROWS]
         }
-        if not matched:
+        if not origin_count:
             classification = "source_unlinked"
         elif not physical:
             classification = "source_linked_unplaced"
@@ -169,11 +181,9 @@ def inspect_exact_source(
                 # Placement of this exact Artifact remains verified.
                 # Preserve ambiguous_match: these are still distinct paths,
                 # not permission to relink, discard or deduplicate.
-                if len(physical) > _MAX_ROWS:
-                    multipath_truncated = True
-                if directory is None or len(physical) > _MAX_ROWS:
+                if directory is None or len(physical_rows) > _MAX_ROWS:
                     check = "multiple_placements_unverified"
-                    multi_proof = (0, 0, min(len(physical), _MAX_ROWS))
+                    multi_proof = (0, 0, len(physical))
                 else:
                     proofs = [
                         ("missing_file" if placement_state != "present" else
@@ -230,7 +240,7 @@ def inspect_exact_source(
         "network": "not_used", "mutations": "none",
         "verify_files": verify_files,
         "truncated": (len(refs) > _MAX_ROWS or len(ledger) > _MAX_ROWS
-                      or multipath_truncated),
+                      or related_truncated),
         "rights": rights_out, "receipts": receipt_out,
         "staging_evidence": staging,
     }
