@@ -146,16 +146,20 @@ def retire_verified_canonical_duplicate(
                 or artifact_id != "sha256:" + artifact[0]
                 or type(artifact[1]) is not int or artifact[1] <= 0):
             raise ValueError("canonical_retire_artifact_invalid")
-        directories = db.execute(
-            "SELECT identity_id,directory_name FROM identities"
-        ).fetchall()
-        owners = [name for identity, name in directories if identity == identity_id]
-        if (len(owners) != 1 or type(owners[0]) is not str or not owners[0]
-                or sum(name == owners[0] for _, name in directories) != 1):
+        owner = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (identity_id,),
+        ).fetchone()
+        if (owner is None or type(owner[0]) is not str or not owner[0]):
             raise ValueError("canonical_retire_profile_ambiguous")
-        reserved = frozenset(
-            name for _, name in directories if type(name) is str and name
-        )
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (owner[0], identity_id),
+        ).fetchone() is not None:
+            raise ValueError("canonical_retire_profile_ambiguous")
+        owner_dir = owner[0]
+        reserved = frozenset((owner_dir,))
         observations = []
         for raw_path in (candidate[0], keeper[0]):
             if type(raw_path) is not str or not raw_path:
@@ -168,7 +172,7 @@ def retire_verified_canonical_duplicate(
             if (not stat.S_ISREG(before.st_mode)
                     or not _verified_copy(
                         raw_path, root=library_root,
-                        owner_directory=owners[0],
+                        owner_directory=owner_dir,
                         registered_directories=reserved,
                         size=artifact[1], sha256=artifact[0],
                     ) or not _same_file(path, before)):
@@ -294,24 +298,26 @@ def recover_canonical_duplicate_retirement(
                     or type(artifact[1]) is not int or artifact[1] <= 0
                     or marker["stat"]["size"] != artifact[1]):
                 return CanonicalRetirementResult(True, False, True)
-            identities = db.execute(
-                "SELECT identity_id,directory_name FROM identities"
-            ).fetchall()
-            folders = [folder for profile, folder in identities
-                       if profile == candidate[1]]
-            if (len(folders) != 1 or type(folders[0]) is not str
-                    or not folders[0]
-                    or sum(folder == folders[0] for _, folder in identities) != 1):
+            owner = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (candidate[1],),
+            ).fetchone()
+            if owner is None or type(owner[0]) is not str or not owner[0]:
                 return CanonicalRetirementResult(True, False, True)
-            registered = frozenset(
-                folder for _, folder in identities if type(folder) is str and folder
-            )
+            if db.execute(
+                "SELECT 1 FROM identities WHERE directory_name=? "
+                "AND identity_id<>? LIMIT 1",
+                (owner[0], candidate[1]),
+            ).fetchone() is not None:
+                return CanonicalRetirementResult(True, False, True)
+            owner_dir = owner[0]
+            registered = frozenset((owner_dir,))
             keeper_path = Path(keeper[0])
             keeper_stat = os.stat(keeper_path, follow_symlinks=False)
             if (not stat.S_ISREG(keeper_stat.st_mode)
                     or not _verified_copy(
                         keeper[0], root=library_root,
-                        owner_directory=folders[0],
+                        owner_directory=owner_dir,
                         registered_directories=registered,
                         size=artifact[1], sha256=artifact[0],
                     ) or not _same_file(keeper_path, keeper_stat)):
@@ -332,7 +338,7 @@ def recover_canonical_duplicate_retirement(
                         or _file_signature(current) != marker["stat"]
                         or not _verified_copy(
                             candidate[0], root=library_root,
-                            owner_directory=folders[0],
+                            owner_directory=owner_dir,
                             registered_directories=registered,
                             size=artifact[1], sha256=artifact[0],
                         ) or not _same_file(copy_path, current)
