@@ -134,6 +134,12 @@ def consent_current_in_transaction(db, source: SourceKey) -> bool:
     """
     if type(source) is not SourceKey:
         return False
+    # The legacy exact-right metadata grant may outlive the connection or
+    # account that created it. Revalidate the SAME enabled binding for both
+    # canonical source/type and legacy-per-right paths during publication,
+    # under the publisher's BEGIN IMMEDIATE lock.
+    if not _bound(db, _coordinates(source)[:4], enabled=True):
+        return False
     # The source/type automatic acquisition switch is authoritative when
     # explicitly configured. Its OFF state revokes even earlier per-right
     # grants, including for an in-flight GET. No rights database row creates
