@@ -709,3 +709,23 @@ explicitement. La synchronisation, le prêt et les POST restent inchangés.
 Les tests utilisent exclusivement des HTML fictifs mimant la structure.
 Le parcours HTTP 200 et la pagination réelle demandent une recette après
 déploiement, sans importer la capture privée dans GitHub ou CI.
+
+
+### P1 #4142 — Cohérence des deux projections BnF de synchronisation
+
+Lorsqu'une section authentifiée **non vide** `active-loans` est intégralement
+validée et que **tous** ses prêts numériques actifs (identité, compte,
+credential et identifiants exacts) se projettent sans omission en observations
+de droits, `loan_inventory_snapshot()` et `rights_observation_snapshot()`
+déclarent chacun `status=success`, la branche `bnf_html` en
+`coverage=complete` et `pagination_complete=true`. La projection v2
+`downloadable_resource_snapshot()` conserve ce même niveau de couverture.
+Ce signal ne dit rien des fichiers présents : le Core conserve son propre
+contrôle des placements, acquisitions, erreurs ADEPT et consentements.
+
+Une page vide sans preuve de zéro explicite, un chargeur/paginateur, une
+carte contradictoire, une donnée manquante ou un prêt non projetable impose
+`partial` sur les **deux** projections. Même une couverture complète ne
+permet pas la réconciliation négative des droits, ni une restitution, une
+acquisition automatique ou une suppression de fichier. Tests HTML synthétiques,
+sans requête de jeton ACSM.
