@@ -78,6 +78,6 @@ def test_bnf_local_receipt_exception_does_not_log_file_or_borrower(caplog):
             service, account, row, path,
         )
     assert verified is False
-    assert "receipt file check failed code=verification_unavailable" in caplog.text
+    assert "receipt file check failed provider_id=bnf-pret" in caplog.text
     _assert_redacted(caplog)
     assert str(path) not in caplog.text
