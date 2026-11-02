@@ -107,8 +107,6 @@ def activate_identity(window, identity_id: str) -> None:
         route = window.view_stack.get_visible_child_name() if hasattr(window, "view_stack") else None
         if route == "history":
             window.refresh_history(False)
-        elif route == "bookings":
-            window.refresh_bookings(False)
         window._activity_result(f"Identité chargée : {identity.label}")
     window.runner.submit(
         f"Chargement de {identity.label}…",

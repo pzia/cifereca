@@ -37,6 +37,8 @@ def invalidate_secondary_account_pages(window) -> None:
             "Historique non chargé",
             "Ouvrez l’onglet Historique pour charger ce compte.",
         )
+    # Retire residual private rows of a v1 bookings widget if still mounted,
+    # without enabling or fetching the retired reservations page.
     if hasattr(window, "booking_page"):
         window.booking_page.show_rows([])
         window.booking_page.detail.empty(

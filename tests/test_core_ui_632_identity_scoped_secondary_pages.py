@@ -61,8 +61,10 @@ def test_active_secondary_page_reloads_after_identity_loans_finish():
     source = _method("_activate_identity")
     assert "route == 'history'" in source
     assert "window.refresh_history(False)" in source
-    assert "route == 'bookings'" in source
-    assert "window.refresh_bookings(False)" in source
+    # A stale route retained by old shell/history must not initiate the
+    # retired private ListBookings operation on identity change.
+    assert "route == 'bookings'" not in source
+    assert "window.refresh_bookings(False)" not in source
 
 
 def test_identity_request_guard_requires_both_identity_and_generation():

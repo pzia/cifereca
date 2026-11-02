@@ -250,7 +250,7 @@ def test_identity_work_is_scoped_and_priority_preserved():
 def test_current_callback_renders_loans_and_refreshes_only_active_route():
     for route, expected in [
         ("history", ("refresh-history", False)),
-        ("bookings", ("refresh-bookings", False)),
+        ("bookings", None),
         ("library", None),
     ]:
         window, events = _window(route=route)
@@ -264,6 +264,12 @@ def test_current_callback_renders_loans_and_refreshes_only_active_route():
             assert expected in events
         else:
             assert not any(evt[0] in {"refresh-history", "refresh-bookings"} for evt in events)
+        if route == "bookings":
+            # The legacy route may remain in GTK history: the old account
+            # cache is cleared but no retired reservations service is called.
+            assert window.service.last_bookings == []
+            assert window.booking_objects == {}
+            assert ("booking", "clear") in events
 
 
 def test_previous_identity_callback_cannot_repaint_current_identity():
