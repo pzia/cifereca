@@ -20,6 +20,7 @@ fournisseur d'expirer naturellement un prêt.
 - [#4059](https://github.com/pzia/cifereca/pull/4059) : retrait
   Core/Plugins en **draft**, **non livré** ; ne pas interpréter son code
   comme déjà présent sur `main`.
+- [#4189](https://github.com/pzia/cifereca/pull/4189) : **tranche CoreUI en validation**. Supprime définitivement `confirm_return`, `_return_loan`, `_return_loan_pnb`, `_return_loan_result`, `return_adept_from_detail` et le présentateur `gui/return_feedback.py`. La CI (Core/GTK/install) doit encore valider le dernier SHA avant fusion. La suppression des points d'entrée Core/Plugins reste distincte.
 
 La clôture de #4048 est interdite sans fusion des contrats mutationnels
 et les trois validations CI du commit exact.
