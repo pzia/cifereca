@@ -55,3 +55,20 @@ les rejets et la projection catalogue/Loan. Ils restent synthétiques :
 **l'acceptation d'une URL ne garantit ni un HTTP 200 image ni le rendu GTK**.
 La recette des deux miniatures dans Recherche, Détail et Mes emprunts reste
 ouverte sous #4118/#3104.
+
+## Validation déterministe de deux couvertures (#4118)
+
+Le test `tests/test_p1_4118_two_cover_pipeline.py` enchaîne le parseur BnF
+(recherche puis détail) et le chargeur/cache CoreUI commun avec deux images
+PNG distinctes servies par un transport HTTPX simulé. Il vérifie l'association
+exacte ressource→URL, deux réponses image 200, deux fichiers différents,
+le cache-hit sans troisième GET et le placeholder en l'absence d'image.
+Il n'ouvre aucune session lecteur, ne contacte aucun CDN, et ne teste pas
+les widgets GTK eux-mêmes.
+
+**Réception terrain encore distincte** : après installation à jour,
+ouvrir Recherche BnF avec deux livres dont les images sont présentes dans
+leurs cartes officielles, vérifier les miniatures et les mêmes images en
+Détail ; vérifier le fallback sur une notice sans image. Une réponse HTTP
+image 200 et le décodage GTK ne sont **pas** déductibles du test simulé.
+Les comptes, HTML authentifiés et URLs signées restent exclusivement privés.
