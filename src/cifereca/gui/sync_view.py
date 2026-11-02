@@ -323,6 +323,65 @@ _SYNC_PHASE_CAPTIONS = (
 )
 
 
+def sync_source_cycle_headline(source: object) -> str:
+    """Two independent, bounded last-run signals, without pretending receipt.
+
+    The generic broker supplies phase enums only. They are not an inventory
+    coverage certificate, a Core placement receipt or a provider quota.
+    A malformed or duplicate phase cannot replace an actionable failure with
+    a historical success. Never render provider-supplied error text.
+    """
+    entries = getattr(source, "phase_states", ())
+    if type(entries) not in (tuple, list) or not 1 <= len(entries) <= 8:
+        return ""
+    known = {
+        "success": "réussie", "partial": "partielle",
+        "failed": "échec", "materialization_failed": "échec",
+        "blocked": "bloquée", "attention_required": "action nécessaire",
+        "interrupted": "interrompue", "cancelled": "annulée",
+        "running": "en cours", "idle": "non exécutée",
+        "not_supported": "non disponible",
+    }
+    allowed = {"discover_rights", "offer", "fetch", "materialize", "placement"}
+    phases: dict[str, str] = {}
+    duplicate: set[str] = set()
+    for row in entries:
+        name = getattr(row, "phase", None)
+        if type(name) is not str or name not in allowed:
+            continue
+        raw = getattr(row, "status", None)
+        state = known.get(raw) if type(raw) is str else None
+        if name in phases:
+            duplicate.add(name)
+        else:
+            phases[name] = state or "non confirmée"
+
+    remote = "non confirmée" if "discover_rights" in duplicate else phases.get("discover_rights")
+    # Show the most severe local step, not the first success. In particular,
+    # fetch=failed + placement=success MUST retain the failed fetch. A
+    # materialize=not_supported marker cannot certify successful acquisition.
+    # A verified OFFER is still upstream evidence, never a local file.
+    local_names = ("fetch", "placement", "materialize")
+    local = [(key, ("non confirmée" if key in duplicate else phases[key]))
+             for key in local_names if key in phases]
+    severity = (
+        "échec", "bloquée", "action nécessaire", "interrompue", "partielle",
+        "annulée", "non confirmée", "en cours", "non exécutée",
+        "réussie", "non disponible",
+    )
+    local_status = next((value for value in severity
+                         if any(state == value for _, state in local)), None)
+    parts = []
+    if remote is not None:
+        parts.append("Inventaire distant : " + remote)
+    if local_status is not None:
+        # A green stage is not proof that files were placed and hashed.
+        parts.append("Livraison locale : " + local_status +
+                     (" (étape seulement)" if local_status == "réussie"
+                      and "placement" not in phases else ""))
+    return " · ".join(parts)
+
+
 def sync_source_phase_summary(source: object) -> str:
     """Present only Core-enumerated phase states, never provider diagnostics.
 
@@ -703,6 +762,9 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    cycle_headline = sync_source_cycle_headline(source)
+    if cycle_headline:
+        summary += "\n" + cycle_headline
     phase_summary = sync_source_phase_summary(source)
     if phase_summary:
         summary += "\n" + phase_summary
