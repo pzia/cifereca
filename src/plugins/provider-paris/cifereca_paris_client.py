@@ -152,7 +152,6 @@ class ParisClient:
         self._last_scenario_facet_observation: tuple[str, int, list[dict[str, Any]]] | None = None
         self.last_pairing_errors: list[dict[str, str]] = []
         self.last_history_errors: list[dict[str, str]] = []
-        self.last_booking_errors: list[dict[str, str]] = []
         self.last_pnb_borrow: dict[str, Any] = {"phase": "idle"}
 
     def _create_http_client(self, profile: str = "browser") -> httpx.Client:
