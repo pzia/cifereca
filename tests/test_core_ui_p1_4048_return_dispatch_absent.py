@@ -56,3 +56,13 @@ def test_gtk_e2e_has_no_legacy_return_confirmation():
     assert "P1_4048_loan_return_controls_absent_no_mutation" in source
     assert "loan_sync_return_dialog" not in source
     assert 'w.confirm_return(' not in source
+
+
+def test_successful_loan_download_never_reports_retired_return_capability():
+    source = (GUI / "main_window.py").read_text(encoding="utf-8")
+    # A file successfully recovered via ACSM must not be reported as an
+    # ADEPT profile problem merely because voluntary loan return was retired.
+    assert 'result.get("adept_return_available")' not in source
+    assert "liaison ADEPT indisponible : voir le détail" not in source
+    assert 'result_message = "Livre récupéré"' in source
+    assert 'self.runner.submit("Acquisition du livre numérique…"' in source
