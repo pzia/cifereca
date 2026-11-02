@@ -266,7 +266,13 @@ def test_dotdot_sqlite_path_cannot_attest_bytes_from_another_profile(store, tmp_
     assert decisions[0].provider_satisfied is False
     assert decisions[0].state != "present_attested"
     assert foreign.read_bytes() == BYTES
-    assert store.placement_for_path(disguised)["identity_id"] == "A"
+    # Storage.placement_for_path() deliberately canonicalizes its argument,
+    # so inspect the poisoned *raw* SQLite pathname for this regression.
+    with store._lock, store._connect() as db:
+        saved = db.execute(
+            "SELECT identity_id FROM placements WHERE path=?", (str(disguised),),
+        ).fetchone()
+    assert saved == ("A",)
 
 
 def test_verified_copy_never_accepts_lexical_escape_from_owner_directory(tmp_path):
