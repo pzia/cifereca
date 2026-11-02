@@ -136,3 +136,17 @@ def test_public_transport_exception_redacts_signed_supplier_url(monkeypatch):
         assert "cdn.example" not in str(error.value)
     finally:
         client.close()
+
+
+
+@pytest.mark.parametrize("invalid", [
+    None, "", 123, "https://[invalid-ipv6/path",
+    "https://cdn.example:bad/file.acsm",
+])
+def test_malformed_host_never_raises_unredacted_parser_exception(invalid):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    try:
+        with pytest.raises(ParisRedirectError):
+            client._validate_pnb_redirect_url(invalid)
+    finally:
+        client.close()
