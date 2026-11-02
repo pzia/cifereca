@@ -82,6 +82,35 @@ def test_primary_and_linked_are_scoped_to_credential_identity_and_medium():
     ))
 
 
+def test_paris_primary_legacy_alias_uses_same_scope_as_core_inventory():
+    # Paris's typed loan inventory accepts the literal 'primary' only for
+    # the real primary reader (unique_id=''); this is no linked-account grant.
+    rows = (
+        loan("main-actual", provider="paris", borrower=""),
+        loan("main-legacy", provider="paris", borrower="primary"),
+        loan("other-credential", provider="paris", borrower="primary",
+             credential="elsewhere"),
+    )
+    out = projection((account(provider="paris"),), rows, provider="paris")
+    assert len(out) == 1
+    assert "Numériques : 2 prêt(s) observé(s)" in out[0][1]
+    assert "Quota fournisseur : inconnu" in out[0][1]
+
+
+def test_paris_legacy_primary_alias_collision_cannot_count_for_two_borrowers():
+    # A linked reader literally named 'primary' would make the old alias
+    # ambiguous; no cached positive may be attributed to either owner.
+    owners = (account(provider="paris"),
+              account("primary", provider="paris", primary=False))
+    rows = (loan("ambiguous", provider="paris", borrower="primary"),
+            loan("real-empty", provider="paris", borrower=""))
+    out = projection(owners, rows, provider="paris")
+    assert len(out) == 2
+    assert "Numériques : 1 prêt(s) observé(s)" in out[0][1]
+    assert "Numériques : non vérifiés" in out[1][1]
+    assert "ambiguous" not in str(out)
+
+
 def test_zero_cached_rows_never_mean_zero_live_loans_or_remaining_allowance():
     out = projection((account(),), ())
     assert len(out) == 1
