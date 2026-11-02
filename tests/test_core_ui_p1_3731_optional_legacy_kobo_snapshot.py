@@ -29,7 +29,7 @@ def test_future_provider_neutral_editor_can_omit_every_legacy_kobo_widget(editor
         del values[key]
     values["accounts"] = [account("provider.future")]
     draft = validate(editor, descriptors={"provider.future": descriptor("provider.future")})
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert draft.data["providers"]["accounts"][0]["provider"] == "provider.future"
     assert config.data == before and not config.path.exists()
 
@@ -40,7 +40,7 @@ def test_partial_obsolete_widget_snapshot_is_ignored_without_reset(editor, missi
     del values[missing]
     before = deepcopy(config.data)
     draft = validate(editor)
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert config.data == before and not config.path.exists()
 
 
@@ -55,7 +55,7 @@ def test_malformed_obsolete_widget_snapshot_cannot_mutate_settings(editor, key, 
     values[key] = invalid
     before = deepcopy(config.data)
     draft = validate(editor)
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert config.data == before and not config.path.exists()
 
 
@@ -73,7 +73,7 @@ def test_full_legacy_editor_values_are_ignored_without_regranting_consent(editor
     values["backup_enabled"] = False
     values["allow_unlinked_acquisition"] = False
     draft = validate(editor)
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert config.data == before and not config.path.exists()
 
 
