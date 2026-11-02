@@ -18,11 +18,10 @@ def source():
         capabilities=SimpleNamespace(personal_library=True),
     )
     storage = SimpleNamespace(
-        identity_for_connection=lambda provider, credential: "alice",
-        provider_connections=lambda *, identity_id: [{
-            "provider_id": "numilog", "credential_id": "secret-ref",
-            "enabled": True,
-        }],
+        provider_scope_account_bound=lambda **scope: scope == {
+            "identity_id": "alice", "provider_id": "numilog",
+            "credential_id": "secret-ref", "account_id": "account",
+        },
         entitlements=Mock(side_effect=AssertionError("stale rights read")),
     )
     service = SimpleNamespace(
@@ -83,3 +82,36 @@ def test_mirror_disposes_of_inflight_numilog_rows_after_session_change():
     assert summary.failed_sources == 0
     rights.assert_not_called()
     service._mirror_remote_results.assert_not_called()
+
+
+def test_private_numilog_inventory_requires_persisted_exact_borrower(tmp_path):
+    """Even a live session and valid source ON cannot borrow a sibling right."""
+    from cifereca.storage import Storage
+    from tests.test_core_p0_3171_atomic_publication_v14 import register
+
+    service, account, session = source()
+    real = Storage(tmp_path / "numilog.sqlite")
+    service.storage = real
+    try:
+        for i in range(60):
+            register(real, "alice", "numilog", "secret-ref",
+                     account=f"sibling-{i}")
+        assert not numilog_inventory_binding_valid(service, account, session=session)
+        register(real, "alice", "numilog", "secret-ref", account="account")
+        assert numilog_inventory_binding_valid(service, account, session=session)
+
+        with real._lock, real._connect() as db:
+            db.execute(
+                "UPDATE provider_accounts SET account_id='changed' "
+                "WHERE provider_id='numilog' AND credential_id='secret-ref' "
+                "AND account_id='account'"
+            )
+        assert not numilog_inventory_binding_valid(service, account, session=session)
+        with real._lock, real._connect() as db:
+            db.execute(
+                "UPDATE provider_connections SET enabled=0 "
+                "WHERE provider_id='numilog' AND credential_id='secret-ref'"
+            )
+        assert not numilog_inventory_binding_valid(service, account, session=session)
+    finally:
+        real.close()
