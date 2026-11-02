@@ -78,8 +78,11 @@ def toggle_state(db, source: SourceKey):
     # current account list. Deny the ambiguous *literal* borrower until it
     # receives the new exact-scope, CAS-versioned source policy above.
     scope = source.scope
-    if scope.account_id == (
-        scope.provider_id + ":" + scope.credential_id + ":primary"
+    if scope.account_id and (
+        not scope.account_id.strip()
+        or scope.account_id.strip() == (
+            scope.provider_id + ":" + scope.credential_id + ":primary"
+        )
     ):
         return "off"
     prefix, active, epoch_prefix = spec
