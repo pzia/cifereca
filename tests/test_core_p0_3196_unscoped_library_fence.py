@@ -34,6 +34,10 @@ def test_no_selected_identity_exposes_neither_account_and_does_not_scan(
         )
         assert service.library_entries(scan=False) == []
         assert service.library_entries(scan=True) == []
+        # Empty explicit selection must not turn into a cross-profile view,
+        # whether or not a caller requests a background filesystem scan.
+        assert service.library_entries(identity_id="", scan=False) == []
+        assert service.library_entries(identity_id="", scan=True) == []
 
         # This fence does not prohibit intentionally selected identities.
         alice = service.library_entries(identity_id="alice", scan=False)
