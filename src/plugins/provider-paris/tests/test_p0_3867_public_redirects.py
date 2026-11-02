@@ -192,7 +192,7 @@ def test_paris_selected_delivery_redirect_cycle_never_publishes(tmp_path, monkey
         assert len(calls) <= 2, "selected candidate must not repeat a signed GET"
         return NS(
             status_code=307, url=url,
-            headers={"Location": foreign if url == SIGNED else SIGNED},
+            headers={"location": foreign if url == SIGNED else SIGNED},
         )
 
     client._get_pnb_response = respond
