@@ -12,7 +12,16 @@ inconnue : une URL est projetée dans `SearchResult.thumbnail_url` et
 `ItemDetail.thumbnail_url` **seulement** si elle est réellement portée par
 la carte liée à la ressource, ou par l'unique microdata `Book` de cette
 ressource. Le validateur public d'images utilisé pour les prêts refuse les
-origines non autorisées, URLs signées, paramètres privés et chemins suspects ;
+origines non autorisées, URLs signées, paramètres privés et chemins suspects.
+La famille observée dans la capture privée du 01/11/2026 est admissible uniquement
+sous forme `https://covers.feedbooks.net/item/{id}.jpg?size={lettres}&t={chiffres}`
+(les deux paramètres obligatoires, ordre libre, aucun autre paramètre, fragment,
+port ou chemin alternatif). Les URLs historiques `pret.bnf.fr` et
+`imagedelivery.net` conservent leur politique **sans query**.
+Les couvertures déclarées `class=cover` / `itemprop=image` du `Book`
+exact sont privilégiées par rapport aux images décoratives non marquées ;
+les liens imbriqués vers d'autres ressources sont exclus. Toujours sans
+résolution par ISBN/titre ni requête HTTP de miniature dans le plugin ;
 les images multiples/conflictuelles, d'autres notices, les avatars et les
 `og:image` globaux restent `unknown` (`None`). Les doublons de recherche
 entre pages ne peuvent pas ressusciter une image contradictoire.
@@ -20,11 +29,13 @@ entre pages ne peuvent pas ressusciter une image contradictoire.
 Aucun GET d'image supplémentaire n'est réalisé par le plugin, aucun accès
 prêt/compte ni changement de capacité. Tests hors réseau sur DOM synthétique,
 dont recherche paginée et projection provider. **À qualifier sur des pages BnF
-réelles autorisées** : la présence et les sélecteurs exacts des images dans
-`/resources?q=...` et `/resources/{id}` n'ont pas été attestés par ces tests ;
-si le portail n'émet aucune image admissible, les placeholders restent normaux.
-Recette GTK de deux cartes/détails à couvertures attestées toujours requise
-avant fermeture de #4118.
+réelles autorisées** : une capture privée du 01/11/2026 atteste des
+balises `img.cover` dans les cartes de recherche et `img[itemprop=image]`
+dans les détails, mais ces fixtures synthétiques ne prouvent pas que le
+**chargement réseau** ou l'affichage GTK fonctionnent sur l'installation réelle.
+Les images de recommandations et les URLs non admissibles restent inconnues.
+Recette GTK de deux cartes/détails à couvertures réellement affichées toujours
+requise avant fermeture de #4118.
 
 ## Installer et essayer
 
