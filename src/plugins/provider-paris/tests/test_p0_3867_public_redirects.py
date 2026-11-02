@@ -150,3 +150,57 @@ def test_malformed_host_never_raises_unredacted_parser_exception(invalid):
             client._validate_pnb_redirect_url(invalid)
     finally:
         client.close()
+
+
+def test_signed_supplier_redirect_cycle_stops_before_third_get(monkeypatch):
+    """A replay of the original signed URL is forbidden even below hop limit."""
+    client = ParisClient("https://bibliotheques.paris.fr")
+    calls = []
+
+    def respond(url, **_kwargs):
+        calls.append(url)
+        assert len(calls) <= 2, "redirect cycle must not repeat a signed GET"
+        target = FOREIGN if url == START else START
+        return httpx.Response(
+            302, headers={"Location": target},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(client, "_get_pnb_response", respond)
+    try:
+        with pytest.raises(Exception, match="Boucle de redirections PNB") as error:
+            client._resolve_pnb_loan_to_acsm(START)
+        assert calls == [START, FOREIGN]
+        assert "ticket=" not in str(error.value)
+        assert "key=" not in str(error.value)
+    finally:
+        client.close()
+
+
+def test_paris_selected_delivery_redirect_cycle_never_publishes(tmp_path, monkeypatch):
+    """The selected-right staging path must enforce the same no-replay rule."""
+    from types import SimpleNamespace as NS
+
+    from cifereca.plugin_api import ProviderConfigurationError
+    from tests.test_p0_3252_paris_download_scope import SIGNED, prepare
+
+    session, account, loan, client, calls = prepare(tmp_path, monkeypatch)
+    foreign = "https://new-delivery.example/file?token=SYNTHETIC_SECRET"
+
+    def respond(url):
+        calls.append(url)
+        assert len(calls) <= 2, "selected candidate must not repeat a signed GET"
+        return NS(
+            status_code=307, url=url,
+            headers={"Location": foreign if url == SIGNED else SIGNED},
+        )
+
+    client._get_pnb_response = respond
+    try:
+        with pytest.raises(ProviderConfigurationError, match="Boucle de redirections PNB") as error:
+            session.download_digital(loan, account, tmp_path)
+        assert calls == [SIGNED, foreign]
+        assert "SYNTHETIC_SECRET" not in str(error.value)
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
