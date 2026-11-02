@@ -3,6 +3,8 @@ from copy import copy
 from types import SimpleNamespace as NS
 import unittest
 
+import pytest
+
 from cifereca.core.private_inventory_binding import private_inventory_binding_current
 from cifereca.core.sync_coordination import _synchronize_account_source_impl
 from cifereca.providers import ProviderConfigurationError
@@ -12,8 +14,12 @@ def rig(provider='fixture-unknown', account_id='buyer'):
     account = NS(identity_id='alice', provider_id=provider,
                  credential_id='connection-a', unique_id=account_id)
     scope = ('alice', provider, 'connection-a', account_id)
-    state = NS(owner='alice', enabled=True, profile=True,
+    state = NS(owner='alice', enabled=True, profile=True, borrower=account_id,
                connections=[dict(provider_id=provider, credential_id='connection-a', enabled=True)])
+    def account_bound(*, identity_id, provider_id, credential_id, account_id):
+        return (state.owner == identity_id and provider_id == provider
+                and credential_id == 'connection-a' and account_id == state.borrower
+                and state.connections[0]['enabled'])
     session = NS(provider_id=provider, credential_id='connection-a', connected=True,
                  capabilities=NS(loans=False, personal_library=True))
     service = NS(accounts=[account], _sessions={(provider, 'connection-a'): session},
@@ -22,7 +28,8 @@ def rig(provider='fixture-unknown', account_id='buyer'):
                  sync_source_enabled=lambda a: state.enabled,
                  identity_by_id=lambda identity: NS(identity_id=identity) if state.profile else None,
                  storage=NS(identity_for_connection=lambda p,c:state.owner,
-                            provider_connections=lambda **kw:state.connections))
+                            provider_connections=lambda **kw:state.connections,
+                            provider_scope_account_bound=account_bound))
     service._session_for_account = lambda a: session
     service.reads, service.projections = [], []
     def library():
@@ -62,6 +69,29 @@ class PrivateInventoryBindingTests(unittest.TestCase):
         self.assertTrue(current(service, account, session, scope))
         session.accounts.append(copy(account))
         self.assertFalse(current(service, account, session, scope))
+
+    def test_detached_or_reassigned_sqlite_borrower_denied_even_with_live_session(self):
+        service, account, session, state, scope = rig()
+        self.assertTrue(current(service, account, session, scope))
+        state.borrower = 'different-borrower'
+        self.assertFalse(current(service, account, session, scope))
+        with self.assertRaises(ProviderConfigurationError):
+            _synchronize_account_source_impl(service, account)
+        self.assertEqual(service.reads, [])
+        state.borrower = scope[3]
+        self.assertTrue(current(service, account, session, scope))
+
+    def test_detachment_during_library_read_discards_metadata(self):
+        service, account, session, state, _ = rig()
+        def library():
+            service.reads.append(1)
+            state.borrower = 'new-owner-account'
+            return [object()]
+        session.library = library
+        with self.assertRaises(ProviderConfigurationError):
+            _synchronize_account_source_impl(service, account)
+        self.assertEqual(service.reads, [1])
+        self.assertEqual(service.projections, [])
 
     def test_shared_credential_cannot_cross_profiles(self):
         service, account, session, _, scope = rig()
@@ -132,9 +162,14 @@ def test_real_sqlite_manual_inventory_admission_is_provider_neutral(tmp_path):
             account = Account(identity_id='default', provider_id=provider,
                               credential_id='synthetic-connection', unique_id='synthetic-buyer')
             service.accounts.append(account)
-            service.storage.provider_connection_put(dict(
+            connection_id = service.storage.provider_connection_put(dict(
                 identity_id='default', provider_id=provider,
                 credential_id=account.credential_id, enabled=True,
+            ))
+            service.storage.provider_account_put(dict(
+                connection_id=connection_id, identity_id='default',
+                provider_id=provider, credential_id=account.credential_id,
+                account_id=account.unique_id,
             ))
             calls = []
             session = NS(provider_id=provider, credential_id=account.credential_id,
@@ -150,5 +185,16 @@ def test_real_sqlite_manual_inventory_admission_is_provider_neutral(tmp_path):
             assert service.storage.entitlements() == []
             assert service.storage.acquisitions() == []
             assert service.storage.backup_list() == []
+            # A connected credential without the exact persisted borrower
+            # must never trigger a private provider read.
+            with service.storage._lock, service.storage._connect() as db:
+                db.execute(
+                    "DELETE FROM provider_accounts WHERE identity_id=? "
+                    "AND provider_id=? AND credential_id=? AND account_id=?",
+                    ('default', provider, account.credential_id, account.unique_id),
+                )
+            with pytest.raises(ProviderConfigurationError):
+                service._synchronize_account_source_impl(account)
+            assert calls == [1]
         finally:
             service.close()

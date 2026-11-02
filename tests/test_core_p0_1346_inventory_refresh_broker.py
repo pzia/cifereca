@@ -41,9 +41,14 @@ def _rig(tmp_path):
             or {"library": 1}
         ),
     )
-    storage.provider_connection_put({
+    connection_id = storage.provider_connection_put({
         "identity_id": "alice", "provider_id": "kobo",
         "credential_id": "vault-alice", "enabled": True,
+    })
+    storage.provider_account_put({
+        "connection_id": connection_id, "identity_id": account.identity_id,
+        "provider_id": account.provider_id, "credential_id": account.credential_id,
+        "account_id": account.unique_id,
     })
     return source, account, session, calls
 
