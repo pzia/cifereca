@@ -293,3 +293,33 @@ def test_publisher_legacy_grant_never_outlives_exact_enabled_account(rig, revoca
     # The historical positive metadata may remain; it must not revive
     # authorization when the SQL transaction has invalidated ownership.
     assert db.metadata_get(consent_key(service.source)) is not None
+
+
+
+@pytest.mark.parametrize("raw_factory", [
+    lambda raw: raw.replace('"allowed":true', '"allowed":false,"allowed":true'),
+    lambda raw: raw.replace('"allowed":true', '"allowed":true,"allowed":false,"allowed":true'),
+    lambda raw: raw.replace('"allowed":true', '"allowed":true,"unexpected":"future-grant"'),
+    lambda raw: raw.replace('"allowed":true', '"allowed":true,"source":[],"source":' + json.dumps(raw and [])),
+])
+def test_ambiguous_legacy_consent_metadata_never_grants(rig, raw_factory):
+    """A duplicate/unknown field cannot silently revive a legacy permission."""
+    service, db, _ = rig
+    grant(service)
+    key = consent_key(service.source)
+    baseline = db.metadata_get(key)
+    assert type(baseline) is str and '"allowed":true' in baseline
+    db.metadata_set(key, raw_factory(baseline))
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+    with db._lock, db._connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert consent_current_in_transaction(connection, service.source) is False
+
+
+def test_unmodified_legacy_consent_still_grants_exact_bound_reference(rig):
+    service, db, _ = rig
+    grant(service)
+    assert read_source_acquisition_consent(service, service.account) == frozenset({service.source})
+    with db._lock, db._connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert consent_current_in_transaction(connection, service.source) is True
