@@ -199,3 +199,76 @@ def test_cleanup_rechecks_physical_owner_in_final_sql_transaction(
     assert not staged.exists()
     assert final.read_bytes() == BYTES
     assert storage.placements()[0] == original_placement
+
+
+
+@pytest.mark.parametrize("replacement", ["symlink_parent", "regular_parent", "run_inode"])
+def test_postcommit_cleanup_never_deletes_rebound_staging_namespace(
+    rig, tmp_path, monkeypatch, replacement,
+):
+    """An ancestor/run swap AFTER the path probe must not delete foreign bytes.
+
+    The identity and acquisition SQLite facts remain unchanged. Only a
+    disposable synthetic filesystem is modified, with a foreign sentinel
+    having the same opaque run name as the selected original.
+    """
+    from cifereca.core import canonical_promotion
+
+    service, storage, root, gets, staged = _published_with_deferred_cleanup(
+        rig, monkeypatch,
+    )
+    completed = _checkpoint(storage, service, staged)
+    final = Path(storage.placements()[0]["path"])
+    original_placement = dict(storage.placements()[0])
+    base = staged.parent.parent
+    old_run = staged.parent
+    foreign = tmp_path / "foreign-library"
+    foreign.mkdir()
+    changes = []
+    original_dependency = canonical_promotion._metadata_staging_dependency
+    if replacement == "run_inode":
+        saved = base / "detached-original-run"
+        replacement_parent = base
+    else:
+        saved = base.with_name(".canonical-delivery-detached")
+        replacement_parent = foreign
+
+    def swap_after_dependency(db, *, table, marker, current_operation=""):
+        result = original_dependency(
+            db, table=table, marker=marker,
+            current_operation=current_operation,
+        )
+        if table == "acquisition_ledger" and not changes:
+            if replacement == "run_inode":
+                old_run.rename(saved)
+            else:
+                base.rename(saved)
+                if replacement == "symlink_parent":
+                    base.symlink_to(foreign, target_is_directory=True)
+                else:
+                    base.mkdir(mode=0o700)
+            target = replacement_parent / old_run.name
+            target.mkdir()
+            (target / "foreign.epub").write_bytes(b"NOT A Cifereca acquisition")
+            changes.append(target)
+        return result
+
+    monkeypatch.setattr(
+        canonical_promotion, "_metadata_staging_dependency",
+        swap_after_dependency,
+    )
+    assert canonical_promotion.cleanup_published_staging(
+        storage, source=service.source, completed=completed,
+        library_root=root,
+    ) is False
+    assert len(changes) == 1
+    assert (changes[0] / "foreign.epub").read_bytes() == (
+        b"NOT A Cifereca acquisition"
+    )
+    saved_staged = saved / staged.name if replacement == "run_inode" else (
+        saved / old_run.name / staged.name
+    )
+    assert saved_staged.read_bytes() == BYTES
+    assert final.read_bytes() == BYTES
+    assert storage.placements()[0] == original_placement
+    assert gets == ["signed-right-offer"]
