@@ -305,7 +305,7 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(card))
         self.assertEqual(len(result.loans), 1)
         self.assertEqual(result.loans[0].thumbnail_url, web.ORIGIN + safe)
-        self.assertFalse(result.exhaustive)
+        self.assertTrue(result.exhaustive)  # validated, nonempty official widget
         # Neither an unrelated image nor another resource can supply a cover.
         unrelated = ('<img src="' + safe + '">' + loan())
         self.assertIsNone(self.parse_loans(loans(unrelated)).loans[0].thumbnail_url)
