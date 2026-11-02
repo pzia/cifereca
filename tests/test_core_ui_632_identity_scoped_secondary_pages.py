@@ -19,19 +19,19 @@ def _method(name: str) -> str:
     return ast.unparse(method)
 
 
-def test_identity_change_clears_history_and_booking_models_and_views():
+def test_identity_change_clears_history_without_booking_ui():
     source = _method("_activate_identity")
     for fragment in (
         "window.service.last_history = []",
-        "window.service.last_bookings = []",
+        "window.service.last_bookings = []",  # v1 cache cleared defensively
         "window.history_objects = {}",
-        "window.booking_objects = {}",
         "window._history_all_rows = []",
         "window._history_rows = []",
         "window.history_page.clear_rows()",
-        "window.booking_page.clear_rows()",
     ):
         assert fragment in source
+    assert "window.booking_objects" not in source
+    assert "window.booking_page" not in source
 
 
 def test_identity_context_generation_invalidates_callbacks():
@@ -49,20 +49,13 @@ def test_history_refresh_only_applies_to_current_identity_context():
     assert "self._populate_history(rows)" in source
 
 
-def test_booking_refresh_only_applies_to_current_identity_context():
-    source = _method("refresh_bookings")
-    assert "identity_id = current.identity_id if current is not None else None" in source
-    assert "generation = self._identity_context_generation" in source
-    assert "self._identity_request_current(identity_id, generation)" in source
-    assert "self._populate_bookings(rows)" in source
-
 
 def test_active_secondary_page_reloads_after_identity_loans_finish():
     source = _method("_activate_identity")
     assert "route == 'history'" in source
     assert "window.refresh_history(False)" in source
-    assert "route == 'bookings'" in source
-    assert "window.refresh_bookings(False)" in source
+    assert "route == 'bookings'" not in source
+    assert "window.refresh_bookings(False)" not in source
 
 
 def test_identity_request_guard_requires_both_identity_and_generation():
