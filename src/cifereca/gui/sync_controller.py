@@ -75,6 +75,37 @@ def _build_sync_page(self):
     self._sync_attention_icon = alert_icon
     self._sync_attention_text = alert_text
     heading.append(alert_row)
+    # The fixed warning banner navigates to an actual, currently visible
+    # source row. It never invokes a Sync command or exposes opaque IDs.
+    jump = self.action_button("Voir les points à vérifier", "go-down-symbolic")
+    jump.set_tooltip_text(
+        "Atteindre successivement les comptes en erreur ou avertissement, "
+        "sans lancer de synchronisation."
+    )
+    jump.set_visible(False)
+    alert_row.append(jump)
+    self._sync_attention_jump_button = jump
+    self._sync_attention_targets = []
+    self._sync_attention_cursor = 0
+    self._sync_attention_scope = None
+    self._sync_scroll = scroll
+
+    def jump_to_attention(_button):
+        scope = getattr(self, "_sync_attention_scope", None)
+        if (getattr(self, "_sync_page_token", None) is not page_token
+                or scope is None or not sync_action_scope_current(self, scope)):
+            return
+        from cifereca.gui.sync_attention_navigation import (
+            next_sync_attention_target, focus_sync_attention_target,
+        )
+        target, position = next_sync_attention_target(
+            getattr(self, "_sync_attention_targets", ()),
+            getattr(self, "_sync_attention_cursor", 0),
+        )
+        if target is not None and focus_sync_attention_target(scroll, target):
+            self._sync_attention_cursor = position
+
+    jump.connect("clicked", jump_to_attention)
     add_sync_action(heading, refresh)
     add_sync_action(heading, all_now)
     root.append(sync_action_row(heading))
@@ -152,6 +183,12 @@ def _refresh_sync_page(self) -> None:
     all_now = getattr(self, "_sync_all_button", None)
     summary = getattr(self, "_sync_summary", None)
     alert_row = getattr(self, "_sync_attention_row", None)
+    self._sync_attention_targets = []
+    self._sync_attention_cursor = 0
+    self._sync_attention_scope = None
+    jump = getattr(self, "_sync_attention_jump_button", None)
+    if jump is not None:
+        jump.set_visible(False)
     if alert_row is not None:
         # Reset before all early returns (no broker, no identity, stale scope).
         alert_row.set_visible(False)
@@ -184,6 +221,7 @@ def _refresh_sync_page(self) -> None:
             xalign=0,
         ))
         return
+    self._sync_attention_scope = scope
     # A failed or malformed broker enumeration must not crash the entire
     # Synchronisation page or masquerade as an empty, healthy inventory.
     def sources_unavailable():
@@ -275,6 +313,8 @@ def _refresh_sync_page(self) -> None:
         )
         infos = sum(alert is not None and alert[0] == "info" for alert in alerts)
         if errors or warnings:
+            if jump is not None:
+                jump.set_visible(True)
             self._sync_attention_icon.set_from_icon_name(
                 "dialog-error-symbolic" if errors else "dialog-warning-symbolic"
             )
@@ -430,6 +470,11 @@ def _refresh_sync_page(self) -> None:
                 row.add_suffix(reconnect)
             group.add(row)
             box.append(group)
+            if notice.state in {
+                "not_connected", "plugin_missing", "plugin_unavailable",
+                "invalid_configuration",
+            }:
+                self._sync_attention_targets.append(("warning", row))
 
     if not rows:
         if not unavailable_paris:
@@ -475,6 +520,8 @@ def _refresh_sync_page(self) -> None:
             alert = sync_source_attention(source)
             if alert is not None:
                 severity, message = alert
+                if severity in {"error", "warning"}:
+                    self._sync_attention_targets.append((severity, row))
                 icon = Gtk.Image.new_from_icon_name(
                     "dialog-error-symbolic" if severity == "error"
                     else "dialog-information-symbolic" if severity == "info"
