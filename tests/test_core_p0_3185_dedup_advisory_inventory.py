@@ -221,3 +221,27 @@ def test_deleted_identity_never_produces_green_advisory(store, tmp_path):
     assert review.pending_count == 0 and review.blocked_count == 1
     assert review.entries[0].reason == "owner_directory_unavailable"
     assert store.metadata_get(key) is not None
+
+
+
+def test_invalid_profile_folder_cannot_be_advisory_owner(store, tmp_path):
+    key, _ = _checkpoint(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE identities SET directory_name='../outside' "
+            "WHERE identity_id='A'"
+        )
+    try:
+        result = review_canonical_dedup_advisories(store, identity_id="A")
+        assert result.status == "partial" and result.pending_count == 0
+        assert result.entries[0].reason == "owner_directory_unavailable"
+        assert store.metadata_get(key) is not None
+    finally:
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE identities SET directory_name='A' "
+                "WHERE identity_id='A'"
+            )
+    assert review_canonical_dedup_advisories(
+        store, identity_id="A",
+    ).pending_count == 1
