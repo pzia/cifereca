@@ -289,3 +289,43 @@ def test_generic_unavailable_is_not_retried_or_misclassified_as_archived(rig):
     counts = result["canonical_execution"]
     assert counts["pending"] == 1 and counts["skipped_archived"] == 0
     assert counts["failed"] == 0 and downloads == []
+
+
+
+@pytest.mark.parametrize("change", ["removed", "rebound"])
+def test_selected_offer_refuses_credential_with_unregistered_sql_borrower(
+    rig, change,
+):
+    """A current session object is not proof that Core still owns its account."""
+    from cifereca.core.canonical_selected_offers import qualify_selected_offers
+    from cifereca.locking import InterProcessLock
+
+    service, storage, root = rig
+    _enabled(service, root)
+    provider_reads = []
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: provider_reads.append(True) or _selected(service)
+    )
+    with storage._lock, storage._connect() as sql:
+        if change == "removed":
+            sql.execute(
+                "DELETE FROM provider_accounts WHERE identity_id='A' "
+                "AND provider_id='seller-a' AND credential_id='card-a'"
+            )
+        else:
+            sql.execute(
+                "UPDATE provider_accounts SET account_id='another-borrower' "
+                "WHERE identity_id='A' AND provider_id='seller-a' "
+                "AND credential_id='card-a'"
+            )
+    with InterProcessLock(root.parent / "state" / "acquisition.lock") as lock:
+        with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
+            qualify_selected_offers(
+                service, service.account, service.session, service.snapshot,
+                admitted_epoch=service._source_context_epoch,
+                shared_lock=lock, library_root=root,
+                persisted_consent=frozenset({service.source}),
+                consent_still_current=lambda _source: True,
+            )
+    assert provider_reads == []
+    assert storage.placements() == []
