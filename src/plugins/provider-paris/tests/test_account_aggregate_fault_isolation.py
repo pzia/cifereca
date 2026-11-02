@@ -70,10 +70,18 @@ def test_retired_booking_api_is_absent_while_history_remains_operational():
     # CancelBookings mutation. This is an API surface check; no network call.
     from cifereca_paris import DESCRIPTOR
     from cifereca_paris_normalize import normalize_loan, normalize_history
+    from cifereca.plugin_api import ProviderSession, ProviderCapabilityError
     import cifereca_paris_normalize as normalizers
 
     assert DESCRIPTOR.capabilities.bookings is False
-    assert not hasattr(ParisProviderSession, "bookings")
+    # Public Plugin API v1 keeps an inherited default-deny method. Removing
+    # the Paris override restores that refusal without a network side effect.
+    assert "bookings" not in ParisProviderSession.__dict__
+    assert ParisProviderSession.bookings is ProviderSession.bookings
+    session = object.__new__(ParisProviderSession)
+    session.provider_id = "paris"
+    with pytest.raises(ProviderCapabilityError, match="bookings unsupported"):
+        session.bookings(None)
     assert not hasattr(ParisClient, "bookings")
     assert not hasattr(ParisClient, "all_bookings")
     assert not hasattr(ParisClient, "cancel_booking")
