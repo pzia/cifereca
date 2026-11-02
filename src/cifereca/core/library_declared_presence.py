@@ -134,15 +134,12 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
         return DeclaredPresence('needs_review', str(error))
     except LockBusyError:
         return DeclaredPresence('needs_review', 'acquisition_busy')
-    except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError) as error:
-        # A closed reconciliation outcome does not replace the original
-        # SQLite/filesystem failure. Keep the full observed cause (including
-        # chained exceptions) in the canonical raw journal; do not inspect
-        # anything else, issue a GET, or change the action's admission.
+    except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError):
+        # SQLite/filesystem exceptions can contain private paths, borrowers,
+        # SQL contents or signed source references. Neither the public
+        # result nor ordinary diagnostics may reproduce them or the traceback.
+        # A failed local check cannot authorize acquisition or deletion.
         _TRACE_LOG.warning(
-            "TRACE declared presence check failed identity_id=%s provider_id=%s "
-            "credential_id=%s account_id=%s item_id=%s expected_loan_id=%s",
-            identity_id, provider_id, credential_id, account_id, item_id,
-            expected_loan_id, exc_info=True,
+            "TRACE declared presence check failed code=verification_unavailable"
         )
-        return DeclaredPresence('needs_review', str(error))
+        return DeclaredPresence('needs_review', 'verification_unavailable')
