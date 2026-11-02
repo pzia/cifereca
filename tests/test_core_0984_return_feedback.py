@@ -129,15 +129,14 @@ def test_unknown_channel_cannot_accidentally_claim_success():
         loan_return_feedback({"status": "provider_return_confirmed"}, channel="other")
 
 
-def test_gui_return_actions_show_outcome_instead_of_generic_success_toast():
-    gui = (
-        Path(__file__).parents[1] / "src" / "cifereca" / "gui" / "loans_controller.py"
-    ).read_text(encoding="utf-8")
-    block = gui.split("def _return_loan_result(", 1)[1]
-    assert "loan_return_feedback(result, channel=channel)" in block
-    assert "self.show_attention(message" in block
-    assert "self.toast(message, 6)" in block
-    assert 'channel="adept"' in block and 'channel="pnb"' in block
-    assert "success_toast=" not in block
-    assert "return_loan_prefer_adept(loan)" in block
-    assert "return_digital(loan, explicit_retry=True)" in block
+def test_gui_no_longer_imports_or_dispatches_historical_return_feedback():
+    # The old feedback formatter remains an inert historical projection until
+    # its API compatibility is retired separately. No GUI may invoke it.
+    gui = (Path(__file__).parents[1] / "src" / "cifereca" / "gui"
+           / "loans_controller.py").read_text(encoding="utf-8")
+    assert "loan_return_feedback" not in gui
+    assert "def confirm_return(" not in gui
+    assert "def _return_loan(" not in gui
+    assert "def _return_loan_pnb(" not in gui
+    assert "return_digital(loan" not in gui
+    assert "return_loan_prefer_adept(loan" not in gui
