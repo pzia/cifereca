@@ -1086,18 +1086,6 @@ class ParisClient:
         return self._timed("PNB", "download digital document", work)
 
 
-    def cancel_booking(self, booking: Booking, uid: str = "") -> dict[str, Any]:
-        if not booking.raw:
-            raise ParisError("L'objet réservation Syracuse brut est requis pour l'annulation")
-        def work():
-            r = self.client.post(
-                f"{self.base_url}{ACCOUNT_SERVICE}/CancelBookings",
-                headers={**self._api_headers(), "Content-Type": "application/json; charset=UTF-8"},
-                json={"bookings": [booking.raw], "userUniqueIdentifier": uid},
-            )
-            return self._json(r, "cancel booking")
-        return self._timed("ACTION", "cancel booking", work)
-
     def save_pnb_preferences(self, passphrase: str, hint: str, reader_id: str, reader_app_name: str, uid: str = "") -> dict[str, Any]:
         """Interface Syracuse découverte dans le JS officiel.
 
