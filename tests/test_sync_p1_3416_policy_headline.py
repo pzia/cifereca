@@ -255,3 +255,52 @@ def test_cannot_claim_effective_consent_when_connection_field_is_missing_or_trut
         assert "périodique (suspendue)" in info
         assert "autorisation activée (suspendue)" in info
         assert "source déconnectée" in info
+
+
+@pytest.mark.parametrize("bad_source_id", [
+    None, "", 42, True, object(),
+    "opaque-" + "x" * 251,
+    "https://private.invalid/?token=" + "SECRET" * 50,
+])
+def test_bad_source_scope_never_reads_another_accounts_policies(bad_source_id):
+    """The card and aggregate must use the *same* bounded scope admission."""
+    from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
+    calls = []
+    src = source(source_id=bad_source_id)
+    b = broker(
+        schedule=dict(mode="periodic", interval_minutes=60),
+        authorization=consent(enabled=True),
+        calls=calls,
+    )
+    detail = sync_source_controls_overview(src, b)
+    aggregate = sync_axes_dashboard_summary([src], b)
+    assert detail == "Réglages · portée du compte indisponible"
+    assert "0 programmation(s) active(s)" in aggregate
+    assert "0 autorisation(s) effective(s)" in aggregate
+    assert "1 programmation(s) inconnue(s)" in aggregate
+    assert "1 autorisation(s) inconnue(s)" in aggregate
+    assert calls == []
+    assert "SECRET" not in detail + aggregate
+    assert "private.invalid" not in detail + aggregate
+
+
+def test_maximum_length_opaque_source_id_is_still_admitted():
+    calls = []
+    sid = "s" * 256
+    src = source(source_id=sid)
+    b = broker(
+        schedule=dict(mode="periodic", interval_minutes=60),
+        authorization=consent(enabled=True), calls=calls,
+    )
+    from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
+    detail = sync_source_controls_overview(src, b)
+    aggregate = sync_axes_dashboard_summary([src], b)
+    assert "Notices et droits : périodique" in detail
+    assert "Fichiers : autorisation activée" in detail
+    assert "1 programmation(s) active(s)" in aggregate
+    assert "1 autorisation(s) effective(s)" in aggregate
+    assert calls == [
+        ("read-schedule", sid), ("read-consent", sid),
+        ("read-schedule", sid), ("read-consent", sid),
+    ]
+    assert sid not in detail + aggregate
