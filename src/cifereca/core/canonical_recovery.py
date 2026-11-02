@@ -38,6 +38,31 @@ def _unique_checkpoint_fields(pairs):
     return result
 
 
+def _exact_borrower_bound_in_db(db, scope) -> bool:
+    """Check the sole enabled connection and its exact borrower in one snapshot.
+
+    The journal's caller already holds Storage's lock and BEGIN. A nested
+    Storage call would deadlock, while materializing a whole credential roster
+    makes every completed GET and retry scale with unrelated accounts.
+    """
+    connections = db.execute(
+        "SELECT connection_id,identity_id,enabled FROM provider_connections "
+        "WHERE provider_id=? AND credential_id=? LIMIT 2",
+        (scope.provider_id, scope.credential_id),
+    ).fetchall()
+    if (len(connections) != 1
+            or connections[0][1:] != (scope.identity_id, 1)):
+        return False
+    accounts = db.execute(
+        "SELECT 1 FROM provider_accounts WHERE connection_id=? "
+        "AND identity_id=? AND provider_id=? AND credential_id=? "
+        "AND account_id=? LIMIT 2",
+        (connections[0][0], scope.identity_id, scope.provider_id,
+         scope.credential_id, scope.account_id),
+    ).fetchall()
+    return len(accounts) == 1
+
+
 def _stage_id(source: SourceKey, offer_id: str) -> str:
     scope = source.scope
     return _stable(
@@ -133,18 +158,7 @@ def record_completed_delivery_for_recovery(
     now = int(time.time())
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        binding = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
-            (scope.provider_id, scope.credential_id),
-        ).fetchone()
-        accounts = db.execute(
-            "SELECT account_id FROM provider_accounts WHERE identity_id=? "
-            "AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
-        ).fetchall()
-        if (binding != (scope.identity_id, 1)
-                or sum(a[0] == scope.account_id for a in accounts) != 1):
+        if not _exact_borrower_bound_in_db(db, scope):
             raise ValueError("canonical_intake_account_rebound")
         row = db.execute(
             "SELECT provider_id,credential_id,account_id,item_id,identity_id,"
@@ -211,19 +225,7 @@ def recover_completed_delivery(
             source.edition_id, scope.identity_id,
         ) or row[5] not in (_STAGED, "complete"):
             return None
-        owner = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
-            (scope.provider_id, scope.credential_id),
-        ).fetchone()
-        registered_accounts = db.execute(
-            "SELECT account_id FROM provider_accounts WHERE identity_id=? "
-            "AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
-        ).fetchall()
-        if owner != (scope.identity_id, 1) or sum(
-            item[0] == scope.account_id for item in registered_accounts
-        ) != 1:
+        if not _exact_borrower_bound_in_db(db, scope):
             return None
         try:
             # A damaged operation journal cannot permanently trap the source
