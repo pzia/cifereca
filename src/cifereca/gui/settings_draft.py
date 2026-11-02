@@ -397,6 +397,26 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 'Déplacer un compte avec des plafonds de lecteurs liés '
                 'nécessite une nouvelle connexion explicite.'
             )
+        # A changed public login can represent another remote borrower while
+        # reusing the local credential row ID. Never carry previously scoped
+        # linked-reader preferences across that ownership boundary. Secret
+        # password rotation alone does not change the borrower identity.
+        if (type(original_for_identity) is dict
+                and original_for_identity.get('id') == editor['id']
+                and any(
+                    original_options.get(spec.key)
+                    for spec in getattr(descriptor, 'borrower_scoped_options', ())
+                )
+                and any(
+                    field.secret is not True
+                    and field.key in original_credentials
+                    and original_credentials.get(field.key) != credentials.get(field.key)
+                    for field in descriptor.credential_fields
+                )):
+            raise SettingsValidationError(
+                'Changer l’identifiant de connexion avec des plafonds de '
+                'lecteurs liés nécessite un nouveau compte fournisseur.'
+            )
         account_identity_id = selected_identity or saved_identities[0]['id']
         if account_identity_id not in identity_ids:
             raise SettingsValidationError(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
