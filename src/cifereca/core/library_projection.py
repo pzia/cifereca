@@ -480,15 +480,29 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
         from .convergence_verified_presence import _verified_copy
         try:
             artifact_id = rows[0].get('artifact_id')
-            artifact = self.storage.artifact_get(artifact_id)
-            owner = self.storage.identity_get(identity_id)
-            directory = (owner or {}).get('directory_name')
-            digest = (artifact or {}).get('sha256')
-            size = (artifact or {}).get('size')
+            # Bounded, one-snapshot proof of the registered owner and Artifact.
+            # Storage.identity_get() would enumerate every unrelated profile,
+            # and the historical UNIQUE index may be absent in legacy files.
+            with self.storage._lock, self.storage._connect() as db:
+                db.execute('BEGIN')
+                evidence = db.execute(
+                    'SELECT a.sha256,a.size,i.directory_name FROM artifacts a '
+                    'JOIN identities i ON i.identity_id=? '
+                    'WHERE a.artifact_id=?',
+                    (identity_id, artifact_id),
+                ).fetchone()
+                if evidence is None:
+                    return None
+                digest, size, directory = evidence
+                if (type(directory) is not str or not directory or db.execute(
+                    'SELECT 1 FROM identities WHERE directory_name=? '
+                    'AND identity_id<>? LIMIT 1',
+                    (directory, identity_id),
+                ).fetchone() is not None):
+                    return None
             if (type(artifact_id) is not str or type(digest) is not str
                     or len(digest) != 64 or artifact_id != 'sha256:' + digest
                     or type(size) is not int or size <= 0
-                    or type(directory) is not str or not directory
                     or not _verified_copy(
                         rows[0]['path'], root=self.library_dir(),
                         owner_directory=directory,
