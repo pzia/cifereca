@@ -147,6 +147,31 @@ def review_canonical_dedup_advisories(
                         artifact=artifact, ids=ids,
                     ))
                     continue
+                # A pending preview is meaningful only when one registered
+                # profile owns its physical directory. Legacy/corrupt SQLite
+                # may have lost the uniqueness index; duplicate folder names
+                # must never be presented as actionable maintenance.
+                registered = db.execute(
+                    "SELECT directory_name FROM identities WHERE identity_id=?",
+                    (owner,),
+                ).fetchone()
+                if (registered is None or type(registered[0]) is not str
+                        or not registered[0] or registered[0] in {".", ".."}
+                        or "/" in registered[0] or chr(92) in registered[0]):
+                    entries.append(blocked(
+                        "owner_directory_unavailable", owner=owner,
+                        artifact=artifact, ids=ids,
+                    ))
+                    continue
+                if db.execute(
+                    "SELECT 1 FROM identities WHERE directory_name=? "
+                    "AND identity_id<>? LIMIT 1", (registered[0], owner),
+                ).fetchone() is not None:
+                    entries.append(blocked(
+                        "owner_directory_ambiguous", owner=owner,
+                        artifact=artifact, ids=ids,
+                    ))
+                    continue
                 artifact_row = db.execute(
                     "SELECT sha256 FROM artifacts WHERE artifact_id=?",
                     (artifact,),
