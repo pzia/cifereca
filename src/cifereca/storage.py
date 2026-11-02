@@ -2068,6 +2068,33 @@ class Storage:
             out.append(row)
         return out
 
+    def exact_profile_directory_binding(self, identity_id: str) -> tuple[str | None, bool]:
+        """Read exact profile folder and its ownership in one SQL snapshot.
+
+        Never enumerate or deserialize unrelated profiles. Corrupt stores
+        with duplicate physical folders fail closed despite missing indexes.
+        """
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in identity_id)):
+            return None, False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN")
+            rows = db.execute(
+                "SELECT directory_name FROM identities "
+                "WHERE identity_id=? LIMIT 2", (identity_id,),
+            ).fetchall()
+            if len(rows) != 1:
+                return None, False
+            directory = rows[0][0]
+            if type(directory) is not str:
+                return None, False
+            owners = db.execute(
+                "SELECT identity_id FROM identities "
+                "WHERE directory_name=? LIMIT 2", (directory,),
+            ).fetchall()
+            return directory, len(owners) == 1 and owners[0][0] == identity_id
+
     def identity_get(self, identity_id: str) -> dict[str, Any] | None:
         return next((row for row in self.identities() if row["identity_id"] == identity_id), None)
 
