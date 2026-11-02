@@ -235,7 +235,8 @@ def _ui_component_tests(core_sources: list[str], root: Path) -> list[str] | None
 
 
 def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
-    changed = [path.strip() for path in paths if path.strip()]
+    # README is documentation, but PR CI checks Git status separately.
+    changed = [path.strip() for path in paths if path.strip() and path.strip() != "e2e/README.md"]
     changed_tests = _changed_tests(changed, root)
     # Native installed-recorder assertions run in the dedicated GTK job.
     # The headless PR job still verifies the package/API boundary; selecting
@@ -282,7 +283,7 @@ def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
 
 
 def select_e2e(paths: list[str]) -> str:
-    changed = [path.strip() for path in paths if path.strip()]
+    changed = [path.strip() for path in paths if path.strip() and path.strip() != "e2e/README.md"]
     if any(path in E2E_ALL_FILES or path.startswith(E2E_ALL_PREFIXES) for path in changed):
         return "all"
     if any(

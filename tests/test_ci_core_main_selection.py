@@ -129,6 +129,31 @@ def test_shared_core_or_ambiguous_changes_preserve_full_suite(tmp_path):
     assert select(root, before, head) == ("full", "tests", "shared-or-ambiguous-path")
 
 
+def test_e2e_readme_only_push_skips_core_but_not_deletion_or_rename(tmp_path):
+    root, base = fixture(tmp_path)
+    write(root, "e2e/README.md", "docs v1\n")
+    added = commit(root, "add README")
+    assert select(root, base, added) == ("skip", "", "e2e-readme-only")
+    write(root, "e2e/README.md", "docs v2\n")
+    modified = commit(root, "change README")
+    assert select(root, added, modified) == ("skip", "", "e2e-readme-only")
+    write(root, "e2e/probe.py", "VALUE = 1\n")
+    mixed = commit(root, "E2E code")
+    mode, targets, _reason = select(root, modified, mixed)
+    assert mode == "ui" and targets
+    (root / "e2e/README.md").unlink()
+    deleted = commit(root, "delete README")
+    assert select(root, mixed, deleted)[0:2] == ("full", "tests")
+    write(root, "e2e/README.md", "docs v3\n")
+    restored = commit(root, "restore README")
+    git(root, "mv", "e2e/README.md", "e2e/README.archived.md")
+    renamed = commit(root, "rename README")
+    assert select(root, restored, renamed)[0:2] == ("full", "tests")
+    assert select(root, base, added, "workflow_dispatch") == (
+        "full", "tests", "manual-or-non-push"
+    )
+
+
 def test_deletions_renames_and_missing_history_do_not_skip_tests(tmp_path):
     root, before = fixture(tmp_path)
     (root / "tests/test_storage.py").unlink()

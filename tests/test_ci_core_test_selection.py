@@ -57,6 +57,16 @@ def test_pyproject_or_selector_change_keeps_full_suite():
     assert selector.select(["scripts/ci_test_dependency_guard.py"], ROOT) == ("full", ["tests"])
 
 
+def test_e2e_readme_does_not_expand_other_test_selections():
+    selector = _module()
+    assert selector.select(["e2e/README.md", "tests/test_storage.py"], ROOT) == (
+        "changed", ["tests/test_storage.py"]
+    )
+    assert selector.select_e2e(["e2e/README.md"]) == "none"
+    assert selector.select_e2e(["e2e/README.md", "e2e/run.py"]) == "all"
+    assert selector.select(["e2e/README.md"], ROOT) == ("full", ["tests"])
+
+
 def test_e2e_change_uses_ui_suite():
     selector = _module()
     mode, targets = selector.select(["e2e/run.py"], ROOT)

@@ -74,6 +74,13 @@ def test_readme_push_keeps_lightweight_selection_but_skips_test_execution():
                  "src/plugins/provider-kobo/plugin.py") == {"plugins"}
 
 
+def test_e2e_readme_push_keeps_status_aware_selector():
+    assert route("e2e/README.md") == {"core"}
+    source = WORKFLOWS["core"].read_text(encoding="utf-8")
+    assert source.count("if: steps.scope.outputs.core_mode != 'skip'") == 3
+    assert route("e2e/run.py") == {"core"}
+
+
 def test_plugin_only_runs_plugin_suite_not_core_or_wheel():
     for path in (
         "src/plugins/youth-catalog/youth_page.py",

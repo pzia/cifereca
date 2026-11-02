@@ -78,6 +78,17 @@ jobs:
               grep -Ev '^src/plugins/([^/]+/)?README\.md$' >/dev/null
           }
 
+          e2e_runtime_changes() {
+            # Only added/modified README content is inert. Deletions and
+            # renames still trigger fail-closed Core validation.
+            if git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA" -- e2e/README.md | \
+               grep -Ev '^[AM][[:space:]]' | grep -q .; then
+              return 0
+            fi
+            grep -E '^e2e/' "$changed_file" | \
+              grep -Ev '^e2e/README\.md$' >/dev/null
+          }
+
           core=false
           core_mode=none
           core_targets=""
@@ -92,7 +103,7 @@ jobs:
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
           lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
-          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_core_push\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
+          if matches '^(src/cifereca/|tests/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_core_push\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)' || e2e_runtime_changes; then
             core=true
           fi
 
