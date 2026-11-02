@@ -540,3 +540,55 @@ def test_paris_rights_wrong_credential_or_mixed_v1_v2_refuses_before_get(refs):
         assert client.calls == []
     finally:
         session.close()
+
+
+def test_paris_completed_rights_do_not_turn_legacy_return_inventory_complete():
+    """Rights completeness is informational, not evidence of loan return."""
+    session, account, client = fixture(digital=(
+        upstream("loan-1", "edition-1"),
+    ))
+    try:
+        inventory = session.loan_inventory_snapshot(account)
+        assert inventory.status == "success"
+        assert inventory.branch_claims_complete("dilicom", "digital") is False
+        rights = session.rights_observation_snapshot(account)
+        assert rights.status == "success" and rights.coverage == "complete"
+        assert rights.pagination_complete is True
+        assert rights.authorizes_negative_reconciliation is False
+        assert rights.authorizes_mutation is False
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("fault", ["missing_dilicom", "wrong_medium"])
+def test_paris_missing_or_misclassified_digital_branch_stays_partial(fault):
+    session, account, client = fixture(digital=(
+        upstream("loan-1", "edition-1"),
+    ))
+    original = session._snapshot_for_account
+
+    def altered_snapshot(borrower):
+        result = original(borrower)
+        if fault == "missing_dilicom":
+            return replace(result, branches=tuple(
+                b for b in result.branches if b.upstream != "dilicom"
+            ))
+        assert len(result.loans) == 1
+        return replace(result, loans=(replace(result.loans[0], medium="physical"),))
+
+    session._snapshot_for_account = altered_snapshot
+    try:
+        report = session.rights_observation_snapshot(account)
+        assert report.status == "partial"
+        assert report.coverage == "partial"
+        assert report.pagination_complete is False
+        assert report.authorizes_negative_reconciliation is False
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
