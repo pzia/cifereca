@@ -636,6 +636,13 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     _lib_started = time.monotonic()
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
     logger.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
+    # There is no authorized union-of-profiles Library view. Without an
+    # explicit effective identity, the content-hash grouping below would
+    # collapse two owners' same-SHA placements and remote entitlements into
+    # one card, disclosing paths, account metadata and private possessions.
+    # Fail closed before scanning or reading any cross-profile SQLite rows.
+    if not identity_id:
+        return []
     if scan:
         self.catalog_scan()
     merged: dict[str, dict[str, Any]] = {}
