@@ -145,6 +145,29 @@ class FeedbooksCoverTests(unittest.TestCase):
             expected=scope, observed=scope,
         ).loans[0].thumbnail_url)
 
+    def test_full_provider_loan_projection_and_library_fields_keep_observed_url(self):
+        from dataclasses import asdict
+        from cifereca.plugin_api import Loan
+        import test_http_provider as fixture
+
+        session, calls, _state = fixture.HTTPProviderTests().make(activity())
+        try:
+            account, = session.connect()
+            account.identity_id = "profile-synthetic"
+            before = len(calls)
+            loans = session.loans(account)
+            self.assertEqual(len(loans), 1)
+            self.assertEqual(len(calls), before + 1)
+            loan, = loans
+            self.assertEqual(loan.thumbnail_url, FEED)
+            self.assertEqual(Loan(**asdict(loan)).thumbnail_url, FEED)
+            self.assertEqual(loan.source_provider, "bnf-pret")
+            self.assertIsNone(loan.due_at)
+            self.assertFalse(any(path.startswith(("/item/", "/loans/", "/covers/"))
+                                 for _, _, path in calls))
+        finally:
+            session.close()
+
     def test_provider_search_and_holdings_propagate_exact_url_without_cover_get(self):
         calls = []
 
