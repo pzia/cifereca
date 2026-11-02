@@ -166,4 +166,16 @@ def test_controller_adds_overview_before_last_run_not_a_new_action():
     controller = (Path(__file__).resolve().parents[1] /
                   "src/cifereca/gui/sync_controller.py").read_text(encoding="utf-8")
     assert "sync_source_controls_overview(source, broker)" in controller
-    assert "control_overview + \"\\n\"" in controller
+    assert 'head + "\\n" + control_overview' in controller
+
+
+def test_gtk_card_keeps_provider_first_line_without_extra_broker_actions():
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+    window, _, calls, _, _ = _fixture(sources=[
+        _source(provider_id="future-provider", label="Compte fictif"),
+    ])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.subtitle.startswith("Fournisseur : future-provider\\n")
+    assert "Réglages · Fichiers : autorisation non vérifiée" in row.subtitle
+    assert not window.runner.tasks
+    assert calls == [("sources", "alice")]
