@@ -161,7 +161,7 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
 def build_standard_page(window, route, *, Gtk, PluginManagerPage):
     builders = {"dashboard": window._build_dashboard_page, "loans": window._build_loans_page,
                 "search": window._build_search_page, "history": window._build_history_page,
-                "bookings": window._build_bookings_page, "library": window._build_library_page,
+                "library": window._build_library_page,
                 "recent": window._build_recent_page, "sync": window._build_sync_page,
                 "tools": window._build_tools_page, "settings": window._build_settings_page,
                 "plugins": lambda: PluginManagerPage(window, window.plugin_manager, window._plugins_changed)
