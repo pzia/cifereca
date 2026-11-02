@@ -166,32 +166,22 @@ def _service_host():
     return host, writes
 
 
-@pytest.mark.parametrize("kind", ["history", "bookings"])
-def test_service_fetch_uses_original_account_and_cannot_repopulate_new_account(kind):
+def test_service_history_fetch_uses_original_account_and_cannot_repopulate_new_account():
     host, writes = _service_host()
     calls = []
-    if kind == "history":
-        row = HistoryItem(id="history-a", provider="paris", medium="digital",
-                          record_id="book-1", title="Private A")
-    else:
-        row = Booking(id="booking-a", provider="paris", medium="digital", title="Private A")
+    row = HistoryItem(id="history-a", provider="paris", medium="digital",
+                      record_id="book-1", title="Private A")
 
     def fetch(account):
         calls.append(account.unique_id)
         host.select_account("b", "paris", "vault-b")
         return [row]
 
-    session = NS(
-        capabilities=NS(history=True, bookings=True),
-        history=fetch, bookings=fetch,
+    host._session_for_account = lambda account: NS(
+        capabilities=NS(history=True), history=fetch,
     )
-    host._session_for_account = lambda account: session
-    if kind == "history":
-        result = host.refresh_history(force=True)
-        assert host.last_history == ["existing active history"]
-    else:
-        result = host.refresh_bookings(force=True)
-        assert host.last_bookings == ["existing active booking"]
+    result = host.refresh_history(force=True)
+    assert host.last_history == ["existing active history"]
     assert result == [row]
     assert calls == ["a"]
     assert host.current_account.unique_id == "b"
@@ -200,14 +190,10 @@ def test_service_fetch_uses_original_account_and_cannot_repopulate_new_account(k
     assert "vault-b" not in writes[0][1]
 
 
-@pytest.mark.parametrize("kind", ["history", "bookings"])
-def test_service_does_not_restore_a_b_a_response_to_current_snapshot(kind):
+def test_service_history_never_restores_a_b_a_stale_snapshot():
     host, _writes = _service_host()
-    if kind == "history":
-        row = HistoryItem(id="stale", provider="paris", medium="digital",
-                          record_id="book", title="Stale history")
-    else:
-        row = Booking(id="stale", provider="paris", medium="digital", title="Stale booking")
+    row = HistoryItem(id="stale", provider="paris", medium="digital",
+                      record_id="book", title="Stale history")
 
     def fetch(_account):
         host.select_account("b", "paris", "vault-b")
@@ -215,14 +201,39 @@ def test_service_does_not_restore_a_b_a_response_to_current_snapshot(kind):
         return [row]
 
     host._session_for_account = lambda account: NS(
-        capabilities=NS(history=True, bookings=True),
-        history=fetch, bookings=fetch,
+        capabilities=NS(history=True), history=fetch,
     )
-    if kind == "history":
-        assert host.refresh_history(force=True) == [row]
-        assert host.last_history == ["existing active history"]
-    else:
-        assert host.refresh_bookings(force=True) == [row]
-        assert host.last_bookings == ["existing active booking"]
+    assert host.refresh_history(force=True) == [row]
+    assert host.last_history == ["existing active history"]
     assert host.current_account.unique_id == "a"
     assert host._account_context_epoch == 3
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_retired_bookings_never_read_cache_or_contact_old_installed_plugin(force):
+    host, writes = _service_host()
+    old = host.current_account
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("retired reservation path contacted a provider or cache")
+
+    # A v1 plugin can still claim bookings=True; Core must default-deny
+    # regardless of capability, cached rows and refresh/force arguments.
+    host._session_for_account = forbidden
+    host.storage.cache_get = forbidden
+    host.storage.cache_put = forbidden
+    host._key = forbidden
+
+    assert host.refresh_bookings(force=force) == []
+    assert host.last_bookings == []
+    assert host.current_account is old
+    assert host._account_context_epoch == 1
+    assert writes == []
+
+
+def test_retired_booking_read_never_projects_historical_cache_as_rights():
+    host, _writes = _service_host()
+    host.last_bookings = [Booking(id="legacy", provider="paris",
+                                  medium="digital", title="Historical booking")]
+    assert host.refresh_bookings() == []
+    assert host.last_bookings == []
