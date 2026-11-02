@@ -544,8 +544,9 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
     """Read canonical provider provenance scoped to a *present* placement.
 
     A shared Artifact SHA is not proof that a different profile or provider
-    owns a resource. Only an OriginLink to an exact SourceReference authorizes
-    a source facet; this projection performs no file or rights mutation.
+    owns a resource. Only a completed provider OriginLink with a nonempty
+    Core delivery receipt and a provider-response SourceReference can add a
+    source facet; this projection performs no file or rights mutation.
     """
     from sqlite3 import Error as SqliteError
 
@@ -563,9 +564,12 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
                 "ON s.source_reference_id=o.source_reference_id "
                 "AND s.identity_id=o.identity_id "
                 "WHERE p.state='present' AND o.origin_kind='provider' "
+                "AND s.evidence_kind='provider_response' "
+                "AND o.evidence_ref IS NOT NULL AND o.evidence_ref<>'' "
+                "AND s.evidence_ref IS NOT NULL AND s.evidence_ref<>'' "
                 + ("AND p.identity_id=? " if identity_id else "")
                 + "ORDER BY p.identity_id,p.artifact_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id",
+                "s.credential_id,s.account_id,s.edition_id LIMIT 100001",
                 (identity_id,) if identity_id else (),
             ).fetchall()
     except (SqliteError, AttributeError):
