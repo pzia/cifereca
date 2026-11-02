@@ -11,6 +11,12 @@ class FakeStorage:
     def __init__(self):
         self.owner = "alpha"
 
+    def provider_scope_account_bound(self, *, identity_id, provider_id,
+                                     credential_id, account_id):
+        return (self.owner == identity_id == "alpha"
+                and provider_id == "kobo" and credential_id == "credential"
+                and account_id == "primary")
+
     def identity_for_connection(self, provider, credential):
         assert provider == "kobo" and credential == "credential"
         return self.owner
