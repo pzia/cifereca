@@ -1,0 +1,155 @@
+"""#3416: two independent Sync controls visible without opening tools.
+
+Synthetic broker DTOs only: no GUI session, provider calls, writes, or network.
+"""
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
+
+from cifereca.gui.sync_source_controls_overview import sync_source_controls_overview
+
+
+def source(**kwargs):
+    values = dict(
+        sync_capable=True, enabled=True, source_id="opaque-source",
+        sync_capabilities=(
+            "remote_inventory", "scheduled_refresh", "local_materialization",
+        ),
+    )
+    values.update(kwargs)
+    return NS(**values)
+
+
+def consent(**kwargs):
+    values = dict(
+        supported=True, configured=True, enabled=False,
+        revision="revision-1", valid=True,
+    )
+    values.update(kwargs)
+    return values
+
+
+def broker(*, schedule=None, authorization=None, calls=None):
+    calls = [] if calls is None else calls
+    schedule = schedule if schedule is not None else dict(mode="manual", interval_minutes=60)
+    authorization = authorization if authorization is not None else consent()
+    return NS(
+        inventory_refresh_schedule=lambda sid: (
+            calls.append(("read-schedule", sid)) or schedule
+        ),
+        source_sync_consent=lambda sid: (
+            calls.append(("read-consent", sid)) or authorization
+        ),
+    )
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("manual", "manuelle"),
+    ("on_start", "au démarrage"),
+    ("periodic", "périodique"),
+])
+def test_two_controls_show_distinct_scopes_and_no_side_effect(mode, expected):
+    calls = []
+    info = sync_source_controls_overview(
+        source(),
+        broker(schedule=dict(mode=mode, interval_minutes=60),
+               authorization=consent(enabled=True), calls=calls),
+    )
+    assert info == (
+        f"Réglages · Notices et droits : {expected} · "
+        "Fichiers : autorisation activée"
+    )
+    assert calls == [
+        ("read-schedule", "opaque-source"),
+        ("read-consent", "opaque-source"),
+    ]
+    assert "quota" not in info.lower()
+    assert "restant" not in info.lower()
+
+
+def test_off_and_unconfigured_consent_do_not_inherit_inventory_schedule():
+    assert "Fichiers : autorisation désactivée" in sync_source_controls_overview(
+        source(), broker(schedule=dict(mode="periodic", interval_minutes=120)),
+    )
+    info = sync_source_controls_overview(
+        source(), broker(authorization=consent(
+            configured=False, enabled=False, revision=None,
+        )),
+    )
+    assert "Fichiers : choix non défini" in info
+    assert "autorisation activée" not in info
+
+
+def test_source_switch_does_not_erase_stored_independent_preferences():
+    info = sync_source_controls_overview(
+        source(enabled=False),
+        broker(schedule=dict(mode="on_start", interval_minutes=60),
+               authorization=consent(enabled=True)),
+    )
+    assert "Notices et droits : au démarrage" in info
+    assert "Fichiers : autorisation activée" in info
+    assert info.endswith("source désactivée")
+
+
+def test_capability_scoping_and_unknown_provider_have_no_special_case():
+    b = broker()
+    assert sync_source_controls_overview(
+        source(sync_capable=False, sync_capabilities=("remote_inventory",)), b
+    ) == ""
+    assert sync_source_controls_overview(
+        source(sync_capabilities=("remote_inventory",)), b
+    ) == "Réglages · Notices et droits : planification non proposée"
+    assert sync_source_controls_overview(
+        source(sync_capabilities=("local_materialization",)), b
+    ) == "Réglages · Fichiers : autorisation désactivée"
+    assert sync_source_controls_overview(
+        source(sync_capabilities=("search",)), b
+    ) == ""
+
+
+@pytest.mark.parametrize("bad", [
+    dict(mode="periodic", interval_minutes=True),
+    dict(mode="auto", interval_minutes=15),
+    dict(mode="manual", interval_minutes=0),
+    dict(mode="manual", interval_minutes=10081),
+    dict(mode="manual", interval_minutes=60, private="secret"),
+    {"mode": "https://supplier.invalid/?token=SECRET", "interval_minutes": 20},
+])
+def test_bad_schedule_is_fail_closed_and_never_echoed(bad):
+    info = sync_source_controls_overview(source(), broker(schedule=bad))
+    assert "Notices et droits : réglage indisponible" in info
+    assert "SECRET" not in info and "secret" not in info
+
+
+@pytest.mark.parametrize("bad", [
+    consent(enabled=True, configured=False, revision=None),
+    consent(enabled=True, valid=False),
+    consent(enabled="true"),
+    consent(revision=""),
+    consent(revision="x" * 129),
+    consent(private="secret"),
+    {"enabled": "https://invalid.test/?token=SECRET"},
+])
+def test_bad_consent_never_becomes_permission_or_exposes_provider_data(bad):
+    info = sync_source_controls_overview(source(), broker(authorization=bad))
+    assert "Fichiers : autorisation non vérifiée" in info
+    assert "autorisation activée" not in info
+    assert "SECRET" not in info and "secret" not in info
+
+
+def test_read_failures_cannot_crash_sync_page_or_leak_exceptions():
+    def fail(_):
+        raise RuntimeError("https://private.invalid/?token=SECRET")
+    b = NS(inventory_refresh_schedule=fail, source_sync_consent=fail)
+    assert sync_source_controls_overview(source(), b) == (
+        "Réglages · Notices et droits : réglage indisponible"
+        " · Fichiers : autorisation non vérifiée"
+    )
+
+
+def test_controller_adds_overview_before_last_run_not_a_new_action():
+    controller = (Path(__file__).resolve().parents[1] /
+                  "src/cifereca/gui/sync_controller.py").read_text(encoding="utf-8")
+    assert "sync_source_controls_overview(source, broker)" in controller
+    assert "control_overview + \"\\n\"" in controller
