@@ -118,6 +118,7 @@ def main() -> int:
     assert tuple(row.thumbnail_url for row in parsed) == (*COVERS, None)
     reads: list[str] = []
     details: list[str] = []
+    applied_details: list[str] = []
     image_gets: list[str] = []
     images = {COVERS[0]: png((225, 0, 0)), COVERS[1]: png((0, 0, 225))}
     stages = ["startup"]
@@ -255,6 +256,8 @@ def main() -> int:
         window.search_page.selection.set_selected(0)
         await_condition(
             "first_detail", lambda: bool(selected_detail())
+            and applied_details and applied_details[-1] == RESOURCES[0]
+            and selected_detail()[0].get_mapped()
             and selected_detail()[0]._url == COVERS[0]
             and selected_detail()[0].picture.get_paintable() is not None,
             second_detail,
@@ -266,6 +269,8 @@ def main() -> int:
         app_window[0].search_page.selection.set_selected(1)
         await_condition(
             "second_detail", lambda: bool(selected_detail())
+            and applied_details and applied_details[-1] == RESOURCES[1]
+            and selected_detail()[0].get_mapped()
             and selected_detail()[0]._url == COVERS[1]
             and selected_detail()[0].picture.get_paintable() is not None,
             missing_detail,
@@ -278,6 +283,8 @@ def main() -> int:
         await_condition(
             "missing_placeholder",
             lambda: bool(selected_detail())
+            and applied_details and applied_details[-1] == RESOURCES[2]
+            and selected_detail()[0].get_mapped()
             and selected_detail()[0]._url is None
             and selected_detail()[0].picture.get_paintable() is None
             and selected_detail()[0].placeholder.get_visible(),
@@ -289,6 +296,7 @@ def main() -> int:
         assert set(image_gets) == set(COVERS)
         assert len(image_gets) == 2, "Search and detail must share cached public images"
         assert details[-3:] == list(RESOURCES), "Provider detail scoped to each resource"
+        assert applied_details[-3:] == list(RESOURCES), "Real GTK applied all scoped details"
         assert app_window[0].covers.stats()["ui_applied"] >= 4
         report["checks"]["missing_cover_no_image_get"] = True
         report["checks"]["cache_shared_search_detail"] = True
@@ -320,6 +328,17 @@ def main() -> int:
         def do_activate(self):
             window = MainWindow(self, core.config, core.library, core.diagnostics)
             app_window[0] = window
+            # Do not accept an initial search thumbnail as proof that the
+            # provider's real holdings response reached the GTK detail sink.
+            actual_apply = window._apply_search_detail
+
+            def traced_apply(*args, **kwargs):
+                actual_apply(*args, **kwargs)
+                if (len(args) >= 2
+                        and window._selected_search_id == args[0]):
+                    applied_details.append(args[1].record_id)
+
+            window._apply_search_detail = traced_apply
             window.set_default_size(1326, 780)
             window.present()
             original_client[0] = window.covers.client
