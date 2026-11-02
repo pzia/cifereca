@@ -784,6 +784,7 @@ class ParisClient:
         links = Links()
         links.feed(html_view[:2_000_000])
         candidates = []
+        candidate_requests = set()
         assaredirect_hrefs = 0
         loan_book_hrefs = 0
         rejected_scheme = 0
@@ -829,7 +830,20 @@ class ParisClient:
                 if not valid_origin:
                     rejected_candidate_origin += 1
                     continue
-                if href not in candidates:
+                # HTML may offer the SAME official borrowing action twice
+                # (relative and absolute URL, or explicit default HTTPS port).
+                # Compare the exact HTTPS request target, not the href markup.
+                # Preserve query order/encoding: distinct signed targets must
+                # remain ambiguous, never select one implicitly.
+                request = (
+                    original_target.scheme.lower(),
+                    original_target.hostname.lower(),
+                    original_target.port or 443,
+                    original_target.path, original_target.params,
+                    original_target.query,
+                )
+                if request not in candidate_requests:
+                    candidate_requests.add(request)
                     candidates.append(href)
         selected_site = (
             public_site(urljoin(BASE_URL, candidates[0]))
