@@ -92,7 +92,8 @@ def _build_sync_page(self):
 
     def jump_to_attention(_button):
         scope = getattr(self, "_sync_attention_scope", None)
-        if scope is None or not sync_action_scope_current(self, scope):
+        if (getattr(self, "_sync_page_token", None) is not page_token
+                or scope is None or not sync_action_scope_current(self, scope)):
             return
         from cifereca.gui.sync_attention_navigation import (
             next_sync_attention_target, focus_sync_attention_target,
