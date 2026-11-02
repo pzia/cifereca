@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from cifereca.core.source_auto_consent_bridge import _source_id, toggle_state
 from cifereca.core.source_convergence import SourceKey
 from cifereca.core.source_sync_consent import policy_key
@@ -20,11 +22,16 @@ def reference(account_id):
     )
 
 
-def test_legacy_primary_fallback_collision_never_grants_literal_borrower(tmp_path):
+@pytest.mark.parametrize("literal_id", [
+    "kobo:card:primary", " kobo:card:primary ", "\t",
+])
+def test_legacy_primary_fallback_collision_never_grants_literal_borrower(
+    tmp_path, literal_id,
+):
     storage = Storage(tmp_path / "state.sqlite3")
     try:
         primary = reference("")
-        literal = reference("kobo:card:primary")
+        literal = reference(literal_id)
         unrelated = reference("actual-reader")
         sid = _source_id(primary.scope)
         assert sid == _source_id(literal.scope)
