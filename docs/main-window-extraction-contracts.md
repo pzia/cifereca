@@ -1,5 +1,7 @@
 # Contrats de modularisation MainWindow
 
+> **État produit depuis #4147 (02/11/2026) :** les réservations Paris/BnF ne font plus partie de Cifereca. La page, ses constructeurs, ses présentateurs et ses actions ont été retirés ; `gui/booking_view.py` est supprimé. Les noms `booking*` dans la baseline et dans `main-window-inventory.json` décrivent **l'architecture historique au moment de l'extraction**, pas un contrat exécutable ou une permission d'afficher des réservations. Les tests actuels doivent vérifier l'absence de voies UI et conserver les parcours Prêts/Historique.
+
 Cette baseline précède les extractions CoreUI. `main-window-inventory.json`
 contient chaque méthode, ses attributs directs, callbacks, tâches et fonctions
 imbriquées, ainsi que les tests candidats et leurs assertions exactes. Les

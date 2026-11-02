@@ -1,5 +1,7 @@
 # Contrats de LibraryService avant extraction — lot 0 (#1116)
 
+> **Retrait fonctionnel #4147 (02/11/2026) :** `Booking`, `ProviderCapabilities.bookings` et `LibraryService.refresh_bookings` ne représentent plus une capacité produit. Ils restent strictement **inertes en ABI v1** pour décoder/effacer sans risque d'anciennes données et tolérer les plugins déjà installés : `refresh_bookings` vide son snapshot et retourne `[]` sans stockage, session ni réseau. Aucun `ListBookings`/`CancelBookings`, vue, action ou badge ne doit être réactivé. Les méthodes et callsites de `library-service-inventory.json` sont une **baseline historique** ; leur présence dans ce document n'autorise pas leur réintroduction. Les prêts, l'historique, les profils ADEPT et les renouvellements Paris physiques restent indépendants.
+
 La façade `from cifereca.services import LibraryService` reste le point d'entrée.
 Cet inventaire couvre les 196 méthodes de la baseline. Le fixture
 `tests/fixtures/library_service_facade.json` gèle leurs signatures et types de
