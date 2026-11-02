@@ -884,6 +884,7 @@ class ParisClient:
         unique Paris ASSARedirect origin. A foreign GET is made solely through
         Core's peer-pinned public transport, without private session headers.
         """
+        host = ""  # Malformed/non-string URLs cannot leak or raise NameError.
         try:
             if (type(url) is not str or not 0 < len(url) <= 16384
                     or any(ord(c) < 33 or ord(c) == 127 or c == chr(92) or c.isspace()
