@@ -13,6 +13,8 @@ Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois
 5. Quand l'état ou le propriétaire change, mettre à jour **l'issue canonique** ou la PR avec le résultat et un handoff minimal.
 6. Relire les priorités et recommencer ; `Next` signifie la prochaine étape, pas une release.
 
+**Filtre suspensif `PU` (prioritaire sur P0/P1/P2) :** avant toute sélection ou reprise de PR, exclure les issues étiquetées `PU`, même dans un chantier actif et même après un `next max`. Ne pas coder, tester, prendre une branche, relancer une PR, merger ou clore une réalisation `PU`. Seul le rôle `backlog` vérifie le nouvel input utilisateur et **retire `PU`** pour réintroduire l'issue dans sa priorité existante. Si une dépendance `PU` bloque entièrement un autre ticket, signaler le blocage au backlog pour étiquetage transitif ; si le travail reste autonome, continuer uniquement dans son périmètre propre. Voir [AGENTS.md](../../AGENTS.md#pu--suspension-dexécution-distincte-de-p0p1p2).
+
 ## Périmètre strict — invariant d'exécution
 
 **À chaque étape, Focus résout exclusivement le ticket retenu dans les limites de la demande utilisateur.** Une restriction explicite de chantier, fournisseur, rôle ou composant demeure applicable d'un ticket à l'autre jusqu'à nouvel ordre de l'utilisateur. Les règles transversales [AGENTS.md](../../AGENTS.md#périmètre-strict-du-ticket-et-restitution-par-défaut) restent impératives.
