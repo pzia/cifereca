@@ -24,7 +24,9 @@ def invalidate_secondary_account_pages(window) -> None:
     """Remove private account rows and invalidate pending async completions."""
     window._account_context_generation += 1
     window.service.last_history = []
+    window.service.last_bookings = []
     window.history_objects = {}
+    window.booking_objects = {}
     window._history_all_rows = []
     window._history_rows = []
     window._history_loaded_count = 0
@@ -34,6 +36,14 @@ def invalidate_secondary_account_pages(window) -> None:
         window.history_page.detail.empty(
             "Historique non chargé",
             "Ouvrez l’onglet Historique pour charger ce compte.",
+        )
+    # Retire residual private rows of a v1 bookings widget if still mounted,
+    # without enabling or fetching the retired reservations page.
+    if hasattr(window, "booking_page"):
+        window.booking_page.show_rows([])
+        window.booking_page.detail.empty(
+            "Réservations non chargées",
+            "Ouvrez l’onglet Réservations pour charger ce compte.",
         )
 
 
