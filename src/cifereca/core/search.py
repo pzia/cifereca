@@ -474,6 +474,11 @@ class LocalLibrarySearch:
             return []
         if str(scope or "all").strip().lower() == "physical":
             return []
+        # No selected profile means no authorized local possession query.
+        # Fail before invoking a legacy/mocked reader that may enumerate all
+        # identities rather than relying on a downstream Library fence.
+        if type(identity_id) is not str or not identity_id:
+            return []
         rows = self._entries(identity_id=identity_id, scan=False)
         return filter_loaded_results(
             rows, text, scope=scope, field=field, age=age, age_kind=age_kind,
@@ -529,6 +534,13 @@ class KnownCatalogSearch:
     ) -> list[dict[str, Any]]:
         text = str(query or "").strip()
         if len(text) < 2:
+            return []
+        # The persisted Known Catalog contains account- and identity-scoped
+        # mirrored entries. With no effective identity the enumeration below
+        # would read all SQLite rows (and overwrite same-edition keys across
+        # owners), even if Library's local projection is fenced. Never produce
+        # an implicit union-of-profiles catalogue or search result.
+        if type(identity_id) is not str or not identity_id:
             return []
         merged: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
         # Catalogue is the broad known set. Local/right rows below override it
