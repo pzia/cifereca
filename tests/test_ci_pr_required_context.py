@@ -73,7 +73,7 @@ def test_httpx_ast_gate_is_scoped_to_plugin_and_guard_changes():
 def test_push_selector_changes_trigger_full_core_pr_checks():
     source = _workflow()
     scope = re.search(
-        r"(?m)^          if matches '([^']+)'; then\n            core=true$",
+        r"(?m)^          if matches '([^']+)' \|\| e2e_runtime_changes; then\n            core=true$",
         source,
     )
     assert scope, "missing Core PR scope"
