@@ -300,7 +300,7 @@ def test_publisher_legacy_grant_never_outlives_exact_enabled_account(rig, revoca
     lambda raw: raw.replace('"allowed":true', '"allowed":false,"allowed":true'),
     lambda raw: raw.replace('"allowed":true', '"allowed":true,"allowed":false,"allowed":true'),
     lambda raw: raw.replace('"allowed":true', '"allowed":true,"unexpected":"future-grant"'),
-    lambda raw: raw.replace('"allowed":true', '"allowed":true,"source":[],"source":' + json.dumps(raw and [])),
+    lambda raw: raw.replace('"source":[', '"source":[],"source":['),
 ])
 def test_ambiguous_legacy_consent_metadata_never_grants(rig, raw_factory):
     """A duplicate/unknown field cannot silently revive a legacy permission."""
