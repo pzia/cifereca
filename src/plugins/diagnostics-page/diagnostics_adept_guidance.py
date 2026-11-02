@@ -12,44 +12,44 @@ from __future__ import annotations
 _ADVICE = {
     "invalid_acsm": (
         "Jeton ACSM signalé invalide. Vérifiez le prêt et le jeton enregistré "
-        "avant toute nouvelle importation.",
+        "avant toute nouvelle importation."
     ),
     "profile_not_found": (
         "Profil ADEPT introuvable. Vérifiez le profil associé à cette identité "
-        "dans Paramètres.",
+        "dans Paramètres."
     ),
     "adept_profile_required": (
         "Profil ADEPT requis. Associez explicitement le profil d'origine "
-        "à cette identité avant toute opération.",
+        "à cette identité avant toute opération."
     ),
     "adept_profile_error": (
         "Erreur de profil ADEPT. Vérifiez la configuration du profil "
-        "d'origine ; aucune autre identité n'est sélectionnée automatiquement.",
+        "d'origine ; aucune autre identité n'est sélectionnée automatiquement."
     ),
     "adept_profile_incompatible": (
         "Profil ADEPT incompatible pour cette opération. Vérifiez la liaison "
-        "et le profil ayant initialement activé la licence.",
+        "et le profil ayant initialement activé la licence."
     ),
     "adept_license_already_fulfilled_by_another_user": (
         "ADEPT signale une licence déjà activée par une autre identité Adobe. "
         "Vérifiez l'identité d'origine ; ne réessayez pas automatiquement "
-        "l'activation du même jeton.",
+        "l'activation du même jeton."
     ),
     "adept_error": (
         "Échec ADEPT générique. La cause Adobe précise n'est pas attestée. "
-        "Consultez l'opération et le profil configuré avant toute nouvelle démarche.",
+        "Consultez l'opération et le profil configuré avant toute nouvelle démarche."
     ),
     "kobo_adept_timeout": (
         "Délai ADEPT dépassé. Une activation ACSM peut avoir consommé le jeton ; "
-        "vérifiez les prêts et fichiers locaux avant toute nouvelle tentative.",
+        "vérifiez les prêts et fichiers locaux avant toute nouvelle tentative."
     ),
     "kobo_adept_missing": (
         "Exécutable Kobo-ADEPT introuvable. Vérifiez son installation "
-        "et sa configuration avant toute opération.",
+        "et sa configuration avant toute opération."
     ),
     "kobo_adept_invalid_response": (
         "Réponse Kobo-ADEPT incohérente. Aucun succès d'import n'est "
-        "attesté ; consultez les diagnostics de l'exécution.",
+        "attesté ; consultez les diagnostics de l'exécution."
     ),
 }
 
