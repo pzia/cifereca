@@ -1,6 +1,6 @@
 """CoreUI #1129: progressive History page result projection.
 
-Services, account/identity generations and page widgets are still owned by
+Services, account/identity generations and History widgets are still owned by
 MainWindow. No GTK/PyGObject import or provider request is added; GLib,
 presentation and row factories are injected through the existing facades.
 """
