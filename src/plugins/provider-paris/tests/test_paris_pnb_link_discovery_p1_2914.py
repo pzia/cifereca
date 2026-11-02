@@ -153,3 +153,55 @@ def test_official_https_anchor_can_use_explicit_443(caplog):
     with caplog.at_level(logging.INFO, logger="cifereca"):
         assert ParisClient._pnb_loan_href(_payload('<a href="' + href + '">OK</a>')) == href
     assert "candidates=1" in _trace(caplog)
+
+
+def test_equivalent_official_borrow_anchors_are_one_logical_mutating_action(caplog):
+    relative = _borrow_href("/fake/loan-book.ashx?ean=9782000000000")
+    absolute = "https://bibliotheques.paris.fr" + relative
+    explicit_port = "https://bibliotheques.paris.fr:443" + relative
+    html = "".join(
+        '<a href="' + href + '">Borrow</a>'
+        for href in (relative, absolute, explicit_port, relative)
+    )
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        result = ParisClient._pnb_loan_href(_payload(html))
+    # Still return the FIRST original href unchanged. The caller consumes
+    # its one-shot borrow guard before its only intentional mutating GET.
+    assert result == relative
+    trace = _trace(caplog)
+    assert "anchors=4 candidates=1" in trace
+    assert "assaredirect_hrefs=4 loan_book_hrefs=4" in trace
+    assert "candidate_site=bibliotheques.paris.fr" in trace
+    assert "9782000000000" not in trace
+
+
+def test_distinct_signed_borrow_targets_are_never_deduplicated_by_host_or_path(
+    caplog,
+):
+    first = _borrow_href("/fake/loan-book.ashx?token=PRIVATE_A")
+    second = _borrow_href("/fake/loan-book.ashx?token=PRIVATE_B")
+    html = (
+        '<a href="' + first + '">First</a>'
+        '<a href="https://bibliotheques.paris.fr' + second + '">Second</a>'
+    )
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        with pytest.raises(ParisError, match="Aucun emprunt lancé"):
+            ParisClient._pnb_loan_href(_payload(html))
+    trace = _trace(caplog)
+    assert "anchors=2 candidates=2" in trace
+    assert "candidate_site=unknown" in trace
+    assert "PRIVATE_A" not in trace and "PRIVATE_B" not in trace
+
+
+def test_equivalent_anchor_with_distinct_fragment_keeps_single_network_target(
+    caplog,
+):
+    href = _borrow_href("/fake/loan-book.ashx?ean=9782000000000")
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        selected = ParisClient._pnb_loan_href(_payload(
+            '<a href="' + href + '">Button</a>'
+            '<a href="https://bibliotheques.paris.fr' + href
+            + '#alternate">Icon</a>',
+        ))
+    assert selected == href
+    assert "anchors=2 candidates=1" in _trace(caplog)
