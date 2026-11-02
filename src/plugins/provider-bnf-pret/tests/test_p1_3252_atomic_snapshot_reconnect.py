@@ -86,11 +86,11 @@ def test_reconnect_cannot_replace_account_between_loan_read_and_snapshot():
             snapshot = first.result(timeout=10)
             (new_account,) = second.result(timeout=10)
 
-        assert snapshot.status == "partial"
+        assert snapshot.status == "success"
         assert snapshot.scope.account_id == original_account.unique_id
         assert len(snapshot.loans) == 1
         assert snapshot.loans[0].identity_id == "synthetic-identity"
-        assert snapshot.branches[0].completeness == "partial"
+        assert snapshot.branches[0].completeness == "complete"
         assert new_account is not original_account
         assert client.calls == ["login", "activity", "login"]
         # The old account is no longer a source after reconnect.
@@ -108,10 +108,10 @@ def test_read_only_snapshot_does_not_call_token_or_fulfillment():
     session, account, client = fixture()
     try:
         snapshot = session.loan_inventory_snapshot(account)
-        assert snapshot.status == "partial"
+        assert snapshot.status == "success"
         assert len(snapshot.loans) == 1
         assert client.calls == ["login", "activity"]
-        assert snapshot.branches[0].reason_code == "inventory_not_exhaustive"
-        assert not snapshot.branch_claims_complete("bnf_html", "digital")
+        assert snapshot.branches[0].reason_code is None
+        assert snapshot.branch_claims_complete("bnf_html", "digital")
     finally:
         session.close()

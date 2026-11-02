@@ -200,7 +200,7 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(loan("a", "ra") + loan("b", "rb")))
         self.assertEqual(len(result.loans), 2)
         self.assertEqual(result.status, 'observed')
-        self.assertFalse(result.exhaustive)
+        self.assertTrue(result.exhaustive)
 
     def test_signed_links_are_not_returned(self):
         result = self.parse_loans(loans(loan(query="?signature=synthetic-private-marker")))
@@ -305,7 +305,7 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(card))
         self.assertEqual(len(result.loans), 1)
         self.assertEqual(result.loans[0].thumbnail_url, web.ORIGIN + safe)
-        self.assertFalse(result.exhaustive)
+        self.assertTrue(result.exhaustive)  # validated, nonempty official widget
         # Neither an unrelated image nor another resource can supply a cover.
         unrelated = ('<img src="' + safe + '">' + loan())
         self.assertIsNone(self.parse_loans(loans(unrelated)).loans[0].thumbnail_url)

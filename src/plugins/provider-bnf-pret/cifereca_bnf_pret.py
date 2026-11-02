@@ -119,6 +119,9 @@ class BnfProviderSession(ProviderSession):
         # Only loans positively observed during this credential session are
         # eligible for an explicit, fresh-read token retrieval.
         self._observed_loans = {}
+        # Exact, fresh coverage proof from the last authenticated activity
+        # read; never a durable right/negative-reconciliation authority.
+        self._last_loan_inventory_evidence = None
         # Extra same-session guard: Core already owns durable at-most-once.
         self._borrow_post_attempts = set()
 
@@ -191,6 +194,7 @@ class BnfProviderSession(ProviderSession):
             self.connected = False
             self._accounts = []
             self._observed_loans = {}
+            self._last_loan_inventory_evidence = None
             username = str(self.credentials.get('username') or '').strip()
             password = str(self.credentials.get('password') or '')
             if self._closed or not username or not password:
@@ -235,6 +239,7 @@ class BnfProviderSession(ProviderSession):
         )
         if caller_scope[2:] != (self.provider_id, self.credential_id):
             raise ProviderConfigurationError('account_scope_mismatch')
+        self._last_loan_inventory_evidence = None
         broker = self.identity_broker
         owner = (
             self._core_owner_binding(caller_scope[0], caller_scope[1])
@@ -309,6 +314,9 @@ class BnfProviderSession(ProviderSession):
         # A partial/empty page cannot close historical rights; nevertheless
         # it must not authorize token downloads from stale observations.
         self._observed_loans = {row.loan_id: row.resource_id for row in snapshot.loans}
+        self._last_loan_inventory_evidence = (
+            self._epoch, caller_scope, snapshot.exhaustive,
+        )
         return loans
 
     def loan_inventory_snapshot(self, account):
@@ -319,11 +327,12 @@ class BnfProviderSession(ProviderSession):
             return self._loan_inventory_snapshot_locked(account)
 
     def _loan_inventory_snapshot_locked(self, account):
-        """Optional v1 inventory evidence: BnF HTML never attests completeness.
+        """Exact borrower-scoped active-loans coverage, never acquisition proof.
 
-        Calls exactly one existing scoped loans() read. A successful GET/empty
-        HTML section is still only a partial view of the active-loan corpus.
-        This method never retrieves private loan tokens or starts ADEPT.
+        Calls one authenticated scoped activity GET. Only a validated,
+        nonempty, non-paginated loan widget can assert complete coverage;
+        empty/ambiguous HTML and a monkeypatched v1 reader remain partial.
+        No token GET, rights deletion, return, or ADEPT side effects.
         """
         if (not self.connected or self._closed or len(self._accounts) != 1
                 or type(account) is not Account
@@ -345,7 +354,9 @@ class BnfProviderSession(ProviderSession):
         # authenticated GET must still use the *live* session Account. The
         # historical loans() method remains instance-restricted.
         scope = LoanInventoryScope.for_account(account)
+        self._last_loan_inventory_evidence = None
         rows = self._read_live_loans_locked(bound)
+        evidence = self._last_loan_inventory_evidence
         if not self.connected or self._closed:
             raise ProviderConfigurationError('session_closed')
         if (len(self._accounts) != 1 or self._accounts[0] is not bound
@@ -355,15 +366,21 @@ class BnfProviderSession(ProviderSession):
                     account.provider_id, account.credential_id) != caller_scope
                 or LoanInventoryScope.for_account(bound) != scope):
             raise ProviderConfigurationError('account_scope_mismatch')
+        complete = (
+            type(evidence) is tuple and len(evidence) == 3
+            and evidence == (self._epoch, bound_scope, True)
+        )
         return LoanInventorySnapshot(
             scope=scope,
             loans=tuple(rows),
-            status='partial',
+            status='success' if complete else 'partial',
             branches=(LoanBranchCoverage(
                 upstream='bnf_html', medium='digital',
-                completeness='partial', reason_code='inventory_not_exhaustive',
+                completeness='complete' if complete else 'partial',
+                pagination_complete=True if complete else None,
+                reason_code=None if complete else 'inventory_not_exhaustive',
             ),),
-            reason_code='inventory_not_exhaustive',
+            reason_code=None if complete else 'inventory_not_exhaustive',
         )
 
     def _core_owner_binding(self, account_id, identity_id):

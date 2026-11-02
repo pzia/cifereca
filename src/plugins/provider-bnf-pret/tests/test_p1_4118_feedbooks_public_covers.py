@@ -139,7 +139,7 @@ class FeedbooksCoverTests(unittest.TestCase):
                              expected=scope, observed=scope)
         loan, = result.loans
         self.assertEqual(loan.thumbnail_url, FEED)
-        self.assertFalse(result.exhaustive)
+        self.assertTrue(result.exhaustive)  # verified widget, not a rights grant
         self.assertIsNone(parse_loans(
             activity(FEED + "&token=secret"), page_url=ORIGIN + "/my_profile/activity",
             expected=scope, observed=scope,
