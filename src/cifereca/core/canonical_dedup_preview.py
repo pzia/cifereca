@@ -102,18 +102,22 @@ def preview_canonical_duplicate(
                     or candidate[2] != "sha256:" + artifact[0]
                     or type(artifact[1]) is not int or artifact[1] <= 0):
                 return report("blocked", "artifact_unverified")
-            profiles = db.execute(
-                "SELECT identity_id,directory_name FROM identities"
-            ).fetchall()
-            folders = [folder for identity, folder in profiles
-                       if identity == candidate[1]]
-            if (len(folders) != 1 or type(folders[0]) is not str
-                    or not folders[0]
-                    or sum(folder == folders[0] for _, folder in profiles) != 1):
+            owner = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (candidate[1],),
+            ).fetchone()
+            if owner is None or type(owner[0]) is not str or not owner[0]:
                 return report("blocked", "profile_ambiguous")
-            reserved = frozenset(
-                folder for _, folder in profiles if type(folder) is str and folder
-            )
+            if db.execute(
+                "SELECT 1 FROM identities WHERE directory_name=? "
+                "AND identity_id<>? LIMIT 1",
+                (owner[0], candidate[1]),
+            ).fetchone() is not None:
+                return report("blocked", "profile_ambiguous")
+            # The physical verifier checks the exact registered owner
+            # directory; unrelated profile names carry no authority here.
+            owner_dir = owner[0]
+            reserved = frozenset((owner_dir,))
             observations = []
             for raw in (candidate[0], keeper[0]):
                 path = Path(raw)
@@ -123,7 +127,7 @@ def preview_canonical_duplicate(
                     return report("blocked", "physical_evidence_changed")
                 if (not stat.S_ISREG(before.st_mode)
                         or not _verified_copy(
-                            raw, root=library_root, owner_directory=folders[0],
+                            raw, root=library_root, owner_directory=owner_dir,
                             registered_directories=reserved, size=artifact[1],
                             sha256=artifact[0],
                         ) or not _same_file(path, before)):

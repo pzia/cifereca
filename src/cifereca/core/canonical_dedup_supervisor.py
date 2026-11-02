@@ -79,22 +79,22 @@ def _verified_postcheck(
                     or keeper[2] != "sha256:" + artifact[0]
                     or type(artifact[1]) is not int or artifact[1] <= 0):
                 return False
-            profiles = db.execute(
-                "SELECT identity_id,directory_name FROM identities"
-            ).fetchall()
-            owner_dirs = [folder for ident, folder in profiles
-                          if ident == keeper[1]]
-            if (len(owner_dirs) != 1 or type(owner_dirs[0]) is not str
-                    or not owner_dirs[0]
-                    or sum(folder == owner_dirs[0]
-                           for _, folder in profiles) != 1):
+            owner = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (keeper[1],),
+            ).fetchone()
+            if owner is None or type(owner[0]) is not str or not owner[0]:
                 return False
-            allowed = frozenset(
-                folder for _, folder in profiles
-                if type(folder) is str and folder
-            )
+            if db.execute(
+                "SELECT 1 FROM identities WHERE directory_name=? "
+                "AND identity_id<>? LIMIT 1",
+                (owner[0], keeper[1]),
+            ).fetchone() is not None:
+                return False
+            owner_dir = owner[0]
+            allowed = frozenset((owner_dir,))
         return (not os.path.lexists(candidate_path) and _verified_copy(
-            keeper[0], root=library_root, owner_directory=owner_dirs[0],
+            keeper[0], root=library_root, owner_directory=owner_dir,
             registered_directories=allowed, size=artifact[1],
             sha256=artifact[0],
         ) and not os.path.lexists(candidate_path))
