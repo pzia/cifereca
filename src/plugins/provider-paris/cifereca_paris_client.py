@@ -1055,6 +1055,13 @@ class ParisClient:
                 )
             if not location:
                 raise ParisError("Parcours PNB interrompu: redirection sans en-tête Location")
+            # urljoin() discards CR, LF and TAB in raw Location values.
+            # Do not silently rewrite a supplier-signed redirect into a
+            # different request. Reject before URL parsing or another GET.
+            if (type(location) is not str or len(location) > 16384
+                    or any(ord(c) < 33 or ord(c) == 127 or c == chr(92)
+                           or c.isspace() for c in location)):
+                raise ParisRedirectError("invalid")
             next_url = urljoin(str(response.url), location)
             self._validate_pnb_redirect_url(next_url)
             next_parsed = urlparse(next_url)
