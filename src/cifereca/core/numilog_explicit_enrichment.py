@@ -63,7 +63,7 @@ def can_enrich_numilog_result(item: object) -> bool:
     # the provider independently attests the product URL before any GET.
     # Keep a generic syntactic HTTPS gate to avoid advertising malformed links.
     if (type(url) is not str or not url or len(url) > 16384
-            or any(ord(char) < 33 or ord(char) == 127 or char == "\\\\" for char in url)):
+            or any(ord(char) < 33 or ord(char) == 127 or ord(char) == 92 for char in url)):
         return False
     try:
         parsed = urlsplit(url)
