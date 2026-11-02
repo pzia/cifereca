@@ -87,7 +87,6 @@ from .task_runner import TaskPriority, TaskRunner
 from .maintenance_result_view import MaintenanceResultView
 from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
 from .maintenance_line_widgets import build_maintenance_line
-from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
 from .activity_history_projection import activity_history_rows
