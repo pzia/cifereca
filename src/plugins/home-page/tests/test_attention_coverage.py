@@ -63,7 +63,7 @@ class AttentionCoverageTests(unittest.TestCase):
         }
         labels=[item["label"] for item in mod.attention_items(row,now=100+25*3600)]
         self.assertIn("Prêts proches de l’échéance",labels)
-        self.assertIn("Réservations disponibles",labels)
+        self.assertNotIn("Réservations disponibles",labels)
         self.assertNotIn("Inventaire des prêts à actualiser",labels)
         self.assertIn("Synchronisation à reprendre",labels)
         self.assertIn("Paris · connexion requise",labels)
