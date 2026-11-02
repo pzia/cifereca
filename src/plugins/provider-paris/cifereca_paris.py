@@ -1004,9 +1004,6 @@ class ParisProviderSession(ProviderSession):
         state["history_errors"] = [
             dict(row) for row in getattr(self.client, "last_history_errors", ()) if isinstance(row, dict)
         ]
-        state["booking_errors"] = [
-            dict(row) for row in getattr(self.client, "last_booking_errors", ()) if isinstance(row, dict)
-        ]
         # Observed response-page descriptors only. Never an active server
         # search filter or property attached to an individual book.
         state["search_response_facets"] = [
