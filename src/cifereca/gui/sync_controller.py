@@ -254,11 +254,14 @@ def _refresh_sync_page(self) -> None:
     row_titles = sync_source_row_labels(rows)
     actionable = any(item.action_enabled for item in presentations)
     if summary is not None:
+        # Also imported in the standalone AST-based GTK controller harness.
+        from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
         summary.set_label(
             f"{len(rows)} source(s) · "
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
             + (f" · {len(unavailable_paris)} connexion(s) Paris configurée(s) non disponibles"
                if unavailable_paris else "")
+            + "\n" + sync_axes_dashboard_summary(rows, broker)
         )
     if alert_row is not None:
         # Never use provider diagnostics or source labels in the global

@@ -97,3 +97,102 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
     if getattr(source, "enabled", None) is not True:
         parts.append("source désactivée")
     return "Réglages · " + " · ".join(parts)
+
+
+def sync_axes_dashboard_summary(sources: object, broker: object) -> str:
+    """Summarize *effective* per-source synchronization settings, not rights.
+
+    Scheduling and automatic file consent are independent axes. Counts refer
+    only to sources available in the currently selected identity. A persisted
+    ON choice on a disabled/disconnected source is *suspended*, not effective;
+    a missing, malformed or failed local read is *unknown*, never OFF.
+    Catalogue SEARCH does not imply a catalogue REFRESH capability.
+    """
+    if type(sources) not in (list, tuple) or len(sources) > 1024:
+        return "Réglages par flux indisponibles"
+    scheduled = manual = inventory_unknown = inventory_suspended = 0
+    authorized = consent_suspended = consent_unknown = consent_unset = 0
+
+    for source in sources:
+        if getattr(source, "sync_capable", None) is not True:
+            continue
+        caps = getattr(source, "sync_capabilities", ())
+        if (type(caps) not in (tuple, list) or len(caps) > 32
+                or any(type(value) is not str for value in caps)):
+            inventory_unknown += 1
+            consent_unknown += 1
+            continue
+        sid = getattr(source, "source_id", None)
+        scoped = type(sid) is str and bool(sid) and len(sid) <= 256
+        available = (getattr(source, "enabled", None) is True
+                     and getattr(source, "connected", None) is True)
+        if "remote_inventory" in caps and "scheduled_refresh" in caps:
+            policy = None
+            reader = getattr(broker, "inventory_refresh_schedule", None)
+            if scoped and callable(reader):
+                try:
+                    policy = reader(sid)
+                except Exception:
+                    pass
+            if (type(policy) is not dict
+                    or set(policy) != {"mode", "interval_minutes"}
+                    or type(policy.get("mode")) is not str
+                    or policy["mode"] not in {"manual", "on_start", "periodic"}
+                    or type(policy.get("interval_minutes")) is not int
+                    or not 15 <= policy["interval_minutes"] <= 10080):
+                inventory_unknown += 1
+            elif policy["mode"] == "manual":
+                manual += 1
+            elif available:
+                scheduled += 1
+            else:
+                inventory_suspended += 1
+
+        if "local_materialization" in caps:
+            consent = None
+            reader = getattr(broker, "source_sync_consent", None)
+            if scoped and callable(reader):
+                try:
+                    consent = reader(sid)
+                except Exception:
+                    pass
+            if (type(consent) is not dict
+                    or set(consent) != {"supported", "configured", "enabled", "revision", "valid"}
+                    or any(type(consent.get(key)) is not bool
+                           for key in ("supported", "configured", "enabled", "valid"))
+                    or (consent["configured"] and
+                        (type(consent["revision"]) is not str
+                         or not 1 <= len(consent["revision"]) <= 128))
+                    or (not consent["configured"] and
+                        (consent["revision"] is not None or consent["enabled"]
+                         or not consent["valid"]))
+                    or (not consent["valid"] and consent["enabled"])):
+                consent_unknown += 1
+            elif not consent["valid"]:
+                consent_unknown += 1
+            elif not consent["configured"]:
+                if consent["supported"]:
+                    consent_unset += 1
+            elif consent["enabled"]:
+                if consent["supported"] and available:
+                    authorized += 1
+                else:
+                    consent_suspended += 1
+
+    message = (
+        f"Notices et droits : {scheduled} programmation(s) active(s)"
+        f" · {manual} en manuel"
+        f" · Réception de fichiers : {authorized} autorisation(s) effective(s)"
+    )
+    if inventory_suspended or consent_suspended:
+        message += (
+            f" · {inventory_suspended} programmation(s) suspendue(s)"
+            f" · {consent_suspended} autorisation(s) suspendue(s)"
+        )
+    if inventory_unknown or consent_unknown or consent_unset:
+        message += (
+            f" · À vérifier : {inventory_unknown} programmation(s) inconnue(s)"
+            f" · {consent_unknown} autorisation(s) inconnue(s)"
+            f" · {consent_unset} choix de fichiers non défini(s)"
+        )
+    return message
