@@ -183,6 +183,22 @@ def retire_missing_placement(
                 if physical != "absent":
                     db.rollback()
                     return _blocked(physical)
+                # The configured library mount may have been replaced by a
+                # different (empty) directory after _scope() pinned its
+                # original inode. Absence in the replacement is not evidence
+                # that the original book is gone. Recheck under the same SQL
+                # writer transaction, immediately before the irreversible
+                # SQLite DELETE.
+                try:
+                    current_root = root.stat()
+                except OSError:
+                    db.rollback()
+                    return _blocked("root_changed")
+                if (int(current_root.st_dev), int(current_root.st_ino)) != (
+                    int(stat.st_dev), int(stat.st_ino)
+                ):
+                    db.rollback()
+                    return _blocked("root_changed")
                 cur = db.execute(
                     "DELETE FROM placements WHERE placement_id=? AND identity_id=? "
                     "AND state='missing' AND path=? AND updated_at=?",
