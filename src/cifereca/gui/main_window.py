@@ -1607,10 +1607,10 @@ class MainWindow(Adw.ApplicationWindow):
                 else:
                     self.show_error(detail, "Téléchargement non terminé")
                 return
-            # ADEPT binding is useful for recovery, but return is retired (#4048).
-            # Never advertise voluntary return after a successful download.
-            suffix = "" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
-            result_message = "Livre récupéré" + suffix
+            # #4048: a retired voluntary-return capability cannot qualify
+            # successful book acquisition or invent a missing ADEPT binding.
+            # The branch above already checked the exact acquisition result.
+            result_message = "Livre récupéré"
             reporter = getattr(self, "_activity_result", None)
             if callable(reporter):
                 reporter(result_message)
