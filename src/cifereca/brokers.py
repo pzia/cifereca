@@ -51,7 +51,7 @@ def _account_ref(service: Any, account: Any) -> AccountRef:
     capabilities: list[str] = []
     caps = getattr(session, "capabilities", None)
     if caps is not None:
-        for name in ("catalog", "loans", "history", "bookings", "direct_download", "personal_library"):
+        for name in ("catalog", "loans", "history", "direct_download", "personal_library"):
             if bool(getattr(caps, name, False)):
                 capabilities.append(name)
     return AccountRef(
