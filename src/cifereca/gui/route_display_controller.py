@@ -126,9 +126,6 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     elif route == "history" and not window.service.last_history:
         if is_current():
             window.refresh_history(False)
-    elif route == "bookings" and not window.service.last_bookings:
-        if is_current():
-            window.refresh_bookings(False)
     elif route == "sync":
         window._refresh_sync_page()
     elif route == "tools":
