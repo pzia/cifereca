@@ -700,6 +700,7 @@ class KoboSession(ProviderSession):
             "upstream_id": upstream_id, "bound_identity": bound.identity_id,
             "caller": account, "scope": scope, "broker": broker,
             "owner": owner, "rows": None, "rejections": (),
+            "pagination_complete": False,
         }
         token = self._source_inventory_batch.set(batch)
         try:
@@ -856,6 +857,14 @@ class KoboSession(ProviderSession):
             self._check_source_inventory_batch(batch, bound_account, generation, account_id)
             batch["rows"] = tuple(deepcopy(rows))
             batch["rejections"] = tuple(self.last_library_rejections)
+            # A cached personal manifest may be replayed only in this
+            # source Sync. Preserve its original pagination proof together
+            # with the cached data, not a mutable later client-side flag.
+            batch["pagination_complete"] = (
+                isinstance(self.client, KoboVaultClient)
+                and self.client.last_manifest_pagination_complete is True
+                and self.client.last_manifest_page_attempts > 0
+            )
         return rows
 
     def _rights_owner_snapshot(self, expected_account: str):
@@ -1027,13 +1036,34 @@ class KoboSession(ProviderSession):
             raise ProviderCapabilityError(
                 "Kobo-Vault : propriétaire modifié pendant la lecture"
             )
+        # Vault's official page reader records its own successful final
+        # cursor. An injected/legacy manifest client has no such proof.
+        # One rejected/foreign/ambiguous record prevents a false exhaustive
+        # rights projection. Account/profile and generation were rechecked
+        # above; a full inventory neither revokes absent rights nor grants a
+        # GET of content.
+        batch = self._source_inventory_batch.get()
+        page_chain_complete = (
+            batch.get("pagination_complete") is True
+            if batch is not None and batch.get("rows") is not None
+            else (
+                isinstance(self.client, KoboVaultClient)
+                and self.client.last_manifest_pagination_complete is True
+                and self.client.last_manifest_page_attempts > 0
+            )
+        )
+        complete = (
+            page_chain_complete and not self.last_library_rejections
+            and len(observed_rights) == len(results)
+        )
         return ProviderRightsSnapshot(
             scope=ProviderRightsScope(
                 caller_scope[0], "kobo", self.credential_id, account_id,
             ),
             rights=tuple(observed_rights),
-            status="partial", coverage="partial",
-            pagination_complete=False, branch="personal_manifest",
+            status="success" if complete else "partial",
+            coverage="complete" if complete else "partial",
+            pagination_complete=complete, branch="personal_manifest",
             observed_at=observed, snapshot_ref="kobo.personal_manifest",
         )
 
@@ -1111,7 +1141,10 @@ class KoboSession(ProviderSession):
         if right.delivery == "unavailable":
             # Keep the exact positive purchase, but do not POST a descriptor
             # for a manifest-attested archive (#514).
-            return replace(baseline, rights=(right,))
+            return replace(
+                baseline, rights=(right,), status="partial",
+                coverage="partial", pagination_complete=False,
+            )
         # Exactly one POST for the exact attested product, after an explicit
         # selection. Do not fall back to delegated mode on a descriptor 403.
         payload = self.resolve_acquisition(
@@ -1133,7 +1166,12 @@ class KoboSession(ProviderSession):
         # not publish an old owner's otherwise valid offer snapshot.
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
-        return replace(baseline, rights=(qualified,))
+        # One exact purchase preflight is never a branch-wide manifest,
+        # even when the preceding Vault inventory was fully attested.
+        return replace(
+            baseline, rights=(qualified,), status="partial",
+            coverage="partial", pagination_complete=False,
+        )
 
     def downloadable_resource_snapshot(self, account):
         """#3252 v2: positive-only authenticated resources, not legal rights."""
