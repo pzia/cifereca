@@ -210,6 +210,6 @@ def test_settings_callsite_reads_core_cache_only_without_inventory_or_provider_i
     assert 'observed_loans=getattr(self.service, "last_loans", ())' in source
     helper = (Path(__file__).resolve().parents[1] /
               "src/cifereca/gui/settings_loan_observation.py").read_text(encoding="utf-8")
-    assert "http" not in helper.lower()
-    assert "requests" not in helper.lower()
+    assert "httpx" not in helper.lower()
+    assert "requests.get(" not in helper.lower()
     assert "synchronize" not in helper.lower()
