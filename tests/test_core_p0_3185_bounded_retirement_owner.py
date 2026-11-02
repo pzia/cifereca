@@ -12,6 +12,7 @@ import pytest
 from cifereca.core import canonical_dedup_retirement as retirement
 from cifereca.locking import InterProcessLock
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows
+from tests.test_core_p0_3171_atomic_publication_v14 import store
 from tests.test_core_p0_3719_canonical_duplicate_retirement import rig, _retire
 
 
