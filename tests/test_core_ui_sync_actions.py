@@ -19,7 +19,7 @@ def test_sync_header_actions_keep_refresh_and_scoped_sync_commands():
 
     assert "Actualiser" in source
     assert "view-refresh-symbolic" in source
-    assert "Synchroniser les sources" in source
+    assert "Actualiser les synchronisations actives" in source
     assert "self._sync_all_button = all_now" in source
     assert "emblem-synchronizing-symbolic" in source
     assert "add_sync_action(heading, refresh)" in source

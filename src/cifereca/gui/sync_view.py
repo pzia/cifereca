@@ -37,7 +37,11 @@ def _timestamp_label(value: object) -> str:
 
 def sync_identity_action_label(identity: object | None) -> str:
     label = str(getattr(identity, "label", "") or "").strip() if identity is not None else ""
-    return f"Synchroniser {label}" if label else "Synchroniser les sources"
+    # Source-scoped actions still say "Synchroniser <source>"; this one is
+    # the explicitly selected identity's global operation, which may deliver
+    # files under already-stored source-specific consent.
+    action = "Actualiser les synchronisations actives"
+    return f"{action} · {label}" if label else action
 
 
 

@@ -61,8 +61,10 @@ def test_last_success_and_named_action_are_user_facing():
 
 
 def test_global_action_is_contextualized_by_identity():
-    assert sync_identity_action_label(SimpleNamespace(label="Camille")) == "Synchroniser Camille"
-    assert sync_identity_action_label(None) == "Synchroniser les sources"
+    assert sync_identity_action_label(SimpleNamespace(label="Camille")) == (
+        "Actualiser les synchronisations actives · Camille"
+    )
+    assert sync_identity_action_label(None) == "Actualiser les synchronisations actives"
 
 
 def test_sync_page_uses_named_actions_and_disabled_reasons():
