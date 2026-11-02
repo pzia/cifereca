@@ -30,6 +30,18 @@ def _configured_binding(service: Any, account: Any) -> bool:
     identity = getattr(account, "identity_id", None)
     if type(credential) is not str or not credential or type(identity) is not str or not identity:
         return False
+    upstream_id = getattr(account, "unique_id", None)
+    # The legacy source key normalizes a blank primary account to
+    # "kobo:<credential>:primary" and strips nonblank IDs. An account whose
+    # actual upstream ID equals that fallback (or requires stripping) must
+    # never inherit an ON from a previous borrower after reconnect/rebind.
+    # Exact per-account V2 CAS consent is a separate, safer path.
+    if (type(upstream_id) is not str
+            or (upstream_id and (
+                upstream_id != upstream_id.strip()
+                or upstream_id == f"kobo:{credential}:primary"
+            ))):
+        return False
     # Kobo acquisition is credential-scoped. Two account records sharing the
     # credential cannot safely be materialized as one identity/account.
     if sum(
