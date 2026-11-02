@@ -71,10 +71,16 @@ def test_six_positive_offers_recover_after_library_folder_move(v2, monkeypatch, 
         assert second["downloaded"] == 6
         assert second["failed"] == second["blocked"] == second["pending"] == 0
         assert session._delivery_calls == 12
-        current_paths = tuple(Path(item["path"]) for item in storage.placements())
+        # Historical SQL placements are intentionally preserved for the
+        # separate missing-placement repair flow (#2847). They cannot be
+        # accepted as currently present, but Sync never silently deletes them.
+        all_placements = storage.placements()
+        current_paths = tuple(Path(item["path"]) for item in all_placements
+                              if Path(item["path"]).is_file())
+        assert len(all_placements) == 12
         assert len(current_paths) == 6
-        assert {path.name: path.read_bytes() for path in current_paths} == original_bytes
-        assert all(path.is_file() and path.parent == root / "A" / "Acquisitions"
+        assert {path.read_bytes() for path in current_paths} == set(original_bytes.values())
+        assert all(path.parent == root / "A" / "Acquisitions"
                    for path in current_paths)
         assert {path.name: path.read_bytes() for path in moved.iterdir()} == original_bytes
 
@@ -82,7 +88,7 @@ def test_six_positive_offers_recover_after_library_folder_move(v2, monkeypatch, 
         assert third["present_attested"] == 6
         assert third["downloaded"] == 0
         assert session._delivery_calls == 12
-        assert len(storage.placements()) == 6
+        assert len(storage.placements()) == 12  # 6 historical + 6 received
         assert storage.entitlements() == []
     finally:
         session.close()
