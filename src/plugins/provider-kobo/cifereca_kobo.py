@@ -163,6 +163,9 @@ DESCRIPTOR = ProviderDescriptor(
     display_name="Kobo",
     description="Catalogue et bibliothèque Kobo via Kobo-Vault (API 2.3, révision 2.3.3 / schema acquisition 1.4).",
     state="ready",
+    # Public reader-facing catalogue link belongs to this provider.
+    # It must not be confused with the private Kobo-Vault API base_url.
+    homepage="https://www.kobo.com",
     capabilities=ProviderCapabilities(
         authentication=True,
         multiple_credentials=True,
