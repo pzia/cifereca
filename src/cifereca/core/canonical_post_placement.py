@@ -245,16 +245,22 @@ def clear_checkpoint_if_no_duplicates(
                 or len(set(record["placement_ids"])) != len(record["placement_ids"])
                 or placement_id not in record["placement_ids"]):
             return False
-        registered = db.execute(
-            "SELECT identity_id,directory_name FROM identities"
-        ).fetchall()
-        owners = [directory for owner, directory in registered if owner == identity]
-        if (len(owners) != 1 or type(owners[0]) is not str
-                or sum(directory == owners[0] for _, directory in registered) != 1):
+        # Advisory expiry may only be decided by the exact physical owner.
+        # No unrelated profile registry may be loaded or treated as evidence.
+        owner = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (identity,),
+        ).fetchone()
+        if owner is None or type(owner[0]) is not str or not owner[0]:
             return False
-        owner_dir = owners[0]
-        reserved = frozenset(directory for _, directory in registered
-                             if type(directory) is str and directory)
+        owner_dir = owner[0]
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (owner_dir, identity),
+        ).fetchone() is not None:
+            return False
+        reserved = frozenset((owner_dir,))
         former_ids = tuple(
             pid for pid in record["placement_ids"] if pid != placement_id
         )
@@ -290,6 +296,19 @@ def clear_checkpoint_if_no_duplicates(
         return False
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # The owner directory could have changed while the keeper was being
+        # SHA-verified outside SQLite. Recheck it under the deletion lock;
+        # a stale owner proof can never erase a pending advisory.
+        owner_now = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (identity,),
+        ).fetchone()
+        if owner_now != (owner_dir,) or db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (owner_dir, identity),
+        ).fetchone() is not None:
+            return False
         # Never erase a pending marker when a second physical Placement
         # remains, even if its bytes no longer match the stored artifact SHA.
         present = db.execute(
