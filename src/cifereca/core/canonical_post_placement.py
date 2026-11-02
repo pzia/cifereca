@@ -36,19 +36,28 @@ def verified_post_placement_duplicates(
                 or row[2] != "sha256:" + row[4]):
             return ()
         identity, target, artifact_id, _, digest, size = row
-        directories = db.execute(
-            "SELECT identity_id,directory_name FROM identities"
-        ).fetchall()
-        owners = [name for owner, name in directories if owner == identity]
-        if len(owners) != 1 or type(owners[0]) is not str or not owners[0]:
+        # This probe runs after EVERY successful B/present-attested replay.
+        # Inspect the one owner's directory, not the complete user registry.
+        # Both queries share the Placement/Artifact SQLite snapshot.
+        owner_row = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (identity,),
+        ).fetchone()
+        if owner_row is None or type(owner_row[0]) is not str or not owner_row[0]:
             return ()
-        owner_dir = owners[0]
-        # Two profile IDs sharing one directory cannot provide physical
-        # profile isolation, even if the placement rows name one owner.
-        if sum(name == owner_dir for _, name in directories) != 1:
+        owner_dir = owner_row[0]
+        # A second profile claiming the same physical directory voids proof,
+        # even if this Placement's identity_id is correct. Keep the guard
+        # for migrated/corrupt SQLite files despite the current UNIQUE index.
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (owner_dir, identity),
+        ).fetchone() is not None:
             return ()
-        reserved = frozenset(name for _, name in directories
-                             if type(name) is str and name)
+        # _verified_copy only tests whether the owner directory is in this
+        # collection; it separately enforces relative path containment.
+        reserved = frozenset((owner_dir,))
         candidates = db.execute(
             "SELECT placement_id,path FROM placements "
             "WHERE identity_id=? AND artifact_id=? AND state='present' "
