@@ -27,7 +27,7 @@ def _refs(row, owner):
         return set()
     return {
         (p['entitlement_id'], p['provider_id'], p['item_id'],
-         p['account_id'], owner)
+         p.get('account_id'), owner)
         for p in possessions
         if type(p) is dict and p.get('identity_id') == owner
         and all(type(p.get(k)) is str and p[k]
