@@ -43,6 +43,43 @@ def test_gui_facade_signature_and_descriptor_survive_extraction(name, expected):
     assert actual == expected
 
 
+
+def test_retired_bookings_are_absent_from_facade_contract_and_runtime_ast():
+    """#4186: a removed GTK renderer must not be pinned by an old fixture.
+
+    Kept in the facade test itself: a stale key otherwise produces only an
+    opaque StopIteration in the parametrized signature check and breaks P0 CI.
+    """
+    retired = (
+        "DetailPanel.show_booking",
+        "MainWindow.refresh_bookings",
+        "MainWindow._build_bookings_page",
+        "MainWindow._populate_bookings",
+        "MainWindow._booking_selected",
+    )
+    for qualified in retired:
+        assert qualified not in CONTRACTS, f"retired booking facade persisted: {qualified}"
+        owner, _, method = qualified.partition(".")
+        declaration = _declaration(MODULE, owner)
+        assert not any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == method
+            for node in declaration.body
+        ), f"retired booking facade reintroduced: {qualified}"
+    assert not (MODULE.parent / "booking_view.py").exists()
+
+
+def test_legacy_booking_data_model_stays_deserializable_without_gtk():
+    """Retiring the reservation UI must not break v1 serialized data."""
+    from dataclasses import asdict
+    from cifereca.models import Booking
+
+    historic = Booking(
+        id="fixture-booking", provider="SYRACUSE",
+        medium="physical", title="Historic reservation",
+    )
+    assert Booking(**asdict(historic)) == historic
+
 def test_gui_namespace_core_and_cli_remain_lazy_without_pygobject():
     code = '''
 import importlib.abc, sys
