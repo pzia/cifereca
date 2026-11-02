@@ -46,15 +46,13 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
                 or not service.sync_source_enabled(account)
                 or service.identity_by_id(identity) is None):
             return False
-        if service.storage.identity_for_connection("numilog", credential) != identity:
-            return False
-        connections = [
-            row for row in service.storage.provider_connections(identity_id=identity)
-            if row.get("provider_id") == "numilog"
-            and row.get("credential_id") == credential
-            and row.get("enabled") is True
-        ]
-        if len(connections) != 1:
+        # A still-connected private session is not authority when its exact
+        # borrower was unlinked or the persisted source owner was reassigned.
+        # One SQLite read snapshot, no credential-wide account enumeration.
+        if not service.storage.provider_scope_account_bound(
+            identity_id=identity, provider_id="numilog",
+            credential_id=credential, account_id=account_id,
+        ):
             return False
         # A login/reconnect can replace a session while library() is
         # retrieving pages. Never accept an old in-flight session as the
