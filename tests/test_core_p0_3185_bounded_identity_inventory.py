@@ -5,6 +5,10 @@ deletions, relinks or provider requests.
 """
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
+
 from cifereca.core.canonical_placement_inventory import (
     read_canonical_placement_inventory,
 )
@@ -19,6 +23,42 @@ def _sample(store, tmp_path):
             name: db.execute("SELECT count(*) FROM " + name).fetchone()[0]
             for name in ("identities", "placements", "artifacts", "origin_links")
         }
+
+
+def _inject_corrupt_duplicate_root(store, *, owner="A"):
+    """Simulate a legacy/corrupt DB by removing UNIQUE only in a test fixture.
+
+    Live Storage.identity_put MUST reject this state. The reader still
+    fails closed when opening an older or externally modified SQLite file.
+    """
+    root = store.identity_get(owner)["directory_name"]
+    with store._lock, store._connect() as db:
+        db.execute("DROP INDEX uq_identity_directory_name")
+    store.identity_put({
+        "identity_id": "shadow-owner", "label": "Synthetic shadow",
+        "directory_name": root,
+    })
+
+
+def _restore_unique_root(store):
+    with store._lock, store._connect() as db:
+        db.execute("DELETE FROM identities WHERE identity_id='shadow-owner'")
+        db.execute(
+            "CREATE UNIQUE INDEX uq_identity_directory_name "
+            "ON identities(directory_name)"
+        )
+
+
+def test_normal_storage_rejects_duplicate_directory_before_inventory(store, tmp_path):
+    _sample(store, tmp_path)
+    with pytest.raises(sqlite3.IntegrityError):
+        store.identity_put({
+            "identity_id": "shadow-owner", "label": "Cannot share root",
+            "directory_name": store.identity_get("A")["directory_name"],
+        })
+    assert read_canonical_placement_inventory(
+        store, identity_id="A",
+    ).status == "reviewed"
 
 
 def test_inventory_same_profile_with_hundreds_unrelated_identities(store, tmp_path):
@@ -44,22 +84,19 @@ def test_inventory_same_profile_with_hundreds_unrelated_identities(store, tmp_pa
 
 def test_second_identity_claiming_exact_same_root_fails_closed(store, tmp_path):
     _sample(store, tmp_path)
-    canonical = store.identity_get("A")
-    assert canonical is not None
-    store.identity_put({
-        "identity_id": "shadow-owner",
-        "label": "Shadow synthetic",
-        "directory_name": canonical["directory_name"],
-    })
-    before = store.placements()
-    inventory = read_canonical_placement_inventory(store, identity_id="A")
-    assert inventory.status == "unavailable"
-    assert inventory.groups == ()
-    assert store.placements() == before
-    # An unrelated directory remains independently inspectable.
-    other = read_canonical_placement_inventory(store, identity_id="B")
-    assert other.status == "reviewed"
-    assert other.placement_count == 1
+    _inject_corrupt_duplicate_root(store)
+    try:
+        before = store.placements()
+        inventory = read_canonical_placement_inventory(store, identity_id="A")
+        assert inventory.status == "unavailable"
+        assert inventory.groups == ()
+        assert store.placements() == before
+        # An unrelated directory remains independently inspectable.
+        other = read_canonical_placement_inventory(store, identity_id="B")
+        assert other.status == "reviewed"
+        assert other.placement_count == 1
+    finally:
+        _restore_unique_root(store)
 
 
 def test_unknown_profile_cannot_inherit_other_profile_directory(store, tmp_path):
@@ -72,16 +109,29 @@ def test_unknown_profile_cannot_inherit_other_profile_directory(store, tmp_path)
 
 def test_duplicate_directory_isolation_can_be_restored_without_file_change(store, tmp_path):
     _sample(store, tmp_path)
-    directory = store.identity_get("A")["directory_name"]
-    store.identity_put({
-        "identity_id": "shadow-owner", "label": "Shadow synthetic",
-        "directory_name": directory,
-    })
-    assert read_canonical_placement_inventory(store, identity_id="A").status == "unavailable"
-    store.identity_put({
-        "identity_id": "shadow-owner", "label": "Shadow synthetic",
-        "directory_name": "shadow-distinct-root",
-    })
-    result = read_canonical_placement_inventory(store, identity_id="A")
-    assert result.status == "reviewed"
-    assert result.candidate_count == 1
+    _inject_corrupt_duplicate_root(store)
+    try:
+        assert read_canonical_placement_inventory(
+            store, identity_id="A",
+        ).status == "unavailable"
+        store.identity_put({
+            "identity_id": "shadow-owner", "label": "Shadow synthetic",
+            "directory_name": "shadow-distinct-root",
+        })
+        # Repair the test-only schema and confirm physical inventory stays
+        # independent from the unrelated second profile.
+        with store._lock, store._connect() as db:
+            db.execute(
+                "CREATE UNIQUE INDEX uq_identity_directory_name "
+                "ON identities(directory_name)"
+            )
+        result = read_canonical_placement_inventory(store, identity_id="A")
+        assert result.status == "reviewed"
+        assert result.candidate_count == 1
+    finally:
+        with store._lock, store._connect() as db:
+            db.execute("DELETE FROM identities WHERE identity_id='shadow-owner'")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_directory_name "
+                "ON identities(directory_name)"
+            )
