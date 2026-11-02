@@ -489,8 +489,6 @@ class ParisClient:
                 errors.append({"upstream": provider, "type": type(exc).__name__})
         if operation == "history":
             self.last_history_errors = errors
-        elif operation == "bookings":
-            self.last_booking_errors = errors
         if len(errors) == 2 and not rows:
             kinds = ",".join(sorted({row["type"] for row in errors}))
             raise ParisError(f"{operation} indisponible: {kinds}")
