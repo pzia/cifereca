@@ -18,14 +18,14 @@ python3 simulation/datasetctl.py down ux-small
 - ISBN valide, invalide **et totalement absent**, HTML détail **tronqué**, résultat vide, fiche inexistante (404) ;
 - `?fault=unavailable` (503), `?fault=wrong-type`, `?fault=oversized`.
 
-Le véritable `MilanYouthSource` impose `https://www.editionsmilan.com`
-et ses chemins publics. Pour les tests, un `httpx.MockTransport`
-redirige **uniquement** les requêtes autorisées vers loopback : aucun
-DNS système, proxy ni paramètre de production n'est modifié.
+L'ancien consommateur `MilanYouthSource` a été retiré avec les plugins
+Jeunesse (#957). Les routes de ce faux service restent disponibles pour
+l'étude des contrats HTTP **sans prétendre valider un plugin installé**.
+Les self-tests actuels contactent uniquement le serveur loopback ; aucun
+DNS fournisseur, proxy ni paramètre de production n'est modifié.
 
 ```sh
 python3 -m unittest discover -s simulation/tests -p 'test_milan_fixture_edges.py' -v
-python3 -m unittest discover -s simulation/tests -p 'test_milan_http_service.py' -v
 ```
 
 Les profils `ux-small`, `ux-all` et `ux-errors` démarrent ce service
@@ -35,10 +35,10 @@ dans les pages GTK ou les caches métier. Il s'agit d'une couverture de
 
 Le fichier `test_milan_fixture_edges.py` vérifie **uniquement** les
 réponses du serveur loopback (pagination, payloads, limites, checksum des
-ISBN synthétiques, erreurs). `test_milan_http_service.py` vérifie le
-vrai consommateur Milan et **exactement neuf requêtes pour la page 1 :
-un listing + huit fiches**. Ces deux preuves restent séparées, et
-aucune n'est une validation d'écran GTK.
+ISBN synthétiques, erreurs). L'ancien test d'intégration
+`test_milan_http_service.py` n'existe plus dans l'arbre actif ; aucune
+assertion de consommation par un adaptateur Milan ou d'écran GTK n'est
+attestée par ce self-test.
 
 Les produits « Notice fictive ... » et les ISBN générés ne représentent
 aucune notice réelle d'Éditions Milan.

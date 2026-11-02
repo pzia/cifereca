@@ -91,11 +91,12 @@ PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
 ## Éditions Milan — HTTP
 
 Le service `milan` sur 127.0.0.1:8101 sert le catalogue et les fiches HTML
-synthétiques ; `MilanYouthSource` est testé via `httpx.MockTransport`
-injecté, sans aucun accès réseau extérieur. Les scénarios couvrent âges
-attestés ou absents, ISBN valide/invalide, 0/1/N, pagination, 404, 503,
-Content-Type invalide et dépassement de taille. Aucun plugin n'est
-automatiquement activé ; ce n'est **pas** un test GUI GTK.
+synthétiques. Le test **actif** `simulation/tests/test_milan_fixture_edges.py`
+vérifie le faux serveur local (pagination, HTML/ISBN, 404, 503, type et
+limites), sans importer de plugin ni accéder à un fournisseur extérieur.
+L'ancien consommateur `MilanYouthSource` et son test d'intégration ont été
+retirés avec les packages Jeunesse (#957) ; ce n'est **ni** une preuve de
+conformance du provider **ni** un test GTK.
 
 Voir `simulation/milan/README.md` et #816.
 
@@ -108,27 +109,22 @@ catalogue, recherches, pagination, détails, téléchargements EPUB synthétique
 `simulation/tests/test_baen_http_service.py`. Le service n'active aucun
 plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
 
-## Découverte de sources et enrichissement Jeunesse — scénarios exécutables
+## Découverte et enrichissement Jeunesse — fixtures conservées, plugins retirés
 
-Le manifeste des JDD spécialisés passe à la **version 2** : les profils
-`ux-small`, `ux-all`, `ux-errors` régénèrent automatiquement les
-anciens caches lorsque la version change. Deux nouvelles fixtures synthétiques
-sont accessibles via `CIFERECA_UX_SPECIALIZED_DATA` et le service éditorial :
+Le manifeste des JDD spécialisés reste en **version 2** ; les profils
+`ux-small`, `ux-all`, `ux-errors` peuvent régénérer les fixtures
+`youth-discovery.json` et `youth-enrichment.json`, proposées par le service
+éditorial local (`GET /youth/discovery.json` et `GET /youth/enrichment.json`).
+Elles représentent des cas synthétiques de recherche de sources, de preuves
+ISBN, de doublons, d'âges et d'isolation d'identité ; elles ne constituent
+pas une validation de la chaîne applicative.
 
-- `youth-discovery.json` / `GET /youth/discovery.json` : résultats
-  dupliqués, source attestant des âges, âge en mois, bruit documentaire,
-  URL privée, credentials et inspection de page en erreur. Le vrai plugin
-  `YouthSourceDiscoveryPlugin` construit un dossier avec revue manuelle.
-- `youth-enrichment.json` / `GET /youth/enrichment.json` : preuve ISBN
-  forte, éditions distinctes, conflit de doublons, titre seul refusé,
-  séparation des identités, cache inaccessible. Le vrai
-  `YouthDetailEnrichment` utilise un index **synthétique en mémoire**, sans
-  recherche distante ni mutation du cache du Core.
-
-`simulation/tests/test_youth_workflow_contracts.py` vérifie les deux plugins.
-Les URLs `.example` restent fictives : **aucune requête HTTP externe** n'est
-effectuée pendant l'exécution du workflow de découverte ou enrichissement.
-La GUI GTK et la persistance applicative ne sont pas encore recettées.
+Les consommateurs historiques `YouthSourceDiscoveryPlugin` et
+`YouthDetailEnrichment` ont été retirés (#957). Le test ancien
+`simulation/tests/test_youth_workflow_contracts.py` est **absent** de la
+suite actuelle : ne pas le citer comme gate de conformance ou tenter de
+réactiver ces packages. Les fixtures restent indépendantes du runtime
+Cifereca ; ni GUI GTK ni persistance métier ne sont attestées ici.
 
 ## Kobo-Adept — profils synthétiques
 
