@@ -164,10 +164,18 @@ def set_source_enabled(service, account, enabled, preference_key):
     Re-enabling inventory never resurrects a revoked acquisition permission.
     Even OFF->ON inventory toggles advance the same source generation.
     """
+    # This internal write path is also callable without the public broker.
+    # Never coerce a string like "false" to True or write a preference row
+    # belonging to another borrower, credential or identity.
+    if type(enabled) is not bool or type(preference_key) is not str:
+        raise ValueError('invalid_source_sync_toggle')
+    from .source_auto_consent_bridge import _source_id
+    scope = scope_for_account(account)
+    if preference_key != 'sync.source.enabled.' + _source_id(scope):
+        raise ValueError('source_sync_toggle_scope_mismatch')
     from .source_acquisition_consent import _context, _bound
     from .source_enablement import source_enabled
     storage, coords, current = _context(service, account)
-    scope = scope_for_account(account)
     with storage._lock, storage._connect() as db:
         db.execute('BEGIN IMMEDIATE')
         if not current() or not _bound(db, coords, enabled=False):
