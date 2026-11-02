@@ -314,7 +314,7 @@ def test_gui_renewal_never_proclaims_success_from_unverified_post():
         Path(__file__).parents[1]
         / "src/cifereca/gui/loans_controller.py"
     ).read_text(encoding="utf-8")
-    block = src.split("def _renew_result(", 1)[1].split("def confirm_return(", 1)[0]
+    block = src.split("def _renew_result(", 1)[1]
     assert "loan_renewal_feedback(result)" in block
     assert "self.service.renew(loan, confirmed=True)" in block
     assert "success_toast=" not in block
