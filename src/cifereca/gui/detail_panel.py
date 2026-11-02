@@ -14,9 +14,8 @@ from ..catalogue_link import safe_document_link_url
 from ..core.search import file_format
 from ..descriptions import description_text
 from ..book_detail_metadata import canonical_book_isbn, safe_detail_value
-from ..models import Booking, HistoryItem, ItemDetail, Loan, SearchResult
+from ..models import HistoryItem, ItemDetail, Loan, SearchResult
 from .book_widgets import CoverView
-from .booking_view import booking_presentation
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
@@ -691,23 +690,6 @@ class DetailPanel(Gtk.Box):
             ("Fournisseur", item.provider),
         ])
         self._decorate(item)
-
-    def show_booking(self, item: Booking) -> None:
-        self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
-        medium = "Numérique" if item.medium == "digital" else "Physique"
-        presentation = booking_presentation(item)
-        self._cover_and_title(item.title, None, None, [medium, presentation.status_label])
-        self._group("Réservation", [
-            ("État", presentation.status_label),
-            ("Réservé le", fr_date(item.booking_date)),
-            ("Disponible depuis", fr_date(item.availability_date)),
-            ("Disponible jusqu’au", fr_date(item.available_until)),
-            ("Bibliothèque", item.location or "—"),
-        ])
-        self._decorate(item)
-
 
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
         content_type = self.window.service.content_type_for(item)
