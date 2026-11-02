@@ -15,9 +15,11 @@ def _source_origin(service, *, identity, provider, credential, account,
             "INSERT INTO source_references("
             "source_reference_id,identity_id,provider_id,credential_id,"
             "account_id,branch_id,edition_id,right_id,reference_kind,state,"
-            "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "evidence_kind,evidence_ref,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (f"reference-{token}", identity, provider, credential, account,
-             "purchases", edition, f"right-{token}", "purchase", "active", 1, 1),
+             "purchases", edition, f"right-{token}", "purchase", "active",
+             "provider_response", "positive-right-observation", 1, 1),
         )
         db.execute(
             "INSERT INTO origin_links("
