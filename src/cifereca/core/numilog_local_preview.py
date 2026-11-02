@@ -57,6 +57,11 @@ def _valid_binding(broker: Any, account: Any, source_id: str) -> bool:
                 or not all(type(value) is str and 0 < len(value) <= 1024
                            and not any(c in value for c in "\0\r\n")
                            for value in (identity, credential, account_id))
+                # The legacy source ID strips a nonempty account ID. A
+                # different borrower with leading/trailing spaces (or the
+                # literal empty-primary fallback) cannot inherit old ON.
+                or account_id != account_id.strip()
+                or account_id == 'numilog:' + credential + ':primary'
                 or not broker._enabled(source_id)
                 or broker.service.identity_by_id(identity) is None):
             return False
