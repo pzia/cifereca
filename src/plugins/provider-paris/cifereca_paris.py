@@ -913,15 +913,47 @@ class ParisProviderSession(ProviderSession):
                         account.provider_id, account.credential_id) != scope_key
                     or core_owner_binding() != owner_binding):
                 raise ProviderConfigurationError("account_scope_mismatch")
+            # ListLoans is one authenticated, non-paginated DILICOM inventory
+            # response for this exact borrower. Successful consultation is
+            # complete by default for *observations*, including zero loans.
+            # A missing upstream branch, invalid/misclassified card or
+            # duplicate right ID must keep this evidence partial. Physical
+            # SYRACUSE errors are independent and cannot erase a successful
+            # DILICOM read. This claim never authorizes negative rights or
+            # a return: LoanInventorySnapshot's stricter completeness stays
+            # unchanged until its separate legacy return semantics are retired.
+            dilicom_branches = [
+                branch for branch in inventory.branches
+                if branch.upstream == "dilicom" and branch.medium == "digital"
+            ]
+            digital_candidates = [
+                loan for loan in inventory.loans
+                if loan.provider == "DILICOM" or loan.medium == "digital"
+            ]
+            complete = (
+                type(inventory) is LoanInventorySnapshot
+                and inventory.status in ("success", "partial")
+                and len(dilicom_branches) == 1
+                and dilicom_branches[0].reason_code is None
+                and not dilicom_failed
+                and not ambiguous_right_ids
+                and len(rights_by_id) == len(digital_candidates)
+                and all(
+                    loan.provider == "DILICOM" and loan.medium == "digital"
+                    for loan in digital_candidates
+                )
+            )
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
                     scope.identity_id, scope.provider_id,
                     scope.credential_id, scope.account_id,
                 ),
                 rights=tuple(rights_by_id.values()),
-                status="failed" if dilicom_failed else "partial",
-                coverage="unknown" if dilicom_failed else "partial",
-                pagination_complete=False, branch="dilicom",
+                status=("failed" if dilicom_failed else
+                        "success" if complete else "partial"),
+                coverage=("unknown" if dilicom_failed else
+                          "complete" if complete else "partial"),
+                pagination_complete=bool(complete), branch="dilicom",
                 observed_at=observed, snapshot_ref="paris.dilicom.listloans",
             )
 
