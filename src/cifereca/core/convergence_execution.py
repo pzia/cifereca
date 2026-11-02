@@ -249,11 +249,25 @@ def execute_admitted_convergence(
             connections = service.storage.provider_connections(
                 identity_id=scope.identity_id,
             )
-            return sum(
+            if sum(
                 conn.get("provider_id") == scope.provider_id
                 and conn.get("credential_id") == scope.credential_id
                 and conn.get("enabled") is True
                 for conn in connections
+            ) != 1:
+                return False
+            # Re-validate the exact persisted upstream borrower BEFORE
+            # each selected GET/receipt/recovery, not merely when publishing
+            # B. A credential may remain enabled after the Core account
+            # table has been replaced, leaving a stale session in memory.
+            borrowers = service.storage.provider_accounts(
+                identity_id=scope.identity_id,
+            )
+            return sum(
+                row.get("provider_id") == scope.provider_id
+                and row.get("credential_id") == scope.credential_id
+                and row.get("account_id") == scope.account_id
+                for row in borrowers
             ) == 1
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
