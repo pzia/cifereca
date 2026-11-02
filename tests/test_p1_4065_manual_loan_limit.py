@@ -6,7 +6,7 @@ import pytest
 from cifereca.plugin_api import AccountOptionField
 from cifereca.gui.settings_draft import SettingsValidationError
 
-from test_settings_draft import account, descriptor, validate
+from test_settings_draft import editor, account, descriptor, validate
 
 
 LIMIT = AccountOptionField(
