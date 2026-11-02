@@ -38,7 +38,8 @@ def test_bnf_same_page_signed_action_qualifies_exact_offered_loan_only():
         assert first.delivery_offer_id.startswith("bnf.reader_acs4:")
         assert first.delivery_offer_id != first.right_id
         assert second.delivery == "unknown" and second.delivery_offer_id == ""
-        assert result.coverage == "partial"
+        assert result.status == "success" and result.coverage == "complete"
+        assert result.pagination_complete is True
         assert not result.authorizes_mutation
         assert not result.authorizes_negative_reconciliation
         exported = json.dumps(asdict(result))

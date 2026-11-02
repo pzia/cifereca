@@ -34,7 +34,11 @@ def ready(**transport):
         account, edition_id="book-a", right_id="loan-a", kind="loan",
         branch="bnf_html", explicit_user_action=True,
     )
-    assert observed.coverage == "partial"
+    # Explicit selection covers one offer, never the full provider branch.
+    assert observed.status == observed.coverage == "partial"
+    assert observed.pagination_complete is False
+    assert not observed.authorizes_negative_reconciliation
+    assert not observed.authorizes_mutation
     assert len(observed.rights) == 1
     offer = observed.rights[0]
     assert offer.delivery == "available" and offer.state == "active"
