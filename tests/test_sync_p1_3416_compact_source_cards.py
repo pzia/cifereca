@@ -82,7 +82,7 @@ def test_actual_gtk_card_keeps_problem_and_next_step_above_collapsed_details(
     window, _, calls, _, _ = _fixture(sources=[source])
     group = window._sync_sources_box.children[0]
     row = group.children[0]
-    assert row.subtitle_lines == 3
+    assert row.subtitle_lines == 2
     assert row.subtitle.startswith(sync_source_attention(source)[1] + "\n")
     assert text in row.subtitle.splitlines()[1]
     assert len(row.prefixes) == 1
@@ -103,7 +103,7 @@ def test_healthy_card_is_compact_and_preserves_manual_sync_action(monkeypatch):
     window, _, calls, _, _ = _fixture(sources=[source])
     group = window._sync_sources_box.children[0]
     row = group.children[0]
-    assert row.subtitle_lines == 3
+    assert row.subtitle_lines == 2
     assert row.subtitle.startswith("Fournisseur : future-provider\n")
     assert "À faire :" not in row.subtitle
     assert row.prefixes == []
