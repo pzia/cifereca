@@ -478,7 +478,7 @@ _MONTHS_FR = dict(zip(
     ("janvier février mars avril mai juin juillet août septembre octobre novembre décembre").split(),
     range(1, 13),
 ))
-_DATE_FR = re.compile(r"([0-9]{1,2}) ([^\\W\\d_]+) ([0-9]{4}) à ([0-9]{2}):([0-9]{2})")
+_DATE_FR = re.compile(r"([0-9]{1,2}) ([^\W\d_]+) ([0-9]{4}) à ([0-9]{2}):([0-9]{2})")
 
 
 def _loan_due_at(card: _Node) -> str | None:
