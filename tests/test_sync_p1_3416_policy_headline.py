@@ -81,6 +81,20 @@ def test_off_and_unconfigured_consent_do_not_inherit_inventory_schedule():
     assert "autorisation activée" not in info
 
 
+def test_legacy_active_consent_stays_visible_after_capability_withdrawal():
+    # The Core broker still allows explicit revocation of a prior ON policy.
+    # An unsupported new activation cannot silently erase that persisted bit.
+    info = sync_source_controls_overview(
+        source(), broker(authorization=consent(supported=False, enabled=True)),
+    )
+    assert "Fichiers : autorisation antérieure activée (activation indisponible)" in info
+    assert "Fichiers : autorisation non proposée" not in info
+    off = sync_source_controls_overview(
+        source(), broker(authorization=consent(supported=False, enabled=False)),
+    )
+    assert "autorisation antérieure désactivée" in off
+
+
 def test_source_switch_does_not_erase_stored_independent_preferences():
     info = sync_source_controls_overview(
         source(enabled=False),
