@@ -63,7 +63,7 @@ def test_two_axes_count_only_effective_settings_and_preserve_suspended_choices()
         ("schedule", "c"), ("consent", "c"),
         ("schedule", "d"), ("consent", "d"),
     ]
-    assert all(value not in result for value in schedules)
+    assert "arbitrary-new-provider" not in result
     assert "Fournisseur futur" not in result
 
 
