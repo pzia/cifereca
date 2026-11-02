@@ -270,7 +270,7 @@ def parse_search_page(html: str) -> CatalogPage:
             rid, title, tuple(props.get("author", ())),
             single("publisher"), single("isbn"), single("inLanguage"),
             descriptions[0] if len(descriptions) == 1 else None,
-            thumbnail_url=_catalog_book_cover(book),
+            thumbnail_url=_catalog_book_cover(book, rid),
         )
         if rid in records and records[rid] != record:
             partial = True
@@ -331,7 +331,7 @@ def parse_detail(html: str, *, page_url: str) -> CatalogPage:
     record = CatalogRecord(rid, props["name"][0], tuple(props.get("author", ())),
                            single("publisher"), single("isbn"), single("inLanguage"),
                            single("description"), "unavailable" if unavailable else "unknown",
-                           _catalog_book_cover(books[0]))
+                           _catalog_book_cover(books[0], rid))
     return CatalogPage((record,), "partial" if partial else "ok", scope="detail")
 
 
@@ -367,6 +367,20 @@ def _public_cover_url(value: str) -> str | None:
             return None
         url = urljoin(ORIGIN + '/', value)
         parts = urlsplit(url)
+        # BnF's real catalogue/loan cards link to public Feedbooks covers.
+        # This is a dedicated, closed URL family, NOT a general permission
+        # for queries on loan/SSO paths or the other image hosts.
+        if parts.netloc == 'covers.feedbooks.net':
+            if (parts.scheme != 'https' or parts.username or parts.password
+                    or parts.fragment
+                    or not re.fullmatch(r'/item/[A-Za-z0-9_-]{1,128}\\.jpg', parts.path)
+                    or not re.fullmatch(
+                        r'(?:size=[A-Za-z]{1,16}&t=[0-9]{1,20}|'
+                        r't=[0-9]{1,20}&size=[A-Za-z]{1,16})',
+                        parts.query,
+                    )):
+                return None
+            return url
         if (parts.scheme != 'https' or parts.netloc not in
                 {'pret.bnf.fr', 'imagedelivery.net'}
                 or parts.username or parts.password or parts.query or parts.fragment
@@ -390,30 +404,43 @@ def _public_cover_url(value: str) -> str | None:
     return url
 
 
-def _catalog_book_cover(book: _Node) -> str | None:
+def _catalog_book_cover(book: _Node, resource_id: str | None = None) -> str | None:
     """A cover only within the validated, unique Book microdata scope.
 
     Do not consult global og:image, adjacent result cards, page header,
     profile avatars, nested Person/Organization scopes or a book title/ISBN.
     A conflicting or invalid image candidate means unknown, not first wins.
     """
-    sources: list[str] = []
+    declared: list[str] = []
+    unmarked: list[str] = []
 
     def visit(node: _Node) -> None:
         if (node.tag in _HIDDEN or 'hidden' in node.attrs
                 or node.attrs.get('aria-hidden') == 'true'):
             return
         if node is not book and 'itemscope' in node.attrs:
-            return  # Not an image of this Book.
+            return  # Nested Book/Person/Organization isn't this resource.
+        if node.tag == 'a' and resource_id is not None:
+            linked = _id(node.attrs.get('href', ''), 'resources')
+            if linked is not None and linked != resource_id:
+                return  # Embedded recommendations cannot supply this cover.
         if node.tag == 'img':
-            sources.append(node.attrs.get('data-src') or node.attrs.get('src') or '')
+            source = node.attrs.get('data-src') or node.attrs.get('src') or ''
+            if node.has_class('cover') or 'image' in node.attrs.get('itemprop', '').split():
+                declared.append(source)
+            else:
+                unmarked.append(source)
         elif node.tag == 'meta' and 'image' in node.attrs.get('itemprop', '').split():
-            sources.append(node.attrs.get('content') or '')
+            declared.append(node.attrs.get('content') or '')
         for child in node.children:
             if isinstance(child, _Node):
                 visit(child)
 
     visit(book)
+    # A declared Book cover outranks unrelated/decorative unmarked images.
+    # Keep the old conservative fallback for legacy Book markup without
+    # explicit microdata/class markers. Conflicting declared covers stay null.
+    sources = declared if declared else unmarked
     if not sources or len(sources) > 4:
         return None
     images = [_public_cover_url(source) for source in sources]
