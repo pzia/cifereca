@@ -78,14 +78,14 @@ def test_mutated_borrower_during_activity_rejected_before_typed_publication(chan
         session.close()
 
 
-def test_stable_borrower_keeps_partial_and_no_hidden_download():
+def test_stable_borrower_keeps_scoped_coverage_and_no_hidden_download():
     session, account, client = fixture()
     try:
         result = session.loan_inventory_snapshot(account)
         assert result.scope.identity_id == "synthetic-identity"
-        assert result.status == "partial"
+        assert result.status == "success"
         assert len(result.loans) == 1
-        assert result.branches[0].completeness == "partial"
+        assert result.branches[0].completeness == "complete"
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
@@ -162,11 +162,11 @@ def test_public_typed_inventory_reader_accepts_bnf_core_copy_without_legacy_retr
     copy = replace(account)
     try:
         report = read_loan_inventory(session, copy)
-        assert report.status == "partial"
+        assert report.status == "success"
         assert report.scope.identity_id == "synthetic-identity"
         assert len(report.loans) == 1
         assert report.loans[0].source_credential == "synthetic-credential"
-        assert report.reason_code == "inventory_not_exhaustive"
+        assert report.reason_code is None
         # Reader does not fall back to the instance-only legacy loans(copy).
         assert client.calls == ["login", "activity"]
     finally:
