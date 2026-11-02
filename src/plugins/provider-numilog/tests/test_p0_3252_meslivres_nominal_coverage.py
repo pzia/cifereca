@@ -95,3 +95,63 @@ def test_malformed_meslivres_row_does_not_attest_exhaustiveness(monkeypatch):
         assert not snapshot.authorizes_negative_reconciliation
     finally:
         s.close()
+
+
+def _html_cards(*, duplicate=False, missing_link=False):
+    def card(lid, *, link=True):
+        anchor = (
+            '<a class="LnkDownloadBook" '
+            f'href="/Pages/Compte/readBook.ashx?lid={lid}&amp;m=dwld">Get</a>'
+            if link else ''
+        )
+        return (
+            '<tr><td><span class="pTitle">Purchased book</span>'
+            f'{anchor}</td></tr>'
+        )
+    rows = [card(42)]
+    if duplicate:
+        rows.append(card(42))
+    if missing_link:
+        rows.append(card(43, link=False))
+    return (
+        '<html><body><table id="myTable"><tbody>'
+        + ''.join(rows) + '</tbody></table></body></html>'
+    )
+
+
+@pytest.mark.parametrize(("duplicate", "missing_link", "expected_complete"), [
+    (False, False, True),
+    (True, False, False),
+    (False, True, False),
+])
+def test_real_meslivres_parser_does_not_silently_certify_dropped_owned_cards(
+    duplicate, missing_link, expected_complete,
+):
+    from cifereca_numilog_html import parse_library_page, LIBRARY
+    diagnostics = {}
+    rows, next_url = parse_library_page(
+        _html_cards(duplicate=duplicate, missing_link=missing_link),
+        LIBRARY, inventory_diagnostics=diagnostics,
+    )
+    assert len(rows) == 1
+    assert next_url is None
+    assert diagnostics["complete"] is expected_complete
+
+
+def test_reader_with_no_structural_page_proof_stays_partial(monkeypatch):
+    s, _ = session()
+    try:
+        def page(_url, **_kwargs):
+            return s.library_url, "SYNTHETIC"
+        def parser(_html, _url, **_kwargs):
+            # A third-party/legacy parse shim that fails to attest what it
+            # silently filtered must not make Core report full coverage.
+            return [owned_row()], None
+        s._page = page
+        monkeypatch.setattr(provider, "parse_library_page", parser)
+        snapshot = s.rights_observation_snapshot(bound_account(s))
+        assert len(snapshot.rights) == 1
+        assert snapshot.status == snapshot.coverage == "partial"
+        assert snapshot.pagination_complete is False
+    finally:
+        s.close()
