@@ -1,7 +1,7 @@
-"""P0 #979 / #1120: Core must never receive opaque vendor success JSON.
+"""#979 / #1120 / #4048: ADEPT fulfillment receipts exclude vendor secrets.
 
-The runtime's return/download seams are simulated, with no subprocess,
-account, Adobe identity, real license, device or filesystem mutations.
+No voluntary return route remains. All download scenarios use synthetic
+receipts and never invoke a CLI, real license, account, or filesystem write.
 """
 from __future__ import annotations
 
@@ -35,13 +35,6 @@ def runtime():
     ))
 
 
-def returned(r, response):
-    r.return_loan = MethodType(lambda self, loan, profile: deepcopy(response), r)
-    return r.execute({"operation": "return", "metadata": {
-        "adept_loan_id": "loan-17", "adept_profile_name": "original-profile",
-    }})
-
-
 def fulfilled(r, response):
     r.download_request = MethodType(lambda self, payload: deepcopy(response), r)
     return r.execute({
@@ -51,14 +44,6 @@ def fulfilled(r, response):
         "destination": "/tmp/synthetic-artifact.epub",
         "metadata": {"adept_profile_name": "original-profile"},
     })
-
-
-def valid_return(**extra):
-    return {
-        "ok": True, "operation": "loan_return",
-        "loan_id": "loan-17", "profile": "original-profile",
-        **deepcopy(FORGED), **extra,
-    }
 
 
 def valid_fulfill(**extra):
@@ -83,31 +68,16 @@ def assert_no_vendor_private_metadata(value):
     assert "certificate" not in published
 
 
-def test_return_proves_exact_loan_and_origin_but_discards_vendor_json():
+def test_historical_return_receipt_cannot_be_published_by_a_stale_runtime_call():
     r = runtime()
-    output = returned(r, valid_return())
-    assert output.ok is True and output.operation == "return"
-    assert output.artifact is None
-    assert output.metadata == {
-        "runtime_result": {
-            "ok": True, "operation": "loan_return",
-            "loan_id": "loan-17", "profile": "original-profile",
-        },
-        "adept_loan_id": "loan-17", "adept_profile_name": "original-profile",
-        "loan_state": "returned", "artifact_preserved": True,
-    }
-    assert_no_vendor_private_metadata(output)
-
-
-@pytest.mark.parametrize(("wrong_field", "replacement"), [
-    ("ok", False), ("ok", "true"), ("operation", "download"),
-    ("loan_id", "another-loan"), ("profile", "another-profile"),
-])
-def test_return_never_claims_success_for_a_contradictory_receipt(wrong_field, replacement):
-    with pytest.raises(KoboAdeptError, match="incohérent") as exc:
-        returned(runtime(), valid_return(**{wrong_field: replacement}))
-    assert exc.value.code == "kobo_adept_invalid_response"
-    assert "PRIVATE_LICENSE" not in str(exc.value)
+    r.return_loan = MethodType(lambda self, loan, profile: valid_fulfill(), r)
+    with pytest.raises(Exception) as exc:
+        r.execute({"operation": "return", "metadata": {
+            "adept_loan_id": "loan-17", "adept_profile_name": "original-profile",
+        }})
+    assert getattr(exc.value, "code", None) == "kobo_adept_drm_mutation_unsupported"
+    # Even a legacy object that dynamically restores return_loan cannot
+    # re-enable the retired execute() route or publish a Core return receipt.
 
 
 def test_fulfillment_keeps_artifact_reference_but_only_bounded_receipt():
