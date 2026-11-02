@@ -94,10 +94,9 @@ def test_controller_imports_without_gtk_and_preserves_three_window_facades():
         method = methods[facade]
         assert tuple(arg.arg for arg in method.args.args) == ("self", *args)
         assert f"secondary_results_controller.{controller}" in ast.unparse(method)
-    assert "populate_bookings" not in vars(__import__(
-        "cifereca.gui.secondary_results_controller",
-        fromlist=["populate_bookings"],
-    ))
+    assert "populate_bookings" not in {
+        node.name for node in module.body if isinstance(node, ast.FunctionDef)
+    }
     assert "_populate_bookings" not in methods
     assert "refresh_bookings" not in methods
     assert "_booking_selected" not in methods
