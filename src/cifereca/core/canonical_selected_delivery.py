@@ -191,6 +191,8 @@ def complete_selected_delivery(
     attempt.mkdir(mode=0o700)
     created = os.stat(attempt, follow_symlinks=False)
     attempt_inode = (created.st_dev, created.st_ino)
+    created_parent = os.stat(base, follow_symlinks=False)
+    base_inode = (created_parent.st_dev, created_parent.st_ino)
     # The staging namespace belongs to this failed attempt until the Core
     # issues a completed delivery receipt. Failed GET, invalid candidates and
     # rejected ADEPT results must not leave signed ACSM/partial bytes behind.
@@ -312,14 +314,29 @@ def complete_selected_delivery(
     except BaseException:
         # Best effort, without masking the original provider/cancellation
         # error or trusting a path that the provider may have replaced.
+        parent_fd = None
         try:
-            now = os.stat(attempt, follow_symlinks=False)
-            if (stat.S_ISDIR(now.st_mode)
-                    and (now.st_dev, now.st_ino) == attempt_inode
-                    and not base.is_symlink()):
-                shutil.rmtree(attempt)
+            # A supplier callback may rename/swap .canonical-delivery while
+            # raising. An absolute-path rmtree would then follow an ancestor
+            # symlink or remove another owner's same-named run.
+            flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                     | getattr(os, "O_NOFOLLOW", 0))
+            parent_fd = os.open(base, flags)
+            opened = os.fstat(parent_fd)
+            visible = os.stat(base, follow_symlinks=False)
+            run = os.stat(attempt.name, dir_fd=parent_fd,
+                          follow_symlinks=False)
+            if (all(stat.S_ISDIR(item.st_mode)
+                    for item in (opened, visible, run))
+                    and all((item.st_dev, item.st_ino) == base_inode
+                            for item in (opened, visible))
+                    and (run.st_dev, run.st_ino) == attempt_inode):
+                shutil.rmtree(attempt.name, dir_fd=parent_fd)
         except (OSError, ValueError):
             pass
+        finally:
+            if parent_fd is not None:
+                os.close(parent_fd)
         raise
     finally:
         # The callback must not authorize a future GET outside this one
