@@ -23,7 +23,7 @@ def sync_source_card_guidance(source: object, alert: object) -> str:
     if getattr(source, "connected", None) is not True:
         return "À faire : reconnecter ce compte avant une nouvelle synchronisation."
     return (
-        "À faire : examiner les détails du dernier cycle ci-dessous. "
+        "À faire : examiner les détails du dernier cycle au survol du compte. "
         "La relance n'est pas une correction garantie."
     )
 
