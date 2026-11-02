@@ -313,6 +313,19 @@ def cleanup_published_staging(
     # Never delete if the namespace has been replaced or redirected.
     if attempt.is_symlink() or not attempt.is_dir():
         return False
+    # Capture the selected physical directory BEFORE the bounded SQLite
+    # dependency scan. A regular directory or symlink can replace its name
+    # while SQLite is locked; the old absolute-path rmtree could then erase
+    # another profile's run with the same random-looking basename.
+    base = profile / ".canonical-delivery"
+    try:
+        base_initial = os.stat(base, follow_symlinks=False)
+        run_initial = os.stat(attempt, follow_symlinks=False)
+        if (not stat.S_ISDIR(base_initial.st_mode)
+                or not stat.S_ISDIR(run_initial.st_mode)):
+            return False
+    except OSError:
+        return False
     # A Core delivery attempt is private, but legacy import/index tools may
     # still have registered another physical or operational reference under
     # it. Never turn those rows into dangling paths as a cleanup side effect.
@@ -362,11 +375,38 @@ def cleanup_published_staging(
             current_operation=current_operation,
         ):
             return False
-        # Preserve the original receipt until B is already committed (caller
-        # contract), but only remove a private run with no other registered
-        # consumer. Any error leaves the staging bytes in place.
-        shutil.rmtree(attempt)
-        return True
+        # Pin the actual owner namespace, not the absolute pathname:
+        # a symlink or same-path directory substituted while dependencies
+        # were read cannot redirect a recursive removal across profiles.
+        # shutil.rmtree's fd-relative implementation refuses a symlink run.
+        flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                 | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            parent_fd = os.open(base, flags)
+        except OSError:
+            return False
+        try:
+            parent_now = os.fstat(parent_fd)
+            parent_visible = os.stat(base, follow_symlinks=False)
+            run_now = os.stat(
+                parts[1], dir_fd=parent_fd, follow_symlinks=False,
+            )
+            for before, after in (
+                (base_initial, parent_now), (base_initial, parent_visible),
+                (run_initial, run_now),
+            ):
+                if (not stat.S_ISDIR(after.st_mode)
+                        or (before.st_dev, before.st_ino)
+                        != (after.st_dev, after.st_ino)):
+                    return False
+            # No absolute path reaches the recursive deleter. After this
+            # check a parent rename still leaves parent_fd on OUR namespace.
+            shutil.rmtree(parts[1], dir_fd=parent_fd)
+            return True
+        except (OSError, ValueError):
+            return False
+        finally:
+            os.close(parent_fd)
 
 
 __all__ = ["promote_completed_delivery", "cleanup_published_staging"]
