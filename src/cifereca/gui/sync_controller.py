@@ -550,11 +550,23 @@ def _refresh_sync_page(self) -> None:
                     head + "\n" + control_overview
                     + ("\n" + remainder if separator else "")
                 )
+            # Preserve the full evidence for the optional disclosure, but
+            # show no more than two lines in the account header. This keeps
+            # the problem and its next step ahead of diagnostic phase text.
+            from cifereca.gui.sync_source_card_guidance import (
+                sync_source_card_guidance,
+            )
+            next_step = sync_source_card_guidance(source, alert)
             row.set_subtitle(
                 (alert[1] + "\n" if alert is not None else "")
+                + (next_step + "\n" if next_step else "")
                 + display_summary
             )
-            row.set_subtitle_lines(0)
+            row.set_subtitle_lines(2)
+            # Full closed-state details remain available on hover/focus,
+            # without inserting a new child into any source card. Legacy
+            # GTK and E2E consumers rely on the existing controls' order.
+            row.set_tooltip_text(presentation.summary)
         else:
             # An account row without sync capability is NOT evidence of a
             # public catalogue, much less an exhaustively refreshable one.
