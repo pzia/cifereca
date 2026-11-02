@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3171_atomic_publication_v14 import register
+from tests.test_core_p0_3171_canonical_sync_stage import rig  # dependency for v2
 from tests.test_core_p0_3719_v2_execution import v2  # pytest fixture
 
 
