@@ -215,3 +215,43 @@ def test_obsolete_bookings_titlebar_action_is_inert_on_refresh_and_connection():
                for item in window.events)
     # This does NOT establish that this historical preference caused a
     # real user's popup; it only rules out this deterministic callback path.
+
+
+@pytest.mark.parametrize("invalidated", ["route", "header", "identity", "close"])
+def test_callback_that_invalidates_its_context_then_fails_never_opens_modal(invalidated):
+    state = {}
+    def fail_after_transition(_host):
+        window = state["window"]
+        if invalidated == "route":
+            window._route_display_token = object()
+        elif invalidated == "header":
+            window._header_action_generation = object()
+        elif invalidated == "identity":
+            window._identity_context_generation += 1
+        else:
+            window._closed = True
+        raise RuntimeError("stale callback " + SENTINEL_URL)
+
+    window, action, diagnostics, captured, _ = rig(action_callback=fail_after_transition)
+    state["window"] = window
+    window._route_display_token = object()
+    window._header_action_generation = object()
+    window._identity_context_generation = 1
+    invoke_ui_action(window, action, NS())
+    assert captured == [("popdown",)]
+    assert diagnostics == []
+    assert not hasattr(window, "_ui_dialog_observation_context")
+
+
+def test_menu_dismissal_that_switches_identity_never_invokes_old_action():
+    window, action, diagnostics, captured, _ = rig(
+        action_callback=lambda _host: pytest.fail("stale action invoked"),
+    )
+    window._identity_context_generation = 3
+    def change_identity():
+        captured.append(("popdown",))
+        window._identity_context_generation = 4
+    window.shell_menu.popdown = change_identity
+    invoke_ui_action(window, action, NS())
+    assert captured == [("popdown",)]
+    assert diagnostics == []
