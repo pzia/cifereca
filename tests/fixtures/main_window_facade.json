@@ -155,12 +155,6 @@
     "decorators": [],
     "async": false
   },
-  "DetailPanel.show_booking": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='Booking', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
   "DetailPanel.show_search": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='loading', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
     "returns": "Constant(value=None)",
