@@ -73,6 +73,13 @@ def _check_post_placement_duplicates(storage, *, library_root: Path,
             clear_checkpoint_if_no_duplicates(
                 storage, library_root=library_root, placement_id=placement_id,
             )
+    except ValueError as exc:
+        # Overflow is an incomplete maintenance inventory, not proof that
+        # there are zero duplicates. Leave all checkpoints and B untouched.
+        code = ("canonical_dedup_over_budget"
+                if str(exc) == "canonical_dedup_candidates_over_budget"
+                else "canonical_dedup_probe_failed")
+        _LOG.warning("TRACE convergence code=%s", code)
     except Exception:
         # A separate maintenance failure cannot turn verified B into a failed
         # acquisition, revoke its OriginLink or authorize re-download.
