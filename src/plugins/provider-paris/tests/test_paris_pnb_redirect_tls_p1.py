@@ -99,3 +99,34 @@ def test_canonical_https_dilicom_acsm_second_hop_remains_valid(client, monkeypat
     monkeypatch.setattr(client, "_get_pnb_response", respond)
     assert client._resolve_pnb_loan_to_acsm(first) == end
     assert requested == [first]  # Only next-hop URL is returned, never GETed.
+
+
+@pytest.mark.parametrize("opaque_host", (
+    "PRIVATE_ACCOUNT_OR_TOKEN.untrusted.example",
+    "signed-PRIVATE_BORROWER.alt-domain.invalid",
+    "account-PRIVATE_SECRET.cdn.example",
+))
+def test_untrusted_redirect_host_is_not_disclosed_in_exception_or_ui(
+    client, opaque_host,
+):
+    with pytest.raises(ParisRedirectError) as exc:
+        client._validate_pnb_redirect_url(
+            f"https://{opaque_host}/LOAN/PRIVATE_PATH?ticket=PRIVATE_QUERY",
+        )
+    text = str(exc.value)
+    assert exc.value.code == "pnb_redirect_refused"
+    assert "site non autorisé : external" in text
+    assert "PRIVATE" not in text
+    assert opaque_host not in text
+    assert "/LOAN/" not in text
+    assert "ticket=" not in text
+
+
+def test_known_public_host_remains_useful_after_rejected_nonstandard_port(client):
+    with pytest.raises(ParisRedirectError) as exc:
+        client._validate_pnb_redirect_url(
+            "https://acs4.cantook.net:8443/private?ticket=PRIVATE",
+        )
+    assert "acs4.cantook.net" in str(exc.value)
+    assert ":8443" not in str(exc.value)
+    assert "PRIVATE" not in str(exc.value)

@@ -39,8 +39,13 @@ class ParisRedirectError(AttentionRequired, ParisError):
     """PNB navigation refused; retrying the same policy cannot resolve it."""
 
     def __init__(self, host: str) -> None:
+        # The rejected hostname is untrusted. An opaque account/token can be
+        # embedded in a subdomain; never copy arbitrary host text to public
+        # exceptions, UI notices or diagnostics. Preserve recognized public
+        # hostnames through the same closed classifier as HTTP traces.
+        site = public_site("https://" + host + "/") if type(host) is str and host else "sans hôte"
         super().__init__(
-            f"Redirection PNB refusée vers un hôte non autorisé : {host or 'sans hôte'}. "
+            f"Redirection PNB refusée vers un site non autorisé : {site}. "
             "Vérifiez la mise à jour du plugin Paris ; une nouvelle tentative seule ne résout pas ce refus.",
             code="pnb_redirect_refused",
         )
