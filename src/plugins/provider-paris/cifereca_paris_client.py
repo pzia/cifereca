@@ -20,7 +20,7 @@ from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILI
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
-from cifereca_paris_normalize import normalize_booking, normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
+from cifereca_paris_normalize import normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
 from cifereca_paris_bibliography import project_search_response_facets
 
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
