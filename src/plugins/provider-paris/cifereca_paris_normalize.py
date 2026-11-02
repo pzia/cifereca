@@ -94,23 +94,6 @@ def normalize_history(raw: dict[str, Any], provider: str) -> HistoryItem:
     )
 
 
-def normalize_booking(raw: dict[str, Any], provider: str) -> Booking:
-    return Booking(
-        id=str(raw.get("Id") or raw.get("HoldingId") or raw.get("RecordId") or uuid.uuid4()),
-        provider=provider,  # type: ignore[arg-type]
-        medium="digital" if provider == "DILICOM" else "physical",
-        title=str(raw.get("Title") or "Sans titre"),
-        record_id=str(raw["RecordId"]) if raw.get("RecordId") is not None else None,
-        booking_date=microsoft_date_to_iso(raw.get("BookingDate")),
-        availability_date=microsoft_date_to_iso(raw.get("AvailabilityDate")),
-        available_until=microsoft_date_to_iso(raw.get("AvailableUntilDate")),
-        location=raw.get("LocationLabel") or raw.get("Location"),
-        rank=str(raw.get("Rank")) if raw.get("Rank") is not None else None,
-        state=raw.get("State"),
-        raw=raw,
-    )
-
-
 def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult | None:
     resource = raw.get("Resource")
     if not isinstance(resource, dict) or not resource.get("RscId") or not resource.get("RscBase"):
