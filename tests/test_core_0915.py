@@ -75,9 +75,12 @@ class Core0915(unittest.TestCase):
         result=self.service.save_configuration(data);self.assertEqual(result['migrated'],1);self.assertIn('scan',result)
         self.assertFalse((self.root/'old').exists());self.assertEqual(self.config.identities()[0]['directory_name'],'target')
     def test_overview_is_local_and_has_only_connected_capabilities(self):
-        session=NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='c',connected=True,capabilities=NS(search=True,loans=True))
+        session=NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='c',connected=True,capabilities=NS(search=True,loans=True,bookings=True))
         self.service.accounts=[NS(unique_id='main',identity_id='stable',provider_id='paris',credential_id='c')];self.service._sessions={'c':session}
         self.assertEqual([r['id'] for r in self.service.dashboard_state()[0]['capabilities']],['search','loans'])
+        # Older installed plugins can still announce bookings=True; retired
+        # reservations never reappear in the Home capability chips.
+        self.assertNotIn('bookings', {r['id'] for r in self.service.dashboard_state()[0]['capabilities']})
         session.connected=False;self.assertEqual(self.service.dashboard_state()[0]['capabilities'],[])
         self.service._sessions={}
     def test_overview_does_not_expose_another_identity_session(self):
