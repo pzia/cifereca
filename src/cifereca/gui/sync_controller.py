@@ -24,6 +24,7 @@ from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_source_details import add_sync_detail
+from .sync_source_controls_overview import sync_axes_dashboard_summary
 
 
 def _build_sync_page(self):
@@ -259,6 +260,7 @@ def _refresh_sync_page(self) -> None:
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
             + (f" · {len(unavailable_paris)} connexion(s) Paris configurée(s) non disponibles"
                if unavailable_paris else "")
+            + "\n" + sync_axes_dashboard_summary(rows, broker)
         )
     if alert_row is not None:
         # Never use provider diagnostics or source labels in the global
