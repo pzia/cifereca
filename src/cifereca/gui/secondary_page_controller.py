@@ -1,8 +1,7 @@
-"""GTK-independent constructors for History and Bookings shell pages (#1051).
+"""GTK-independent History page builder (#1051; retired Bookings #4147).
 
-Both pages use the existing MasterDetailPage; the window retains service,
-callbacks and ownership. Gtk, MasterDetailPage, MultiSelect are injected.
-No eager provider connection, scan, or subscription is introduced.
+The window owns service, callbacks and widgets. No provider request,
+reservation route, or implicit history fetch is introduced here.
 """
 from __future__ import annotations
 
