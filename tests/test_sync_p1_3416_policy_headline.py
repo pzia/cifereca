@@ -175,7 +175,7 @@ def test_gtk_card_keeps_provider_first_line_without_extra_broker_actions():
         _source(provider_id="future-provider", label="Compte fictif"),
     ])
     row = window._sync_sources_box.children[0].children[0]
-    assert row.subtitle.startswith("Fournisseur : future-provider\\n")
+    assert row.subtitle.startswith("Fournisseur : future-provider\n")
     assert "Réglages · Fichiers : autorisation non vérifiée" in row.subtitle
     assert not window.runner.tasks
     assert calls == [("sources", "alice")]
