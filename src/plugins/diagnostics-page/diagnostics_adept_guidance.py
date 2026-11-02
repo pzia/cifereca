@@ -68,12 +68,23 @@ def adept_guidance_for_event(row: object) -> str:
     detail = row.get("detail")
     if type(detail) is not dict or len(detail) > 20:
         return ""
+    allowed = {
+        "schema_version", "plugin_id", "operation_kind", "operation", "phase",
+        "status", "code", "retryable", "task_ref", "validation_reason",
+        "duration_ms", "stdout_bytes", "stderr_bytes", "returncode",
+        "caller_category", "read_scope_ref",
+    }
+    if set(detail) - allowed:
+        return ""
     if (type(detail.get("schema_version")) is not int
             or detail["schema_version"] != 1
-            or detail.get("plugin_id") != "runtime.kobo-adept"
-            or detail.get("operation_kind") != "kobo_adept"
-            or detail.get("phase") != "completed"
-            or detail.get("status") != "failed"):
+            or any(type(detail.get(key)) is not str
+                   for key in ("plugin_id", "operation_kind", "phase", "status"))
+            or detail["plugin_id"] != "runtime.kobo-adept"
+            or detail["operation_kind"] != "kobo_adept"
+            or detail["phase"] != "completed"
+            or detail["status"] != "failed"
+            or ("retryable" in detail and type(detail["retryable"]) is not bool)):
         return ""
     operation = detail.get("operation")
     if type(operation) is not str or operation not in {
