@@ -27,7 +27,7 @@ def _ui_host():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     method_names = {
-        "_identity_request_current", "refresh_history", "refresh_bookings",
+        "_identity_request_current", "refresh_history",
         "_account_changed",
     }
     methods = [
@@ -76,24 +76,19 @@ def _ui_host():
     host._account_changing = False
     host._visible_accounts = list(accounts)
     host.history_objects = {"old": "history"}
-    host.booking_objects = {"old": "booking"}
     host._history_all_rows = ["old"]
     host._history_rows = ["old"]
     host._history_loaded_count = 3
     host._history_append_scheduled = True
     host.history_displayed = []
-    host.bookings_displayed = []
     host._populate_history = lambda rows: host.history_displayed.append(rows)
-    host._populate_bookings = lambda rows: host.bookings_displayed.append(rows)
     host.history_page = NS(show_rows=lambda rows: None, detail=NS(empty=lambda *_a: None))
-    host.booking_page = NS(show_rows=lambda rows: None, detail=NS(empty=lambda *_a: None))
     host.toast = lambda *_args: None
     return host
 
 
 @pytest.mark.parametrize("method,displayed", [
     ("refresh_history", "history_displayed"),
-    ("refresh_bookings", "bookings_displayed"),
 ])
 def test_switching_account_discards_inflight_secondary_page_callback(method, displayed):
     host = _ui_host()
@@ -111,7 +106,6 @@ def test_switching_account_discards_inflight_secondary_page_callback(method, dis
 
 @pytest.mark.parametrize("method,displayed", [
     ("refresh_history", "history_displayed"),
-    ("refresh_bookings", "bookings_displayed"),
 ])
 def test_account_a_b_a_disallows_callback_from_older_generation(method, displayed):
     host = _ui_host()
@@ -131,7 +125,6 @@ def test_account_switch_clears_secondary_page_models_even_with_same_identity():
     host = _ui_host()
     host._account_changed(NS(get_selected=lambda: 1), None)
     assert host.history_objects == {}
-    assert host.booking_objects == {}
     assert host._history_all_rows == []
     assert host._history_rows == []
     assert host._history_loaded_count == 0
