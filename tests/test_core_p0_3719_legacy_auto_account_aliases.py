@@ -26,6 +26,17 @@ def test_bnf_old_on_never_transfers_to_aliased_borrower(
     # BnF's real credential is provider-specific in the fixture.
     if rebound == "bnf-pret:bnf-card:primary":
         rebound = "bnf-pret:" + account.credential_id + ":primary"
+    # Keep the fixture's durable account register aligned with the initial
+    # borrower. The Core now correctly refuses an in-memory account that is
+    # absent from provider_accounts before any policy can be enabled.
+    # Only the SECOND, aliased borrower remains deliberately out of sync.
+    with service.storage._lock, service.storage._connect() as db:
+        updated = db.execute(
+            "UPDATE provider_accounts SET account_id=? "
+            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
+            (first, account.identity_id, "bnf-pret", account.credential_id),
+        )
+        assert updated.rowcount == 1
     account.unique_id = first
     broker = SynchronizationBrokerImpl(service)
     source_id = broker._source_id(account)
