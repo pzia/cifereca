@@ -22,10 +22,7 @@ def sync_source_card_guidance(source: object, alert: object) -> str:
         return "À faire : activer la source si souhaité."
     if getattr(source, "connected", None) is not True:
         return "À faire : reconnecter ce compte."
-    return (
-        "À faire : examiner le dernier cycle au survol."
-        "Ne relancez qu'après vérification."
-    )
+    return "À faire : examiner le dernier cycle au survol."
 
 
 __all__ = ["sync_source_card_guidance"]
