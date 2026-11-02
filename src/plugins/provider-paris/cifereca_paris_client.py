@@ -15,7 +15,7 @@ from typing import Any, Iterable, Callable
 from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
-from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
+from cifereca.plugin_api import Account, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
 from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
