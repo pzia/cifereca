@@ -132,3 +132,70 @@ def test_postcommit_cleanup_recovers_after_stale_backup_reference_removed(
     assert not staged.exists()
     assert Path(db.placements()[0]["path"]).read_bytes() == BYTES
     assert gets == ["signed-right-offer"]
+
+
+
+@pytest.mark.parametrize("mutation", ["second_owner", "original_owner_rebound"])
+def test_cleanup_rechecks_physical_owner_in_final_sql_transaction(
+    rig, monkeypatch, mutation,
+):
+    """Changes after profile lookup cannot authorize recursive deletion."""
+    from cifereca.core import canonical_promotion
+
+    service, storage, root, gets, staged = _published_with_deferred_cleanup(
+        rig, monkeypatch,
+    )
+    completed = _checkpoint(storage, service, staged)
+    final = Path(storage.placements()[0]["path"])
+    original_placement = dict(storage.placements()[0])
+    if mutation == "second_owner":
+        storage.identity_put({
+            "identity_id": "B", "directory_name": "B", "label": "B",
+        })
+        with storage._lock, storage._connect() as db:
+            db.execute("DROP INDEX uq_identity_directory_name")
+
+    original_parts = canonical_promotion._stage_parts
+    once = []
+
+    def split_then_rebind(physical, profile):
+        result = original_parts(physical, profile)
+        if not once:
+            with storage._lock, storage._connect() as db:
+                if mutation == "second_owner":
+                    db.execute(
+                        "UPDATE identities SET directory_name='A' "
+                        "WHERE identity_id='B'"
+                    )
+                else:
+                    db.execute(
+                        "UPDATE identities SET directory_name='rebound' "
+                        "WHERE identity_id='A'"
+                    )
+            once.append(True)
+        return result
+
+    monkeypatch.setattr(canonical_promotion, "_stage_parts", split_then_rebind)
+    assert cleanup_published_staging(
+        storage, source=service.source, completed=completed,
+        library_root=root,
+    ) is False
+    assert once == [True]
+    assert staged.read_bytes() == BYTES
+    assert final.read_bytes() == BYTES
+    assert storage.placements()[0] == original_placement
+    assert gets == ["signed-right-offer"]
+
+    with storage._lock, storage._connect() as db:
+        if mutation == "second_owner":
+            db.execute("UPDATE identities SET directory_name='B' WHERE identity_id='B'")
+        else:
+            db.execute("UPDATE identities SET directory_name='A' WHERE identity_id='A'")
+    monkeypatch.setattr(canonical_promotion, "_stage_parts", original_parts)
+    assert cleanup_published_staging(
+        storage, source=service.source, completed=completed,
+        library_root=root,
+    ) is True
+    assert not staged.exists()
+    assert final.read_bytes() == BYTES
+    assert storage.placements()[0] == original_placement
