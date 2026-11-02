@@ -376,7 +376,7 @@ def test_settings_save_preserves_legacy_kobo_format_without_ui_control(
     values["identities"][0]["label"] = "Updated without changing Kobo format"
     draft = validate(editor)
     assert draft.data["kobo_backup"]["format"] == persisted
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert draft.data["identities"][0]["label"] == (
         "Updated without changing Kobo format"
     )
@@ -391,7 +391,7 @@ def test_settings_save_does_not_create_missing_obsolete_kobo_format(editor):
     values["backup_interval"] = "90"
     draft = validate(editor)
     assert "format" not in draft.data["kobo_backup"]
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert config.data == before
 
 
@@ -507,14 +507,14 @@ def test_legacy_backup_profile_index_is_not_consulted_by_generic_draft(editor, i
     before = deepcopy(config.data)
     values["vault_profile_index"] = invalid
     draft = validate(editor)
-    assert draft.data["kobo_backup"] == before["kobo_backup"]
+    assert draft.data.get("kobo_backup") == before.get("kobo_backup")
     assert config.data == before
 
 
 def test_legacy_backup_profile_index_out_of_range_is_ignored(editor):
     config, values = editor
     values["vault_profile_index"] = 99
-    assert validate(editor).data["kobo_backup"] == config.data["kobo_backup"]
+    assert validate(editor).data.get("kobo_backup") == config.data.get("kobo_backup")
 
 
 def test_generic_provider_duplicate_account_ids_rejected_before_save(editor):
