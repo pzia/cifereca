@@ -70,8 +70,11 @@ def _resolve(service, entitlement_id, identity_id):
     _, _, scope, configuration = _source(broker, sid)
     # An older complete receipt for another borrower is not a reason to
     # suppress acquisition of this exact currently admitted Kobo right.
-    _require(service.local_placement_for_source(
-        provider_id="kobo", credential_id=right["credential_id"],
+    # Call the Core's scoped reader internally; keep LibraryService's public
+    # four-coordinate facade and its frozen plugin contract untouched.
+    from .library_projection import local_placement_for_source
+    _require(local_placement_for_source(
+        service, provider_id="kobo", credential_id=right["credential_id"],
         item_id=right["item_id"], identity_id=identity_id,
         account_id=right["account_id"],
     ) is None)
