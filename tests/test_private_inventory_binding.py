@@ -3,6 +3,8 @@ from copy import copy
 from types import SimpleNamespace as NS
 import unittest
 
+import pytest
+
 from cifereca.core.private_inventory_binding import private_inventory_binding_current
 from cifereca.core.sync_coordination import _synchronize_account_source_impl
 from cifereca.providers import ProviderConfigurationError
@@ -191,7 +193,7 @@ def test_real_sqlite_manual_inventory_admission_is_provider_neutral(tmp_path):
                     "AND provider_id=? AND credential_id=? AND account_id=?",
                     ('default', provider, account.credential_id, account.unique_id),
                 )
-            with __import__('pytest').raises(ProviderConfigurationError):
+            with pytest.raises(ProviderConfigurationError):
                 service._synchronize_account_source_impl(account)
             assert calls == [1]
         finally:
