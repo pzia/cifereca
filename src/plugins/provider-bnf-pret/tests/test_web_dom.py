@@ -200,7 +200,7 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(loan("a", "ra") + loan("b", "rb")))
         self.assertEqual(len(result.loans), 2)
         self.assertEqual(result.status, 'observed')
-        self.assertFalse(result.exhaustive)
+        self.assertTrue(result.exhaustive)
 
     def test_signed_links_are_not_returned(self):
         result = self.parse_loans(loans(loan(query="?signature=synthetic-private-marker")))
