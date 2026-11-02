@@ -490,10 +490,19 @@ def _refresh_sync_page(self) -> None:
                 sync_source_controls_overview,
             )
             control_overview = sync_source_controls_overview(source, broker)
+            # Preserve the existing first-line provider identity contract
+            # (including accessible name and old GTK consumers), while
+            # placing the two settings immediately under that fixed heading.
+            display_summary = presentation.summary
+            if control_overview:
+                head, separator, remainder = display_summary.partition("\n")
+                display_summary = (
+                    head + "\n" + control_overview
+                    + ("\n" + remainder if separator else "")
+                )
             row.set_subtitle(
                 (alert[1] + "\n" if alert is not None else "")
-                + (control_overview + "\n" if control_overview else "")
-                + presentation.summary
+                + display_summary
             )
             row.set_subtitle_lines(0)
         else:
