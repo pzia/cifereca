@@ -247,11 +247,11 @@ def read_account_rights_snapshot(service, account: Account, *,
     except Cancelled:
         return unavailable("cancelled")
     except Exception:
+        # Provider exceptions can contain signed URLs, private account IDs,
+        # paths and response bodies. Only report a closed, non-sensitive code.
         _LOG.warning(
-            "TRACE rights snapshot read failed provider_id=%s identity_id=%s "
-            "credential_id=%s account_id=%s reader_kind=%s",
-            scope.provider_id, scope.identity_id, scope.credential_id,
-            scope.account_id, reader_kind, exc_info=True,
+            "TRACE rights snapshot read failed code=provider_error reader_kind=%s",
+            reader_kind,
         )
         return unavailable()
 
