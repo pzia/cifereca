@@ -51,7 +51,8 @@ def test_official_complete_meslivres_page_chain_attests_its_scope(monkeypatch, t
         assert snapshot.claims_complete_branch is True
         assert snapshot.authorizes_negative_reconciliation is False
         assert snapshot.authorizes_mutation is False
-        assert s.library()  # Legacy projection remains a list, not a page tuple.
+        legacy = s.library()  # Legacy projection remains a list, not a page tuple.
+        assert type(legacy) is list and len(legacy) == total
         assert len(calls) == 2 * len(urls)
     finally:
         s.close()
