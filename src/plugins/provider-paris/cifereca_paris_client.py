@@ -24,6 +24,10 @@ from cifereca_paris_trace import (
 from cifereca_paris_normalize import normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
 from cifereca_paris_bibliography import project_search_response_facets
 
+# A selected public HTTPS supplier must not fill memory with an unbounded
+# body (including a 200 HTML/login/error response instead of an ACSM).
+_MAX_PNB_PUBLIC_BODY_BYTES = 128 * 1024 * 1024
+
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
 class _ParisTrace(logging.LoggerAdapter):
     def process(self,msg,kwargs):return 'PNB trace='+_BORROW_TRACE.get()+' '+msg,kwargs
@@ -967,14 +971,41 @@ class ParisClient:
             with HTTPX_TRANSPORT.public_client(
                 producer="provider.paris.pnb.delivery", timeout=self.timeout,
             ) as public:
-                return public.get(url, headers=headers, follow_redirects=False)
+                # A supplier's redirect/error body is not part of the loan
+                # proof. Never materialize it; only the final HTTP 200
+                # candidate may carry bytes into private Core staging.
+                with public.stream("GET", url, headers=headers,
+                                   follow_redirects=False) as response:
+                    if response.status_code != 200:
+                        payload = b""
+                    else:
+                        declared = response.headers.get("content-length")
+                        if declared is not None:
+                            try:
+                                size = int(declared)
+                            except (TypeError, ValueError):
+                                raise ParisError("Taille de réponse PNB invalide") from None
+                            if not 0 <= size <= _MAX_PNB_PUBLIC_BODY_BYTES:
+                                raise ParisError("Réponse HTTPS PNB trop volumineuse")
+                        chunks = bytearray()
+                        for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                            if len(chunks) + len(chunk) > _MAX_PNB_PUBLIC_BODY_BYTES:
+                                raise ParisError("Réponse HTTPS PNB trop volumineuse")
+                            chunks.extend(chunk)
+                        payload = bytes(chunks)
+                    # Clone before the stream closes; the original request
+                    # retains the exact URL without exposing it in diagnostics.
+                    return httpx.Response(
+                        response.status_code, headers=response.headers,
+                        content=payload, request=response.request,
+                    )
         except (httpx.InvalidURL, httpx.RemoteProtocolError):
             # HTTPX can embed a signed Location or request URL in exception
             # messages, even when follow_redirects=False. Never journal it.
             raise ParisRedirectError(public_site(url)) from None
-        except httpx.RequestError:
-            # Includes signed URL/nonce on transport failure; expose only a
-            # closed, retryable reason instead of a private traceback.
+        except httpx.HTTPError:
+            # Includes stream/decode and signed URL/nonce failures; expose
+            # only a closed, retryable reason instead of a private traceback.
             raise ParisError("Transport HTTPS PNB indisponible") from None
 
     def _resolve_pnb_loan_to_acsm(self, href: str, *, max_redirects: int = 12) -> str:
