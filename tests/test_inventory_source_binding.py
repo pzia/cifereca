@@ -20,7 +20,7 @@ def rig(provider):
                  connected=True, capabilities=NS(personal_library=True, backup=False))
     connection = dict(provider_id=provider, credential_id=account.credential_id, enabled=True)
     state = NS(owner='alice', enabled=None, identity=True, source_enabled=True,
-               connections=[connection], reads=[])
+               connections=[connection], borrower='account-a', reads=[])
     def metadata_get(key):
         state.reads.append(key)
         return state.enabled
@@ -29,7 +29,7 @@ def rig(provider):
                  provider_connections=lambda **kw: state.connections,
                  provider_scope_account_bound=lambda **kw: (
                      kw == dict(identity_id='alice', provider_id=provider,
-                                credential_id='credential-a', account_id='account-a')
+                                credential_id='credential-a', account_id=state.borrower)
                      and state.owner == 'alice' and connection['enabled'] is True
                  ))
     service = NS(accounts=[account], _sessions={(provider, account.credential_id): session},
@@ -55,6 +55,7 @@ class InventorySourceBindingTests(unittest.TestCase):
             with self.subTest(provider=provider):
                 service, account, _, state = rig(provider)
                 account.unique_id = ''
+                state.borrower = ''  # Simulate a registered primary borrower.
                 self.assertTrue(inventory_source_eligible(service, account))
                 expected_key = 'sync.source.enabled.' + SynchronizationBrokerImpl._source_id(account)
                 self.assertEqual(state.reads, [expected_key])
