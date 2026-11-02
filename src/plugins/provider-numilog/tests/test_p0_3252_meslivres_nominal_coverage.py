@@ -61,6 +61,24 @@ def test_official_complete_meslivres_page_chain_attests_its_scope(monkeypatch, t
         s.close()
 
 
+def test_complete_inventory_does_not_make_one_selected_offer_complete(monkeypatch):
+    s, _ = session()
+    try:
+        rows = [{**owned_row(), "lid": "101"}, {**owned_row(), "lid": "102"}]
+        calls, urls = _pages(monkeypatch, s, [rows])
+        account = bound_account(s)
+        full = s.rights_observation_snapshot(account)
+        assert full.coverage == "complete"
+        selected = s.rights_delivery_offer_snapshot(account, full.rights[0].right_id)
+        assert selected.coverage == selected.status == "partial"
+        assert selected.pagination_complete is False
+        assert len(selected.rights) == 1
+        assert selected.authorizes_negative_reconciliation is False
+        assert calls == urls * 3
+    finally:
+        s.close()
+
+
 def test_duplicate_meslivres_card_keeps_positive_siblings_but_partial_coverage(monkeypatch):
     s, _ = session()
     try:
