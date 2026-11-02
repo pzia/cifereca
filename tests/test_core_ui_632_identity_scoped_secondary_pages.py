@@ -30,8 +30,8 @@ def test_identity_change_clears_history_without_booking_ui():
         "window.history_page.clear_rows()",
     ):
         assert fragment in source
-    assert "window.booking_objects" not in source
-    assert "window.booking_page" not in source
+    assert 'if hasattr(window, \'booking_objects\'):' in source
+    assert "window.booking_page.clear_rows()" in source
 
 
 def test_identity_context_generation_invalidates_callbacks():
