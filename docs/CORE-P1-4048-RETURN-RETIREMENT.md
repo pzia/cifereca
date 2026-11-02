@@ -30,7 +30,7 @@ et les trois validations CI du commit exact.
 | Couche | Entrée historique | Sortie exigée |
 | --- | --- | --- |
 | GUI | `confirm_return`, `_return_loan`, `_return_loan_pnb`, `return_adept_from_detail` | Absence de commande et de tâche |
-| Broker ADEPT | `AdeptLoanBrokerImpl.return_acquisition` | Aucun appel service |
+| Broker ADEPT | `AdeptLoanBrokerImpl.return_acquisition` | **Retiré du protocole public et de l'implémentation** (#4048) ; rapprochement, choix et rattachement préservés |
 | Core | `return_digital`, `return_loan_prefer_adept`, `return_adept_acquisition` | Pas de verrou, claim, lecture ou mutation |
 | Reprise | `verify_loan_return` après ancien checkpoint | Ne **jamais** relancer le retour |
 | DRM | `execute_drm_mutation(operation="return")` | Refus avant découverte de plugin |

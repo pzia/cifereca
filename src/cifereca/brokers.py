@@ -1510,7 +1510,7 @@ class AdeptProfileBrokerImpl:
 
 @dataclass(slots=True)
 class AdeptLoanBrokerImpl:
-    """Public facade over Core ADEPT binding and confirmed-return orchestration."""
+    """Public facade over ADEPT binding and read-only loan reconciliation."""
 
     service: Any
 
@@ -1539,10 +1539,6 @@ class AdeptLoanBrokerImpl:
             str(profile_id),
             str(adept_loan_id),
         )
-
-    def return_acquisition(self, acquisition_id: str):
-        return self.service.return_adept_acquisition(str(acquisition_id))
-
 
 @dataclass(slots=True)
 class DiagnosticsBrokerImpl:

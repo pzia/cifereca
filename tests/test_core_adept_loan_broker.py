@@ -22,11 +22,6 @@ class Service:
         self.calls.append(("attach", acquisition_id, profile_id, loan_id))
         return {"status": "resolved", "acquisition_id": acquisition_id}
 
-    def return_adept_acquisition(self, acquisition_id):
-        self.calls.append(("return", acquisition_id))
-        return {"ok": True, "verification": "confirmed", "artifact_preserved": True}
-
-
 def test_public_broker_registry_contains_adept_loans():
     broker = build_public_brokers(Service())["adept.loans"]
     assert isinstance(broker, AdeptLoanBroker)
@@ -60,18 +55,18 @@ def test_attach_contract_requires_explicit_adept_loan_id_and_passes_it_unchanged
     ]
 
 
-def test_return_is_keyed_only_by_acquisition_and_preserves_core_confirmation():
+def test_public_adept_broker_has_no_voluntary_return_even_when_called_directly():
     service = Service()
     broker = AdeptLoanBrokerImpl(service)
-
-    result = broker.return_acquisition("acq-1")
-
-    assert service.calls == [("return", "acq-1")]
-    assert result == {
-        "ok": True,
-        "verification": "confirmed",
-        "artifact_preserved": True,
-    }
+    # Old callers cannot reach the Core service, inventory or a return
+    # checkpoint. A fabricated service method must not make this callable.
+    service.return_adept_acquisition = lambda _id: (_ for _ in ()).throw(
+        AssertionError("Adept return must not be dispatched")
+    )
+    assert not hasattr(broker, "return_acquisition")
+    assert "return_acquisition" not in AdeptLoanBroker.__dict__
+    assert isinstance(broker, AdeptLoanBroker)
+    assert service.calls == []
 
 
 def test_empty_profile_scope_keeps_core_origin_resolution():
