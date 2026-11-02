@@ -349,7 +349,7 @@ class ProfileScope:
 
 
 def _public_cover_url(value: str) -> str | None:
-    """A query-free public image URL, never a private loan or SSO endpoint.
+    """A narrowly validated public image URL, never a loan or SSO endpoint.
 
     The page's image URL is not proof that it is this loan's cover:
     _loan_cover additionally requires an image nested in the exact resource
@@ -373,7 +373,7 @@ def _public_cover_url(value: str) -> str | None:
         if parts.netloc == 'covers.feedbooks.net':
             if (parts.scheme != 'https' or parts.username or parts.password
                     or parts.fragment
-                    or not re.fullmatch(r'/item/[A-Za-z0-9_-]{1,128}\\.jpg', parts.path)
+                    or not re.fullmatch(r'/item/[A-Za-z0-9_-]{1,128}\.jpg', parts.path)
                     or not re.fullmatch(
                         r'(?:size=[A-Za-z]{1,16}&t=[0-9]{1,20}|'
                         r't=[0-9]{1,20}&size=[A-Za-z]{1,16})',
