@@ -895,7 +895,7 @@ class ParisClient:
                     or parsed.username is not None or parsed.password is not None
                     or parsed.fragment or not host or host.endswith(".")
                     or "%" in parsed.netloc or host in {"localhost", "metadata.google.internal"}
-                    or host.endswith((".localhost", ".local", ".internal", ".home.arpa"))):
+                    or host.endswith((".localhost", ".local", ".internal", ".home.arpa", ".invalid"))):
                 raise ValueError
             try:
                 ipaddress.ip_address(host)
