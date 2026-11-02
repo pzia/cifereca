@@ -1040,12 +1040,16 @@ class LibraryService:
         descriptor = next((d for d in self.provider_descriptors() if d.id == provider), None)
         base = descriptor.homepage if descriptor else None
         if provider == 'paris':
-            base = self.config.paris_base_url(row.get('source_credential'))
-        elif provider == 'kobo' and not base:
+            # Explicit legacy/connection settings take precedence, but the
+            # provider descriptor is authoritative for a fresh installation.
+            base = self.config.paris_base_url(row.get('source_credential')) or base
+        elif provider == 'kobo':
+            # Provider-owned homepage or explicit per-account catalogue
+            # option; Core must never supply a Kobo service endpoint.
             base = self.config.provider_option(
-                'kobo', 'catalogue_url', 'https://www.kobo.com',
+                'kobo', 'catalogue_url', None,
                 credential_id=row.get('source_credential'),
-            )
+            ) or base
 
         notice = catalogue_notice_url(row, base=base, provider=provider)
         if notice:
@@ -1054,7 +1058,7 @@ class LibraryService:
         catalogue = catalogue_url({'friendly_url': base})
         if not catalogue:
             # This is a generic catalogue homepage, not a fabricated book notice.
-            fallback = self.config.get('library.public_catalogue_fallback', 'https://catalogue.bnf.fr')
+            fallback = self.config.get('library.public_catalogue_fallback', '')
             catalogue = catalogue_url({'friendly_url': fallback})
         return ('catalogue', catalogue) if catalogue else None
 
