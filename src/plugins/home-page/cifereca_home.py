@@ -184,10 +184,6 @@ def attention_items(row, *, now=None):
     if due:
         add('loans-due','warning','Prêts proches de l’échéance',count=due,priority=80,
             action='open',action_label='Voir',context='Bibliothèque · échéances')
-    available=int(stats.get('available_bookings') or stats.get('available_reservations') or 0)
-    if available:
-        add('bookings-available','success','Réservations disponibles',count=available,priority=90,
-            action='open',action_label='Voir',context='Bibliothèque · réservations')
 
     attention=int(sync.get('attention_required') or 0)
     errors=int(sync.get('errors') or 0)
