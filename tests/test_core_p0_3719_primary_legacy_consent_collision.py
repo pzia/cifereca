@@ -33,9 +33,11 @@ def test_legacy_primary_fallback_collision_never_grants_literal_borrower(
         primary = reference("")
         literal = reference(literal_id)
         unrelated = reference("actual-reader")
+        padded_unrelated = reference(" actual-reader ")
         sid = _source_id(primary.scope)
         assert sid == _source_id(literal.scope)
         assert sid != _source_id(unrelated.scope)
+        assert _source_id(unrelated.scope) == _source_id(padded_unrelated.scope)
         storage.metadata_set("sync.source.materialization.on_start." + sid, "1")
         storage.metadata_set(
             "sync.source.materialization.on_start." + _source_id(unrelated.scope),
@@ -46,6 +48,7 @@ def test_legacy_primary_fallback_collision_never_grants_literal_borrower(
             assert toggle_state(db, primary) == "on"
             assert toggle_state(db, literal) == "off"
             assert toggle_state(db, unrelated) == "on"
+            assert toggle_state(db, padded_unrelated) == "off"
         # The same legacy metadata remains on disk; the Core cannot
         # reinterpret it as consent for a distinct literal borrower.
         assert storage.metadata_get(
