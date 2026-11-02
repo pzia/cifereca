@@ -470,6 +470,34 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
     if len(rows)!=1:return None
     try:self.local_book_path(rows[0]['placement_id'],identity_id=identity_id)
     except ProviderConfigurationError:return None
+    if account_id is not None:
+        # Only a physically attested copy may suppress a fresh, explicitly
+        # admitted owned-right GET. A complete historical receipt and an
+        # existing pathname alone are not proof: bytes may have been replaced,
+        # the path symlinked or the artifact digest corrupted. Do this stricter
+        # check solely for the exact-account internal admission; preserve the
+        # historical four-coordinate LibraryService reader contract.
+        from .convergence_verified_presence import _verified_copy
+        try:
+            artifact_id = rows[0].get('artifact_id')
+            artifact = self.storage.artifact_get(artifact_id)
+            owner = self.storage.identity_get(identity_id)
+            directory = (owner or {}).get('directory_name')
+            digest = (artifact or {}).get('sha256')
+            size = (artifact or {}).get('size')
+            if (type(artifact_id) is not str or type(digest) is not str
+                    or len(digest) != 64 or artifact_id != 'sha256:' + digest
+                    or type(size) is not int or size <= 0
+                    or type(directory) is not str or not directory
+                    or not _verified_copy(
+                        rows[0]['path'], root=self.library_dir(),
+                        owner_directory=directory,
+                        registered_directories=frozenset((directory,)),
+                        size=size, sha256=digest,
+                    )):
+                return None
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return None
     return rows[0]
 
 
