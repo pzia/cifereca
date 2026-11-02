@@ -100,6 +100,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             # Read only already observed Core accounts; never ask providers
             # for linked borrowers while rendering Settings.
             observed_borrowers=getattr(self.service, "accounts", ()),
+            observed_loans=getattr(self.service, "last_loans", ()),
         )
         account_editors.append(editor)
         def delete_account(_button, e=editor):
