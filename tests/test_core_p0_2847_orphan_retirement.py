@@ -197,3 +197,61 @@ def test_concurrent_stale_prepare_cannot_retire_reactivated_placement(rig):
     assert retire(rig, token)["reason"] == "not_missing"
     assert storage.placement_get(pid)["state"] == "present"
     assert path.read_bytes() == b"new bytes"
+
+
+
+def test_corrupt_shared_identity_directory_never_authorizes_sql_retirement(rig):
+    """A legacy DB with two profile IDs pointing to one folder fails closed."""
+    storage, root, path, pid = rig
+    previous = prepare(rig)
+    assert previous["status"] == "ready"
+
+    # The current schema disallows this corruption; only a disposable
+    # fixture removes its UNIQUE index to emulate an old/imported file.
+    with storage._lock, storage._connect() as db:
+        db.execute("DROP INDEX uq_identity_directory_name")
+        db.execute(
+            "UPDATE identities SET directory_name='alice' WHERE identity_id='bob'"
+        )
+    assert prepare(rig) == {
+        "status": "blocked", "reason": "ambiguous_identity_directory",
+    }
+    assert retire(rig, previous["plan_token"]) == {
+        "status": "blocked", "reason": "ambiguous_identity_directory",
+    }
+    from cifereca.core.missing_placement_readiness import (
+        preview_missing_placement_retirement,
+    )
+    preview = preview_missing_placement_retirement(
+        storage, placement_id=pid, identity_id="alice", library_root=root,
+    )
+    assert preview["status"] == "blocked"
+    assert preview["reason"] == "ambiguous_identity_directory"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert not path.exists()
+
+    # Repairing the ownership registry makes the original orphan eligible
+    # again, but never without a fresh explicit confirmation.
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE identities SET directory_name='bob' WHERE identity_id='bob'"
+        )
+    assert prepare(rig)["status"] == "ready"
+    assert storage.placement_get(pid)["state"] == "missing"
+
+
+
+def test_changed_owner_directory_revokes_prior_missing_retirement_token(rig):
+    storage, _root, path, pid = rig
+    token = prepare(rig)["plan_token"]
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE identities SET directory_name='alice-renamed' "
+            "WHERE identity_id='alice'"
+        )
+    # An old, fully valid plan cannot be reused after an owner moves roots.
+    result = retire(rig, token)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "path_out_of_scope"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert not path.exists()

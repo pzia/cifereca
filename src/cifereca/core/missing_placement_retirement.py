@@ -49,6 +49,14 @@ def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
     directory = owner[0]
     if directory in {"", ".", ".."} or "/" in directory or "\\" in directory:
         return _blocked("invalid_identity_directory"), None
+    # A broken/migrated registry may assign the same physical folder to
+    # multiple identities. Missing bytes in that folder cannot establish
+    # which profile owns the Placement; never issue a retirement token.
+    if db.execute(
+        "SELECT 1 FROM identities WHERE directory_name=? "
+        "AND identity_id<>? LIMIT 1", (directory, identity_id),
+    ).fetchone() is not None:
+        return _blocked("ambiguous_identity_directory"), None
 
     row = db.execute(
         "SELECT placement_id,artifact_id,path,identity_id,provider_id,"

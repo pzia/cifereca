@@ -88,6 +88,11 @@ def preview_missing_placement_retirement(
             if (directory in {"", ".", ".."} or "/" in directory
                     or "\\" in directory):
                 return blocked("invalid_identity_directory")
+            if db.execute(
+                "SELECT 1 FROM identities WHERE directory_name=? "
+                "AND identity_id<>? LIMIT 1", (directory, identity_id),
+            ).fetchone() is not None:
+                return blocked("ambiguous_identity_directory")
             row = db.execute(
                 "SELECT path,identity_id,state FROM placements "
                 "WHERE placement_id=?",
