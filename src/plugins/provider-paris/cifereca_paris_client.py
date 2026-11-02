@@ -967,10 +967,14 @@ class ParisClient:
                 producer="provider.paris.pnb.delivery", timeout=self.timeout,
             ) as public:
                 return public.get(url, headers=headers, follow_redirects=False)
-        except httpx.RemoteProtocolError as exc:
-            if "Invalid URL in location header:" in str(exc):
-                raise ParisRedirectError("") from None
-            raise
+        except (httpx.InvalidURL, httpx.RemoteProtocolError):
+            # HTTPX can embed a signed Location or request URL in exception
+            # messages, even when follow_redirects=False. Never journal it.
+            raise ParisRedirectError(public_site(url)) from None
+        except httpx.RequestError:
+            # Includes signed URL/nonce on transport failure; expose only a
+            # closed, retryable reason instead of a private traceback.
+            raise ParisError("Transport HTTPS PNB indisponible") from None
 
     def _resolve_pnb_loan_to_acsm(self, href: str, *, max_redirects: int = 12) -> str:
         """Follow the official signed PNB redirect chain and stop before ACSM GET."""
