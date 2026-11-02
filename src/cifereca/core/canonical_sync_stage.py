@@ -58,24 +58,32 @@ def persist_attested_source_references(
         db.execute("BEGIN IMMEDIATE")
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_rights_source_rebound")
-        binding = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
+        # Never load the complete credential roster into Python. A large
+        # account list must neither slow A publication nor let a disconnected
+        # or re-bound borrower contribute new SourceReference evidence.
+        connections = db.execute(
+            "SELECT connection_id,identity_id,enabled "
+            "FROM provider_connections WHERE provider_id=? AND credential_id=? "
+            "LIMIT 2",
             (scope.provider_id, scope.credential_id),
-        ).fetchone()
-        accounts = db.execute(
-            "SELECT account_id FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
         ).fetchall()
         profile = db.execute(
-            "SELECT directory_name FROM identities WHERE identity_id=?",
+            "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
             (scope.identity_id,),
         ).fetchall()
-        if (binding != (scope.identity_id, 1)
+        if (len(connections) != 1
+                or connections[0][1:] != (scope.identity_id, 1)
                 or len(profile) != 1
-                or type(profile[0][0]) is not str or not profile[0][0]
-                or sum(a[0] == scope.account_id for a in accounts) != 1):
+                or type(profile[0][0]) is not str or not profile[0][0]):
+            raise ValueError("canonical_rights_core_binding_changed")
+        exact_accounts = db.execute(
+            "SELECT 1 FROM provider_accounts "
+            "WHERE connection_id=? AND identity_id=? AND provider_id=? "
+            "AND credential_id=? AND account_id=? LIMIT 2",
+            (connections[0][0], scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id),
+        ).fetchall()
+        if len(exact_accounts) != 1:
             raise ValueError("canonical_rights_core_binding_changed")
         for row in admitted:
             coords = (

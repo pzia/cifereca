@@ -1,0 +1,64 @@
+"""P0 #3171: stage A requires exactly one currently connected borrower.
+
+The SQLite read is bounded regardless of sibling accounts. The source
+reference itself is not delivery or possession proof; no artifact is written.
+"""
+import pytest
+
+from cifereca.core.canonical_sync_stage import persist_attested_source_references
+from cifereca.storage import Storage
+from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register
+
+
+def test_source_reference_stage_exact_account_amid_many_siblings(tmp_path):
+    storage = Storage(tmp_path / "state.sqlite")
+    try:
+        key, snapshot = new_source()
+        for n in range(100):
+            register(storage, "A", "seller", "card-A", account=f"sibling-{n}")
+        with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+            persist_attested_source_references(storage, snapshot)
+        assert storage.schema_version() == 14
+        register(storage, "A", "seller", "card-A", account="buyer-A")
+        assert persist_attested_source_references(storage, snapshot) == 1
+        assert persist_attested_source_references(storage, snapshot) == 0
+        assert storage.provider_scope_account_bound(
+            identity_id="A", provider_id="seller",
+            credential_id="card-A", account_id="buyer-A",
+        ) is True
+
+        register(storage, "A", "another", "other-card", account="borrower")
+        with storage._lock, storage._connect() as db:
+            other = db.execute(
+                "SELECT connection_id FROM provider_connections "
+                "WHERE provider_id='another' AND credential_id='other-card'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE provider_accounts SET connection_id=? "
+                "WHERE identity_id='A' AND provider_id='seller' "
+                "AND credential_id='card-A' AND account_id='buyer-A'",
+                (other,),
+            )
+        with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+            persist_attested_source_references(storage, snapshot)
+        with storage._lock, storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM source_references").fetchone() == (1,)
+    finally:
+        storage.close()
+
+
+def test_empty_primary_borrower_and_disabled_connection(tmp_path):
+    storage = Storage(tmp_path / "state.sqlite")
+    try:
+        source, snapshot = new_source(provider="paris", account="")
+        register(storage, "A", "paris", "card-A", account="")
+        assert persist_attested_source_references(storage, snapshot) == 1
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "UPDATE provider_connections SET enabled=0 "
+                "WHERE provider_id='paris' AND credential_id='card-A'"
+            )
+        with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+            persist_attested_source_references(storage, snapshot)
+    finally:
+        storage.close()
