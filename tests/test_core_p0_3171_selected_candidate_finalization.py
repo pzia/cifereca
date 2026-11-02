@@ -502,3 +502,53 @@ def test_symlinked_final_directory_refuses_promotion_then_recovers_without_get(
     assert second["canonical_execution"]["recovered"] == 1
     assert gets == ["signed-right-offer"]
     assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
+
+
+
+@pytest.mark.parametrize("replacement", ["symlink_base", "new_regular_base", "new_run"])
+def test_failed_selected_delivery_never_erases_foreign_rebound_run(
+    rig, tmp_path, replacement,
+):
+    """Supplier failure after a namespace swap preserves foreign bytes."""
+    service, db, root = rig
+    _prepare(service)
+    outside = tmp_path / "foreign"
+    outside.mkdir()
+    changed = []
+
+    def candidate(_account, *, target_dir, **_kwargs):
+        old_run = Path(target_dir)
+        base = old_run.parent
+        source = old_run / "private-token.acsm"
+        source.write_bytes(b"synthetic failed delivery token")
+        if replacement == "new_run":
+            saved = base / "original-run-moved"
+            old_run.rename(saved)
+            takeover = base / old_run.name
+        else:
+            saved = base.with_name(".canonical-delivery-moved")
+            base.rename(saved)
+            if replacement == "symlink_base":
+                base.symlink_to(outside, target_is_directory=True)
+                takeover = outside / old_run.name
+            else:
+                base.mkdir(mode=0o700)
+                takeover = base / old_run.name
+        takeover.mkdir()
+        marker = takeover / "foreign.pdf"
+        marker.write_bytes(b"NOT THE SELECTED DELIVERY")
+        changed.append((source, saved, marker))
+        raise ValueError("synthetic_supplier_rejected")
+
+    service.session.rights_selected_delivery_candidate = candidate
+    outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_execution"]["failed"] == 1
+    assert len(changed) == 1
+    _source, saved, marker = changed[0]
+    assert marker.read_bytes() == b"NOT THE SELECTED DELIVERY"
+    saved_token = (
+        saved / "private-token.acsm" if replacement == "new_run" else
+        saved / _source.parent.name / "private-token.acsm"
+    )
+    assert saved_token.read_bytes() == b"synthetic failed delivery token"
+    assert db.placements() == [] and refs(db)[1] == 0
