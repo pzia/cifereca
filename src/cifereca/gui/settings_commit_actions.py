@@ -50,6 +50,14 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             row["option_fields"] = {
                 key: widget.get_text() for key, widget in editor.get("option_fields", {}).items()
             }
+            row["scoped_option_fields"] = {
+                key: {
+                    borrower: {medium: widget.get_text()
+                               for medium, widget in branch_fields.items()}
+                    for borrower, branch_fields in borrowers.items()
+                }
+                for key, borrowers in editor.get("scoped_option_fields", {}).items()
+            }
             accounts.append(row)
         values = {
             "identities": identities, "accounts": accounts,
