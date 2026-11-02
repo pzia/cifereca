@@ -499,18 +499,6 @@ class ParisClient:
         rows = self._aggregate_account_rows("history", self.history, uid)
         return sorted(rows, key=lambda x: x.borrowed_at or x.returned_at or "", reverse=True)
 
-    def bookings(self, provider: str, uid: str = "") -> list[Booking]:
-        def work():
-            r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/ListBookings", params=self._params(provider, uid), headers=self._api_headers())
-            data = self._json(r, f"bookings {provider}")
-            rows = ((data.get("d") or {}).get("Bookings") or [])
-            return [normalize_booking(x, provider) for x in rows if isinstance(x, dict)]
-        return self._timed("API", f"bookings {provider}", work)
-
-    def all_bookings(self, uid: str = "") -> list[Booking]:
-        self.last_booking_errors = []
-        return self._aggregate_account_rows("bookings", self.bookings, uid)
-
     def pairings(self) -> list[Account]:
         def work():
             seen: dict[str, Account] = {}
