@@ -18,11 +18,11 @@ _UNKNOWN = (
 
 
 def _safe_scope(value: object, *, allow_empty: bool = False) -> bool:
-    return (type(value) is str and len(value) <= 128
-            and (allow_empty or bool(value))
-            and value == value.strip()
-            and value.isprintable() if value else
-            type(value) is str and allow_empty and value == "")
+    if type(value) is not str or len(value) > 128:
+        return False
+    if not value:
+        return allow_empty
+    return value == value.strip() and value.isprintable()
 
 
 def _count_label(medium: str, count: int) -> str:
