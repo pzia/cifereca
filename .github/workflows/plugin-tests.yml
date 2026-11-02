@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths:
       - 'src/plugins/**'
+      # Keep the push job scoped to executable or shared plugin changes.
+      - '!src/plugins/README.md'
+      - '!src/plugins/*/README.md'
       - 'src/cifereca/**'
       - '!src/cifereca/gui/**'
       - '!src/cifereca/builtin_ui/**'

@@ -62,6 +62,13 @@ def test_docs_handoffs_release_triggers_run_zero_heavy_suites():
     assert route("docs/notes.md", "AGENTS.md") == set()
 
 
+def test_readme_only_edits_do_not_trigger_main_plugin_suite():
+    for path in ("src/plugins/README.md", "src/plugins/provider-kobo/README.md"):
+        assert route(path) == set(), path
+    assert route("src/plugins/provider-kobo/README.md",
+                 "src/plugins/provider-kobo/plugin.py") == {"plugins"}
+
+
 def test_plugin_only_runs_plugin_suite_not_core_or_wheel():
     for path in (
         "src/plugins/youth-catalog/youth_page.py",

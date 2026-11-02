@@ -52,6 +52,21 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(names, ["leaf", "provider"])
         self.assertIn("test modules", reason)
 
+    def test_readme_changes_do_not_expand_isolated_test_changes(self):
+        names, reason = self.names([
+            ("M", "src/plugins/provider/tests/test_local.py"),
+            ("M", "src/plugins/consumer/README.md"),
+            ("A", "src/plugins/README.md"),
+        ])
+        self.assertEqual(names, ["provider"])
+        self.assertIn("test modules", reason)
+        # Non-README assets and deletions still trigger exhaustive checks.
+        self.assertEqual(self.names([
+            ("M", "src/plugins/provider/tests/test_local.py"),
+            ("M", "src/plugins/consumer/notes.md"),
+        ])[0], [])
+        self.assertEqual(self.names([("D", "src/plugins/consumer/README.md")])[0], [])
+
     def test_product_change_includes_direct_and_transitive_consumers(self):
         names, reason = self.names([("M", "src/plugins/provider/module.py")])
         self.assertEqual(names, ["consumer", "leaf", "optional", "provider"])

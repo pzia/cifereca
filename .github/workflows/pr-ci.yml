@@ -67,6 +67,12 @@ jobs:
             grep -Eq "$1" "$changed_file"
           }
 
+          plugin_runtime_changes() {
+            # README-only edits should not launch a complete plugin test run.
+            grep -E '^src/plugins/' "$changed_file" | \
+              grep -Ev '^src/plugins/([^/]+/)?README\.md$' >/dev/null
+          }
+
           core=false
           core_mode=none
           core_targets=""
@@ -85,7 +91,7 @@ jobs:
             core=true
           fi
 
-          if matches '^src/plugins/'; then
+          if plugin_runtime_changes; then
             plugins=true
           fi
           if matches '^(scripts/ci-run-plugin-tests\.sh$|scripts/ci_select_plugin_tests\.py$|\.github/plugin-test-dependencies\.json$|pyproject\.toml$)'; then
@@ -99,7 +105,9 @@ jobs:
 
           if matches '^(src/plugins/|scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py|package_partial_plugins\.py|test_partial_plugin_release\.py|ci_plugins_release_target\.py)$)'; then
             packaging=true
-            plugins=true
+            if plugin_runtime_changes || matches '^scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py|package_partial_plugins\.py|test_partial_plugin_release\.py|ci_plugins_release_target\.py)$'; then
+              plugins=true
+            fi
           fi
 
           if matches '^(README\.md$|pyproject\.toml$|VERSION$|scripts/ci-smoke-installed-wheel\.sh$|src/cifereca/(__init__\.py|__main__\.py|cli\.py|updater\.py|dev_updater\.py|plugin_test_runner\.py)$|src/cifereca/builtin_ui/)'; then

@@ -9,6 +9,7 @@ from pathlib import Path
 
 PACKAGE_PATH = re.compile(r"src/plugins/([A-Za-z0-9_-]+)/(.+)")
 TEST_MODULE = re.compile(r"tests/(?:[A-Za-z0-9_-]+/)*test_[A-Za-z0-9_]+\.py")
+PLUGIN_README = re.compile(r"src/plugins/(?:[A-Za-z0-9_-]+/)?README\.md")
 MANIFEST = "cifereca-plugin.json"
 EXPLICIT_GRAPH = Path(".github/plugin-test-dependencies.json")
 
@@ -99,6 +100,10 @@ def select(changes: list[tuple[str, str]], root: Path) -> tuple[list[str], str]:
     product: set[str] = set()
     for status, path in changes:
         if path.startswith(("docs/", ".agents/")) or path == "AGENTS.md":
+            continue
+        # README edits do not alter the executable plugin contract. All other
+        # assets, README deletions and renames retain the fail-closed fallback.
+        if status in {"A", "M"} and PLUGIN_README.fullmatch(path):
             continue
         match = PACKAGE_PATH.fullmatch(path)
         if status not in {"A", "M"} or not match:
