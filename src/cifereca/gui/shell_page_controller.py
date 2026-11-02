@@ -167,7 +167,7 @@ def build_standard_page(window, route, *, Gtk, PluginManagerPage):
                 "plugins": lambda: PluginManagerPage(window, window.plugin_manager, window._plugins_changed)
                 if window.plugin_manager else Gtk.Label(label="Gestionnaire indisponible")}
     widget = builders[route]()
-    attr = {"loans": "loan", "bookings": "booking"}.get(route, route)
+    attr = {"loans": "loan"}.get(route, route)
     setattr(window, attr + "_page", widget)
     if route == "library": window.kobo_page = widget
     return widget
