@@ -174,3 +174,80 @@ def test_keeper_corrupted_after_initial_hash_cannot_erase_pending_advisory(
     ) is True
     assert store.metadata_get(key) is None
     assert paths[0].read_bytes() == BYTES
+
+
+
+def _pending_candidate_id(store):
+    with store._lock, store._connect() as db:
+        rows = db.execute(
+            "SELECT placement_id FROM placements "
+            "WHERE identity_id='A' AND state='missing'"
+        ).fetchall()
+    assert len(rows) == 1
+    return rows[0][0]
+
+
+def test_advisory_not_expired_if_former_path_now_points_outside_owner(
+    store, tmp_path,
+):
+    root, paths, first, foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    assert paths[2].is_file()
+    # An externally edited/migrated row can claim a path under profile B.
+    # lexists(False) at that path never proved that profile A's duplicate
+    # was retired.
+    forged = paths[2].parent / "not-an-A-book.epub"
+    assert not forged.exists()
+    pending = _pending_candidate_id(store)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(forged), pending),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+    assert paths[0].read_bytes() == BYTES
+    assert store.placement_get(foreign.placement_id)["state"] == "present"
+
+
+def test_symlinked_former_parent_is_not_proof_of_absence(
+    store, tmp_path,
+):
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    alias = paths[1].parent / "late-alias"
+    alias.symlink_to(paths[2].parent, target_is_directory=True)
+    forged = alias / "unseen.epub"
+    assert not forged.exists()
+    pending = _pending_candidate_id(store)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(forged), pending),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+    assert alias.is_symlink()
+
+
+def test_missing_former_parent_is_not_verified_leaf_absence(
+    store, tmp_path,
+):
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    missing_parent = paths[1].parent / "deleted-directory"
+    assert not missing_parent.exists()
+    pending = _pending_candidate_id(store)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(missing_parent / "unseen.epub"), pending),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
