@@ -15,7 +15,7 @@ MAIN = ROOT / "main_window.py"
 OWNER = ROOT / "shell_page_controller.py"
 
 ROUTES = (
-    "dashboard", "loans", "search", "history", "bookings", "library",
+    "dashboard", "loans", "search", "history", "library",
     "recent", "sync", "tools", "settings",
 )
 
@@ -70,14 +70,15 @@ def test_each_built_in_route_calls_only_its_builder_and_preserves_widget(route):
     assert calls == [("build", route)]
 
 
-def test_loans_and_bookings_keep_singular_mainwindow_page_attributes():
-    host, widgets, _calls = _host()
+def test_loans_page_remains_and_retired_bookings_builder_cannot_be_invoked():
+    host, widgets, calls = _host()
     _dispatch(host, "loans")
-    _dispatch(host, "bookings")
     assert host.loan_page is widgets["loans"]
-    assert host.booking_page is widgets["bookings"]
     assert not hasattr(host, "loans_page")
-    assert not hasattr(host, "bookings_page")
+    with pytest.raises(KeyError):
+        _dispatch(host, "bookings")
+    assert calls == [("build", "loans")]
+    assert not hasattr(host, "booking_page")
 
 
 def test_library_keeps_kobo_alias_pointing_at_exact_current_widget():

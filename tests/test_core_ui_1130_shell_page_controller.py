@@ -128,6 +128,27 @@ def test_shell_coordinator_is_headless_and_facade_stable():
     assert "Pango=Pango" in ast.unparse(method)
 
 
+def test_retired_bookings_plugin_route_is_rejected_before_factory_and_navigation(monkeypatch):
+    calls = []
+    def forbidden(_host):
+        calls.append("bookings network factory")
+        raise AssertionError("retired reservations UI must not be built")
+    # Simulate a retained third-party UI plugin and a persisted active route.
+    # Both the old plugin contribution and old navigation state are inert.
+    host, _removed, names, navigation, events = _host(
+        monkeypatch, visible="bookings",
+        contributions=[_page("bookings", priority=100, factory=forbidden),
+                       _page("loans")],
+    )
+    _rebuild(host)
+    assert calls == []
+    assert "bookings" not in names
+    assert "bookings" not in host._pages
+    assert "bookings" not in host.nav_rows
+    assert navigation == ["loans"]
+    assert not any(event[0] == "diagnostic" for event in events)
+
+
 def test_rebuild_preserves_filters_and_active_route_and_clears_old_widgets(monkeypatch):
     host, removed, names, navigation, events = _host(
         monkeypatch, contributions=[_page("search"), _page("library")],

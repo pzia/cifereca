@@ -8,7 +8,9 @@ from __future__ import annotations
 
 
 def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
-    if getattr(window, "_closed", False) or route not in window._pages:
+    # Legacy navigation/history/plugin links cannot trigger a retired
+    # reservations-page provider GET even if a stale route was injected.
+    if route == "bookings" or getattr(window, "_closed", False) or route not in window._pages:
         return
     # GTK signals can synchronously redirect to another route or close the
     # window. Only the latest invocation may continue rendering its page.
@@ -124,9 +126,6 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     elif route == "history" and not window.service.last_history:
         if is_current():
             window.refresh_history(False)
-    elif route == "bookings" and not window.service.last_bookings:
-        if is_current():
-            window.refresh_bookings(False)
     elif route == "sync":
         window._refresh_sync_page()
     elif route == "tools":

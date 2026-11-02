@@ -69,7 +69,9 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
         contributed = list(fallback)
     # Management pages remain reachable to recover from broken/disabled UI.
     contributed += [p for p in fallback if p.route in {"plugins", "settings"} and all(x.route != p.route for x in contributed)]
-    resolved = resolve_pages(contributed)
+    # Retired product route: older installed UI plugins cannot resurrect it.
+    # Filter before invoking an untrusted factory to prevent bookings I/O.
+    resolved = [page for page in resolve_pages(contributed) if page.route != "bookings"]
     if not is_current():
         return
     window._pages = {}
@@ -159,13 +161,13 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
 def build_standard_page(window, route, *, Gtk, PluginManagerPage):
     builders = {"dashboard": window._build_dashboard_page, "loans": window._build_loans_page,
                 "search": window._build_search_page, "history": window._build_history_page,
-                "bookings": window._build_bookings_page, "library": window._build_library_page,
+                "library": window._build_library_page,
                 "recent": window._build_recent_page, "sync": window._build_sync_page,
                 "tools": window._build_tools_page, "settings": window._build_settings_page,
                 "plugins": lambda: PluginManagerPage(window, window.plugin_manager, window._plugins_changed)
                 if window.plugin_manager else Gtk.Label(label="Gestionnaire indisponible")}
     widget = builders[route]()
-    attr = {"loans": "loan", "bookings": "booking"}.get(route, route)
+    attr = {"loans": "loan"}.get(route, route)
     setattr(window, attr + "_page", widget)
     if route == "library": window.kobo_page = widget
     return widget

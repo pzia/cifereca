@@ -181,13 +181,15 @@ def test_successfully_empty_recent_is_not_refetched_until_identity_changes():
     assert events[-1] == ("recent-refresh",)
 
 
-def test_history_and_booking_refresh_only_when_cached_service_data_is_empty():
+def test_history_refresh_remains_and_stale_booking_route_cannot_fetch():
     host, events = _context(history=[], bookings=[])
     show_route(host, "history", Gtk=GTK)
-    show_route(host, "bookings", Gtk=GTK)
     assert ("history-refresh", False) in events
-    assert ("bookings-refresh", False) in events
     events.clear()
+    # A stale installed UI plugin or persisted navigation history can retain
+    # the old route; it must never dispatch a private bookings GET.
+    show_route(host, "bookings", Gtk=GTK)
+    assert events == []
     host.service.last_history = ["old"]
     host.service.last_bookings = ["booking"]
     show_route(host, "history", Gtk=GTK)
