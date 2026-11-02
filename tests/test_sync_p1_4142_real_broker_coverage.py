@@ -1,7 +1,8 @@
-"""P1 #4142: real Core SyncBroker has three phase states, not two.
+"""P1 #4142: real broker's three-phase partial is ambiguous, not success.
 
-This is a *presentation* fix only. It must not assert exhaustive remote
-inventory, modify a Loan/consent or run a provider request.
+An unproven BnF inventory may coexist with blocked downloads. The Core UI
+must expose unknown coverage without suppressing a real attention warning.
+All cases are offline and never make a provider request or acquisition.
 """
 from __future__ import annotations
 
@@ -12,15 +13,17 @@ import pytest
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.gui.sync_view import (
     sync_source_attention, sync_source_informational_partial,
-    sync_source_presentation,
+    sync_source_unverified_remote_inventory, sync_source_presentation,
 )
+from cifereca.storage import Storage
+from tests.test_core_0978_source_state import fake_broker
 from tests.test_core_ui_1347_sync_action_scope import _fixture
 from tests.test_sync_p1_3416_informational_partial import source
 
 
 def real_broker_phase_states():
-    # Directly invoke the actual Core broker projection: no service, storage
-    # or login is needed for a source without the Kobo-local phase capability.
+    # Exercise the actual broker's phase projection, with only local helper
+    # methods stubbed. No provider I/O or extra source state is synthesized.
     broker = NS(
         _safe_phase_timestamp=SynchronizationBrokerImpl._safe_phase_timestamp,
         _source_id=lambda account: "sync:synthetic",
@@ -31,7 +34,7 @@ def real_broker_phase_states():
         {"status": "partial", "last_attempt": "2026-11-02T05:29:06+00:00"},
         ("entitlements", "loan_auto_materialization"),
     )
-    assert [(p.phase, p.status) for p in phases] == [
+    assert [(row.phase, row.status) for row in phases] == [
         ("discover_rights", "partial"),
         ("materialize", "not_supported"),
         ("reconcile", "not_supported"),
@@ -40,78 +43,99 @@ def real_broker_phase_states():
 
 
 @pytest.mark.parametrize("provider", ["bnf-pret", "provider.future", "paris"])
-def test_real_three_phase_broker_inventory_partial_is_information_not_failure(provider):
-    phases = real_broker_phase_states()
-    row = source(provider=provider, phase_states=phases)
-    assert sync_source_informational_partial(row)
-    assert sync_source_attention(row) == (
-        "info", "Notices et droits : couverture partielle (information)"
-    )
+def test_real_three_phase_broker_partial_explains_coverage_without_inventing_success(provider):
+    row = source(provider=provider, phase_states=real_broker_phase_states())
+    assert sync_source_unverified_remote_inventory(row) is True
+    assert sync_source_informational_partial(row) is False
+    assert sync_source_attention(row) == ("warning", "Notices et droits : résultat partiel")
     shown = sync_source_presentation(row)
-    assert shown.sync_label.startswith("Couverture partielle (information)")
-    assert "Couverture distante des prêts/notices non attestée" in shown.summary
-    assert "aucun échec de téléchargement local déclaré" in shown.summary
+    assert shown.sync_label.startswith("Partielle · couverture distante non attestée")
+    assert "Inventaire distant : couverture non attestée" in shown.summary
+    assert "une action requise ou un échec reste possible" in shown.summary
+    assert "aucun échec de téléchargement local déclaré" not in shown.summary
     assert "Synchronisation complète" not in shown.summary
 
 
-def test_three_phase_state_produces_information_banner_on_real_headless_gtk_controller():
-    # A fictional provider avoids executing any provider-specific UI hook.
-    source_row = source(provider="provider.future", phase_states=real_broker_phase_states())
-    window, broker, calls, _build, _page = _fixture(sources=[source_row])
-    row = window._sync_sources_box.children[0].children[0]
-    assert row.prefixes[0].icon_name == "dialog-information-symbolic"
-    assert window._sync_attention_icon.icon_name == "dialog-information-symbolic"
+def test_actual_three_phase_broker_shows_warning_not_false_information_in_gtk():
+    # Fictional provider: no BnF-specific UI switch or network dependency.
+    row = source(provider="provider.future", phase_states=real_broker_phase_states())
+    window, _broker, calls, _build, _page = _fixture(sources=[row])
+    widget = window._sync_sources_box.children[0].children[0]
+    assert widget.prefixes[0].icon_name == "dialog-warning-symbolic"
+    assert window._sync_attention_icon.icon_name == "dialog-warning-symbolic"
     assert window._sync_attention_text.label == (
-        "Information : 1 source(s) à couverture partielle ; aucun échec local déclaré."
+        "À vérifier : 0 échec(s) · 1 avertissement(s). "
+        "Consultez les comptes signalés ci-dessous."
     )
-    assert "Couverture distante des prêts/notices non attestée" in row.subtitle
+    assert "Inventaire distant : couverture non attestée" in widget.subtitle
     assert window.runner.tasks == []
     assert all(call[0] == "sources" for call in calls)
-    assert source_row.status == "partial"
+    assert row.status == "partial"
+
+
+def test_real_core_attention_required_cannot_be_hidden_by_missing_local_phase(tmp_path):
+    storage = Storage(tmp_path / "sync.sqlite3")
+    try:
+        broker = fake_broker(storage, partial=True)
+        source_id = broker.sources()[0].source_id
+        outcome = broker.synchronize_source(source_id)
+        assert outcome.ok is False
+        assert outcome.facts["attention_required"] == 1
+        row = broker.sources()[0]
+        assert sync_source_unverified_remote_inventory(row)
+        assert sync_source_informational_partial(row) is False
+        assert sync_source_attention(row)[0] == "warning"
+        shown = sync_source_presentation(row)
+        assert "Partielle" in shown.sync_label
+        assert "une action requise ou un échec reste possible" in shown.summary
+        assert "aucun échec de téléchargement local déclaré" not in shown.summary
+    finally:
+        storage.close()
 
 
 @pytest.mark.parametrize("reconcile", [
     "failed", "blocked", "partial", "interrupted", "unknown", "running",
     "success", "attention_required", None, 1,
 ])
-def test_unproved_reconciliation_does_not_silence_warning(reconcile):
-    phases = real_broker_phase_states()
-    changed = (*phases[:2], NS(phase="reconcile", status=reconcile))
-    row = source(phase_states=changed)
+def test_unknown_or_actionable_reconciliation_is_not_a_clean_three_phase_partial(reconcile):
+    first, local, _reconcile = real_broker_phase_states()
+    row = source(phase_states=(first, local, NS(phase="reconcile", status=reconcile)))
+    assert not sync_source_unverified_remote_inventory(row)
     assert not sync_source_informational_partial(row)
     assert sync_source_attention(row)[0] in {"warning", "error"}
 
 
 @pytest.mark.parametrize("local", [
-    "failed", "partial", "blocked", "interrupted", "unknown", "running",
+    "failed", "partial", "blocked", "interrupted", "unknown", "running", "success",
 ])
-def test_real_three_phase_failure_is_not_informational(local):
-    first, _local, final = real_broker_phase_states()
-    row = source(phase_states=(first, NS(phase="materialize", status=local), final))
+def test_three_phase_local_state_changes_are_not_invented_as_clean_coverage(local):
+    first, _local, reconcile = real_broker_phase_states()
+    row = source(phase_states=(first, NS(phase="materialize", status=local), reconcile))
+    assert not sync_source_unverified_remote_inventory(row)
     assert not sync_source_informational_partial(row)
     assert sync_source_attention(row)[0] in {"warning", "error"}
 
 
 def test_duplicate_unknown_and_malformed_phases_fail_closed():
-    first, local, final = real_broker_phase_states()
-    cases = [
-        (first, local, final, final),
+    first, local, reconcile = real_broker_phase_states()
+    for phases in (
+        (first, local, reconcile, reconcile),
         (first, local, NS(phase="future-phase", status="success")),
         (first, local, NS(phase="reconcile", status="not_supported"),
          NS(phase="future", status="success")),
         (first, NS(phase="materialize", status="not_supported"),
          NS(phase="discover_rights", status="partial")),
-    ]
-    for phases in cases:
+    ):
         row = source(phase_states=phases)
+        assert not sync_source_unverified_remote_inventory(row)
         assert not sync_source_informational_partial(row)
 
 
-def test_no_provider_claim_is_promoted_to_complete_without_remote_coverage():
+def test_prior_success_remains_historical_not_a_new_success():
     row = source(provider="bnf-pret", phase_states=real_broker_phase_states(),
                  last_success="2026-11-01T20:10:00+00:00")
     shown = sync_source_presentation(row)
-    assert "Couverture partielle (information)" in shown.summary
+    assert "Partielle" in shown.sync_label
     assert "Dernier succès confirmé" in shown.summary
     assert row.status == "partial"
     assert "Synchronisation : Dernier succès" not in shown.summary
