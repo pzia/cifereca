@@ -299,6 +299,21 @@ def cleanup_published_staging(
     marker = str(attempt)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # The registry can change after _profile() resolved the folder.
+        # A shared or rebound directory must never be recursively deleted,
+        # even when no legacy SQL row references the staging attempt.
+        scope = source.scope
+        registered = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (scope.identity_id,),
+        ).fetchone()
+        aliased = db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (profile.name, scope.identity_id),
+        ).fetchone()
+        if registered != (profile.name,) or aliased is not None:
+            return False
         for table, column in (
             ("placements", "path"),
             ("backup_items", "local_path"),
