@@ -123,6 +123,23 @@ class AccountOptionField:
 
 
 @dataclass(frozen=True)
+class BorrowerScopedOptionField:
+    """Declarative per-linked-reader integer settings, no provider I/O.
+
+    The key stores a nested mapping: borrower unique_id -> branch -> decimal
+    string. The connection/identity/credential scope is owned by its account
+    configuration, not inferred from a reader's display name.
+    """
+    key: str
+    label: str
+    branches: tuple[tuple[str, str], ...]
+    default: str = "4"
+    min_value: int = 0
+    max_value: int = 99
+    help_text: str = ""
+
+
+@dataclass(frozen=True)
 class ProviderDescriptor:
     id: str
     display_name: str
@@ -138,6 +155,7 @@ class ProviderDescriptor:
     interactive_authentication: bool = False
     # Optional declarative settings, backward-compatible with existing plugins.
     account_options: tuple[AccountOptionField, ...] = ()
+    borrower_scoped_options: tuple[BorrowerScopedOptionField, ...] = ()
     max_accounts_per_identity: int | None = None
     account_note: tuple[str, str] | None = None
 
