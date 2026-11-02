@@ -19,7 +19,11 @@ _MAX_MATCHES = 64
 def verified_post_placement_duplicates(
     storage, *, library_root: Path, placement_id: str,
 ) -> tuple[str, ...]:
-    """Return only same-profile, rehashed placement IDs; never mutate files/SQL."""
+    """Return same-profile, rehashed placement IDs without changing files/SQL.
+
+    More than 64 candidates is *unknown*, not evidence of zero duplicates.
+    Raise a fixed, privacy-safe error before hashing any partial subset.
+    """
     if (not isinstance(library_root, Path) or type(placement_id) is not str
             or not placement_id or storage.schema_version() < 14):
         return ()
@@ -64,7 +68,11 @@ def verified_post_placement_duplicates(
             "AND placement_id<>? ORDER BY placement_id LIMIT ?",
             (identity, artifact_id, placement_id, _MAX_MATCHES + 1),
         ).fetchall()
-        if not candidates or len(candidates) > _MAX_MATCHES:
+        if len(candidates) > _MAX_MATCHES:
+            # A bounded SQL probe may not silently turn an oversized set
+            # into "no duplicates". No subset can authorize deduplication.
+            raise ValueError("canonical_dedup_candidates_over_budget")
+        if not candidates:
             # No duplicate => no extra full-file SHA pass on every successful
             # delivery. The publisher has already verified its own bytes.
             return ()
