@@ -57,7 +57,8 @@ def test_known_and_offline_linked_borrowers_only_in_exact_scope():
         credential_id="conn-a", identity_id="alice",
     )
     assert set(dict(choices)) == {"linked-a", "old-offline"}
-    assert dict(choices)["linked-a"] == "Lecteur associé"
+    assert "Lecteur associé" in dict(choices)["linked-a"]
+    assert "Compte lié" in dict(choices)["linked-a"]
     assert dict(choices)["old-offline"].startswith("Compte lié")
     assert "other-id" not in dict(choices)
     assert "other-credential" not in dict(choices)
