@@ -306,6 +306,17 @@ def main() -> int:
         save()
         app.quit()
 
+    def click_search():
+        window = app_window[0]
+        assert window.search_global_button.get_mapped()
+        assert window.search_global_button.get_sensitive()
+        device[0].click_widget(window.search_global_button)
+        await_condition(
+            "search_results",
+            lambda: window.search_page.store.get_n_items() == 3,
+            search_ready,
+        )
+
     def begin():
         window = app_window[0]
         window.navigate("search")
@@ -313,13 +324,14 @@ def main() -> int:
             QueryState(text="Synthetic", field="title", scope="all"),
             notify=False,
         )
-        assert window.search_global_button.get_mapped()
-        device[0].click_widget(window.search_global_button)
-        await_condition(
-            "search_results",
-            lambda: window.search_page.store.get_n_items() == 3,
-            search_ready,
-        )
+        # Search route uses a real GTK stack transition: do not XTEST click
+        # while its button is still unmapped by the crossfade.
+        later(350, lambda: await_condition(
+            "global_button_visible",
+            lambda: window.search_global_button.get_mapped()
+            and window.search_global_button.get_sensitive(),
+            click_search,
+        ))
 
     class Application(Adw.Application):
         def __init__(self):
