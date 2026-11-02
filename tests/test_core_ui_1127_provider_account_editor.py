@@ -435,3 +435,31 @@ def test_p1_retired_non_text_extensions_do_not_block_editable_fields():
     assert editor["invalid_saved_snapshot"] is False
     assert editor["original_options"]["retired_setting"] == [1, 2, 3]
     assert editor["original_credentials"]["retired_token"] == {"opaque": 1}
+
+
+def test_p1_bnf_manual_loan_limit_default_and_hint_are_descriptor_driven():
+    """#4065: option is an indicative local value, not an authorization."""
+    option = SimpleNamespace(
+        key="manual_loan_limit", label="Maximum d’emprunts (valeur personnelle)",
+        default="4", secret=False, legacy_config_key=None,
+        value_type="unsigned_integer", min_value=0, max_value=99,
+        help_text="Valeur personnelle ; ne change pas les droits serveur.",
+    )
+    account_editor, _, container, _ = _render(
+        "bnf-pret", descriptor_options=[option],
+        data={"id": "bnf-reader", "identity_id": "alice", "options": {}},
+    )
+    assert account_editor["option_fields"]["manual_loan_limit"].text == "4"
+    rows = container.children[0].children
+    assert any(
+        row.title == option.label and row.subtitle == option.help_text
+        for row in rows if hasattr(row, "subtitle")
+    )
+    assert account_editor["original_options"] == {}
+
+    saved, _, _, _ = _render(
+        "bnf-pret", descriptor_options=[option],
+        data={"id": "bnf-reader", "identity_id": "alice",
+              "options": {"manual_loan_limit": "9"}},
+    )
+    assert saved["option_fields"]["manual_loan_limit"].text == "9"
