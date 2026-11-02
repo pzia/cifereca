@@ -105,7 +105,7 @@ DESCRIPTOR = ProviderDescriptor(
         # Preserve the existing authorized Paris opening-sync path only.
         # Newly installed lenders remain default-deny until explicit opt-in.
         opening_loan_auto_acquisition=True,
-        return_loan=True,
+        return_loan=False,
         renew_loan=True,
     ),
     search_capabilities=ProviderSearchCapabilities(
@@ -989,9 +989,6 @@ class ParisProviderSession(ProviderSession):
                 or loan.identity_id != account.identity_id):
             raise ProviderCapabilityError("paris_renew_physical_only")
         return self.client.renew_loan(loan, "" if account.is_primary else account.unique_id)
-
-    def return_digital(self, loan: Loan, account: Account) -> dict[str, Any]:
-        return self.client.return_digital_loan(loan, "" if account.is_primary else account.unique_id)
 
     def digital_preferences(self, account: Account) -> dict[str, Any]:
         return self.client.pnb_preferences()
