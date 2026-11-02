@@ -2,12 +2,11 @@
 
 All HTML and IDs are synthetic. No authentication, CDN, ACSM or mutation.
 """
-from datetime import date
-
 import pytest
 
 from bnf_token_fixture import connected
 from cifereca_bnf_pret_web import ORIGIN, ProfileScope, WebParseError, parse_loans
+from cifereca.gui.loan_view import loan_due_presentation, loan_due_detail_value
 
 
 def card(lid="a", rid="book-a", value="01 janvier 2099 à 12:34",
@@ -144,6 +143,21 @@ def test_session_list_projection_and_repeat_read_do_not_trigger_mutations():
         assert downloaded == []
         assert all(method == "GET" and url == "/my_profile/activity"
                    for method, _host, url in calls[before:])
+    finally:
+        session.close()
+
+
+def test_generic_list_and_detail_present_actual_due_date_without_bnf_ui_branch():
+    from datetime import date
+    session, account, _, state, _calls, _downloaded = connected()
+    try:
+        state["activity"] = activity(card(value="01 janvier 2099 à 12:34"))
+        row, = session.loans(account)
+        presentation = loan_due_presentation(row.due_at, today=date(2098, 12, 31))
+        assert presentation.label == "Retour demain"
+        detail = loan_due_detail_value(row.due_at)
+        assert "2099" in detail
+        assert detail != "Échéance inconnue"
     finally:
         session.close()
 
