@@ -311,3 +311,32 @@ def test_duplicate_policy_fields_deny_delivery_and_require_cas_repair(source, fi
     assert repaired['valid'] and not repaired['enabled']
     assert repaired['revision'] != state['revision']
 
+
+
+
+@pytest.mark.parametrize("resource_count", [0, 2, 4])
+def test_source_off_reports_exact_number_of_withheld_resources(
+    source, resource_count,
+):
+    service, db, _root, calls, _broker = source
+    original = service.resource_snapshot
+    sample = original.resources[0]
+    resources = tuple(
+        replace(sample, source=replace(
+            sample.source,
+            edition_id="off-edition-" + str(index),
+            resource_id="off-resource-" + str(index),
+        ))
+        for index in range(resource_count)
+    )
+    service.resource_snapshot = replace(original, resources=resources)
+    off = change(source, False)
+    assert off["configured"] and not off["enabled"]
+    result = synchronize_account_source(service, service.account)
+    execution = result["canonical_execution"]
+    assert execution["pending"] == resource_count
+    assert execution["downloaded"] == 0
+    assert execution["recovered"] == 0
+    assert execution["blocked"] == 0
+    assert calls == []  # Not even a selected-offer preflight.
+    assert db.placements() == []
