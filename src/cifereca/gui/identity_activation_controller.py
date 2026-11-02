@@ -74,17 +74,13 @@ def activate_identity(window, identity_id: str) -> None:
     # is released, causing an unbounded refresh/task loop.
     window._populate_account_dropdown(identity.identity_id)
     window.service.last_history = []
-    window.service.last_bookings = []
     window.history_objects = {}
-    window.booking_objects = {}
     window._history_all_rows = []
     window._history_rows = []
     window._history_loaded_count = 0
     window._history_append_scheduled = False
     if hasattr(window, "history_page"):
         window.history_page.clear_rows()
-    if hasattr(window, "booking_page"):
-        window.booking_page.clear_rows()
     window._library_entries_cache = []
     window._recent_entries_cache = []
     window._recent_objects = {}
@@ -107,8 +103,6 @@ def activate_identity(window, identity_id: str) -> None:
         route = window.view_stack.get_visible_child_name() if hasattr(window, "view_stack") else None
         if route == "history":
             window.refresh_history(False)
-        elif route == "bookings":
-            window.refresh_bookings(False)
         window._activity_result(f"Identité chargée : {identity.label}")
     window.runner.submit(
         f"Chargement de {identity.label}…",
