@@ -114,6 +114,12 @@ class AccountOptionField:
     secret: bool = False
     # Read-only migration fallback for old top-level configuration values.
     legacy_config_key: str | None = None
+    # Declarative validation; existing provider options remain text by default.
+    # Numeric values stay decimal strings in the opaque provider account config.
+    value_type: Literal["text", "unsigned_integer"] = "text"
+    min_value: int | None = None
+    max_value: int | None = None
+    help_text: str = ""
 
 
 @dataclass(frozen=True)

@@ -43,7 +43,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.26.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.27.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -51,6 +51,17 @@ Dans Configuration, ajouter une connexion **BnF Prêt** au bon profil Cifereca,
 saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
 sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
 L'ancien identifiant de page UI n'est plus une contribution du package.
+
+## Plafond personnel indicatif des emprunts (#4065 P1, plugin 0.3.27)
+
+Le réglage par compte `manual_loan_limit` propose **4** par défaut
+et accepte **0 à 99** entiers décimaux canoniques dans Paramètres.
+Il appartient à la configuration locale du compte BnF ; il n'est ni une
+limite attestée par le portail, ni un consentement, ni une autorisation
+pour `borrow`, la synchronisation ou ADEPT. Une ancienne configuration
+sans cette clé reste inchangée : la valeur 4 affichée ne crée pas
+de nouveau droit. Le schéma déclaratif nécessite **Core Plugin API 1.4.5** ;
+la version du package 0.3.27 refuse son installation sur une API antérieure.
 
 ## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.26)
 

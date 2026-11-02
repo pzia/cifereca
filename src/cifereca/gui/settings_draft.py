@@ -287,7 +287,25 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 fallback = field.default.strip()
             else:
                 raise SettingsValidationError(f'Défaut d’option invalide : {field.label}')
-            value = raw_value.strip() or fallback
+            value_type = getattr(field, 'value_type', 'text')
+            if value_type == 'unsigned_integer':
+                # A local user preference is not a provider right. Refuse
+                # empty, signed, padded, float, boolean and out-of-range values
+                # before any configuration write; do not silently default an
+                # explicitly cleared field or normalize a stale widget.
+                if not re.fullmatch(r'(0|[1-9][0-9]{0,2})', raw_value):
+                    raise SettingsValidationError(f'Entier décimal invalide : {field.label}')
+                number = int(raw_value)
+                lower = getattr(field, 'min_value', None)
+                upper = getattr(field, 'max_value', None)
+                if (type(lower) is not int or type(upper) is not int
+                        or lower < 0 or upper < lower or not lower <= number <= upper):
+                    raise SettingsValidationError(f'Valeur hors limites : {field.label}')
+                value = raw_value
+            elif value_type == 'text':
+                value = raw_value.strip() or fallback
+            else:
+                raise SettingsValidationError(f'Type d’option non pris en charge : {field.label}')
             if field.required is True and editor['enabled'] is True and not value:
                 original_account = editor.get('original_account', {})
                 old_value = original_options.get(field.key)
