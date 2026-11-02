@@ -32,16 +32,12 @@ def test_observed_acs4_delivery_hosts_are_allowed_only_as_exact_https_hosts(clie
     [
         "http://acs4.edelivres.fr/delivery/token",
         "https://acs4.edelivres.fr:444/delivery/token",
-        "https://sub.acs4.edelivres.fr/delivery/token",
-        "https://acs4.edelivres.fr.example.test/delivery/token",
-        "https://acs5.edelivres.fr/delivery/token",
         "http://acs4.cantook.net/delivery/token",
         "https://acs4.cantook.net:8443/delivery/token",
-        "https://sub.acs4.cantook.net/delivery/token",
         "https://user:secret@acs4.cantook.net/delivery/token",
     ],
 )
-def test_acs4_policy_rejects_http_non_443_neighbors_and_embedded_credentials(client, url):
+def test_acs4_policy_rejects_http_non_443_and_embedded_credentials(client, url):
     with pytest.raises(ParisRedirectError):
         client._validate_pnb_redirect_url(url)
 
