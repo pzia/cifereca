@@ -1437,7 +1437,14 @@ class ParisProviderSession(ProviderSession):
             len(response.content), public_site(str(response.url)),
             int((time.monotonic()-http_started)*1000),
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            # HTTPX messages include the full signed response URL. Preserve
+            # only a closed numeric status in provider diagnostics.
+            raise ProviderConfigurationError(
+                f"PNB HTTPS livraison HTTP {public_http_status(response.status_code)}"
+            ) from None
         content = response.content
         content_type = response.headers.get("content-type", "")
         fmt = 'pdf' if content.startswith(b'%PDF-') else ('epub' if content.startswith(b'PK') else 'acsm')
