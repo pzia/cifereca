@@ -26,12 +26,11 @@ from ..diagnostics import Diagnostics
 from ..descriptions import description_text
 from ..epub_metadata import notice_rows
 from ..book_detail_metadata import detail_metadata_items, canonical_book_isbn, safe_detail_value
-from ..models import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
+from ..models import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
-from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
 from . import public_catalogue_action_controller
@@ -1312,44 +1311,6 @@ class MainWindow(Adw.ApplicationWindow):
                 self.history_page.detail.show_history(item)
                 self._add_facets(self.history_page.detail, asdict(item), self.search_controls)
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
-
-    # ---------- bookings ----------
-    def _build_bookings_page(self) -> MasterDetailPage:
-        return secondary_page_controller.build_bookings_page(
-            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
-        )
-
-    def refresh_bookings(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
-        current = self.service.current_identity
-        identity_id = current.identity_id if current is not None else None
-        generation = self._identity_context_generation
-        account = self.service.current_account
-        account_generation = self._account_context_generation
-
-        def done(rows: list[Booking]) -> None:
-            if (self._identity_request_current(identity_id, generation)
-                    and account_generation == self._account_context_generation
-                    and self.service.current_account is account):
-                self._populate_bookings(rows)
-
-        self.runner.submit(
-            "Chargement des réservations…", lambda: self.service.refresh_bookings(force=force), done, control=control,
-            priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="bookings",
-        )
-
-    def _populate_bookings(self, rows: list[Booking]) -> None:
-        return secondary_results_controller.populate_bookings(
-            self, rows, BookListItem=BookListItem,
-            booking_presentation=booking_presentation, fr_date=fr_date,
-        )
-    def _booking_selected(self, row: BookListItem | None) -> None:
-        if row:
-            item = self.booking_objects.get(row.key)
-            if item:
-                from dataclasses import asdict
-                self.booking_page.detail.show_booking(item)
-                self._add_facets(self.booking_page.detail, asdict(item), self.search_controls)
-                self._add_local_book_actions(self.booking_page.detail, asdict(item))
 
     # ---------- Bibliothèque fédérée ----------
     def _build_library_page(self) -> MasterDetailPage:
