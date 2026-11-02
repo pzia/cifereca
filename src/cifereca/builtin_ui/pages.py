@@ -13,7 +13,6 @@ class Pages:
             ("recent", "Récents", "document-open-recent-symbolic", "usage"),
             ("loans", "Emprunts", "folder-documents-symbolic", "usage"),
             ("history", "Historique", "document-open-recent-symbolic", "usage"),
-            ("bookings", "Réservations", "bookmark-new-symbolic", "usage"),
             ("sync", "Synchronisation", "emblem-synchronizing-symbolic", "configuration"),
             ("tools", "Outils", "applications-system-symbolic", "configuration"),
             ("plugins", "Plugins", "application-x-addon-symbolic", "configuration"),
