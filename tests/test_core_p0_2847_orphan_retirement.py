@@ -238,3 +238,20 @@ def test_corrupt_shared_identity_directory_never_authorizes_sql_retirement(rig):
         )
     assert prepare(rig)["status"] == "ready"
     assert storage.placement_get(pid)["state"] == "missing"
+
+
+
+def test_changed_owner_directory_revokes_prior_missing_retirement_token(rig):
+    storage, _root, path, pid = rig
+    token = prepare(rig)["plan_token"]
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE identities SET directory_name='alice-renamed' "
+            "WHERE identity_id='alice'"
+        )
+    # An old, fully valid plan cannot be reused after an owner moves roots.
+    result = retire(rig, token)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "path_out_of_scope"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert not path.exists()
