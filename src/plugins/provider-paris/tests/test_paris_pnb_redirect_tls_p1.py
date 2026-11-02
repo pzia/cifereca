@@ -54,8 +54,8 @@ def test_known_redirect_hosts_require_https_with_standard_port(client, host):
 @pytest.mark.parametrize("url", (
     "https://user:secret@bibliotheques.paris.fr/ASSARedirect.ashx",
     "https://user:secret@pnb-dilicom.centprod.com/LOAN/private",
-    "https://evil.example/ASSARedirect.ashx",
-    "https://bibliotheques.paris.fr.evil.example/ASSARedirect.ashx",
+    "https://127.0.0.1/ASSARedirect.ashx",
+    "https://localhost/ASSARedirect.ashx",
     "ftp://numilog.com/path",
     "https://www.numilog.com:invalid/path",
 ))
@@ -111,7 +111,7 @@ def test_untrusted_redirect_host_is_not_disclosed_in_exception_or_ui(
 ):
     with pytest.raises(ParisRedirectError) as exc:
         client._validate_pnb_redirect_url(
-            f"https://{opaque_host}/LOAN/PRIVATE_PATH?ticket=PRIVATE_QUERY",
+            f"https://{opaque_host}:8443/LOAN/PRIVATE_PATH?ticket=PRIVATE_QUERY",
         )
     text = str(exc.value)
     assert exc.value.code == "pnb_redirect_refused"
