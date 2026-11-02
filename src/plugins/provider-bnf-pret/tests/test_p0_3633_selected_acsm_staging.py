@@ -232,8 +232,8 @@ def test_rebound_session_instance_or_credential_never_stages_or_gets_stale_token
         elif when == "token":
             original = session.client.loan_token
 
-            def get_and_rebind(*args):
-                result = original(*args)
+            def get_and_rebind(*args, **kwargs):
+                result = original(*args, **kwargs)
                 rebind()
                 return result
 
@@ -333,8 +333,8 @@ def test_disconnected_without_epoch_change_rejects_completed_candidate(
         if when == "token":
             original = session.client.loan_token
 
-            def disconnect_after_token(*args):
-                token = original(*args)
+            def disconnect_after_token(*args, **kwargs):
+                token = original(*args, **kwargs)
                 session.connected = False
                 return token
 
