@@ -76,12 +76,18 @@ def activate_identity(window, identity_id: str) -> None:
     window.service.last_history = []
     window.service.last_bookings = []
     window.history_objects = {}
+    # Clear any pre-upgrade reservations widget passively. The retired route
+    # never builds one, and no provider/cache read is permitted.
+    if hasattr(window, "booking_objects"):
+        window.booking_objects = {}
     window._history_all_rows = []
     window._history_rows = []
     window._history_loaded_count = 0
     window._history_append_scheduled = False
     if hasattr(window, "history_page"):
         window.history_page.clear_rows()
+    if hasattr(window, "booking_page"):
+        window.booking_page.clear_rows()
     window._library_entries_cache = []
     window._recent_entries_cache = []
     window._recent_objects = {}
