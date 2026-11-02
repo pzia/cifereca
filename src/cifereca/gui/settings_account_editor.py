@@ -91,6 +91,12 @@ def build_provider_account_editor(
         entry.set_text(selected)
         group.add(entry)
         option_fields[field.key] = entry
+        help_text = getattr(field, 'help_text', '')
+        if type(help_text) is str and help_text:
+            note = Adw.ActionRow()
+            note.set_title(field.label)
+            note.set_subtitle(help_text)
+            group.add(note)
     account_note = getattr(descriptor, "account_note", None)
     if option_fields and account_note:
         note = Adw.ActionRow()
