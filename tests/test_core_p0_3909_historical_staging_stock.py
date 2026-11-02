@@ -207,3 +207,65 @@ def test_stock_repairs_valid_B_even_if_postcommit_intake_flag_was_lost(
             "WHERE acquisition_id LIKE 'canonical-intake:%'",
         ).fetchone()
     assert status == ("complete", "sha256:" + SHA)
+
+
+
+@pytest.mark.parametrize("mutation", ["second_owner", "original_owner_rebound"])
+def test_owner_registry_changed_after_final_hash_blocks_stock_sql_relink(
+    rig, monkeypatch, mutation,
+):
+    """A completed staging Placement cannot be moved into a rebounded folder."""
+    from cifereca.core import canonical_staging_stock as stock
+
+    service, storage, root, old, gets = _legacy_placement(rig, monkeypatch)
+    prior_placement = dict(storage.placements()[0])
+    if mutation == "second_owner":
+        storage.identity_put({
+            "identity_id": "B", "directory_name": "B", "label": "B",
+        })
+        with storage._lock, storage._connect() as db:
+            db.execute("DROP INDEX uq_identity_directory_name")
+
+    real_verify = stock._path_verified
+    mutated = []
+
+    def verify_then_rebind(*args, **kwargs):
+        verified = real_verify(*args, **kwargs)
+        if (not mutated and Path(kwargs["path"]).parent.name == "Acquisitions"):
+            with storage._lock, storage._connect() as db:
+                if mutation == "second_owner":
+                    db.execute(
+                        "UPDATE identities SET directory_name='A' "
+                        "WHERE identity_id='B'"
+                    )
+                else:
+                    db.execute(
+                        "UPDATE identities SET directory_name='rebound' "
+                        "WHERE identity_id='A'"
+                    )
+            mutated.append(True)
+        return verified
+
+    monkeypatch.setattr(stock, "_path_verified", verify_then_rebind)
+    outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_execution"]["failed"] == 1
+    assert mutated == [True]
+    assert storage.placements()[0] == prior_placement
+    assert old.read_bytes() == BYTES
+    assert gets == ["signed-right-offer"]  # no second supplier GET
+    assert len(list((root / "A" / "Acquisitions").glob("*.pdf"))) == 1
+
+    # The final file can be reused after repairing the registry. No staged
+    # file is lost and no new authentication or remote delivery is needed.
+    with storage._lock, storage._connect() as db:
+        if mutation == "second_owner":
+            db.execute("UPDATE identities SET directory_name='B' WHERE identity_id='B'")
+        else:
+            db.execute(
+                "UPDATE identities SET directory_name='A' WHERE identity_id='A'"
+            )
+    monkeypatch.setattr(stock, "_path_verified", real_verify)
+    restored = synchronize_account_source(service, service.account)
+    assert restored["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert Path(storage.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
