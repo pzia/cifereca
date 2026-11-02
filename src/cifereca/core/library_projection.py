@@ -470,6 +470,48 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
     if len(rows)!=1:return None
     try:self.local_book_path(rows[0]['placement_id'],identity_id=identity_id)
     except ProviderConfigurationError:return None
+    if account_id is not None:
+        # Only a physically attested copy may suppress a fresh, explicitly
+        # admitted owned-right GET. A complete historical receipt and an
+        # existing pathname alone are not proof: bytes may have been replaced,
+        # the path symlinked or the artifact digest corrupted. Do this stricter
+        # check solely for the exact-account internal admission; preserve the
+        # historical four-coordinate LibraryService reader contract.
+        from .convergence_verified_presence import _verified_copy
+        try:
+            artifact_id = rows[0].get('artifact_id')
+            # Bounded, one-snapshot proof of the registered owner and Artifact.
+            # Storage.identity_get() would enumerate every unrelated profile,
+            # and the historical UNIQUE index may be absent in legacy files.
+            with self.storage._lock, self.storage._connect() as db:
+                db.execute('BEGIN')
+                evidence = db.execute(
+                    'SELECT a.sha256,a.size,i.directory_name FROM artifacts a '
+                    'JOIN identities i ON i.identity_id=? '
+                    'WHERE a.artifact_id=?',
+                    (identity_id, artifact_id),
+                ).fetchone()
+                if evidence is None:
+                    return None
+                digest, size, directory = evidence
+                if (type(directory) is not str or not directory or db.execute(
+                    'SELECT 1 FROM identities WHERE directory_name=? '
+                    'AND identity_id<>? LIMIT 1',
+                    (directory, identity_id),
+                ).fetchone() is not None):
+                    return None
+            if (type(artifact_id) is not str or type(digest) is not str
+                    or len(digest) != 64 or artifact_id != 'sha256:' + digest
+                    or type(size) is not int or size <= 0
+                    or not _verified_copy(
+                        rows[0]['path'], root=self.library_dir(),
+                        owner_directory=directory,
+                        registered_directories=frozenset((directory,)),
+                        size=size, sha256=digest,
+                    )):
+                return None
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return None
     return rows[0]
 
 
