@@ -18,6 +18,10 @@ Paramètres :
   numérique/physique**. Une ligne sans provenance exacte est ignorée.
 - Les noms, identifiants, titres, credentials, URLs et messages d'erreur
   fournisseur ne sont jamais interpolés dans le libellé de l'observation.
+- La vérification de scope réutilise le contrat typé Core. L'alias historique
+  Paris `source_account_id="primary"` est admis **uniquement** pour le
+  principal `unique_id=""`, jamais pour un compte lié ; si un lié porte
+  exactement ce même ID et rend l'attribution ambiguë, la ligne est exclue.
 
 **Portées et limites :**
 
