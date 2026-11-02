@@ -474,6 +474,11 @@ class LocalLibrarySearch:
             return []
         if str(scope or "all").strip().lower() == "physical":
             return []
+        # No selected profile means no authorized local possession query.
+        # Fail before invoking a legacy/mocked reader that may enumerate all
+        # identities rather than relying on a downstream Library fence.
+        if type(identity_id) is not str or not identity_id:
+            return []
         rows = self._entries(identity_id=identity_id, scan=False)
         return filter_loaded_results(
             rows, text, scope=scope, field=field, age=age, age_kind=age_kind,
