@@ -7,7 +7,7 @@ from cifereca.core.canonical_post_placement import (
     verified_post_placement_duplicates,
 )
 from cifereca.core.convergence_execution import _check_post_placement_duplicates
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
+from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, store
 from tests.test_core_p0_3719_post_placement_duplicates import _two_accounts
 
 
