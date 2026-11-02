@@ -37,13 +37,26 @@ Les images de recommandations et les URLs non admissibles restent inconnues.
 Recette GTK de deux cartes/détails à couvertures réellement affichées toujours
 requise avant fermeture de #4118.
 
+## Échéances réelles BnF — P1 #4146 (version 0.3.29)
+
+L'activité privée officielle `/my_profile/activity` contient une échéance
+dans chaque carte `js-loan` validée par prêt/ressource : un unique
+`article.js-loan__content .details-content__body > .time-remaining`
+avec « Votre prêt expirera le » et un unique `strong` de date française.
+Le parseur traduit cette **date calendaire locale attestée** en ISO-8601
+sans fuseau/offset inventé, et projette `Loan.due_at` en liste et détail
+génériques. Les dates absentes, ambiguës, invalides ou étrangères à la
+carte restent `None` ; aucun prêt n'est clôturé par cette seule date.
+Aucune lecture de jeton ACSM, mutation ou nouvelle opération réseau.
+Le DOM privé ne figure ni dans GitHub ni dans les tests.
+
 ## Installer et essayer
 
 Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.28.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.29.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
