@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from cifereca.core import canonical_dedup_preview as preview_mod
 from cifereca.core import canonical_dedup_supervisor as supervisor
+from tests.test_core_p0_3171_atomic_publication_v14 import store
 from tests.test_core_p0_3719_canonical_duplicate_retirement import rig, _retire
 
 
