@@ -76,6 +76,7 @@ def linked_borrower_choices(
     if len(names) > MAX_BORROWERS:
         raise ValueError("too_many_scoped_options")
     return tuple(
-        (borrower, names[borrower] or f"Compte lié {index}")
+        (borrower, f"Compte lié {index}" +
+         (f" · {names[borrower]}" if names[borrower] else ""))
         for index, borrower in enumerate(sorted(names), start=1)
     )
