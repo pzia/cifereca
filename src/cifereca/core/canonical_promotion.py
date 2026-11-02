@@ -148,6 +148,19 @@ def promote_completed_delivery(
         except OSError:
             return False
 
+    def physical_owner_current() -> bool:
+        # _profile() proved uniqueness before an expensive read/copy. An
+        # unrelated SQLite writer may rebind that directory while bytes are
+        # streamed. Repeat the exact physical ownership check before
+        # advertising a final path; never rely only on its old SHA.
+        try:
+            checked_root, checked_profile = _profile(
+                storage, library_root, source,
+            )
+            return checked_root == root and checked_profile == profile
+        except (ValueError, OSError):
+            return False
+
     def own_entry(name: str) -> bool:
         if made is None:
             return False
@@ -185,6 +198,8 @@ def promote_completed_delivery(
             raise ValueError("canonical_promotion_sha_mismatch")
         if not directory_current() or not own_entry(temporary):
             raise ValueError("canonical_promotion_destination_changed")
+        if not physical_owner_current():
+            raise ValueError("canonical_promotion_profile_rebound")
         # A no-replace hardlink is an atomic namespace promotion. No other
         # thread can ever open a partially written final file; a foreign
         # final target is never overwritten or adopted by filename alone.
@@ -204,6 +219,8 @@ def promote_completed_delivery(
         if (not directory_current() or not own_entry(target.name)
                 or not _same_file(original, before)):
             raise ValueError("canonical_promotion_destination_changed")
+        if not physical_owner_current():
+            raise ValueError("canonical_promotion_profile_rebound")
         # Staging remains untouched until the Core B transaction commits.
         return verified
     except Exception:
