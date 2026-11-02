@@ -2514,6 +2514,46 @@ class Storage:
             row=dict(zip(columns,record)); row["enabled"]=bool(row["enabled"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
+    def provider_scope_account_bound(
+        self, *, identity_id: str, provider_id: str,
+        credential_id: str, account_id: str,
+    ) -> bool:
+        """One exact connected owner and borrower, read in one SQLite snapshot.
+
+        Called by Core before private selected-offer and content GETs (often
+        per network chunk). Never enumerate unrelated account metadata and
+        never turn a missing/disabled/rebound connection into permission.
+        The upstream primary borrower may have an empty ID.
+        """
+        values = (identity_id, provider_id, credential_id, account_id)
+        if (any(type(v) is not str or len(v) > 1024
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in v)
+                for v in values)
+                or not identity_id or not provider_id or not credential_id):
+            return False
+        with self._lock, self._connect() as db:
+            # Both cardinality checks must use the same read snapshot:
+            # a concurrent owner rebind cannot mix an old connection with
+            # a newly registered borrower.
+            db.execute("BEGIN")
+            connections = db.execute(
+                "SELECT connection_id,identity_id,enabled "
+                "FROM provider_connections WHERE provider_id=? "
+                "AND credential_id=? LIMIT 2",
+                (provider_id.lower(), credential_id),
+            ).fetchall()
+            if (len(connections) != 1
+                    or connections[0][1:] != (identity_id, 1)):
+                return False
+            borrowers = db.execute(
+                "SELECT 1 FROM provider_accounts WHERE connection_id=? "
+                "AND identity_id=? AND provider_id=? AND credential_id=? "
+                "AND account_id=? LIMIT 2",
+                (connections[0][0], identity_id, provider_id.lower(),
+                 credential_id, account_id),
+            ).fetchall()
+            return len(borrowers) == 1
+
     def identity_for_connection(self, provider_id: str, credential_id: str) -> str | None:
         with self._lock, self._connect() as db:
             row = db.execute(
