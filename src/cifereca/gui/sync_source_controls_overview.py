@@ -71,12 +71,22 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
                      or consent["enabled"] or not consent["valid"]))
                 or (not consent["valid"] and consent["enabled"])):
             parts.append("Fichiers : autorisation non vérifiée")
-        elif consent["supported"] is False:
-            parts.append("Fichiers : autorisation non proposée")
         elif not consent["valid"]:
             parts.append("Fichiers : réglage à vérifier")
         elif not consent["configured"]:
-            parts.append("Fichiers : choix non défini")
+            parts.append(
+                "Fichiers : choix non défini" if consent["supported"]
+                else "Fichiers : autorisation non proposée"
+            )
+        elif not consent["supported"]:
+            # The broker permits revoking a formerly authorized policy even
+            # when this version can no longer activate new deliveries.
+            # Do not hide that still-persisted ON bit.
+            parts.append(
+                "Fichiers : autorisation antérieure " +
+                ("activée" if consent["enabled"] else "désactivée") +
+                " (activation indisponible)"
+            )
         else:
             parts.append("Fichiers : autorisation " + (
                 "activée" if consent["enabled"] else "désactivée"
