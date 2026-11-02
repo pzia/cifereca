@@ -3,6 +3,7 @@
 No network, supplier credentials or imported private data are required.
 """
 from cifereca.storage import Storage
+from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3171_canonical_sync_stage import rig  # v2 dependency
 from tests.test_core_p0_3719_v2_execution import v2
 
@@ -36,7 +37,7 @@ def test_private_selected_delivery_never_gets_when_profile_folder_ambiguous(v2):
         sql.execute("DROP INDEX IF EXISTS uq_identity_directory_name")
     db.identity_put({"identity_id": "foreign", "label": "foreign",
                      "directory_name": "A"})
-    result = service.synchronize_account_source(service.account)
+    result = synchronize_account_source(service, service.account)
     counts = result["canonical_execution"]
     assert counts["downloaded"] == 0
     assert counts["failed"] == 1
