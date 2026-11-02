@@ -87,9 +87,11 @@ def test_bnf_positive_loan_rights_0_1_n_without_implicit_acquisition(pairs):
                     "identity-A", "bnf-pret", "credential-A", "credential-A",
                 )
         assert result.branch == "bnf_html"
-        assert result.status == result.coverage == "partial"
-        assert result.pagination_complete is False
-        assert not result.claims_complete_branch
+        complete = bool(pairs)  # Official, scoped, nonempty unpaginated widget.
+        assert result.status == ("success" if complete else "partial")
+        assert result.coverage == ("complete" if complete else "partial")
+        assert result.pagination_complete is complete
+        assert result.claims_complete_branch is complete
         assert not result.authorizes_mutation
         assert not result.authorizes_negative_reconciliation
         assert [(r.edition_id, r.right_id) for r in result.rights] == list(pairs)
@@ -491,5 +493,46 @@ def test_bnf_invalid_typed_loan_coordinates_keep_valid_sibling(bad_coordinate):
         assert not result.authorizes_negative_reconciliation
         assert not result.authorizes_mutation
         assert client.calls == ["login"]  # typed projection adds no HTTP
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("pairs", [
+    (), (("edition-1", "loan-1"),),
+    (("edition-1", "loan-1"), ("edition-2", "loan-2")),
+])
+def test_bnf_rights_v2_adaptor_preserves_only_attested_branch_coverage(pairs):
+    session, account, client = fixture(activity(*pairs))
+    try:
+        # Exactly one authenticated activity GET; no token, ACSM, ADEPT,
+        # download, borrow or return, including the unknown-offer branch.
+        snap = session.downloadable_resource_snapshot(account)
+        complete = bool(pairs)
+        assert snap.status == ("success" if complete else "partial")
+        assert snap.coverage == ("complete" if complete else "partial")
+        assert snap.pagination_complete is complete
+        assert len(snap.resources) == len(pairs)
+        assert not snap.authorizes_negative_reconciliation
+        assert not snap.authorizes_mutation
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()
+
+
+def test_bnf_incomplete_html_maintains_partial_on_both_legacy_and_v2():
+    # A pagination marker is not trustworthy merely because the first
+    # visible loan is valid: do not pronounce the source fully observed.
+    html = activity(("edition-1", "loan-1")).replace(
+        "</section>", '<a rel="next" href="/my_profile/activity?page=2">Suite</a></section>',
+    )
+    session, account, client = fixture(html)
+    try:
+        snap = session.rights_observation_snapshot(account)
+        assert len(snap.rights) == 1
+        assert snap.status == snap.coverage == "partial"
+        assert snap.pagination_complete is False
+        assert not snap.claims_complete_branch
+        assert not snap.authorizes_negative_reconciliation
+        assert client.calls == ["login", "activity"]
     finally:
         session.close()
