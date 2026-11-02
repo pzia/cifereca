@@ -8,6 +8,7 @@ engine. It never renders personal IDs, book titles, or private diagnostics.
 from __future__ import annotations
 
 from cifereca.models import Account, Loan
+from cifereca.plugin_api.loan_inventory import LoanInventoryScope, _loan_matches_scope
 
 _MAX_ACCOUNTS = 32
 _MAX_LOANS = 10_000
@@ -79,19 +80,24 @@ def loan_cache_observations(
         borrower: {"digital": set(), "physical": set(), "unknown": set()}
         for borrower in accounts
     }
+    scopes = {
+        borrower: LoanInventoryScope.for_account(account)
+        for borrower, account in accounts.items()
+    }
     for loan in cached_loans:
-        if type(loan) is not Loan:
+        if type(loan) is not Loan or not _safe_scope(loan.id):
             continue
-        if (loan.source_provider != provider_id
-                or loan.source_credential != credential_id
-                or loan.identity_id != identity_id
-                or type(loan.source_account_id) is not str
-                or loan.source_account_id not in accounts
-                or type(loan.medium) is not str
-                or loan.medium not in {"digital", "physical", "unknown"}
-                or not _safe_scope(loan.id)):
-            continue
-        evidence[loan.source_account_id][loan.medium].add(loan.id)
+        # Reuse Core's exact typed-inventory predicate, including Paris'
+        # narrow historical primary alias ('primary' for unique_id='').
+        # Never guess a provider-specific alias in CoreUI. If a real linked
+        # reader has that same ID, reject this ambiguous positive observation
+        # rather than attributing it to *both* borrower rows.
+        matches = [
+            borrower for borrower, scope in scopes.items()
+            if _loan_matches_scope(loan, scope)
+        ]
+        if len(matches) == 1:
+            evidence[matches[0]][loan.medium].add(loan.id)
 
     ordered = sorted(accounts.values(), key=lambda a: (
         a.is_primary is not True, a.unique_id,
