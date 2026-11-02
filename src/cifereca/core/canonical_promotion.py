@@ -39,14 +39,22 @@ def _stage_parts(physical: Path, profile: Path) -> tuple[str, ...] | None:
 
 
 def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
+    registered = storage.identities()
     matches = [
-        x.get("directory_name") for x in storage.identities()
+        x.get("directory_name") for x in registered
         if x.get("identity_id") == source.scope.identity_id
     ]
     if (len(matches) != 1 or type(matches[0]) is not str
             or not matches[0] or matches[0] in (".", "..")
             or "/" in matches[0] or "\\" in matches[0]):
         raise ValueError("canonical_promotion_profile_unknown")
+    # Both pre-commit promotion and post-commit cleanup may touch physical
+    # bytes. An imported registry with two owners for one directory cannot
+    # authorize either action, regardless of matching SHA/account receipts.
+    if sum(
+        row.get("directory_name") == matches[0] for row in registered
+    ) != 1:
+        raise ValueError("canonical_promotion_profile_ambiguous")
     canonical_root = Path(os.path.abspath(root.expanduser()))
     profile = canonical_root.resolve() / matches[0]
     if (canonical_root.is_symlink() or profile.is_symlink()
