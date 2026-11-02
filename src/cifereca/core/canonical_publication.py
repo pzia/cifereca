@@ -222,12 +222,17 @@ def publish_completed_acquisition(
         # An authenticated credential may serve several borrower IDs.
         # Require one exact registered account, not a credential-only match
         # or an opportunistic first item. Upstream primary '' is legal.
+        # A credential may expose a large borrower roster. The publisher
+        # must admit only the exact account and never materialize every other
+        # borrower's identifier inside its write transaction.
         account_rows = db.execute(
-            "SELECT account_id FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
+            "SELECT 1 FROM provider_accounts "
+            "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+            "AND account_id=? LIMIT 2",
+            (scope.identity_id, scope.provider_id, scope.credential_id,
+             scope.account_id),
         ).fetchall()
-        if sum(a[0] == scope.account_id for a in account_rows) != 1:
+        if len(account_rows) != 1:
             raise ValueError("canonical_account_not_registered")
         if not _same_file(target, before):
             raise ValueError("canonical_final_file_changed")
