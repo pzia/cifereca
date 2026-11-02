@@ -129,203 +129,24 @@ d'acceptation reste rouge tant que CoreUI n'a pas corrigé le compteur et
 la section sans contenu. Aucun scénario/workflow supplémentaire.
 
 
-### UX P1 #922 — aides et étiquettes des filtres Jeunesse (recette distincte)
+## Recettes Jeunesse — archives retirées (#957)
 
-La recette dédiée (1366 px uniquement) s'exécute avec :
+Les anciennes recettes `youth-filter-help-1366`, `youth-milan-1366`,
+`youth-editions-1366`, `youth-1366`, `youth-focus-return-1366`
+et la commande `--plugin catalog.youth` **ne sont plus exécutables** :
+elles ne figurent pas dans `e2e/run.py::SCENARIOS`. Les packages
+`src/plugins/youth-catalog/` et `src/plugins/youth-source-milan/`
+ont été retirés. Les anciennes procédures et preuves restent consultables
+dans l'historique Git de ce document ; **ne pas les utiliser comme recette
+courante ni tenter de réinstaller ces plugins**.
 
-    dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario youth-filter-help-1366
+La prévention d'une réactivation des anciens fournisseurs Jeunesse demeure
+vérifiée par `tests/test_retired_youth_sources_957.py`. Les jeux de données
+synthétiques encore utiles au banc `simulation/` sont indépendants des
+anciens parcours GTK. La liste des scénarios actuellement exécutables est
+la table `SCENARIOS` de `e2e/run.py` ; `--help` expose les arguments.
 
-Elle ouvre la vraie page GTK, inspecte les dix contrôles (profil, recherche,
-âge, nature d'âge, source, langue, format, type, thèmes et âges inférés)
-et vérifie une aide contextuelle non vide pour chacun. Les étiquettes doivent
-être visibles et explicitement liées au widget via Gtk.Label.set_mnemonic_widget ;
-la case à cocher peut porter son libellé intrinsèque.
-
-Après un clic XTEST suivi de la saisie « Forest », le test vérifie la
-persistance des étiquettes, la distinction cache local / collecte explicite
-et l'absence de requête réseau. Il traverse également les contrôles avec
-de vraies touches XTEST Tab/Shift+Tab, journalise les focus GTK réels (y
-compris GtkText interne) et contrôle qu'aucune collecte n'est induite.
-Le rapport screen.json et trois captures documentent les dix champs, le
-parcours clavier et toute absence d'aide. Un contrôle non atteint ou un
-double arrêt Tab anonyme sur un Gtk.FlowBoxChild non interactif est signalé,
-sans déduire l'accessibilité de la seule capture visuelle.
-
-**Test d'acceptation intentionnellement bloquant tant que le plugin n'a pas
-ajouté les libellés et tooltips du P1 #922.** Les anciens scénarios Jeunesse
-restent inchangés. Ne pas contourner le test par des placeholders.
-Aucun scénario de largeur basse et aucun workflow CI nouveau.
-
-## Recette Jeunesse P1 (#758)
-
-La recette `catalog.youth` utilise la vraie page `ui.page.youth`, le Core et
-le package versionné de `src/plugins/youth-catalog` installé dans le store
-isolé de la fixture. Aucune requête réseau n'est déclenchée ; le cache est
-alimenté directement avec des notices déterministes par identité.
-
-```bash
-dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth
-```
-
-Un écran Xvfb **1366×900** est exercé. Les captures
-`00-empty-cache` à `06-keyboard-search-detail` prouvent les états vides,
-tranches 0/8/12/17 (18 non proposé), âges d'intérêt/lecture/inféré,
-isolation Camille/Alex, recherche clavier XTEST, sélection et provenance.
-
-Chaque rapport `screen.json` inclut le SHA Git, la résolution réellement
-observée et les empreintes des captures. Il s'agit d'un parcours GTK4 réel
-avec fixtures de cache, **pas** d'un test HTTP des fournisseurs ni d'un
-parcours réseau. Les scénarios des fournisseurs et le cache offline après
-collecte restent à recetter séparément.
-
-
-### Milan activé — pagination, notice GTK et panne 503 (UX P1 #758)
-
-Le scénario `youth-milan-1366` installent la **vraie
-extension** `youth-source-milan` dans le store isolé, puis simulent uniquement
-ses réponses HTTP avec `httpx.MockTransport` et les pages HTML versionnées
-de `simulation/milan/pseudo_milan_service.py`. Aucun trafic vers Milan
-n'est effectué.
-
-Sur la vraie GTK/Xvfb, le test confirme l'absence d'accès implicite,
-l'activation de Milan dans la liste des sources, le clic XTEST de collecte,
-les **quatre notices acceptées**, la pagination explicite (une cinquième
-notice), l'âge éditeur attesté et le **Gtk.LinkButton « Voir la notice
-publique »** avec URL HTTPS vérifiée. Le bouton n'est **pas activé** :
-l'ouverture d'un navigateur/portail et l'accès au site réel restent hors
-périmètre. Après HTTP 503 simulé, les cinq notices restent dans le cache,
-un message d'échec est visible et le filtre local ne déclenche aucun HTTP.
-
-Cette recette vérifie Milan de manière autonome, avec transport HTTP simulé.
-
-
-### Deux éditions homonymes, ISBN distincts et âges contradictoires (UX P1 #758)
-
-La recette `youth-editions-1366` utilisent la
-**vraie interface GTK4/Xvfb**, sans plugin distant ni réseau :
-
-- 3 notices locales synthétiques ont exactement le même titre et la même
-  autrice, mais deux ISBN différents ;
-- Source fictive `5–7 ans` (intérêt) et Milan `à partir de 12 ans` (éditeur)
-  partagent le **premier ISBN** : une seule ligne, **deux preuves d'âge
-  conservées avec leurs sources** et visibles dans le détail ;
-- un **second ISBN** Milan `à partir de 8 ans`, même titre/autrice, doit
-  rester une **autre ligne** et n'afficher que son âge/source ;
-- filtres 6, 9 et 12 ans, nature d'âge intérêt/éditeur, et identité Alex
-  sans entrée, sont vérifiés sur la vraie liste/détail GTK.
-
-8 captures permettent d'inspecter la distinction des éditions
-et la provenance. Aucun rapprochement automatique par titre/autrice ne doit
-faire fusionner des ISBN différents. Les fiches et ISBN sont fictifs ou
-utilisés uniquement comme données de test structurées ; aucune disponibilité
-éditoriale externe n'est attestée.
-
-#### Visibilité des identifiants d'édition (UX #891, correctif produit #894)
-
-Cette recette vérifie maintenant **l'affichage réel** des deux ISBN dans
-les cellules `Gtk.ListView` mappées (`meta_label`, à 1366 px),
-ainsi que les `Adw.ActionRow` de chacune des deux fiches sélectionnées.
-Les ISBN sont distincts et ne fuient pas d'une fiche à l'autre. Le scénario
-sans ISBN du cache local vérifie la mention **Référence source** dans la fiche,
-sans faux ISBN. Les captures à 1366 px restent la preuve visuelle.
-
-### Reprise explicite après panne distante (UX #758)
-
-Le scénario `youth-milan-1366` vérifient désormais toute la séquence
-**succès → HTTP 503 → cache conservé → filtre local sans requête →
-nouveau clic XTEST après rétablissement → succès**. L'extension réelle
-reste installée ; le simulateur ne remplace que les réponses HTTP.
-
-Milan : 9 requêtes pour page 1, 3 pour page 2, 1 pour la panne,
-9 après reprise explicite (22 au total). La reprise remplace le cache de
-cinq notices par les quatre notices fraîches de la première page et
-réactive la pagination, sans doublons ni perte silencieuse de provenance.
-
-Les étapes supplémentaires sont capturées dans
-`06-milan-recovered-first-page.png` à 1366 px. Ceci ne
-prouve pas la disponibilité des services publics ni la reconnexion
-réseau réelle : l'intégralité des réponses HTTP reste simulée.
-
-### Notice publique : lancement réel sans trafic Internet (UX P1 #758)
-
-Le scénario `youth-milan-1366` valident
-désormais la **navigation GTK réelle** : après une collecte volontaire avec
-le vrai adaptateur Milan et un transport HTTP simulé, un clic de souris XTEST
-sur le vrai `Gtk.LinkButton « Voir la notice publique »` est envoyé.
-
-Dans le HOME/XDG **temporaire isolé du runner**, le test crée un gestionnaire
-d'URI HTTPS local via `Gio.AppInfo` et vérifie qu'il est bien le défaut
-**avant** d'autoriser le clic. Ce faux navigateur écrit uniquement l'URL
-reçue dans `local-https-handler.jsonl` et n'effectue aucune requête. La
-recette vérifie une invocation **exactement** égale à l'URL Milan affichée,
-aucun clic implicite et aucune modification du cache ni nouvelle collecte.
-
-L'étape `02b-milan-notice-launched-to-offline-browser.png` et le JSON
-`milan_notice_handler_invocations` prouvent le passage
-**clic GTK → gestionnaire HTTPS local de test**. Ce protocole ne prouve
-pas qu'un navigateur externe réel est installé ni la disponibilité du site
-éditeur. Hors du XDG de test, aucune association HTTPS n'est modifiée.
-
-### Activation : preuve GTK du gestionnaire de plugins (UX #758)
-
-Le parcours local `youth-1366` se terminent
-désormais par la **vraie page Plugins** de Cifereca, après l'installation
-et l'activation du vrai package Jeunesse. L'utilisateur recherche
-`youth` dans la zone GTK du gestionnaire par **saisie clavier XTEST**.
-Le banc vérifie l'état activé affiché, le statut technique, l'absence
-d'activation involontaire et l'absence de requête réseau.
-
-Les captures `09-real-plugin-manager-installed.png`,
-`10-real-plugin-manager-youth-search.png` et
-`11-youth-restored-after-plugin-manager.png` documentent le parcours
-**Jeunesse → Plugins → recherche jeunesse → retour Jeunesse**, aux
-largeur 1366 px. Cette recette ne désinstalle pas de package
-et ne prétend pas recetter une première installation manuelle par la
-boîte de dialogue du sélecteur de fichiers.
-
-### Observation clavier Entrée — écart UX P1 #910 (non bloquante)
-
-Sur le scénario local `youth-1366`,
-après une recherche `Forest` saisie **physiquement par XTEST**
-dans le vrai `Gtk.Entry`, le banc émet `Return` puis `KP_Enter`.
-Il compte les émissions du signal GTK `activate`, capture les statuts
-visibles avant/après, la route et les notices affichées, et garantit
-**zéro accès distant** sans source précise sélectionnée.
-
-Nouvelles preuves : `05b-youth-return-gtk-observation.png` et
-`05c-youth-keypad-enter-gtk-observation.png` à 1366 px, avec
-`screen.json > keyboard_enter_observation` (deux signaux GTK, changement
-ou non du retour utilisateur). La capture `06-keyboard-search-detail.png`
-reste le parcours suivant.
-
-**Après le correctif clavier #910**, ce probe exige désormais un retour
-visible pour la première Entrée (cache local) et pour la seconde (demande
-d'une source précise si « Toutes les sources » est sélectionné). Il interdit
-toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
-fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
-sélectionnée** : ce dernier scénario reste à recetter indépendamment.
-Aucun nouveau scénario ni workflow CI n'a été créé.
-
-### UX P2 #962 — focus clavier au retour Recherche → Jeunesse
-
-Exécuter le parcours strict indépendant à **1366 px** :
-
-```bash
-dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario youth-focus-return-1366
-```
-
-Le test utilise le même vrai trajet GTK/XTEST que le parcours P0 #906 :
-sélection d'une édition Jeunesse, clic « Rechercher en bibliothèque », unique
-recherche **locale** avec identité contrôlée, puis Retour GTK. Il capture
-`14-library-search-return.png`, lit `window.get_focus()` et exige que
-le focus soit sur le bouton d'origine ou son descendant, **avant tout appel
-à `grab_focus()`**. Le contrôle vérifie aussi la sélection, le filtre,
-l'identité et l'absence de collecte/recherche distante.
-
-Ce scénario P2 est **rouge intentionnellement** tant que la navigation
-ne restaure pas le focus. Le parcours P0 #906 reste inchangé et continue
-de vérifier Entrée/Espace indépendamment ; aucune modification du Core,
-des plugins ou des workflows et aucune cible à résolution inférieure.
+## Recettes GTK courantes
 
 ### MainWindow preparation baseline (#1123)
 
