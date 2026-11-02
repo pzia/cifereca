@@ -43,18 +43,15 @@ class FakeDialog:
         self.captured.append(("present", self.title, self.body))
 
 
-def rig(*, selected=True, route="search"):
+def rig(*, selected=True, route="search", action_callback=None):
     captured, diagnostics = [], []
     def make_dialog(window, title, body):
         return FakeDialog(title, body, captured)
     adw = NS(MessageDialog=NS(new=make_dialog))
+    # An actual declared header action, not the generated implicit open.
     action = UiActionContribution(
-        "open", "Open", lambda _host: None, "system-run-symbolic",
-    )
-    # A built-in "open" action is generated, not this instance. An actual
-    # declared header action is needed for canonical registry identity.
-    action = UiActionContribution(
-        "refresh", "Refresh", lambda _host: None, "view-refresh-symbolic",
+        "refresh", "Refresh", action_callback or (lambda _host: None),
+        "view-refresh-symbolic",
     )
     page = UiPageContribution(
         route="search", title="Recherche",
@@ -82,10 +79,9 @@ def evidence(events):
 
 
 def test_real_modal_from_exact_registered_ui_action_has_proven_click_context():
-    window, action, diagnostics, captured, _adw = rig()
     def fail(_host):
         raise RuntimeError("provider said " + SENTINEL_URL)
-    action.callback = fail
+    window, action, diagnostics, captured, _adw = rig(action_callback=fail)
     invoke_ui_action(window, action, NS())
     assert captured[0] == ("popdown",)
     assert ("present", "Action impossible", "Traitement indisponible") in captured
