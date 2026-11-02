@@ -795,7 +795,10 @@ class NumilogSession(ProviderSession):
             if len(selected) != 1:
                 # A page failure or missing edition cannot revoke earlier
                 # ownership, but it cannot claim any executable offer.
-                return replace(base, rights=(original,))
+                return replace(
+                    base, rights=(original,), status='partial',
+                    coverage='partial', pagination_complete=False,
+                )
             offer_id = _numilog_selected_offer_id(
                 account.identity_id, account.credential_id, account.unique_id,
                 right_id, selected[0], self.library_url,
@@ -805,7 +808,13 @@ class NumilogSession(ProviderSession):
                 delivery='available' if offer_id else 'unknown',
                 delivery_offer_id=offer_id,
             )
-            return replace(base, rights=(qualified,))
+            # A preflight examines ONE exact purchase, even when its initial
+            # MesLivres inventory covered every page. It must never turn the
+            # selected slice into a claim of complete branch-wide coverage.
+            return replace(
+                base, rights=(qualified,), status='partial',
+                coverage='partial', pagination_complete=False,
+            )
 
     def downloadable_resource_snapshot(self, account):
         """#3252 v2: positive-only authenticated resources, not legal rights."""
