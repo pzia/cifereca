@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 import html
+import ipaddress
 import re
 from html.parser import HTMLParser
 from importlib import metadata
@@ -877,37 +878,44 @@ class ParisClient:
                          "(lien absent ou ambigu). Aucun emprunt lancé ; actualisez la disponibilité ou vérifiez le parcours sur le site Paris.")
 
     def _validate_pnb_redirect_url(self, url: str) -> None:
+        """Host-neutral validation of one supplier-signed HTTPS redirect.
+
+        This does NOT authorize an arbitrary URL: callers first attest the
+        unique Paris ASSARedirect origin. A foreign GET is made solely through
+        Core's peer-pinned public transport, without private session headers.
+        """
         try:
+            if (type(url) is not str or not 0 < len(url) <= 16384
+                    or any(ord(c) < 33 or ord(c) == 127 or c == "\\\\" or c.isspace()
+                           for c in url)):
+                raise ValueError
             parsed = urlparse(url)
             host = (parsed.hostname or "").casefold()
-            port = parsed.port
-        except ValueError:
-            # Never echo the input URL: it can carry signed delivery tokens.
-            raise ParisRedirectError("") from None
-        base_host = (urlparse(self.base_url).hostname or "").casefold()
-        existing_host = (
-            host == base_host
-            or host == "marketplace.syracuse.cloud" or host.endswith(".syracuse.cloud")
-            or host == "pnb-dilicom.centprod.com"
-            or host == "numilog.com" or host.endswith(".numilog.com")
-        )
-        # Exact delivery hosts observed in authenticated Paris diagnostics.
-        # edenlivres and edelivres are distinct observed hosts, never aliases.
-        # A signed loan/ACSM redirect must never downgrade to plaintext HTTP
-        # or navigate to an arbitrary service port, INCLUDING for legacy
-        # "existing_host" entries. This check is run before every GET hop.
-        supplier_host = host in {
-            "www.edenlivres.fr", "www.cantook.net", "acs4.edelivres.fr",
-            "acs4.edenlivres.fr", "acs4.cantook.net",
-        }
-        if (parsed.scheme != "https" or port not in (None, 443)
-                or parsed.username is not None or parsed.password is not None
-                or not (existing_host or supplier_host)):
+            if (parsed.scheme != "https" or parsed.port not in (None, 443)
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.fragment or not host or host.endswith(".")
+                    or "%" in parsed.netloc or host in {"localhost", "metadata.google.internal"}
+                    or host.endswith((".localhost", ".local", ".internal", ".home.arpa"))):
+                raise ValueError
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                pass
+            else:
+                raise ValueError
+            if (len(host) > 253 or len(host.split(".")) < 2
+                    or any(re.fullmatch(
+                        r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label,
+                    ) is None for label in host.split("."))):
+                raise ValueError
+        except (ValueError, AttributeError, TypeError):
+            # Arbitrary subdomains can contain account IDs or bearer tokens.
+            # Only the closed public_site() label may enter a diagnostic.
             _TRACE_LOG.warning(
-                "PNB redirect refused site=%s reason=host_scheme_port_or_credentials",
+                "PNB redirect refused site=%s reason=invalid_https_destination",
                 public_site(url),
             )
-            raise ParisRedirectError(host)
+            raise ParisRedirectError(public_site(url)) from None
 
     @staticmethod
     def _pnb_trace_path(url: str) -> str:
@@ -941,10 +949,24 @@ class ParisClient:
         )
 
     def _get_pnb_response(self, url, **kwargs):
-        # httpx builds next_request even with follow_redirects=False. A malformed
-        # Location can therefore fail before our per-hop URL validation.
+        # Only the configured Paris portal may receive authenticated cookies.
+        # A signed 3xx can name any public HTTPS CDN; use the Core public-peer
+        # transport with a fresh empty cookie jar on EVERY foreign hop.
+        # Never route SSO/private POSTs through this content-only branch.
+        self._validate_pnb_redirect_url(url)
+        host = (urlparse(url).hostname or "").casefold()
+        base_host = (urlparse(self.base_url).hostname or "").casefold()
         try:
-            return self.client.get(url, follow_redirects=False, **kwargs)
+            if host == base_host:
+                return self.client.get(url, follow_redirects=False, **kwargs)
+            headers = dict(kwargs.get("headers") or {})
+            for name in list(headers):
+                if name.casefold() not in {"accept", "accept-language", "user-agent"}:
+                    del headers[name]
+            with HTTPX_TRANSPORT.public_client(
+                producer="provider.paris.pnb.delivery", timeout=self.timeout,
+            ) as public:
+                return public.get(url, headers=headers, follow_redirects=False)
         except httpx.RemoteProtocolError as exc:
             if "Invalid URL in location header:" in str(exc):
                 raise ParisRedirectError("") from None
@@ -971,7 +993,14 @@ class ParisClient:
                 hop + 1, public_site(current),
             )
             hop_started = time.monotonic()
-            response = self._get_pnb_response(current, headers=navigation_headers)
+            # A foreign supplier never receives Paris Referer, cookies or
+            # Authorization, even when the preceding signed hop was Paris.
+            hop_headers = (navigation_headers if
+                (parsed.hostname or "").casefold() == base_host else {
+                    key: value for key, value in navigation_headers.items()
+                    if key.casefold() in {"accept", "accept-language", "user-agent"}
+                })
+            response = self._get_pnb_response(current, headers=hop_headers)
             self._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             location = response.headers.get("location") or ""
             _TRACE_LOG.info(
@@ -980,7 +1009,7 @@ class ParisClient:
             )
             if response.status_code not in {301, 302, 303, 307, 308}:
                 raise ParisError(
-                    f"Parcours PNB interrompu avant l'ACSM (HTTP {response.status_code} sur {parsed.hostname or 'hôte inconnu'})"
+                    f"Parcours PNB interrompu avant l'ACSM (HTTP {response.status_code} sur {public_site(current)})"
                 )
             if not location:
                 raise ParisError("Parcours PNB interrompu: redirection sans en-tête Location")
@@ -995,11 +1024,13 @@ class ParisClient:
                 return next_url
             current_host = (urlparse(str(response.url)).hostname or "").casefold()
             next_host = (next_parsed.hostname or "").casefold()
-            if current_host == next_host:
+            if current_host == next_host == base_host:
                 navigation_headers["Referer"] = str(response.url)
             else:
-                response_parsed = urlparse(str(response.url))
-                navigation_headers["Referer"] = f"{response_parsed.scheme}://{response_parsed.netloc}/"
+                # Never disclose a signed path or initial Paris session to
+                # an unrelated supplier. Re-entry into Paris gets no implicit
+                # authentication-derived Referer from an untrusted CDN.
+                navigation_headers.pop("Referer", None)
             current = next_url
         raise ParisError(f"Parcours PNB trop long ({max_redirects} redirections) sans URL ACSM")
 
