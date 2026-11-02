@@ -12,7 +12,7 @@ from cifereca.gui.sync_source_controls_overview import sync_source_controls_over
 
 def source(**kwargs):
     values = dict(
-        sync_capable=True, enabled=True, source_id="opaque-source",
+        sync_capable=True, enabled=True, connected=True, source_id="opaque-source",
         sync_capabilities=(
             "remote_inventory", "scheduled_refresh", "local_materialization",
         ),
@@ -179,3 +179,79 @@ def test_gtk_card_keeps_provider_first_line_without_extra_broker_actions():
     assert "Réglages · Fichiers : autorisation non vérifiée" in row.subtitle
     assert not window.runner.tasks
     assert calls == [("sources", "alice")]
+
+
+@pytest.mark.parametrize(("enabled", "connected", "reason"), [
+    (True, False, "source déconnectée"),
+    (False, True, "source désactivée"),
+    (False, False, "source désactivée"),
+])
+def test_saved_on_modes_are_explicitly_suspended_when_source_unavailable(
+    enabled, connected, reason,
+):
+    calls = []
+    b = broker(
+        schedule=dict(mode="periodic", interval_minutes=60),
+        authorization=consent(enabled=True), calls=calls,
+    )
+    src = source(enabled=enabled, connected=connected)
+    info = sync_source_controls_overview(src, b)
+    assert "Notices et droits : périodique (suspendue)" in info
+    assert "Fichiers : autorisation activée (suspendue)" in info
+    assert reason in info
+    assert "source déconnectée" in info if not connected else "source déconnectée" not in info
+    assert calls == [
+        ("read-schedule", "opaque-source"),
+        ("read-consent", "opaque-source"),
+    ]
+    # The aggregate and each card must describe the same operational state.
+    from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
+    overview = sync_axes_dashboard_summary([src], b)
+    assert "0 programmation(s) active(s)" in overview
+    assert "0 autorisation(s) effective(s)" in overview
+    assert "1 programmation(s) suspendue(s)" in overview
+    assert "1 autorisation(s) suspendue(s)" in overview
+    assert "opaque-source" not in info and "opaque-source" not in overview
+
+
+def test_manual_policy_is_not_counted_as_suspended_automatic_refresh():
+    src = source(connected=False)
+    info = sync_source_controls_overview(
+        src, broker(
+            schedule=dict(mode="manual", interval_minutes=60),
+            authorization=consent(enabled=False),
+        ),
+    )
+    assert "Notices et droits : manuelle" in info
+    assert "manuelle (suspendue)" not in info
+    assert "autorisation désactivée (suspendue)" not in info
+    assert "source déconnectée" in info
+
+
+def test_withdrawn_capability_with_old_on_consent_remains_visible_but_suspended():
+    info = sync_source_controls_overview(
+        source(connected=False),
+        broker(
+            schedule=dict(mode="on_start", interval_minutes=60),
+            authorization=consent(supported=False, enabled=True),
+        ),
+    )
+    assert "Notices et droits : au démarrage (suspendue)" in info
+    assert "Fichiers : autorisation antérieure activée" in info
+    assert "(activation indisponible)" in info
+    assert "(suspendue)" in info
+    assert "Fichiers : autorisation désactivée" not in info
+    assert "source déconnectée" in info
+
+
+def test_cannot_claim_effective_consent_when_connection_field_is_missing_or_truthy():
+    for value in (None, 1, "true", object()):
+        src = source(connected=value)
+        info = sync_source_controls_overview(
+            src,
+            broker(schedule=dict(mode="periodic", interval_minutes=60),
+                   authorization=consent(enabled=True)),
+        )
+        assert "périodique (suspendue)" in info
+        assert "autorisation activée (suspendue)" in info
+        assert "source déconnectée" in info
