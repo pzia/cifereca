@@ -55,7 +55,10 @@ def _verified_copy(
         # remain untouched; acquisition eligibility is a separate decision.
         if (len(relative.parts) < 2
                 or relative.parts[0] != owner_directory
-                or owner_directory not in registered_directories):
+                or owner_directory not in registered_directories
+                # A poisoned SQLite path such as A/../B/book.pdf has the
+                # right first component but physically belongs to profile B.
+                or any(part == ".." for part in relative.parts)):
             return False
         current = alias
         for part in relative.parts:
@@ -63,7 +66,7 @@ def _verified_copy(
             if current.is_symlink():
                 return False
         resolved = physical.resolve(strict=True)
-        if not resolved.is_relative_to(resolved_root):
+        if not resolved.is_relative_to(resolved_root / owner_directory):
             return False
         before = os.stat(resolved, follow_symlinks=False)
         if not stat.S_ISREG(before.st_mode) or before.st_size != size:
