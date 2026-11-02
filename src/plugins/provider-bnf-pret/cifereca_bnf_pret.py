@@ -816,7 +816,12 @@ class BnfProviderSession(ProviderSession):
                     raise ReaderHTTPError('session_closed')
                 if not scope_current():
                     raise ReaderHTTPError('loan_not_observed')
-                token = self.client.loan_token(loan_id, signed_url)
+                # Preserve legacy explicit reads; only a Core-selected offer
+                # carries the epoch/borrower closure through every CDN hop.
+                token = (self.client.loan_token(
+                    loan_id, signed_url, admission_current=scope_current,
+                ) if expected_offer_id is not None else
+                    self.client.loan_token(loan_id, signed_url))
                 if self._closed or epoch != self._epoch:
                     raise ReaderHTTPError('session_closed')
                 if not scope_current():
