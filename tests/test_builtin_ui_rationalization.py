@@ -57,7 +57,6 @@ def test_builtin_pages_keep_routes_groups_and_library_action():
         "recent",
         "loans",
         "history",
-        "bookings",
         "sync",
         "tools",
         "plugins",
