@@ -481,11 +481,35 @@ def sync_source_informational_partial(source: object) -> bool:
             or getattr(source, "error", None) != "Synchronisation partielle"):
         return False
     entries = getattr(source, "phase_states", ())
-    # Core's current SyncBroker projects THREE phases, including an explicit
-    # reconcile=not_supported placeholder. The older two-phase projection is
-    # also valid. Requiring exactly two made every real BnF inventory partial
-    # look like an actionable download warning even with no local failure.
-    if not isinstance(entries, (tuple, list)) or not 2 <= len(entries) <= 3:
+    if not isinstance(entries, (tuple, list)) or len(entries) != 2:
+        return False
+    phases: dict[str, str] = {}
+    for row in entries:
+        phase = getattr(row, "phase", None)
+        status = getattr(row, "status", None)
+        if (type(phase) is not str or phase not in {"discover_rights", "materialize"}
+                or type(status) is not str or phase in phases):
+            return False
+        phases[phase] = status
+    return (phases.get("discover_rights") == "partial"
+            and phases.get("materialize") in {"success", "not_supported"})
+
+
+def sync_source_unverified_remote_inventory(source: object) -> bool:
+    """Identify Core's actual three-phase ambiguous remote-inventory partial.
+
+    A third 'reconcile=not_supported' marker is NOT proof of delivery success.
+    The source may simultaneously have attention_required > 0, pending,
+    blocked or failed downloads that SyncSourceRef does not project. Preserve
+    the warning and only explain the unknown coverage; never claim local
+    success from a missing materialization phase or a past success clock.
+    """
+    if (getattr(source, "sync_capable", None) is not True
+            or getattr(source, "status", None) != "partial"
+            or getattr(source, "error", None) != "Synchronisation partielle"):
+        return False
+    entries = getattr(source, "phase_states", ())
+    if type(entries) not in (tuple, list) or len(entries) != 3:
         return False
     phases: dict[str, str] = {}
     for row in entries:
@@ -496,12 +520,9 @@ def sync_source_informational_partial(source: object) -> bool:
                 or type(status) is not str or phase in phases):
             return False
         phases[phase] = status
-    # A missing/failed/partial reconciliation or an unknown future phase is
-    # NOT evidence of a clean local operation. Never invent remote coverage:
-    # this information label means only that no local failure was declared.
     return (phases.get("discover_rights") == "partial"
-            and phases.get("materialize") in {"success", "not_supported"}
-            and phases.get("reconcile", "not_supported") == "not_supported")
+            and phases.get("materialize") == "not_supported"
+            and phases.get("reconcile") == "not_supported")
 
 
 def sync_source_attention(source: object) -> tuple[str, str] | None:
@@ -640,6 +661,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         prefix = (
             "Couverture partielle (information)"
             if alert is not None and alert[0] == "info"
+            else "Partielle · couverture distante non attestée"
+            if sync_source_unverified_remote_inventory(source)
             else "Partielle"
         )
         sync_label = prefix + (f" · {last_attempt}" if last_attempt else "")
@@ -685,9 +708,16 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         summary += "\n" + phase_summary
     if sync_source_informational_partial(source):
         summary += (
-            "\nCouverture distante des prêts/notices non attestée ; "
+            "\nCouverture incomplète des notices et droits ; "
             "aucun échec de téléchargement local déclaré. "
             "La présence et la publication des fichiers restent distinctes."
+        )
+    elif sync_source_unverified_remote_inventory(source):
+        summary += (
+            "\nInventaire distant : couverture non attestée. "
+            "La livraison locale n'est pas qualifiée par cette projection : "
+            "une action requise ou un échec reste possible. "
+            "Consultez les détails du dernier run avant de conclure."
         )
     # Explicit scope, independent of provider-supplied free-form metadata.
     # A manual source sync is not the global opening/acquisition workflow.
