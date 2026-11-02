@@ -29,18 +29,34 @@ def test_library_canonical_facet_requires_source_and_delivery_evidence(tmp_path)
         assert _origins(store) == (expected,)
         assert _origins(store, identity="B") == ()
 
-        with store._lock, store._connect() as db:
-            db.execute(
-                "UPDATE origin_links SET evidence_ref='' "
-                "WHERE origin_link_id=?", (published.origin_link_ids[0],),
-            )
+        def replace_historical_receipt(value):
+            # Production OriginLink is immutable. Emulate a separately
+            # imported legacy row by replacing it instead of weakening
+            # the schema's immutability trigger.
+            with store._lock, store._connect() as db:
+                current = db.execute(
+                    "SELECT origin_link_id,origin_kind,identity_id,artifact_id,"
+                    "source_reference_id,created_at,updated_at "
+                    "FROM origin_links WHERE origin_link_id=?",
+                    (published.origin_link_ids[0],),
+                ).fetchone()
+                assert current is not None
+                db.execute(
+                    "DELETE FROM origin_links WHERE origin_link_id=?",
+                    (published.origin_link_ids[0],),
+                )
+                db.execute(
+                    "INSERT INTO origin_links("
+                    "origin_link_id,origin_kind,identity_id,artifact_id,"
+                    "source_reference_id,evidence_ref,created_at,updated_at)"
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (*current[:5], value, *current[5:]),
+                )
+
+        replace_historical_receipt("")
         assert _origins(store) == ()
 
-        with store._lock, store._connect() as db:
-            db.execute(
-                "UPDATE origin_links SET evidence_ref='core-delivery:receipt' "
-                "WHERE origin_link_id=?", (published.origin_link_ids[0],),
-            )
+        replace_historical_receipt("core-delivery:receipt")
         assert _origins(store) == (expected,)
 
         with store._lock, store._connect() as db:
