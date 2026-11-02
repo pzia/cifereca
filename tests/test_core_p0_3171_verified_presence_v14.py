@@ -240,3 +240,48 @@ def test_verified_copy_inside_target_profile_remains_positive_after_path_moves(
             (str(nested), str(original)),
         )
     assert plan(store, snapshot, tmp_path)[0].provider_satisfied
+
+
+
+def test_dotdot_sqlite_path_cannot_attest_bytes_from_another_profile(store, tmp_path):
+    """Profile A/../B is not an A placement, even with A's valid OriginLink."""
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    register(store, "B", "another", "card-B")
+    own = target(tmp_path, "A")
+    foreign = target(tmp_path, "B")
+    publish(store, tmp_path / "EBooks", own, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].state == "present_attested"
+
+    # Historical/poisoned DB keeps A's true origin, identity and SHA, but
+    # rewrites only the pathname through a parent component into profile B.
+    own.unlink()
+    disguised = tmp_path / "EBooks" / "A" / ".." / "B" / foreign.name
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE placements SET path=? WHERE path=?", (
+            str(disguised), str(own),
+        ))
+    decisions = plan(store, snapshot, tmp_path)
+    assert len(decisions) == 1
+    assert decisions[0].provider_satisfied is False
+    assert decisions[0].state != "present_attested"
+    assert foreign.read_bytes() == BYTES
+    assert store.placement_for_path(disguised)["identity_id"] == "A"
+
+
+def test_verified_copy_never_accepts_lexical_escape_from_owner_directory(tmp_path):
+    from hashlib import sha256
+    from cifereca.core.convergence_verified_presence import _verified_copy
+    root = tmp_path / "EBooks"
+    own = root / "A" / "book.pdf"
+    other = root / "B" / "book.pdf"
+    own.parent.mkdir(parents=True)
+    other.parent.mkdir(parents=True)
+    own.write_bytes(BYTES)
+    other.write_bytes(BYTES)
+    opts = dict(root=root, owner_directory="A",
+                registered_directories=frozenset({"A"}),
+                size=len(BYTES), sha256=sha256(BYTES).hexdigest())
+    assert _verified_copy(str(own), **opts) is True
+    assert _verified_copy(str(root / "A" / ".." / "B" / "book.pdf"), **opts) is False
+    assert _verified_copy(str(root / "A" / ".." / ".." / "EBooks" / "B" / "book.pdf"), **opts) is False
