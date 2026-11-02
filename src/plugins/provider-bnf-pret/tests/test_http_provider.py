@@ -72,7 +72,7 @@ class HTTPProviderTests(unittest.TestCase):
         s.close()
         with self.assertRaises(ProviderConfigurationError): s.loans(a)
 
-    def test_typed_partial_inventory_replaces_mutable_v1_error_sidechannel(self):
+    def test_typed_scoped_inventory_replaces_mutable_v1_error_sidechannel(self):
         s, calls, state = self.make()
         try:
             account, = s.connect()
@@ -80,13 +80,14 @@ class HTTPProviderTests(unittest.TestCase):
             prior = len(calls)
             positive = s.loan_inventory_snapshot(account)
             self.assertEqual(len(calls), prior + 1)
-            self.assertEqual(positive.status, 'partial')
-            self.assertEqual(positive.reason_code, 'inventory_not_exhaustive')
+            self.assertEqual(positive.status, 'success')
+            self.assertIsNone(positive.reason_code)
             self.assertEqual(len(positive.loans), 1)
             self.assertEqual(len(positive.branches), 1)
             self.assertEqual((positive.branches[0].upstream,
                               positive.branches[0].completeness),
-                             ('bnf_html', 'partial'))
+                             ('bnf_html', 'complete'))
+            self.assertTrue(positive.branch_claims_complete('bnf_html', 'digital'))
             self.assertNotIn('last_loan_errors', vars(s))
 
             # An empty observed page is NOT proof that an earlier right
