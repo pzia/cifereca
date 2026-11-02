@@ -29,6 +29,13 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
                 ("alice", "kobo", "vault-alice"),
             ).fetchall()
             assert len(stale) == 1
+            # Retire the synthetic borrower's row as well: a detached
+            # provider_account remains subject to Kobo's unique-owner rule.
+            db.execute(
+                "DELETE FROM provider_accounts WHERE identity_id=? "
+                "AND provider_id=? AND credential_id=?",
+                ("alice", "kobo", "vault-alice"),
+            )
             db.execute(
                 "DELETE FROM provider_connections WHERE identity_id=? "
                 "AND provider_id=? AND credential_id=?",
