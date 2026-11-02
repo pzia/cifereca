@@ -57,7 +57,6 @@ def _window(*, with_pages=True):
         _identity_context_generation=9,
         service=service,
         history_objects={"A": "private"},
-        booking_objects={"A": "private"},
         _history_all_rows=["A"],
         _history_rows=["A"],
         _history_loaded_count=1,
@@ -69,10 +68,6 @@ def _window(*, with_pages=True):
         window.history_page = NS(
             show_rows=lambda rows: events.append(("history-clear", rows)),
             detail=NS(empty=lambda title, msg: events.append(("history-empty", title, msg))),
-        )
-        window.booking_page = NS(
-            show_rows=lambda rows: events.append(("booking-clear", rows)),
-            detail=NS(empty=lambda title, msg: events.append(("booking-empty", title, msg))),
         )
     return window, events, a, b
 
@@ -134,8 +129,7 @@ def test_account_commit_precedes_private_view_clear_and_feedback():
     account_changed(window, _dropdown(1), None)
     assert window.service.current_account is b
     assert [evt[0] for evt in events] == [
-        "select", "history-clear", "history-empty",
-        "booking-clear", "booking-empty", "toast",
+        "select", "history-clear", "history-empty", "toast",
     ]
     assert events[-1] == ("toast", "Compte : Compte B")
     assert window._account_context_generation == 5
@@ -143,7 +137,6 @@ def test_account_commit_precedes_private_view_clear_and_feedback():
     assert window.service.last_history == []
     assert window.service.last_bookings == []
     assert window.history_objects == {}
-    assert window.booking_objects == {}
     assert window._history_all_rows == []
     assert window._history_rows == []
     assert window._history_loaded_count == 0
@@ -255,5 +248,4 @@ def test_secondary_invalidated_only_once_for_a_single_account_change():
     account_changed(window, _dropdown(1), None)
     assert window._account_context_generation == 5
     assert [event[0] for event in events].count("history-clear") == 1
-    assert [event[0] for event in events].count("booking-clear") == 1
     assert [event[0] for event in events].count("toast") == 1
