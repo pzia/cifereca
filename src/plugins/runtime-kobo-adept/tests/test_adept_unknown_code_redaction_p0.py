@@ -50,7 +50,7 @@ def fail(monkeypatch, *, code, operation=None, source_type="http", exit_code=1,
         assert private not in published
     assert emitted[-1][0][1] == "error"
     assert runtime.last_run_diagnostic["operation"] in {
-        "download request", "acsm return", "profile show", "profile list",
+        "download request", "profile show", "profile list",
         "other", "contract",
     }
     assert exc.exit_code == exit_code
@@ -66,7 +66,6 @@ def fail(monkeypatch, *, code, operation=None, source_type="http", exit_code=1,
 ])
 @pytest.mark.parametrize("operation", [
     ["download", "request", "-", "--json"],
-    ["acsm", "return", "loan", "--json"],
     ["profile", "show", "fake", "--json"],
     ["contract", "--json"],
 ])

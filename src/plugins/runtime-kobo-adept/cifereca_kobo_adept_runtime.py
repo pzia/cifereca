@@ -277,6 +277,18 @@ class KoboAdeptRuntime:
     def available(self): return bool(shutil.which(self.command[0]))
 
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
+        # #4048: the generic CLI entrypoint must not bypass the retired
+        # return_loan/execute(return) API. Reject before a subprocess, path
+        # resolution, diagnostic state, profile or checkpoint can be touched.
+        # No untrusted reference is coerced into text for this gate.
+        if (type(args) in (list, tuple) and args
+                and args[0] == 'acsm'
+                and any(type(part) is str and part.casefold() == 'return'
+                        for part in args[1:])):
+            raise AttentionRequired(
+                'La restitution volontaire ADEPT n’est plus disponible.',
+                code='kobo_adept_drm_mutation_unsupported',
+            )
         started = time.monotonic()
         self.last_run_diagnostic = {
             'operation': operation_family(args),

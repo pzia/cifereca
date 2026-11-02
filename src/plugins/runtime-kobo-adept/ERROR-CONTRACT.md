@@ -1,3 +1,13 @@
+## 1.2.37 — garde ultime sur la commande CLI générique (#4048 P1)
+
+L'ancienne extension pouvait appeler directement `KoboAdeptRuntime.run_json`
+malgré le retrait de la méthode de retour. Les arguments commençant par
+`acsm` et contenant un sous-ordre `return` sont désormais refusés par
+`kobo_adept_drm_mutation_unsupported` **avant tout sous-processus**, diagnostic,
+découverte de profil ou lecture du contenu. Un retour observé dans
+l'inventaire ADEPT historique reste consultable ; le téléchargement et le
+provisioning des profils ne sont pas modifiés.
+
 ## 1.2.36 — retrait de la restitution volontaire (#4048 P1)
 
 Le runtime n'annonce plus `loan.return`, `supports(return)` retourne

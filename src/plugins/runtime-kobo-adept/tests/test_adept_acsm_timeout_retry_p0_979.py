@@ -24,7 +24,6 @@ XML = "<fulfillmentToken>PRIVATE_TOKEN</fulfillmentToken>"
     (["download", "request", "-", "--json"],
      {"source": {"type": "kobo"}}, True),
     (["profile", "list", "--json"], None, True),
-    (["acsm", "return", "loan-id", "--json"], None, True),
     (["download", "request", "-", "--json"],
      {"source": {"type": "ACSM"}}, True),
     (["download", "request", "-", "--json"],

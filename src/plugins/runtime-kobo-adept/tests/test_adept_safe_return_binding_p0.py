@@ -95,8 +95,32 @@ def test_plugin_manifest_keeps_readonly_loans_and_fulfillment_without_return():
 
     descriptor = json.loads((ROOT / "cifereca-plugin.json").read_text(encoding="utf-8"))
     runtime = descriptor["plugins"][0]
-    assert descriptor["package"]["version"] == runtime["version"] == "1.2.36"
+    assert descriptor["package"]["version"] == runtime["version"] == "1.2.37"
     assert "loan.return" not in runtime["capabilities"]
     assert "loan.inventory.readonly" in runtime["capabilities"]
     assert "acquisition.fulfill" in runtime["capabilities"]
     assert "adept.profile.provision" in runtime["capabilities"]
+
+
+@pytest.mark.parametrize("argv", [
+    ["acsm", "return", "loan-17", "--profile", "alice", "--json"],
+    ["acsm", "--json", "return", "loan-17"],
+    ("acsm", "return"),
+    ["acsm", "RETURN", "loan-17"],
+])
+def test_legacy_generic_cli_return_blocked_even_with_valid_argv(argv):
+    from unittest.mock import patch
+
+    r = KoboAdeptRuntime(SimpleNamespace(
+        config={"command": ["kobo-adept"]},
+        logger=logging.getLogger("test.safe.adept"),
+        report_diagnostic=lambda *args, **kwargs: None,
+    ))
+    assert r.last_run_diagnostic == {}
+    with patch("cifereca_kobo_adept_runtime.subprocess.run") as invocation:
+        with pytest.raises(AttentionRequired) as error:
+            r.run_json(argv, payload={"secret": SECRET})
+    assert error.value.code == "kobo_adept_drm_mutation_unsupported"
+    assert SECRET not in str(error.value)
+    assert r.last_run_diagnostic == {}
+    invocation.assert_not_called()
