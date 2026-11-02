@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from .borrower_scoped_options import linked_borrower_choices
+
 
 def build_provider_account_editor(
     *, data: dict[str, Any], provider_id: str, account_id: str,
     descriptor: Any, configured_identities: list[dict[str, Any]],
     accounts_container: Any, config: Any, Gtk: Any, Adw: Any,
+    observed_borrowers: Any = (),
 ) -> tuple[dict[str, Any], Any]:
     """Create descriptor-driven provider rows and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
@@ -97,6 +100,37 @@ def build_provider_account_editor(
             note.set_title(field.label)
             note.set_subtitle(help_text)
             group.add(note)
+    # Declarative borrower-specific fields consume only accounts previously
+    # observed by Core; opening Settings never connects, inventories or GETs.
+    # Persisted borrower keys remain available for offline re-editing.
+    scoped_option_fields: dict[str, dict[str, dict[str, Any]]] = {}
+    for spec in getattr(descriptor, "borrower_scoped_options", ()):
+        scoped_option_fields[spec.key] = {}
+        stored = options.get(spec.key, {})
+        try:
+            borrowers = linked_borrower_choices(
+                stored, spec, observed_borrowers,
+                provider_id=provider_id, credential_id=account_id,
+                identity_id=chosen_owner,
+            )
+        except ValueError:
+            invalid_saved_snapshot = True
+            borrowers = ()
+        for borrower, label in borrowers:
+            branch_fields = {}
+            for medium, branch_name in spec.branches:
+                entry = Adw.EntryRow()
+                entry.set_title(f"{spec.label} · {label} · {branch_name}")
+                saved = stored.get(borrower, {}).get(medium) if type(stored) is dict else None
+                entry.set_text(saved if type(saved) is str else spec.default)
+                group.add(entry)
+                branch_fields[medium] = entry
+            scoped_option_fields[spec.key][borrower] = branch_fields
+        if borrowers and type(getattr(spec, "help_text", None)) is str and spec.help_text:
+            note = Adw.ActionRow()
+            note.set_title(spec.label)
+            note.set_subtitle(spec.help_text)
+            group.add(note)
     account_note = getattr(descriptor, "account_note", None)
     if option_fields and account_note:
         note = Adw.ActionRow()
@@ -109,6 +143,7 @@ def build_provider_account_editor(
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields,
         "option_fields": option_fields,
+        "scoped_option_fields": scoped_option_fields,
         "original_options": options, "original_credentials": credentials,
         "original_account": dict(data),
         "invalid_saved_snapshot": invalid_saved_snapshot,
