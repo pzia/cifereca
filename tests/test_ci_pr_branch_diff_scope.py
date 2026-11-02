@@ -73,13 +73,18 @@ class PRDiffScopeTests(unittest.TestCase):
     def test_readme_scope_is_status_aware_for_pr_changes(self):
         import os
         source = WORKFLOW.read_text(encoding="utf-8")
+        full_begin = "          e2e_readme_requires_full() {\n"
         begin = "          e2e_runtime_changes() {\n"
-        assert source.count(begin) == 1
+        assert source.count(full_begin) == source.count(begin) == 1
+        full_body = source.split(full_begin, 1)[1].split("\n          }\n", 1)[0]
         body = source.split(begin, 1)[1].split("\n          }\n", 1)[0]
-        assert 'git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA"' in body
+        assert 'git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA"' in full_body
+        assert source.count("if e2e_readme_requires_full; then") == 2
+        assert 'core_mode=full\n              core_targets=tests' in source
         script = (
             "set -euo pipefail\n"
             'changed_file="$1"\n'
+            'e2e_readme_requires_full() {\n' + full_body + "\n}\n"
             'e2e_runtime_changes() {\n' + body + "\n}\n"
             "if e2e_runtime_changes; then echo true; else echo false; fi\n"
         )
@@ -108,6 +113,15 @@ class PRDiffScopeTests(unittest.TestCase):
         git(self.repo, "commit", "-m", "delete README")
         deleted = git(self.repo, "rev-parse", "HEAD")
         self.assertTrue(selected(mixed, deleted, ["e2e/README.md"]))
+
+        self.change("e2e/README.md", "docs v3\n")
+        restored = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "mv", "e2e/README.md", "e2e/README.archived.md")
+        git(self.repo, "commit", "-m", "rename README")
+        renamed = git(self.repo, "rev-parse", "HEAD")
+        self.assertTrue(selected(restored, renamed, [
+            "e2e/README.md", "e2e/README.archived.md",
+        ]))
 
     def test_workflow_checks_effective_tree_then_scopes_from_merge_base(self):
         content = WORKFLOW.read_text()
