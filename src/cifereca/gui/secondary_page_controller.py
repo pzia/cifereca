@@ -1,6 +1,6 @@
 """GTK-independent constructors for History shell pages (#1051).
 
-Both pages use the existing MasterDetailPage; the window retains service,
+The History page uses the existing MasterDetailPage; the window retains service,
 callbacks and ownership. Gtk, MasterDetailPage, MultiSelect are injected.
 No eager provider connection, scan, or subscription is introduced.
 """
