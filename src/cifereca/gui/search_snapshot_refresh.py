@@ -14,9 +14,26 @@ def _identity(window):
 
 
 def _refs(row, owner):
-    return {(r.get('provider_id'), r.get('item_id'), owner)
-            for r in row.get('source_refs', ())
-            if r.get('identity_id') == owner and r.get('provider_id') and r.get('item_id')}
+    """Exact existing source-right identities, not bibliographic aliases.
+
+    The provider can issue the same edition to distinct credentials or
+    borrowers. Matching only provider/item/identity could redirect a selected
+    remote book to another borrower's row during a refreshed search.
+    """
+    if type(row) is not dict:
+        return set()
+    possessions = row.get('possessions')
+    if type(possessions) not in (list, tuple):
+        return set()
+    return {
+        (p['entitlement_id'], p['provider_id'], p['item_id'],
+         p['account_id'], owner)
+        for p in possessions
+        if type(p) is dict and p.get('identity_id') == owner
+        and all(type(p.get(k)) is str and p[k]
+                for k in ('entitlement_id', 'provider_id', 'item_id'))
+        and (p.get('account_id') is None or type(p.get('account_id')) is str)
+    }
 
 
 def _selected_key(window, rows, owner):
@@ -26,7 +43,14 @@ def _selected_key(window, rows, owner):
         return key
     previous = getattr(window, '_search_local_objects', {}).get(key, {})
     refs = _refs(previous, owner)
-    matches = [str(row['key']) for row in rows if refs & _refs(row, owner)]
+    if not refs:
+        return None
+    # A previously grouped multi-account row may split on refreshed
+    # provenance. Do not guess which of its former rights was selected.
+    matches = [
+        str(row['key']) for row in rows
+        if refs.issubset(_refs(row, owner))
+    ]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -93,7 +117,7 @@ def invalidate_search_snapshot(window):
         key = _selected_key(window, rows, owner)
         window._populate_local_search(rows)
         # Core can replace source:<provider>:<purchase> with artifact:<sha>.
-        # Preserve selection only via a unique same-owner source reference.
+        # Preserve selection only via unique, exact same-owner source rights.
         page = window.search_page
         if key is not None:
             for index in range(page.store.get_n_items()):
