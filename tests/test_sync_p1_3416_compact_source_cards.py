@@ -18,13 +18,13 @@ from tests.test_core_ui_1347_sync_action_scope import (
 
 @pytest.mark.parametrize(("fields", "expected"), [
     (dict(status="failed", connected=True, enabled=True),
-     "examiner les détails du dernier cycle"),
+     "examiner le dernier cycle"),
     (dict(status="failed", connected=False, enabled=True),
      "reconnecter ce compte"),
     (dict(status="blocked", connected=True, enabled=False),
-     "activer cette source"),
+     "activer la source"),
     (dict(status="partial", connected=True, enabled=True),
-     "examiner les détails du dernier cycle"),
+     "examiner le dernier cycle"),
 ])
 def test_problem_guidance_is_source_scoped_and_actionable(fields, expected):
     source = _source(provider_id="future-provider", **fields)
@@ -64,10 +64,10 @@ def test_untrusted_alert_or_provider_text_never_becomes_advice():
 
 @pytest.mark.parametrize(("options", "text"), [
     (dict(status="failed", error="https://private.invalid/SECRET_CARD"),
-     "examiner les détails du dernier cycle"),
+     "examiner le dernier cycle"),
     (dict(status="partial", error="Synchronisation partielle",
           phase_states=(NS(phase="discover_rights", status="partial"),)),
-     "examiner les détails du dernier cycle"),
+     "examiner le dernier cycle"),
     (dict(status="failed", enabled=True, connected=False),
      "reconnecter ce compte"),
 ])
@@ -82,7 +82,7 @@ def test_actual_gtk_card_keeps_problem_and_next_step_above_collapsed_details(
     window, _, calls, _, _ = _fixture(sources=[source])
     group = window._sync_sources_box.children[0]
     row = group.children[0]
-    assert row.subtitle_lines == 4
+    assert row.subtitle_lines == 3
     assert row.subtitle.startswith(sync_source_attention(source)[1] + "\n")
     assert text in row.subtitle.splitlines()[1]
     assert len(row.prefixes) == 1
@@ -103,7 +103,7 @@ def test_healthy_card_is_compact_and_preserves_manual_sync_action(monkeypatch):
     window, _, calls, _, _ = _fixture(sources=[source])
     group = window._sync_sources_box.children[0]
     row = group.children[0]
-    assert row.subtitle_lines == 4
+    assert row.subtitle_lines == 3
     assert row.subtitle.startswith("Fournisseur : future-provider\n")
     assert "À faire :" not in row.subtitle
     assert row.prefixes == []
