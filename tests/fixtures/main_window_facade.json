@@ -1063,12 +1063,6 @@
     "decorators": [],
     "async": false
   },
-  "MainWindow._build_bookings_page": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Name(id='MasterDetailPage', ctx=Load())",
-    "decorators": [],
-    "async": false
-  },
   "MainWindow.refresh_bookings": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='force', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False), Constant(value=None)])",
     "returns": "Constant(value=None)",
