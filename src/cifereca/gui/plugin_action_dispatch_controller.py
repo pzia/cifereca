@@ -34,4 +34,9 @@ def invoke_ui_action(window, action, host) -> None:
             # private paths and HTTP payloads. Only the public exception
             # contract explicitly marks its user_message as UI-safe.
             message = exc.user_message if isinstance(exc, UserFacingError) else "Traitement indisponible"
-            window.show_error(message, "Action impossible")
+            # The public action object is resolved against the current live
+            # registry; never derive a name from untrusted exception text.
+            # The context exists only during this synchronous dialog call.
+            from .ui_dialog_observation import action_dialog_context
+            with action_dialog_context(window, action):
+                window.show_error(message, "Action impossible")
