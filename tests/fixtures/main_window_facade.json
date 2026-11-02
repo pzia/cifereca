@@ -155,12 +155,6 @@
     "decorators": [],
     "async": false
   },
-  "DetailPanel.show_booking": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='Booking', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
   "DetailPanel.show_search": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='loading', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
     "returns": "Constant(value=None)",
@@ -877,30 +871,6 @@
     "decorators": [],
     "async": false
   },
-  "MainWindow.confirm_return": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
-  "MainWindow._return_loan_result": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='result', annotation=Name(id='Any', ctx=Load()))], kwonlyargs=[arg(arg='channel', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
-  "MainWindow._return_loan": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
-  "MainWindow._return_loan_pnb": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
   "MainWindow._query_controls": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='changed'), arg(arg='activate')], kwonlyargs=[arg(arg='library')], kw_defaults=[Constant(value=False)], defaults=[])",
     "returns": null,
@@ -1332,12 +1302,6 @@
   "MainWindow.reconcile_adept_from_detail": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id'), arg(arg='loan'), arg(arg='control')], kwonlyargs=[], kw_defaults=[], defaults=[])",
     "returns": null,
-    "decorators": [],
-    "async": false
-  },
-  "MainWindow.return_adept_from_detail": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id', annotation=Name(id='str', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
     "decorators": [],
     "async": false
   },
