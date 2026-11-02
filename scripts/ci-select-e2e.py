@@ -22,6 +22,7 @@ SYNC_PRODUCERS = frozenset((
 ))
 CAPTURE_GTK = ("capture-session-gtk-1366",)
 BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
+BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600",) + CAPTURE_GTK + ("startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366")
@@ -37,13 +38,13 @@ CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
 RECOMMENDATIONS_GTK = ("recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
 OPTIMIZER_GTK = ("optimizer-handoff-1366", "optimizer-handoff-1600")
-ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK
+ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          *CAPTURE_GTK, "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366")
 # MainWindow changes affect core/detail and Diagnostics navigation probes.
 MAINWINDOW = tuple(dict.fromkeys(
-    CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
+    CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366") + BNF_COVERS
 ))
 # The Diagnostics common probe is imported by every other Diagnostics probe;
 # navigation probes also implement both MainWindow baseline scenarios.
@@ -56,12 +57,12 @@ LOCAL_GUI = {
     "action_layout.py": BOOK_DETAIL,
     "action_widgets.py": BOOK_DETAIL,
     "book_facets.py": ("search-filter-p0",) + BOOK_DETAIL,
-    "book_widgets.py": BOOK_DETAIL + ("search-filter-p0",),
-    "cover_loader.py": BOOK_DETAIL,
+    "book_widgets.py": BOOK_DETAIL + ("search-filter-p0",) + BNF_COVERS,
+    "cover_loader.py": BOOK_DETAIL + BNF_COVERS,
     "cover_preview.py": BOOK_DETAIL,
     "facet_text.py": ("search-filter-p0",),
     "query_controls.py": ("search-filter-p0", "core-navigation"),
-    "query_model.py": ("search-filter-p0",) + BOOK_DETAIL,
+    "query_model.py": ("search-filter-p0",) + BOOK_DETAIL + BNF_COVERS,
     "search_intent.py": ("search-filter-p0",),
     "settings_ai_actions.py": LLM,
     "settings_ai_section.py": LLM,
@@ -76,6 +77,7 @@ PROBES = {
     "e2e/capture_session_gtk_probe.py": CAPTURE_GTK,
     "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
     "e2e/book_detail_probe.py": BOOK_DETAIL,
+    "e2e/bnf_cover_probe.py": BNF_COVERS,
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
     "e2e/optimizer_handoff_probe.py": OPTIMIZER_GTK,
@@ -123,6 +125,8 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             selected.update(PROBES[path])
         elif path.startswith("e2e/"):
             return ALL  # unknown or shared E2E helper
+        elif path.startswith("src/plugins/provider-bnf-pret/"):
+            selected.update(BNF_COVERS)
         elif path.startswith("src/plugins/diagnostics-page/") or path == "src/cifereca/core/diagnostic_numilog_projection.py":
             selected.update(DIAG)
         elif path.startswith("src/plugins/home-page/"):
