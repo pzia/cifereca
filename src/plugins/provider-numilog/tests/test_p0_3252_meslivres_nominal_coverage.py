@@ -25,9 +25,12 @@ def _pages(monkeypatch, session_obj, pages):
         assert url in urls
         return url, str(urls.index(url))
 
-    def parse(html, url, **_kwargs):
+    def parse(html, url, **kwargs):
         index = int(html)
         assert url == urls[index]
+        diagnostics = kwargs.get("inventory_diagnostics")
+        if diagnostics is not None:
+            diagnostics["complete"] = True  # Synthetic parser saw all cards.
         return list(pages[index]), urls[index + 1] if index + 1 < len(urls) else None
 
     session_obj._page = page
