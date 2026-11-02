@@ -6,12 +6,12 @@ Matching SHA alone neither authorizes adoption nor deletion of another path.
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import hashlib
 import json
 import sqlite3
 
 from .convergence_verified_presence import _verified_copy
+from .missing_placement_readiness import _physical_absence
 
 _MAX_MATCHES = 64
 
@@ -254,6 +254,12 @@ def clear_checkpoint_if_no_duplicates(
         if owner is None or type(owner[0]) is not str or not owner[0]:
             return False
         owner_dir = owner[0]
+        if (owner_dir in {".", ".."} or "/" in owner_dir or "\\" in owner_dir):
+            return False
+        # Missing bytes are meaningful only below the exact registered
+        # profile directory, with no symlink in the ancestor chain.
+        # os.path.lexists(path) alone also returns False outside this scope.
+        identity_root = library_root / owner_dir
         if db.execute(
             "SELECT 1 FROM identities WHERE directory_name=? "
             "AND identity_id<>? LIMIT 1",
@@ -280,11 +286,10 @@ def clear_checkpoint_if_no_duplicates(
                     or candidate_artifact != artifact or state == "present"
                     or type(candidate_path) is not str):
                 return False
-            previous = Path(candidate_path)
-            # Missing registered placement is not missing physical bytes.
-            # Preserve the queue until EACH previous pathname is absent.
-            if (not previous.is_absolute() or ".." in previous.parts
-                    or os.path.lexists(previous)):
+            # A missing filename in another profile, under a symlinked
+            # ancestor, or behind an unavailable parent cannot prove that
+            # this identity's duplicate was physically cleaned up.
+            if _physical_absence(identity_root, candidate_path) != "absent":
                 return False
             former_paths.append((pid, candidate_path, state))
         if len(former_paths) != len(former_ids):
@@ -324,7 +329,7 @@ def clear_checkpoint_if_no_duplicates(
                 "AND identity_id=? AND artifact_id=?",
                 (pid, identity, artifact),
             ).fetchone() != (candidate_path, state)
-                    or os.path.lexists(candidate_path)):
+                    or _physical_absence(identity_root, candidate_path) != "absent"):
                 return False
         if db.execute(
             "SELECT 1 FROM placements WHERE placement_id=? "
