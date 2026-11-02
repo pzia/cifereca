@@ -7,6 +7,7 @@ in WEB.md; a successful parse does not authenticate a session or attest a right.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from html.parser import HTMLParser
 import re
 from urllib.parse import urljoin, urlsplit
@@ -470,6 +471,71 @@ def _loan_cover(card: _Node, resource_id: str) -> str | None:
     return images[0]
 
 
+
+# Qualified on the official BnF activity page (02/11/2026). Never use
+# expiry from an ACSM, signed URL or the global quota renewal notice.
+_MONTHS_FR = dict(zip(
+    ("janvier février mars avril mai juin juillet août septembre octobre novembre décembre").split(),
+    range(1, 13),
+))
+_DATE_FR = re.compile(r"([0-9]{1,2}) ([^\W\d_]+) ([0-9]{4}) à ([0-9]{2}):([0-9]{2})")
+
+
+def _loan_due_at(card: _Node) -> str | None:
+    """Strictly local wall-clock date on the validated loan's own card."""
+    articles = [n for n in card.walk()
+                if n.tag == "article" and n.has_class("js-loan__content")]
+    if len(articles) != 1 or not articles[0].closed:
+        return None
+    article = articles[0]
+
+    def owned(node: _Node):
+        if node is not article and (
+                node.tag == "article" or node.has_class("js-loan") or
+                ("itemscope" in node.attrs and
+                 node.attrs.get("itemtype", "").rstrip("/").endswith("/Book"))):
+            return  # skip nested recommendations and foreign card/book scopes
+        if node.tag in _HIDDEN or "hidden" in node.attrs or node.attrs.get("aria-hidden") == "true":
+            return
+        yield node
+        for child in node.children:
+            if isinstance(child, _Node):
+                yield from owned(child)
+
+    blocks = [child for n in owned(article) if n.has_class("details-content__body")
+              for child in n.children if isinstance(child, _Node)
+              and child.has_class("time-remaining") and child.closed
+              and "hidden" not in child.attrs and child.attrs.get("aria-hidden") != "true"]
+    if len(blocks) != 1:
+        return None
+    block = blocks[0]
+    tags = [x for x in block.children if isinstance(x, _Node)]
+    if len(tags) != 1 or tags[0].tag != "strong" or not tags[0].closed:
+        return None
+    strong = tags[0]
+    if ("hidden" in strong.attrs or strong.attrs.get("aria-hidden") == "true"
+            or any(isinstance(x, _Node) for x in strong.children)):
+        return None
+    i = block.children.index(strong)
+    before = " ".join(" ".join(x.split()) for x in block.children[:i] if isinstance(x, str)).strip()
+    after = " ".join(" ".join(x.split()) for x in block.children[i + 1:] if isinstance(x, str)).strip()
+    if before.casefold() != "votre prêt expirera le" or after not in {"", "."}:
+        return None
+    match = _DATE_FR.fullmatch(strong.text())
+    if not match:
+        return None
+    day, month, year, hour, minute = match.groups()
+    month_number = _MONTHS_FR.get(month.casefold())
+    if month_number is None:
+        return None
+    try:
+        # No timezone is attested by the portal. Do not append Z/offset.
+        return datetime(int(year), month_number, int(day),
+                        int(hour), int(minute)).isoformat(timespec="seconds")
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class LoanRecord:
     loan_id: str = field(repr=False)
@@ -479,7 +545,8 @@ class LoanRecord:
     # Do not use headers, linked catalogue names or unrelated book scopes.
     authors: tuple[str, ...] = field(default=(), repr=False, compare=False)
     thumbnail_url: str | None = field(default=None, repr=False, compare=False)
-    # Raw dates intentionally absent: no date selector has been qualified.
+    # Portal local time, explicitly scoped to this loan; no guessed offset.
+    due_at: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -539,6 +606,7 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
     loans = {}
     partial = False
     quarantined_loan_ids: set[str] = set()
+    ambiguous_due_ids: set[str] = set()
     for card in cards:
         if not card.closed:
             partial = True
@@ -558,7 +626,8 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         resource_id = next(iter(rids))
         loan = LoanRecord(next(iter(lids)), resource_id,
                           next(iter(titles)) if len(titles) == 1 else "",
-                          tuple(author_values), _loan_cover(card, resource_id))
+                          tuple(author_values), _loan_cover(card, resource_id),
+                          _loan_due_at(card))
         if loan.loan_id in quarantined_loan_ids:
             # The third or later occurrence must not resurrect a loan with
             # two conflicting resource IDs on this same provider page.
@@ -574,12 +643,18 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
                 quarantined_loan_ids.add(loan.loan_id)
                 partial = True
                 continue
-            if previous.thumbnail_url != loan.thumbnail_url:
-                # Duplicate cards with conflicting evidence must not choose
-                # a cover arbitrarily; keep the positive loan but no image.
+            conflicting_cover = previous.thumbnail_url != loan.thumbnail_url
+            conflicting_due = previous.due_at != loan.due_at
+            if conflicting_due:
+                ambiguous_due_ids.add(loan.loan_id)
+            if conflicting_cover or conflicting_due or loan.loan_id in ambiguous_due_ids:
+                # Metadata contradiction does not erase a validated loan,
+                # and later duplicate cards cannot resurrect an uncertain date.
                 partial = True
                 loan = LoanRecord(previous.loan_id, previous.resource_id,
-                                  previous.title, previous.authors)
+                                  previous.title, previous.authors,
+                                  previous.thumbnail_url if not conflicting_cover else None,
+                                  None if loan.loan_id in ambiguous_due_ids else previous.due_at)
             else:
                 loan = previous
         loans[loan.loan_id] = loan
