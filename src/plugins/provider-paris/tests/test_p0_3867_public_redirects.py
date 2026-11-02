@@ -309,3 +309,63 @@ def test_public_supplier_redirect_body_is_never_read(monkeypatch):
         assert seen == []
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("malformed_location", [
+    "https://cdn.example/file.acsm\rPRIVATE",
+    "https://cdn.example/file.acsm\nPRIVATE",
+    "https://cdn.example/file.acsm\tPRIVATE",
+    "https://cdn.example/file.acsm\\\\PRIVATE",
+    "https://cdn.example/file.acsm#FRAGMENT",
+])
+def test_raw_signed_location_refused_before_urljoin_or_second_get(
+    monkeypatch, malformed_location,
+):
+    # HTTP response headers from untrusted suppliers must never be repaired
+    # by urllib before they are authorized as the next signed GET.
+    from types import SimpleNamespace
+    client = ParisClient("https://bibliotheques.paris.fr")
+    calls = []
+
+    def respond(url, **_kwargs):
+        calls.append(url)
+        assert calls == [START]
+        return SimpleNamespace(
+            status_code=302, url=START,
+            headers={"location": malformed_location},
+        )
+
+    monkeypatch.setattr(client, "_get_pnb_response", respond)
+    monkeypatch.setattr(client, "_pnb_trace_response", lambda *_a, **_kw: None)
+    try:
+        with pytest.raises(ParisRedirectError) as error:
+            client._resolve_pnb_loan_to_acsm(START)
+        assert calls == [START]
+        assert "PRIVATE" not in str(error.value)
+        assert "FRAGMENT" not in str(error.value)
+    finally:
+        client.close()
+
+
+def test_same_origin_relative_location_still_valid(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    calls = []
+    relative = "/numerique/another-hop"
+
+    def respond(url, **_kwargs):
+        calls.append(url)
+        return httpx.Response(
+            302, headers={
+                "location": relative if len(calls) == 1 else FINAL,
+            }, request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(client, "_get_pnb_response", respond)
+    try:
+        assert client._resolve_pnb_loan_to_acsm(START) == FINAL
+        assert calls == [
+            START,
+            "https://bibliotheques.paris.fr/numerique/another-hop",
+        ]
+    finally:
+        client.close()
