@@ -157,7 +157,7 @@ def consent_generation(storage, scope):
     try:
         generic = read_policy(storage, scope)
     except Exception:
-        logging.getLogger('cifereca').warning('Source consent generation read failed', exc_info=True)
+        logging.getLogger('cifereca').warning('Source consent generation read failed code=policy_unavailable')
         return "unavailable"
     if generic.configured:
         return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
@@ -180,7 +180,7 @@ def consent_generation_in_transaction(db, source):
     try:
         generic = policy_in_transaction(db, source.scope)
     except Exception:
-        logging.getLogger('cifereca').warning('Source consent transaction generation read failed', exc_info=True)
+        logging.getLogger('cifereca').warning('Source consent transaction generation read failed code=policy_unavailable')
         return "unavailable"
     if generic.configured:
         return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"

@@ -92,7 +92,7 @@ def configured(service, account):
     try:
         return read_policy(service.storage, scope_for_account(account)).configured
     except Exception:
-        _LOG.warning('Source acquisition policy read failed; legacy acquisition disabled', exc_info=True)
+        _LOG.warning('Source acquisition policy read failed code=policy_unavailable')
         return True
 
 
