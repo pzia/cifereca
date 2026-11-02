@@ -42,9 +42,14 @@ def _connect(service, *, identity="default", credential="numilog-private",
         provider_id="numilog", credential_id=credential, identity_id=identity,
     )
     service.accounts.append(account)
-    service.storage.provider_connection_put({
+    connection = service.storage.provider_connection_put({
         "provider_id": "numilog", "credential_id": credential,
         "identity_id": identity, "enabled": True,
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection, "identity_id": identity,
+        "provider_id": "numilog", "credential_id": credential,
+        "account_id": account.unique_id, "label": "Synthetic borrower",
     })
     rows = [_row(credential, i) for i in range(number)]
 

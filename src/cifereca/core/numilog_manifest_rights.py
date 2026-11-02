@@ -46,15 +46,15 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
                 or not service.sync_source_enabled(account)
                 or service.identity_by_id(identity) is None):
             return False
-        if service.storage.identity_for_connection("numilog", credential) != identity:
-            return False
-        connections = [
-            row for row in service.storage.provider_connections(identity_id=identity)
-            if row.get("provider_id") == "numilog"
-            and row.get("credential_id") == credential
-            and row.get("enabled") is True
-        ]
-        if len(connections) != 1:
+        # The previous check enumerated every provider connection and
+        # omitted the SQLite borrower account entirely. A disconnected or
+        # reassigned borrower must not attest a fresh private Numilog manifest
+        # or even enter a legacy selected purchase preflight. Use the exact,
+        # bounded Core snapshot check; it includes the connection_id join.
+        if service.storage.provider_scope_account_bound(
+            identity_id=identity, provider_id="numilog",
+            credential_id=credential, account_id=account_id,
+        ) is not True:
             return False
         # A login/reconnect can replace a session while library() is
         # retrieving pages. Never accept an old in-flight session as the
