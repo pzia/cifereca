@@ -357,15 +357,28 @@ quand il est unique. Les dates et la pagination des prêts ne sont pas qualifié
 aucune date n'est inventée. Chaque `Loan` porte provider, credential, compte et
 identité exacts. Le lien de téléchargement n'est pas transmis au Core.
 
-L'inventaire est **toujours partiel** : `loan_inventory_snapshot()` publie
-`status=partial`, branche `bnf_html` et raison typée `inventory_not_exhaustive`.
+**Qualification P1 #4142 (02/11/2026).** La lecture officielle authentifiée
+`/my_profile/activity` d'une **unique section active-loans validée, non vide,
+aux cartes /loans/{id} ↔ /resources/{id} univoques**, atteste désormais
+l'exhaustivité de la **branche numérique BnF pour cet emprunteur**, sous la
+décision produit du 02/11. Le producteur `loan_inventory_snapshot()` publie
+alors `status=success`, `bnf_html/digital=complete` et
+`pagination_complete=true`. Une page vide sans état zéro explicite, une
+section non close, une carte incorrecte/contradictoire, un indicateur de
+pagination ou de chargement conservé (y compris masqué) publie `partial`
+avec `inventory_not_exhaustive` ; aucune absence de prêt n'est inférée de ces cas.
+Le passage à `complete` ne prouve **ni réception locale, ni droit de restitution,
+ni expiration**, ni provenance cryptographique des fichiers. Le contrat
+`rights_observation_snapshot()` demeure positif seulement et non autorisant
+pour la réconciliation négative. Aucun token, ACSM, POST ou GET supplémentaire.
+
 Le canal mutable historique `last_loan_errors` a été retiré du plugin (#3197).
 Dans la migration ciblée #3628, le producteur typé utilise directement la
 lecture HTML BnF scoppée sous verrou, **sans appeler la façade v1
 \`session.loans(account)\`**. Les deux entrées partagent la même implémentation
 interne de GET : une seule lecture par invocation. La façade v1 reste
-exposée pour les plugins installés selon le contrat API existant ; elle
-ne certifie jamais l'exhaustivité, ni le retour ou la disparition d'un droit.
+exposée pour les plugins installés selon le contrat API existant ; elle ne certifie jamais l'exhaustivité par elle-même, ni le retour ou la
+disparition d'un droit.
  La synchronisation ajoute/actualise les prêts
 observés, mais une page vide, tronquée, une session expirée ou un prêt absent
 ne prouve aucune fin de droit. Le Core actuel (#2975) conserve les anciens droits
