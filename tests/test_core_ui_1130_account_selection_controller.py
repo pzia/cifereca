@@ -124,6 +124,22 @@ def test_identity_ignores_late_notification_after_window_close():
     assert events == []
 
 
+def test_old_booking_widget_is_cleared_passively_without_fetching_reservations():
+    window, events, _a, _b = _window()
+    window.booking_objects = {"legacy": "private"}
+    window.booking_page = NS(
+        show_rows=lambda rows: events.append(("booking-clear", rows)),
+        detail=NS(empty=lambda *_args: events.append(("booking-empty",))),
+    )
+    window.service.refresh_bookings = lambda *a, **kw: (_ for _ in ()).throw(
+        AssertionError("retired reservations GET forbidden")
+    )
+    account_changed(window, _dropdown(1), None)
+    assert window.booking_objects == {}
+    assert ("booking-clear", []) in events
+    assert ("booking-empty",) in events
+
+
 def test_account_commit_precedes_private_view_clear_and_feedback():
     window, events, _a, b = _window()
     account_changed(window, _dropdown(1), None)
