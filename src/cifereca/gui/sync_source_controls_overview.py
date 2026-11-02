@@ -24,6 +24,12 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
     if type(sid) is not str or not sid:
         return "Réglages · portée du compte indisponible"
 
+    # Match the effective/suspended semantics of the sticky dashboard.
+    # Persisted ON is a preference, not an operational permission when the
+    # selected source is disabled or its session is disconnected.
+    source_enabled = getattr(source, "enabled", None) is True
+    source_connected = getattr(source, "connected", None) is True
+    available = source_enabled and source_connected
     parts = []
     if "remote_inventory" in capabilities:
         if "scheduled_refresh" in capabilities:
@@ -45,7 +51,10 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
                     "on_start": "au démarrage",
                     "periodic": "périodique",
                 }[policy["mode"]]
-                parts.append("Notices et droits : " + mode)
+                parts.append(
+                    "Notices et droits : " + mode
+                    + (" (suspendue)" if mode != "manuelle" and not available else "")
+                )
             else:
                 parts.append("Notices et droits : réglage indisponible")
         else:
@@ -86,16 +95,21 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
                 "Fichiers : autorisation antérieure " +
                 ("activée" if consent["enabled"] else "désactivée") +
                 " (activation indisponible)"
+                + (" (suspendue)" if consent["enabled"] else "")
             )
         else:
-            parts.append("Fichiers : autorisation " + (
-                "activée" if consent["enabled"] else "désactivée"
-            ))
+            parts.append(
+                "Fichiers : autorisation "
+                + ("activée" if consent["enabled"] else "désactivée")
+                + (" (suspendue)" if consent["enabled"] and not available else "")
+            )
 
     if not parts:
         return ""
-    if getattr(source, "enabled", None) is not True:
+    if not source_enabled:
         parts.append("source désactivée")
+    if not source_connected:
+        parts.append("source déconnectée")
     return "Réglages · " + " · ".join(parts)
 
 
