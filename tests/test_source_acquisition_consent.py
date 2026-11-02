@@ -10,6 +10,7 @@ import pytest
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
 from cifereca.core.convergence_execution import CompletedDelivery
 from cifereca.core.source_acquisition_consent import (
+    consent_current_in_transaction,
     consent_key, read_source_acquisition_consent, set_source_acquisition_consent,
 )
 from cifereca.core.sync_coordination import synchronize_account_source
@@ -256,3 +257,32 @@ def test_final_transaction_guard_rolls_back_all_publication_rows(rig):
     with db._lock, db._connect() as connection:
         assert connection.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 0
     assert path.read_bytes() == BYTES
+
+
+
+@pytest.mark.parametrize("revocation", [
+    "connection_disabled", "borrower_removed", "connection_rebound",
+])
+def test_publisher_legacy_grant_never_outlives_exact_enabled_account(rig, revocation):
+    """In-flight delivery cannot publish after an account binding is revoked.
+
+    No source/type global switch: exercise the compatibility metadata path
+    that otherwise bypasses the per-transaction _bound check.
+    """
+    service, db, _ = rig
+    grant(service)
+    with db._lock, db._connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert consent_current_in_transaction(connection, service.source)
+        if revocation == "connection_disabled":
+            connection.execute("UPDATE provider_connections SET enabled=0")
+        elif revocation == "borrower_removed":
+            connection.execute("DELETE FROM provider_accounts")
+        else:
+            connection.execute(
+                "UPDATE provider_connections SET identity_id='foreign-owner'"
+            )
+        assert not consent_current_in_transaction(connection, service.source)
+    # The historical positive metadata may remain; it must not revive
+    # authorization when the SQL transaction has invalidated ownership.
+    assert db.metadata_get(consent_key(service.source)) is not None
