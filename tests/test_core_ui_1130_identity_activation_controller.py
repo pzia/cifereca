@@ -201,6 +201,20 @@ def test_transition_invalidates_every_generation_and_private_model():
     assert events.index(("dispose",)) < events.index(("dashboard",))
 
 
+def test_preupgrade_booking_widget_is_cleared_without_refresh():
+    window, events = _window()
+    window.booking_objects = {"legacy": "private"}
+    window.booking_page = _page("booking", events)
+    window.refresh_bookings = lambda force: (_ for _ in ()).throw(
+        AssertionError("booking refresh must remain retired")
+    )
+    activate_identity(window, "bob")
+    assert window.booking_objects == {}
+    assert ("booking", "clear") in events
+    window.runner.submitted[-1].done(["loan-bob"])
+    assert not any(evt[0] == "refresh-bookings" for evt in events)
+
+
 def test_old_search_and_secondary_details_are_cleared_immediately():
     window, events = _window()
     activate_identity(window, "bob")
