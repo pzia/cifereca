@@ -157,16 +157,28 @@ def consent_current_in_transaction(db, source: SourceKey) -> bool:
     return record is not None and _payload_allowed(record[0], source)
 
 
+def _unique_consent_fields(pairs):
+    """Never resolve conflicting durable grants by the last JSON field."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_acquisition_consent_field")
+        result[key] = value
+    return result
+
+
 def _payload_allowed(raw, source):
     if type(raw) is not str or len(raw) > 65_536:
         return False
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_unique_consent_fields)
     except (ValueError, TypeError, RecursionError):
         return False
-    return (type(payload) is dict and payload.get("schema") == _SCHEMA
-            and payload.get("source") == list(_coordinates(source))
-            and payload.get("allowed") is True)
+    return (type(payload) is dict
+            and set(payload) == {"schema", "source", "allowed"}
+            and payload["schema"] == _SCHEMA
+            and payload["source"] == list(_coordinates(source))
+            and payload["allowed"] is True)
 
 
 def read_source_acquisition_consent(service, account: Account) -> frozenset[SourceKey]:
