@@ -134,28 +134,14 @@ def qualify_selected_offers(
                     or getattr(session, "connected", None) is not True
                     or getattr(session, "_closed", False) is not False
                     or service.sync_source_enabled(account) is not True
-                    or initial_storage.identity_for_connection(
-                        scope.provider_id, scope.credential_id) != scope.identity_id):
+                    or not initial_storage.provider_scope_account_bound(
+                        identity_id=scope.identity_id,
+                        provider_id=scope.provider_id,
+                        credential_id=scope.credential_id,
+                        account_id=scope.account_id,
+                    )):
                 return False
-            connections = initial_storage.provider_connections(
-                identity_id=scope.identity_id)
-            if sum(row.get("provider_id") == scope.provider_id
-                   and row.get("credential_id") == scope.credential_id
-                   and row.get("enabled") is True for row in connections) != 1:
-                return False
-            # The upstream session still exposes this borrower, but the
-            # durable Core account registry may already have rebound. An
-            # authenticated selected-offer read is private provider I/O:
-            # never send it without one exact, CURRENT registered borrower.
-            borrower_rows = initial_storage.provider_accounts(
-                identity_id=scope.identity_id,
-            )
-            return sum(
-                row.get("provider_id") == scope.provider_id
-                and row.get("credential_id") == scope.credential_id
-                and row.get("account_id") == scope.account_id
-                for row in borrower_rows
-            ) == 1
+            return True
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
