@@ -80,7 +80,6 @@ def _window(*, widgets=True, route="library", current="alice"):
         _remote_query_key="private remote key",
         _selected_search_id="private selected item",
         history_objects={"alice": object()},
-        booking_objects={"alice": object()},
         _history_all_rows=["private history"],
         _history_rows=["private history"],
         _history_loaded_count=1,
@@ -125,11 +124,10 @@ def _window(*, widgets=True, route="library", current="alice"):
     window.refresh_library = lambda force: events.append(("refresh-library", force))
     window.refresh_recent = lambda: events.append(("refresh-recent",))
     window.refresh_history = lambda force: events.append(("refresh-history", force))
-    window.refresh_bookings = lambda force: events.append(("refresh-bookings", force))
     window._activity_result = lambda message: events.append(("activity", message))
 
     if widgets:
-        for name in ("search", "history", "booking", "recent", "library"):
+        for name in ("search", "history", "recent", "library"):
             setattr(window, f"{name}_page", _page(name, events))
 
     return window, events
@@ -192,7 +190,6 @@ def test_transition_invalidates_every_generation_and_private_model():
     assert window.service.last_history == []
     assert window.service.last_bookings == []
     assert window.history_objects == {}
-    assert window.booking_objects == {}
     assert window._history_all_rows == []
     assert window._history_rows == []
     assert window._history_loaded_count == 0
@@ -207,7 +204,7 @@ def test_transition_invalidates_every_generation_and_private_model():
 def test_old_search_and_secondary_details_are_cleared_immediately():
     window, events = _window()
     activate_identity(window, "bob")
-    for page in ("search", "history", "booking", "recent"):
+    for page in ("search", "history", "recent"):
         assert (page, "clear") in events
     assert (
         "search", "empty", "Nouvelle identité",
@@ -250,7 +247,6 @@ def test_identity_work_is_scoped_and_priority_preserved():
 def test_current_callback_renders_loans_and_refreshes_only_active_route():
     for route, expected in [
         ("history", ("refresh-history", False)),
-        ("bookings", ("refresh-bookings", False)),
         ("library", None),
     ]:
         window, events = _window(route=route)
@@ -263,7 +259,7 @@ def test_current_callback_renders_loans_and_refreshes_only_active_route():
         if expected is not None:
             assert expected in events
         else:
-            assert not any(evt[0] in {"refresh-history", "refresh-bookings"} for evt in events)
+            assert not any(evt[0] in {"refresh-history"} for evt in events)
 
 
 def test_previous_identity_callback_cannot_repaint_current_identity():
