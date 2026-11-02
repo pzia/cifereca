@@ -62,3 +62,41 @@ def test_incorrect_historical_bytes_never_block_exact_owned_download(
     assert target is not None and target.entitlement_id == "right-1"
     assert case.service.storage.entitlements() == before
     assert not case.calls and not case.session.resolve_calls
+
+
+def test_legacy_shared_profile_directory_never_attests_a_kobo_receipt(case):
+    path = _old_completed_receipt(case, account="account")
+    assert _lookup(case, account_id="account") is not None
+    directory = case.service.storage.identity_get("default")["directory_name"]
+    # In production this collision is prevented by UNIQUE. Simulate a
+    # corrupted imported DB only in this disposable fixture.
+    with case.service.storage._lock, case.service.storage._connect() as db:
+        db.execute("DROP INDEX uq_identity_directory_name")
+    try:
+        case.service.storage.identity_put({
+            "identity_id": "shadow-owner", "label": "Synthetic shadow",
+            "directory_name": directory,
+        })
+        assert _lookup(case, account_id="account") is None
+        assert case.service.owned_library_download_target(case.entry) is not None
+        assert path.is_file() and not case.calls
+    finally:
+        with case.service.storage._lock, case.service.storage._connect() as db:
+            db.execute("DELETE FROM identities WHERE identity_id='shadow-owner'")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_directory_name "
+                "ON identities(directory_name)"
+            )
+    assert _lookup(case, account_id="account") is not None
+
+
+def test_many_unrelated_profiles_do_not_change_exact_local_byte_proof(case):
+    path = _old_completed_receipt(case, account="account")
+    for i in range(220):
+        case.service.storage.identity_put({
+            "identity_id": f"unrelated-{i:04d}", "label": "Synthetic",
+            "directory_name": f"other-root-{i:04d}",
+        })
+    assert _lookup(case, account_id="account") is not None
+    assert case.service.owned_library_download_target(case.entry) is None
+    assert path.is_file() and not case.calls
