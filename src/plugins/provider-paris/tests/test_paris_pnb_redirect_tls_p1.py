@@ -115,7 +115,7 @@ def test_untrusted_redirect_host_is_not_disclosed_in_exception_or_ui(
         )
     text = str(exc.value)
     assert exc.value.code == "pnb_redirect_refused"
-    assert "site non autorisé : unknown" in text
+    assert "site non autorisé : external" in text
     assert "PRIVATE" not in text
     assert opaque_host not in text
     assert "/LOAN/" not in text
