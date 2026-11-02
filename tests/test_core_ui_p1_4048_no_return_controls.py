@@ -41,3 +41,32 @@ def test_facet_buttons_are_filters_only_no_adept_return():
     assert "runner.submit" not in body
     assert "window._facet_values" in body
     assert "window._facet_value_group" in body
+
+
+def test_legacy_gtk_mutation_entrypoints_are_absent_from_class_and_module():
+    main = ast.parse((GUI / "main_window.py").read_text(encoding="utf-8"))
+    host = next(n for n in main.body if isinstance(n, ast.ClassDef)
+                and n.name == "MainWindow")
+    forbidden = {
+        "confirm_return", "_return_loan_result", "_return_loan",
+        "_return_loan_pnb", "return_adept_from_detail",
+    }
+    methods = {n.name for n in host.body if isinstance(n, ast.FunctionDef)}
+    assert not forbidden.intersection(methods)
+    assert {"confirm_renew", "_renew", "reconcile_adept_from_detail"} <= methods
+
+    controller = ast.parse((GUI / "loans_controller.py").read_text(encoding="utf-8"))
+    functions = {n.name for n in controller.body if isinstance(n, ast.FunctionDef)}
+    assert not forbidden.intersection(functions)
+    assert {"confirm_renew", "_renew", "_renew_result"} <= functions
+
+    for tree in (main, controller):
+        calls = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+        assert "return_adept_acquisition" not in calls
+        assert "return_loan_prefer_adept" not in calls
+        assert "return_digital" not in calls
+    # No disabled/hidden trigger: direct invocation must also be impossible.
+    for text in ((GUI / "main_window.py").read_text(encoding="utf-8"),
+                 (GUI / "loans_controller.py").read_text(encoding="utf-8")):
+        assert 'kind="loan-return"' not in text
+        assert 'kind="adept-return"' not in text
