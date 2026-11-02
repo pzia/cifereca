@@ -98,7 +98,7 @@ class FeedbooksCoverTests(unittest.TestCase):
             with self.subTest(unsafe=unsafe):
                 self.assertIsNone(_public_cover_url(unsafe))
 
-    def test_search_cards_keep_independent_cover_and_existing_cdn():
+    def test_search_cards_keep_independent_cover_and_existing_cdn(self):
         records = parse_search_page(search(card(), card(CDN, "book-b"))).records
         self.assertEqual([(r.resource_id, r.thumbnail_url) for r in records],
                          [("book-a", FEED), ("book-b", CDN)])
