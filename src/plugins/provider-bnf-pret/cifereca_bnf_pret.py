@@ -672,9 +672,14 @@ class BnfProviderSession(ProviderSession):
                     or (account.identity_id, account.provider_id,
                         account.credential_id, account.unique_id) != pinned):
                 raise ProviderCapabilityError('bnf_selected_offer_scope_changed')
-            # No other loan from the same activity page is promoted into
-            # this explicit selection; unknown delivery stays unknown.
-            return replace(selected, rights=(right,))
+            # A selection is deliberately NOT a full source inventory,
+            # even if its parent HTML snapshot attested complete coverage.
+            # Never attach branch-wide negative authority to one offered
+            # resource, nor conflate its offer with delivery admission.
+            return replace(
+                selected, rights=(right,), status='partial',
+                coverage='partial', pagination_complete=False,
+            )
 
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
