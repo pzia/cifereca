@@ -38,3 +38,20 @@ décodage GTK. Si la carte fournisseur porte une image non extraite, remettre
 Le ZIP fourni ici couvre seulement le 29/10 06:59–07:02 Paris, sans valeur
 `thumbnail_url` ni DOM de carte permettant de trancher ces branches. Le défaut
 terrain reste ouvert ; aucun sélecteur HTML ni enrichissement par titre supposé.
+
+## Mise à jour P1 #4118 — 02/11/2026
+
+Une capture privée BnF du 01/11 a depuis établi des couvertures
+`covers.feedbooks.net/item/{id}.jpg?size=…&t=…` dans des cartes de catalogue,
+fiches et cartes de prêts actifs. Le parseur `cifereca_bnf_pret_web.py` admet
+**uniquement** cette forme de ressource publique (hôte HTTPS exact, deux
+paramètres typés, chemins bornés), tout en gardant l'ancienne politique de
+`pret.bnf.fr` et `imagedelivery.net`. Les contrôles DOM conservent
+l'association à la ressource exacte ; aucune recherche par titre ou ISBN
+ni requête image supplémentaire n'est initiée par le provider.
+
+Les tests `test_p1_4118_feedbooks_public_covers.py` couvrent les formats,
+les rejets et la projection catalogue/Loan. Ils restent synthétiques :
+**l'acceptation d'une URL ne garantit ni un HTTP 200 image ni le rendu GTK**.
+La recette des deux miniatures dans Recherche, Détail et Mes emprunts reste
+ouverte sous #4118/#3104.
