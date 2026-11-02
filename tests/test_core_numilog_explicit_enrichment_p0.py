@@ -138,3 +138,27 @@ def test_legacy_can_be_a_real_credential_id_if_account_matches():
     row = item(source_credential="legacy")
     result = enrich_numilog_result_once(service, row, expected_identity_id="identity-A")
     assert result.source_credential == "legacy"
+
+
+@pytest.mark.parametrize("link", [
+    "https://provider-owned.example/catalogue/title.ebook",
+    "https://cdn.example/notice/42",
+])
+def test_core_detail_action_hint_is_provider_host_neutral(link):
+    # No Core supplier host allowlist: the plugin re-attests the URL before GET.
+    assert can_enrich_numilog_result(item(friendly_url=link))
+
+
+@pytest.mark.parametrize("link", [
+    "", "http://www.numilog.com/1958476/book.ebook",
+    "https://user:password@example.org/book",
+    "https://example.org:8443/book",
+    "https://example.org/book?token=private",
+    "https://example.org/book#fragment",
+    "https://example.org/",
+    "https://[bad-ipv6/book",
+    "https://example.org/\\\\private",
+    "https://example.org/book\\nINJECTED",
+])
+def test_core_detail_action_hint_rejects_invalid_https_or_ambiguous_urls(link):
+    assert not can_enrich_numilog_result(item(friendly_url=link))
