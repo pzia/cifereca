@@ -24,6 +24,12 @@ def policy_key(account: Account) -> str:
 def binding_ready(service, account: Account) -> bool:
     try:
         if (type(account) is not Account or account.provider_id != 'bnf-pret'
+                or (account.unique_id and (
+                    account.unique_id != account.unique_id.strip()
+                    or account.unique_id == (
+                        'bnf-pret:' + account.credential_id + ':primary'
+                    )
+                ))
                 or not service.sync_source_enabled(account)
                 or service.identity_by_id(account.identity_id) is None
                 or service.storage.identity_for_connection(
