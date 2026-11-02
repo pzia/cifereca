@@ -26,7 +26,6 @@ def invalidate_secondary_account_pages(window) -> None:
     window.service.last_history = []
     window.service.last_bookings = []
     window.history_objects = {}
-    window.booking_objects = {}
     window._history_all_rows = []
     window._history_rows = []
     window._history_loaded_count = 0
@@ -36,12 +35,6 @@ def invalidate_secondary_account_pages(window) -> None:
         window.history_page.detail.empty(
             "Historique non chargé",
             "Ouvrez l’onglet Historique pour charger ce compte.",
-        )
-    if hasattr(window, "booking_page"):
-        window.booking_page.show_rows([])
-        window.booking_page.detail.empty(
-            "Réservations non chargées",
-            "Ouvrez l’onglet Réservations pour charger ce compte.",
         )
 
 
