@@ -144,3 +144,23 @@ def test_shared_directory_created_during_get_revokes_staging_receipt(
     assert (root / "A" / ".canonical-delivery").is_dir()
     assert not list((root / "A" / ".canonical-delivery").iterdir())
     assert rows(storage) == (0, 0, 0, 0)
+
+
+
+def test_staging_promotion_and_cleanup_share_the_exact_directory_fence(
+    store, tmp_path,
+):
+    from cifereca.core.canonical_promotion import _profile
+
+    source, _snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    (root / "A").mkdir(parents=True)
+    corrupt_shared_directory(store)
+    with pytest.raises(ValueError, match="canonical_promotion_profile_ambiguous"):
+        _profile(store, root, source)
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE identities SET directory_name='B' WHERE identity_id='B'")
+    canonical_root, profile = _profile(store, root, source)
+    assert canonical_root == root
+    assert profile == root / "A"
