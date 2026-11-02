@@ -922,28 +922,6 @@ class ParisFakeApp:
             )
         self.success(handler, {"Handings": payload})
 
-    def list_bookings(self, handler, qs):
-        provider = (qs.get("serviceCode") or ["SYRACUSE"])[0].upper()
-        uid = (qs.get("userUniqueIdentifier") or [""])[0]
-        rows = self.cache.booking_rows(uid, provider)
-        payload = []
-        for row in rows:
-            when = date.fromisoformat(row["booking_date"])
-            payload.append(
-                {
-                    "Id": row["booking_id"],
-                    "HoldingId": row["booking_id"],
-                    "RecordId": row["record_id"],
-                    "Title": row["title"],
-                    "BookingDate": ms_date(when),
-                    "AvailabilityDate": None,
-                    "AvailableUntilDate": None,
-                    "LocationLabel": "Bibliothèques de Paris",
-                    "Rank": row["rank"],
-                    "State": row["state"],
-                }
-            )
-        self.success(handler, {"Bookings": payload})
 
     def redirect_borrow(self, handler, qs):
         nested = (qs.get("url") or [""])[0]
@@ -998,16 +976,6 @@ class ParisFakeApp:
             return self.fail(handler, "Prêt numérique introuvable", HTTPStatus.CONFLICT)
         self.success(handler, {"Returned": True, "LoanId": loan_id})
 
-    def cancel_booking(self, handler):
-        body = handler.json_body or {}
-        uid = str(body.get("userUniqueIdentifier") or "")
-        rows = body.get("bookings") if isinstance(body.get("bookings"), list) else []
-        booking_id = ""
-        if rows and isinstance(rows[0], dict):
-            booking_id = str(rows[0].get("Id") or rows[0].get("HoldingId") or "")
-        if not booking_id or not self.cache.cancel_booking(booking_id, uid):
-            return self.fail(handler, "Réservation introuvable", HTTPStatus.CONFLICT)
-        self.success(handler, {"Cancelled": True, "BookingId": booking_id})
 
     def check_availability(self, handler):
         body = handler.json_body or {}
@@ -1130,8 +1098,6 @@ class ParisFakeApp:
             return self.list_loans(handler, qs)
         if path == f"{ACCOUNT_SERVICE}/ListHandings":
             return self.list_history(handler, qs)
-        if path == f"{ACCOUNT_SERVICE}/ListBookings":
-            return self.list_bookings(handler, qs)
         if path == f"{ACCOUNT_SERVICE}/GetUserPnbPreferences":
             return self.preferences(handler)
         if path == f"{ACCOUNT_SERVICE}/SavePnbPreferences":
@@ -1142,8 +1108,6 @@ class ParisFakeApp:
             return self.renew(handler)
         if path == f"{ACCOUNT_SERVICE}/ReturnDigitalLoan" and handler.command == "POST":
             return self.return_loan(handler)
-        if path == f"{ACCOUNT_SERVICE}/CancelBookings" and handler.command == "POST":
-            return self.cancel_booking(handler)
 
         if path == "/numerique/ASSARedirect.ashx":
             return self.redirect_borrow(handler, qs)
