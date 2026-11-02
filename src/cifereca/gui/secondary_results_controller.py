@@ -1,4 +1,4 @@
-"""CoreUI #1129: progressive History and Bookings page result projection.
+"""CoreUI #1129: progressive History page result projection.
 
 Services, account/identity generations and page widgets are still owned by
 MainWindow. No GTK/PyGObject import or provider request is added; GLib,
@@ -89,29 +89,3 @@ def append_history_chunk(window) -> bool:
     )
     return False
 
-
-def populate_bookings(
-    window, rows, *, BookListItem, booking_presentation, fr_date,
-) -> None:
-    if getattr(window, "_closed", False):
-        return
-    window.booking_objects = {item.id: item for item in rows}
-    ui_rows = []
-    for item in rows:
-        presentation = booking_presentation(item)
-        ui_rows.append(
-            BookListItem(
-                item.id,
-                item.title,
-                item.location or "",
-                f"Réservé le {fr_date(item.booking_date)}",
-                presentation.status_label,
-                None,
-            )
-        )
-    objects = {
-        item.id: {"source_provider": item.source_provider}
-        for item in rows
-    }
-    window._attach_row_facets(ui_rows, objects, window.search_controls)
-    window.booking_page.show_rows(ui_rows)
