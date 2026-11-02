@@ -352,12 +352,14 @@ def main() -> int:
 
             window._apply_search_detail = traced_apply
             window.set_default_size(1326, 780)
-            window.present()
+            # Install the test transport before the first GTK frame can bind
+            # a list cell: even initial fixtures cannot start a real cover GET.
             original_client[0] = window.covers.client
             window.covers.client = httpx.Client(
                 transport=httpx.MockTransport(image_response), trust_env=False,
             )
             original_client[0].close()
+            window.present()
             device[0] = X11Input()
             later(500, begin)
 
