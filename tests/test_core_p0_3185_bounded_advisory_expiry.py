@@ -98,3 +98,39 @@ def test_missing_owner_cannot_discard_stale_marker(
     ) is False
     assert store.metadata_get(key) == before
     assert paths[0].read_bytes() == BYTES
+
+
+def test_owner_collision_between_hash_and_metadata_delete_never_expires_marker(
+    store, tmp_path, monkeypatch,
+):
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    with store._lock, store._connect() as db:
+        db.execute("DROP INDEX uq_identity_directory_name")
+    real = module._verified_copy
+    observed = []
+
+    def rehash_then_rebind(path, **kwargs):
+        assert real(path, **kwargs)
+        observed.append(path)
+        store.identity_put({
+            "identity_id": "shadow", "label": "Synthetic concurrent alias",
+            "directory_name": "A",
+        })
+        return True
+
+    monkeypatch.setattr(module, "_verified_copy", rehash_then_rebind)
+    try:
+        assert module.clear_checkpoint_if_no_duplicates(
+            store, library_root=root, placement_id=first.placement_id,
+        ) is False
+        assert len(observed) == 1
+        assert store.metadata_get(key) == original
+        assert paths[0].read_bytes() == BYTES
+    finally:
+        with store._lock, store._connect() as db:
+            db.execute("DELETE FROM identities WHERE identity_id='shadow'")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_directory_name "
+                "ON identities(directory_name)"
+            )
