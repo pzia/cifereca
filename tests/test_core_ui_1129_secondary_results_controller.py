@@ -1,4 +1,4 @@
-"""CoreUI P0 #1129: History pagination and Bookings projections are headless."""
+"""CoreUI P0 #1129: History pagination and source scoping are headless."""
 from __future__ import annotations
 
 import ast
@@ -9,7 +9,6 @@ import pytest
 
 from cifereca.gui.secondary_results_controller import (
     populate_history, history_scroll_changed, append_history_chunk,
-    populate_bookings,
 )
 
 
@@ -42,12 +41,10 @@ def _host(*, page_size=2, history_rows=()):
         _history_loaded_count=1,
         _history_append_scheduled=False,
         history_objects={"old": "private"},
-        booking_objects={"old": "booking"},
         history_page=NS(
             show_rows=log("history-show"),
             append_rows=log("history-append"),
         ),
-        booking_page=NS(show_rows=log("booking-show")),
         history_languages=NS(values=lambda: []),
         _known_item_languages=lambda _provider, item: (
             events.append(("language", item)) or {"fr"}
@@ -77,20 +74,7 @@ def _scroll(*, upper=1000, value=0, page=100):
     )
 
 
-def _bookings(host, items):
-    def fake_list_item(*args):
-        return NS(args=args)
-    return populate_bookings(
-        host, items,
-        BookListItem=fake_list_item,
-        booking_presentation=lambda booking: NS(
-            status_label=f"Présentation {booking.state}",
-        ),
-        fr_date=lambda value: f"FR-{value}",
-    )
-
-
-def test_controller_imports_without_gtk_and_preserves_four_window_facades():
+def test_controller_imports_without_gtk_and_preserves_three_window_facades():
     module = ast.parse(OWNER.read_text(encoding="utf-8"))
     imports = [ast.unparse(node) for node in ast.walk(module)
                if isinstance(node, (ast.Import, ast.ImportFrom))]
@@ -104,7 +88,6 @@ def test_controller_imports_without_gtk_and_preserves_four_window_facades():
         ("_populate_history", "populate_history", ("rows", "preserve_all")),
         ("_history_scroll_changed", "history_scroll_changed", ("adjustment",)),
         ("_append_history_chunk", "append_history_chunk", ()),
-        ("_populate_bookings", "populate_bookings", ("rows",)),
     ):
         method = methods[facade]
         assert tuple(arg.arg for arg in method.args.args) == ("self", *args)
@@ -251,44 +234,6 @@ def test_closed_window_does_not_append_or_render_history():
     populate_history(host, [_item(77)])
     assert events == []
     assert host._history_append_scheduled is False
-
-
-def test_bookings_projection_keeps_exact_source_provenance_and_business_status():
-    host, events, callbacks, glib = _host()
-    items = [
-        NS(id="a", title="Réservation A", location=None, booking_date="2026-10-14",
-           state="ready", source_provider="paris"),
-        NS(id="b", title="Réservation B", location="Site B", booking_date="2026-10-15",
-           state="active", source_provider="other"),
-    ]
-    _bookings(host, items)
-    assert host.booking_objects == {"a": items[0], "b": items[1]}
-    assert events[0][0] == "facets"
-    rows, origins, controls = events[0][1:]
-    assert [row.args for row in rows] == [
-        ("a", "Réservation A", "", "Réservé le FR-2026-10-14", "Présentation ready", None),
-        ("b", "Réservation B", "Site B", "Réservé le FR-2026-10-15", "Présentation active", None),
-    ]
-    assert origins == {"a": {"source_provider": "paris"}, "b": {"source_provider": "other"}}
-    assert controls is host.search_controls
-    assert events[1][0] == "booking-show"
-    assert events[1][1] == rows
-
-
-def test_empty_booking_response_clears_private_booking_objects_and_page():
-    host, events, callbacks, glib = _host()
-    _bookings(host, [])
-    assert host.booking_objects == {}
-    assert events[0][0] == "facets"
-    assert events[1] == ("booking-show", [], None)
-
-
-def test_late_booking_projection_after_teardown_is_a_noop():
-    host, events, callbacks, glib = _host()
-    host._closed = True
-    _bookings(host, [NS(id="private")])
-    assert events == []
-    assert host.booking_objects == {"old": "booking"}
 
 
 def test_no_history_append_pending_when_last_row_is_already_loaded():
