@@ -261,7 +261,8 @@ def test_final_transaction_guard_rolls_back_all_publication_rows(rig):
 
 
 @pytest.mark.parametrize("revocation", [
-    "connection_disabled", "borrower_removed", "connection_rebound",
+    "connection_disabled", "borrower_removed", "borrower_replaced",
+    "connection_rebound",
 ])
 def test_publisher_legacy_grant_never_outlives_exact_enabled_account(rig, revocation):
     """In-flight delivery cannot publish after an account binding is revoked.
@@ -278,6 +279,12 @@ def test_publisher_legacy_grant_never_outlives_exact_enabled_account(rig, revoca
             connection.execute("UPDATE provider_connections SET enabled=0")
         elif revocation == "borrower_removed":
             connection.execute("DELETE FROM provider_accounts")
+        elif revocation == "borrower_replaced":
+            # Connection and profile remain active but upstream borrower
+            # changed; the old consent cannot transfer by credential alone.
+            connection.execute(
+                "UPDATE provider_accounts SET account_id='other-borrower'"
+            )
         else:
             connection.execute(
                 "UPDATE provider_connections SET identity_id='foreign-owner'"
