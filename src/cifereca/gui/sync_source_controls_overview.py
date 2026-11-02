@@ -21,7 +21,7 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
         return "Réglages · état des capacités indisponible"
 
     sid = getattr(source, "source_id", None)
-    if type(sid) is not str or not sid:
+    if type(sid) is not str or not sid or len(sid) > 256:
         return "Réglages · portée du compte indisponible"
 
     # Match the effective/suspended semantics of the sticky dashboard.
