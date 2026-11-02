@@ -340,3 +340,41 @@ def test_source_off_reports_exact_number_of_withheld_resources(
     assert execution["blocked"] == 0
     assert calls == []  # Not even a selected-offer preflight.
     assert db.placements() == []
+
+
+
+@pytest.mark.parametrize('invalid', ['false', 'true', 0, 1, None, [], {}])
+def test_internal_source_toggle_rejects_nonboolean_without_any_mutation(source, invalid):
+    service, db, _root, calls, broker = source
+    on = change(source, True)
+    sid = broker._source_id(service.account)
+    preference_key = broker._preference_key(sid)
+    assert db.metadata_get(preference_key) is None
+    with pytest.raises(ValueError, match='invalid_source_sync_toggle'):
+        policy.set_source_enabled(service, service.account, invalid, preference_key)
+    assert db.metadata_get(preference_key) is None
+    assert broker.source_sync_consent(sid) == on
+    assert calls == []
+
+
+def test_internal_source_toggle_cannot_update_foreign_or_policy_metadata(source):
+    service, db, _root, calls, broker = source
+    on = change(source, True)
+    sid = broker._source_id(service.account)
+    scope = policy.scope_for_account(service.account)
+    foreign = 'sync.source.enabled.sync:foreign-source-not-the-bound-account'
+    local_pref = broker._preference_key(sid)
+    policy_row = policy.policy_key(scope)
+    before_policy = db.metadata_get(policy_row)
+    assert before_policy is not None
+    for wrong_key in (foreign, policy_row, '', None):
+        with pytest.raises(ValueError, match=(
+            'invalid_source_sync_toggle' if wrong_key is None
+            else 'source_sync_toggle_scope_mismatch'
+        )):
+            policy.set_source_enabled(service, service.account, False, wrong_key)
+    assert db.metadata_get(foreign) is None
+    assert db.metadata_get(local_pref) is None
+    assert db.metadata_get(policy_row) == before_policy
+    assert broker.source_sync_consent(sid) == on
+    assert calls == []
