@@ -106,7 +106,7 @@ def test_exit_ten_alone_never_infers_a_precise_adobe_reason():
     assert fields["returncode"] == 10
 
 
-@pytest.mark.parametrize("value", [True, 1, "true", None, [], {}])
+@pytest.mark.parametrize("value", [1, "true", None, [], {}])
 def test_non_boolean_runtime_retry_metadata_is_not_attested(value):
     fields = from_runtime(event("adept_profile_incompatible", retryable=value), "error")
     assert fields["code"] == "adept_profile_incompatible"
