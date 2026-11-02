@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from .document_classification import DocumentClassification
 
 # `provider` on legacy domain models is the upstream backend/service code
 # (e.g. SYRACUSE/DILICOM). `source_provider` identifies the application
@@ -115,6 +116,8 @@ class SearchResult:
     currency: str | None = None
     revision_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Additive projection: legacy medium/type/format/content_type remain ABI-stable.
+    document_classification: DocumentClassification | None = field(default=None, repr=False)
 
 @dataclass
 class Holding:
