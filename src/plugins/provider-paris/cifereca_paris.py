@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from cifereca.plugin_api import (
-    Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult,
+    Account, HistoryItem, ItemDetail, Loan, SearchResult,
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
