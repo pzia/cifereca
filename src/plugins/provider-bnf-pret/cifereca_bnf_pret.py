@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import threading
 from uuid import uuid4
 from cifereca.plugin_api import (
-    Account, Loan, SearchResult, ItemDetail, CredentialField,
+    Account, Loan, SearchResult, ItemDetail, CredentialField, AccountOptionField,
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
     ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted,
@@ -36,6 +36,14 @@ DESCRIPTOR = ProviderDescriptor(
     credential_fields=(CredentialField('username', 'Identifiant BnF'),
                        CredentialField('password', 'Mot de passe', secret=True)),
     homepage='https://pret.bnf.fr',
+    # One BnF credential session exposes exactly one borrower. This is a
+    # *user-declared* preference; never consulted by borrow, quota or sync.
+    account_options=(AccountOptionField(
+        'manual_loan_limit', 'Maximum d’emprunts (valeur personnelle)',
+        default='4', value_type='unsigned_integer', min_value=0, max_value=99,
+        help_text='4 par défaut. Valeur indicative renseignée par vous : '
+                  'elle ne change pas vos droits auprès de la BnF.',
+    ),),
     notes=('Inventaire partiel : aucune clôture de prêt par absence.',
            'SSO HTTP expérimental ; une étape interactive supplémentaire est refusée.'),
 )
