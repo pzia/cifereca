@@ -23,9 +23,18 @@ class Core097Dev3(unittest.TestCase):
         self.local('epub')
         for code in ['MONE','MONO','EXTL']:
             self.right(code)
-            row=self.core.library.library_entries(scan=False)[0]
-            self.assertEqual(row['media_format'],'epub');self.assertTrue(row['local'])
-            self.assertEqual(row['metadata']['source_media_format'],code)
+            rows=self.core.library.library_entries(scan=False)
+            # A catalogue-only local entry has no OriginLink or completed
+            # receipt tying it to this Paris loan. Preserve the local EPUB
+            # without injecting the remote right's format/metadata.
+            self.assertEqual(len(rows),2)
+            local=next(row for row in rows if row['local'])
+            remote=next(row for row in rows if not row['local'])
+            self.assertEqual(local['media_format'],'epub')
+            self.assertNotIn('source_media_format',local['metadata'])
+            self.assertEqual(local['possessions'],[])
+            self.assertEqual(remote['metadata']['source_media_format'],code)
+            self.assertEqual(len(remote['possessions']),1)
     def test_local_pdf_survives_remote_epub(self):
         self.local('pdf');self.right('epub')
         self.assertEqual(self.core.library.library_entries(scan=False)[0]['media_format'],'pdf')
