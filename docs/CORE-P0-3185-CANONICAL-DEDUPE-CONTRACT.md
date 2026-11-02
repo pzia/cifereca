@@ -63,6 +63,17 @@ La racine est exclusivement celle de `service.config.get('library.directory')`; 
 
 L'opération historique `delete_duplicate` reste réservée aux Placements non canoniques avec contrat de portée legacy. Elle **ne peut pas** supprimer un Placement B `provider_id IS NULL AND source_item_id IS NULL`. L'outil GTK `library.duplicates.cleanup` doit utiliser l'API supervisée après son dialogue destructif (raccordement #3821).
 
+## Budget de vérification après publication (P0 #3185)
+
+Le probe SQL des Placements d'un même Artifact et d'une même identité est
+limité à **64 autres Placements**. À partir de 65 candidats, le Core émet
+`canonical_dedup_over_budget` (diagnostic stable, sans chemin ni compte)
+et **ne considère pas la réponse comme « aucun doublon »**. Il n'efface
+aucun checkpoint existant, ne déduit aucun droit, ne lance ni GET ni unlink
+et ne dégrade jamais une publication B déjà vérifiée. Une maintenance
+supervisée reste nécessaire pour résoudre le dépassement ; ses propres
+vérifications restent obligatoires. Le cas 64 conserve le rehash physique.
+
 ## Inventaire des avis de doublon post-placement (PR #3980)
 
 Les checkpoints consultatifs `core.canonical-dedup-pending.v1.*` sont une **file de diagnostic**, pas des tombstones et encore moins une autorisation de supprimer. Compter les **enregistrements distincts**, jamais le nombre de lignes de log `canonical_dedup_pending` qui ont pu être répétées.
