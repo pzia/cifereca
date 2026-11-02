@@ -576,6 +576,11 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
         # Legacy fixtures and earlier DB schemas cannot attest canonical
         # provenance. Do not infer associations from a title or a shared SHA.
         return ()
+    if len(rows) > 100_000:
+        # A truncated join could silently turn an ambiguous multi-source
+        # Artifact into a falsely unique (and thus attachable) right. Fail
+        # closed for every facet instead of projecting a partial source set.
+        return ()
     return tuple(
         (artifact, owner, provider, credential, account, edition)
         for artifact, owner, provider, credential, account, edition in rows
