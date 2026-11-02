@@ -1322,48 +1322,61 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
-def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | None:
-    """Never persist a store delivery, signed query, or private account URL.
+def _numilog_public_catalog_url(
+    value: Any, *, cover: bool = False, evidence: str | None = None,
+) -> str | None:
+    """Keep only public HTTPS links qualified by their producing plugin.
 
-    This is defense in depth after the provider's own public-book validation:
-    no remote request is made, and unknown notices/covers are omitted rather
-    than converting private account pages into persisted public links.
+    Numilog's public product hosts and path grammar belong to the Numilog
+    adapter, which emits the closed evidence marker after checking the actual
+    owned-card link. Core does not maintain a vendor-host allowlist and never
+    infers an acquisition URL from a catalogue notice. For older mirrored
+    cover fields the adapter has already verified public image origins; Core
+    retains its independent structural, query-free HTTP(S) protection.
     """
     from urllib.parse import urlsplit
+    import ipaddress
+
     if type(value) is not str or not 0 < len(value) <= 512:
         return None
-    if value != value.strip() or any(c.isspace() or ord(c) < 32 for c in value):
-        return None
-    if "\\" in value:
+    if (value != value.strip() or "\\" in value
+            or any(c.isspace() or ord(c) < 33 or ord(c) == 127
+                   for c in value)):
         return None
     try:
         parsed = urlsplit(value)
-        if (parsed.scheme != "https" or parsed.username or parsed.password
-                or parsed.fragment or parsed.port not in (None, 443)
-                or any(x in {".", ".."} for x in parsed.path.split("/"))):
+        host = (parsed.hostname or "").casefold()
+        if (parsed.scheme != "https" or parsed.username is not None
+                or parsed.password is not None or parsed.fragment
+                or parsed.port not in (None, 443)
+                or not parsed.path.startswith("/") or "%" in parsed.path
+                or any(part in {".", ".."} for part in parsed.path.split("/"))
+                or host.endswith(".") or len(host) > 253
+                or host.endswith((".localhost", ".local", ".internal",
+                                  ".home.arpa", ".invalid", ".test", ".example"))
+                or host in {"localhost", "metadata.google.internal"}
+                or len(host.split(".")) < 2
+                or any(re.fullmatch(
+                    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label,
+                ) is None for label in host.split("."))):
+            return None
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
             return None
         if cover:
-            if parsed.hostname not in {
-                "www.numilog.com", "services.numilog.com",
-                "www.edenlivres.fr", "storage.googleapis.com",
-                "couverture.numilog.com",
-            } or parsed.query:
-                return None
-        else:
-            if parsed.hostname != "www.numilog.com":
-                return None
-            official = re.fullmatch(
-                r"/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook",
-                parsed.path, flags=re.I,
-            )
-            legacy = re.fullmatch(
-                r"/(?:livres|ebooks)/[A-Za-z0-9][A-Za-z0-9._-]{0,100}",
-                parsed.path, flags=re.I,
-            )
-            if not (official or legacy) or parsed.query not in ("", "ref=library"):
-                return None
+            return value if not parsed.query else None
+        # A public product link is qualified by the producing Numilog
+        # adapter's private-card parser. A raw SearchResult without this
+        # evidence may not persist an arbitrary private/download URL.
+        if evidence != "numilog.library_title_link":
+            return None
+        if parsed.query not in ("", "ref=library"):
+            return None
         return value
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
         return None
 
 
@@ -1575,7 +1588,9 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             if row.source_provider == "numilog" else row.thumbnail_url
         )
         product_url = (
-            _numilog_public_catalog_url(row.friendly_url)
+            _numilog_public_catalog_url(
+                row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
+            )
             if row.source_provider == "numilog" else row.friendly_url
         )
         upserts.append({
