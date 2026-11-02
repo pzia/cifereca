@@ -1353,7 +1353,7 @@ def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | Non
             if parsed.hostname != "www.numilog.com":
                 return None
             official = re.fullmatch(
-                r"/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\\.ebook",
+                r"/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook",
                 parsed.path, flags=re.I,
             )
             legacy = re.fullmatch(
