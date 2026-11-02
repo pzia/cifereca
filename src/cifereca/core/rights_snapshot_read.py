@@ -22,6 +22,9 @@ from cifereca.plugin_api.downloadable_resources import (
 )
 
 _LOG = logging.getLogger("cifereca")
+# Bounded positive-only pagination; page count also limits private provider I/O.
+_MAX_INVENTORY_ROWS = 10_000
+_MAX_INVENTORY_PAGES = 128
 
 
 def read_account_rights_snapshot(service, account: Account, *,
@@ -159,31 +162,87 @@ def read_account_rights_snapshot(service, account: Account, *,
         reader = object.__getattribute__(session, reader_name)
         if not callable(reader):
             raise ValueError("invalid_rights_reader")
-        result = reader(account)
-        # In-place account/session rebind and cancelled reads cannot publish
-        # a still-well-formed but now foreign snapshot as current evidence.
+        def validated(raw):
+            if (reader_name == "downloadable_resource_snapshot"
+                    and type(raw) is not ResourceSnapshot):
+                raise ValueError("invalid_downloadable_snapshot")
+            if type(raw) is ResourceSnapshot:
+                if raw.scope != scope:
+                    raise ValueError("invalid_downloadable_snapshot_scope")
+                raw = as_legacy_rights_snapshot(raw)
+            if type(raw) is not ProviderRightsSnapshot or raw.scope != scope:
+                raise ValueError("invalid_rights_snapshot_scope")
+            return raw
+
+        result = validated(reader(account))
         if cancelled():
             return unavailable("cancelled")
         if not still_bound():
             return unavailable()
-        # Transitional v2 adoption through the same single optional reader.
-        # Convert an exact downloadable-resource observation to the existing
-        # Core executor envelope; *never* infer a legal grant or extra GET.
-        # A v2-only provider need not introduce a parallel Sync loop.
-        if reader_name == "downloadable_resource_snapshot" and type(result) is not ResourceSnapshot:
-            raise ValueError("invalid_downloadable_snapshot")
-        if type(result) is ResourceSnapshot:
-            if result.scope != scope:
-                raise ValueError("invalid_downloadable_snapshot_scope")
-            result = as_legacy_rights_snapshot(result)
-        if type(result) is not ProviderRightsSnapshot or result.scope != scope:
-            raise ValueError("invalid_rights_snapshot_scope")
+        if not result.resume_cursor:
+            # Unpaged providers preserve the original Core result contract.
+            return result
+
+        # Collect only positive observations from bounded, exact-account
+        # pages. Even reaching the last cursor grants no negative authority.
+        first = result
+        accepted = list(result.rights)
+        known = {(r.edition_id, r.right_id, r.kind) for r in accepted}
+        visited = set()
+        cursor = result.resume_cursor
+        while (cursor and len(visited) < _MAX_INVENTORY_PAGES
+               and len(accepted) < _MAX_INVENTORY_ROWS):
+            if cursor in visited:
+                break
+            visited.add(cursor)
+            if cancelled():
+                return unavailable("cancelled")
+            if not still_bound():
+                return unavailable()
+            try:
+                page = validated(reader(account, resume_cursor=cursor))
+            except Cancelled:
+                return unavailable("cancelled")
+            except ValueError as exc:
+                if str(exc) in (
+                    "invalid_downloadable_snapshot_scope",
+                    "invalid_rights_snapshot_scope",
+                ):
+                    # An attestation for another account invalidates the
+                    # entire old lease, not merely the current cursor.
+                    return unavailable()
+                _LOG.warning("TRACE rights pagination code=page_unavailable")
+                break
+            except Exception:
+                # Preserve earlier positives; never log a private exception.
+                _LOG.warning("TRACE rights pagination code=page_unavailable")
+                break
+            if cancelled():
+                return unavailable("cancelled")
+            if not still_bound():
+                return unavailable()
+            if page.status == "cancelled":
+                return unavailable("cancelled")
+            if page.status == "failed":
+                # A failed continuation legitimately has no branch and no
+                # rows. Preserve the previously observed positives only.
+                break
+            if page.branch != first.branch:
+                # A positive page for a different branch invalidates A.
+                return unavailable()
+            keys = [(r.edition_id, r.right_id, r.kind) for r in page.rights]
+            if (any(k in known for k in keys)
+                    or (page.resume_cursor and not page.rights)
+                    or len(accepted) + len(page.rights) > _MAX_INVENTORY_ROWS):
+                break
+            accepted.extend(page.rights)
+            known.update(keys)
+            cursor = page.resume_cursor
         return ProviderRightsSnapshot(
-            scope=scope, rights=result.rights, status=result.status,
-            coverage=result.coverage, pagination_complete=result.pagination_complete,
-            branch=result.branch, observed_at=result.observed_at,
-            snapshot_ref=result.snapshot_ref, resume_cursor=result.resume_cursor,
-            schema_version=result.schema_version,
+            scope=scope, rights=tuple(accepted), branch=first.branch,
+            status="partial", coverage="partial", pagination_complete=False,
+            observed_at=first.observed_at, snapshot_ref=first.snapshot_ref,
+            resume_cursor=cursor,
         )
     except Cancelled:
         return unavailable("cancelled")
