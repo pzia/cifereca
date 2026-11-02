@@ -211,3 +211,13 @@ def test_settings_rejects_primary_as_linked_and_identity_transfer(tmp_path):
     )
     with pytest.raises(SettingsValidationError, match="Déplacer un compte"):
         validate(cfg, values)
+
+
+def test_settings_rejects_linked_quota_transfer_to_another_login(tmp_path):
+    cfg, values = draft_inputs(
+        tmp_path, saved={"linked-a": {"digital": "2", "physical": "4"}},
+    )
+    values["accounts"][0]["fields"]["username"] = "different-reader"
+    with pytest.raises(SettingsValidationError, match="identifiant de connexion"):
+        validate(cfg, values)
+    assert not cfg.path.exists()
