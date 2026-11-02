@@ -343,8 +343,10 @@ def test_account_unregistered_after_selected_offer_blocks_candidate_get(rig):
     service.session.rights_selected_delivery_candidate = (
         lambda *_a, **_kw: pytest.fail("no GET after SQL account unbinding")
     )
-    result = synchronize_account_source(service, service.account)
-    assert result["canonical_execution"]["downloaded"] == 0
+    # The stronger selected-offer gate now rejects the entire stale account
+    # lease immediately after preflight, instead of merely blocking B later.
+    with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
+        synchronize_account_source(service, service.account)
     assert refs(db)[1] == 0 and db.placements() == []
 
 
