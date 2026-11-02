@@ -9,7 +9,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.brokers import SyncBroker
+from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.gui.sync_view import (
     sync_source_attention, sync_source_informational_partial,
     sync_source_presentation,
@@ -22,11 +22,11 @@ def real_broker_phase_states():
     # Directly invoke the actual Core broker projection: no service, storage
     # or login is needed for a source without the Kobo-local phase capability.
     broker = NS(
-        _safe_phase_timestamp=SyncBroker._safe_phase_timestamp,
+        _safe_phase_timestamp=SynchronizationBrokerImpl._safe_phase_timestamp,
         _source_id=lambda account: "sync:synthetic",
         _materialization_state=lambda source_id: {},
     )
-    phases = SyncBroker._phase_states(
+    phases = SynchronizationBrokerImpl._phase_states(
         broker, NS(provider_id="bnf-pret"),
         {"status": "partial", "last_attempt": "2026-11-02T05:29:06+00:00"},
         ("entitlements", "loan_auto_materialization"),
