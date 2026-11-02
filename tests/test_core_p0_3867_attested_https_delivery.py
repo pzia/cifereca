@@ -484,3 +484,76 @@ def test_revoked_during_final_sha_probe_unlinks_candidate(
             admission_current=lambda: consent["valid"], timeout=5,
         )
     assert list(tmp_path.iterdir()) == []
+
+
+
+@pytest.mark.parametrize("stage_state", ["missing", "symlink"])
+def test_invalid_staging_parent_does_not_consume_signed_get(
+    tmp_path, monkeypatch, stage_state,
+):
+    """A single-use supplier URL must not be fetched before stage admission."""
+    stage = tmp_path / "chosen-private-stage"
+    if stage_state == "symlink":
+        actual = tmp_path / "another-directory"
+        actual.mkdir()
+        stage.symlink_to(actual, target_is_directory=True)
+    seen = []
+    opened = _client(
+        monkeypatch,
+        lambda request: seen.append(str(request.url)) or httpx.Response(
+            200, content=b"unnecessary signed delivery"
+        ),
+    )
+    with pytest.raises(ValueError, match="delivery_staging_unsafe"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=stage / "candidate.epub", timeout=5,
+            admission_current=lambda: True,
+        )
+    assert seen == []
+    assert opened == []  # The network client was never created.
+    assert not (stage / "candidate.epub").exists()
+
+
+def test_replaced_regular_staging_directory_after_get_is_not_publication_scope(
+    tmp_path, monkeypatch,
+):
+    """A same-name directory rebound during GET cannot receive private bytes."""
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    moved = tmp_path / "moved"
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        stage.rename(moved)
+        stage.mkdir()  # Real directory, NOT a symlink: only inode pin detects it.
+        return httpx.Response(200, content=b"private supplier bytes")
+
+    _client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="delivery_staging_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=stage / "received.epub", timeout=5,
+            admission_current=lambda: True,
+        )
+    assert seen == [FIRST]
+    assert list(stage.iterdir()) == []
+    assert list(moved.iterdir()) == []
+
+
+def test_original_private_stage_remains_valid_without_rebind(
+    tmp_path, monkeypatch,
+):
+    stage = tmp_path / "private"
+    stage.mkdir(mode=0o700)
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=b"synthetic selected bytes"
+    ))
+    result = delivery.download_attested_https(
+        producer="core.selected.delivery", url=FIRST,
+        target=stage / "received.epub", timeout=5,
+        admission_current=lambda: True,
+    )
+    assert result.path.read_bytes() == b"synthetic selected bytes"
+    assert list(stage.iterdir()) == [result.path]
