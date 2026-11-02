@@ -5,6 +5,8 @@ provider-specific policies. Targets are freshly built for one scoped page.
 """
 from __future__ import annotations
 
+from math import isfinite
+
 
 def next_sync_attention_target(targets: object, position: object):
     """Cycle through actionable rows, prioritizing errors over warnings.
@@ -54,7 +56,7 @@ def focus_sync_attention_target(scroller: object, target: object) -> bool:
         lower = float(adjustment.get_lower())
         upper = float(adjustment.get_upper())
         page_size = float(adjustment.get_page_size())
-        if not all(map(__import__("math").isfinite, (y, lower, upper, page_size))):
+        if not all(map(isfinite, (y, lower, upper, page_size))):
             return False
         if page_size <= 0 or upper < lower:
             return False
