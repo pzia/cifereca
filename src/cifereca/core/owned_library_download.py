@@ -64,8 +64,13 @@ def _resolve(service, entitlement_id, identity_id):
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(accounts[0])
     _, _, scope, configuration = _source(broker, sid)
-    _require(service.local_placement_for_source(provider_id="kobo", credential_id=right["credential_id"],
-                                               item_id=right["item_id"], identity_id=identity_id) is None)
+    # An older complete receipt for another borrower is not a reason to
+    # suppress acquisition of this exact currently admitted Kobo right.
+    _require(service.local_placement_for_source(
+        provider_id="kobo", credential_id=right["credential_id"],
+        item_id=right["item_id"], identity_id=identity_id,
+        account_id=right["account_id"],
+    ) is None)
     # A 0.7 backup receipt is historical evidence, not authority that this
     # exact current source has a physically usable Core Placement. The
     # identity/account/edition are already pinned by the entitlement and
