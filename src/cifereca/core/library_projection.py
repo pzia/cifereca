@@ -597,6 +597,28 @@ def _verified_legacy_receipt_aliases(storage, *, identity_id: str | None):
     return tuple(proven)
 
 
+def _unlinked_remote_entitlement_key(entitlement: dict[str, Any],
+                                     identity_id: str) -> str:
+    """Stable opaque display key for ONE exact, still-unlinked source right.
+
+    Two borrowers can own the same provider item_id with different metadata
+    and rights. A shared `source:provider:item` key would merge them, leak
+    another account's details and overwrite a loan/entitlement state. A
+    canonical Artifact+OriginLink may still intentionally group same-byte
+    holdings; this key is only for remote-only fallback cards.
+    """
+    fields = (
+        identity_id, entitlement.get("provider_id"),
+        entitlement.get("credential_id"), entitlement.get("account_id"),
+        entitlement.get("item_id"), entitlement.get("entitlement_type"),
+        entitlement.get("loan_id"), entitlement.get("entitlement_id"),
+    )
+    payload = json.dumps(fields, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    return "source:scoped:" + hashlib.sha256(
+        b"cifereca:remote-entitlement:v1\x00" + payload
+    ).hexdigest()
+
+
 def library_entries(self, *, identity_id: str | None=None, scan: bool=False, logger) -> list[dict[str, Any]]:
     """Canonical Library projection.
 
@@ -850,7 +872,6 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         if identity_id and entitlement_identity != identity_id: continue
         provider_id = str(entitlement.get("provider_id") or ""); item_id = str(entitlement.get("item_id") or "")
         if not provider_id or not item_id: continue
-        source_key = (provider_id, item_id)
         exact_scope = (
             entitlement_identity, provider_id,
             str(entitlement.get("credential_id") or ""),
@@ -865,7 +886,9 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             proved = legacy_exact_aliases.get(receipt_scope, ())
             canonical_key = (
                 next(iter(proved)) if len(proved) == 1
-                else f"source:{provider_id}:{item_id}"
+                else _unlinked_remote_entitlement_key(
+                    entitlement, entitlement_identity,
+                )
             )
         if provider_id == 'bnf-pret' and entitlement_type == 'loan':
             canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
