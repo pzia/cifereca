@@ -41,7 +41,8 @@ observés, et aucune addition numérique + physique.
 
 ## Recette
 
-Les tests synthétiques `test_p1_4065_paris_primary_advisory_limit.py`\net `tests/test_p1_4065_linked_borrower_settings.py`
+Les tests synthétiques `test_p1_4065_paris_primary_advisory_limit.py`
+et `tests/test_p1_4065_linked_borrower_settings.py`
 vérifient les deux descripteurs, le défaut, les limites, l'indépendance
 des emprunteurs principal/lié lors de l'inventaire et l'absence
 d'utilisation des préférences dans les appels réseau simulés. Le contrat
