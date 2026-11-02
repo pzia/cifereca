@@ -122,9 +122,9 @@ def _receipt_local_file_verified(service, account: Account, row: dict, path: Pat
             return False
         return True
     except (OSError, ValueError, TypeError, KeyError):
+        # The caught filesystem/SQL cause may carry a private book path.
         _TRACE_LOG.warning(
-            "TRACE bnf auto receipt file check failed provider_id=%s",
-            account.provider_id, exc_info=True,
+            "TRACE bnf auto receipt file check failed code=verification_unavailable"
         )
         return False
 
