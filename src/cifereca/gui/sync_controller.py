@@ -563,17 +563,10 @@ def _refresh_sync_page(self) -> None:
                 + display_summary
             )
             row.set_subtitle_lines(4)
-            technical_details = Gtk.Expander(label="Détails techniques du dernier cycle")
-            technical_details.set_expanded(False)
-            technical_details.set_margin_start(12)
-            technical_details.set_margin_end(12)
-            technical_details.set_margin_bottom(12)
-            diagnostic_text = Gtk.Label(label=presentation.summary, xalign=0)
-            diagnostic_text.set_wrap(True)
-            diagnostic_text.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            diagnostic_text.set_width_chars(1)
-            diagnostic_text.set_hexpand(True)
-            technical_details.set_child(diagnostic_text)
+            # Full closed-state details remain available on hover/focus,
+            # without inserting a new child into any source card. Legacy
+            # GTK and E2E consumers rely on the existing controls' order.
+            row.set_tooltip_text(presentation.summary)
         else:
             # An account row without sync capability is NOT evidence of a
             # public catalogue, much less an exhaustively refreshable one.
@@ -655,7 +648,6 @@ def _refresh_sync_page(self) -> None:
                     append_source_inventory_schedule_controls(
                         self, broker, source, scope, group,
                     )
-                group.add(technical_details)
                 # The Core broker owns both independent decisions: remote
                 # notices/rights scheduling and automatic file acquisition.
                 # Legacy per-vendor widgets must not re-enter this pathway.
@@ -1650,11 +1642,6 @@ def _refresh_sync_page(self) -> None:
                 dialog.present()
 
             inventory_button.connect("clicked", change_inventory_schedule)
-
-        # Fallback presentation for old broker implementations. Source
-        # settings and any active actions remain outside this disclosure.
-        if source.sync_capable is True:
-            group.add(technical_details)
 
     # Personal inventories come first. Public and authenticated catalogue
     # searches remain an optional, collapsed second section.
