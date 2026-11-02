@@ -76,12 +76,21 @@ def read_canonical_placement_inventory(
             return CanonicalPlacementInventory("unavailable")
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN")
-            identities = db.execute(
-                "SELECT identity_id,directory_name FROM identities",
-            ).fetchall()
-            owners = [name for ident, name in identities if ident == identity_id]
-            if (len(owners) != 1 or type(owners[0]) is not str
-                    or not owners[0] or sum(name == owners[0] for _, name in identities) != 1):
+            # The inventory is bounded by profile. Do not materialize every
+            # unrelated identity to prove directory isolation: this check
+            # belongs to the SAME SQLite snapshot as the Placement query.
+            owner = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (identity_id,),
+            ).fetchone()
+            if owner is None or type(owner[0]) is not str or not owner[0]:
+                return CanonicalPlacementInventory("unavailable")
+            if db.execute(
+                "SELECT 1 FROM identities "
+                "WHERE directory_name=? AND identity_id<>? LIMIT 1",
+                (owner[0], identity_id),
+            ).fetchone() is not None:
+                # Shared physical roots forbid cross-profile dedup previews.
                 return CanonicalPlacementInventory("unavailable")
             rows = db.execute(
                 "SELECT p.placement_id,p.artifact_id,p.state,"
