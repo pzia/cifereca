@@ -513,7 +513,7 @@ def test_bnf_rights_v2_adaptor_preserves_only_attested_branch_coverage(pairs):
         assert snap.pagination_complete is complete
         assert len(snap.resources) == len(pairs)
         assert not snap.authorizes_negative_reconciliation
-        assert not snap.authorizes_mutation
+        assert not snap.authorizes_acquisition
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
