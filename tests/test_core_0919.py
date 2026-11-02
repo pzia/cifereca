@@ -122,10 +122,13 @@ class Core0919(unittest.TestCase):
   self.extract('prepare_pnb_for_loan')(w,self.loan);args=w.runner.submit.call_args.args
   result=args[1]();args[2](result);w.service.reacquire_digital_loan.assert_called_once_with(self.loan)
   w.loan_page.detail.show_loan.assert_called_once_with(self.loan);self.assertIn('Livre récupéré',w.toast.call_args.args[0]);self.assertNotIn('restitution',w.toast.call_args.args[0])
- def test_return_ui_uses_exact_acquisition_and_keeps_file(self):
-  w=NS(service=NS(return_adept_acquisition=Mock(return_value={'ok':True})),runner=Mock(),refresh_library=Mock(),toast=Mock(),show_error=Mock())
-  self.extract('return_adept_from_detail')(w,'binding-id',Mock());args=w.runner.submit.call_args.args;args[2](args[1]())
-  w.service.return_adept_acquisition.assert_called_once_with('binding-id');self.assertIn('fichiers conservés',w.toast.call_args.args[0])
+ def test_return_ui_entrypoint_removed_without_losing_readonly_binding(self):
+  path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
+  tree=ast.parse(gui_source_text(path))
+  cls=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='MainWindow')
+  methods={node.name for node in cls.body if isinstance(node,ast.FunctionDef)}
+  self.assertNotIn('return_adept_from_detail',methods)
+  self.assertIn('reconcile_adept_from_detail',methods)
  def test_loan_detail_displays_adept_binding_without_return_button(self):
   button=Mock();window=NS(service=NS(provider_display_name=lambda _provider:'Paris',can_download_loan=lambda loan:False,adept_return_status_for_loan=lambda loan:{'status':'ready','return_available':True,'acquisition_id':'binding-id','adept_loan_id':'adept-exact','profile_name':'hb'}),action_button=Mock(return_value=button),return_adept_from_detail=Mock(),config=NS(get=lambda key,default=None:default))
   detail=NS(_decorate=Mock(),_clear_actions=Mock(),window=window,content=Mock(),_cancel_meta_request=Mock(),_cover_and_title=Mock(),_group=Mock(),_actions=Mock(),show_presentation=Mock())
