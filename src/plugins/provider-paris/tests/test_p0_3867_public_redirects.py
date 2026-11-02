@@ -115,3 +115,24 @@ def test_untrusted_host_cannot_start_paris_borrow_without_official_link(
             )
     finally:
         client.close()
+
+
+
+def test_public_transport_exception_redacts_signed_supplier_url(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    private_url = "https://cdn.example/token.acsm?secret=PRIVATE_BEARER"
+    def factory(*, producer, timeout):
+        def fail(request):
+            raise httpx.ConnectTimeout("PRIVATE_BEARER: " + str(request.url))
+        return httpx.Client(
+            transport=httpx.MockTransport(fail), follow_redirects=False,
+            trust_env=False,
+        )
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        with pytest.raises(Exception, match="Transport HTTPS PNB indisponible") as error:
+            client._get_pnb_response(private_url)
+        assert "PRIVATE_BEARER" not in str(error.value)
+        assert "cdn.example" not in str(error.value)
+    finally:
+        client.close()
