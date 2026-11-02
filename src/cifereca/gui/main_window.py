@@ -1314,11 +1314,6 @@ class MainWindow(Adw.ApplicationWindow):
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
 
     # ---------- bookings ----------
-    def _build_bookings_page(self) -> MasterDetailPage:
-        return secondary_page_controller.build_bookings_page(
-            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
-        )
-
     def refresh_bookings(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
         current = self.service.current_identity
         identity_id = current.identity_id if current is not None else None
