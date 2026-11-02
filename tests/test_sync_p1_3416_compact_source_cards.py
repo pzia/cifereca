@@ -1,0 +1,132 @@
+"""#3416: urgent per-source actions are visible; diagnostics are optional.
+
+Tests exercise the actual GTK controller AST with headless widget doubles.
+No account, provider, network, source write, lease or acquisition is used.
+"""
+from __future__ import annotations
+
+from types import SimpleNamespace as NS
+
+import pytest
+
+from cifereca.gui.sync_source_card_guidance import sync_source_card_guidance
+from cifereca.gui.sync_view import sync_source_attention
+from tests.test_core_ui_1347_sync_action_scope import (
+    Widget, _fixture, _source,
+)
+
+
+@pytest.mark.parametrize(("fields", "expected"), [
+    (dict(status="failed", connected=True, enabled=True),
+     "examiner les détails du dernier cycle"),
+    (dict(status="failed", connected=False, enabled=True),
+     "reconnecter ce compte"),
+    (dict(status="blocked", connected=True, enabled=False),
+     "activer cette source"),
+    (dict(status="partial", connected=True, enabled=True),
+     "examiner les détails du dernier cycle"),
+])
+def test_problem_guidance_is_source_scoped_and_actionable(fields, expected):
+    source = _source(provider_id="future-provider", **fields)
+    alert = sync_source_attention(source)
+    assert alert is not None
+    assert alert[0] in {"error", "warning"}
+    hint = sync_source_card_guidance(source, alert)
+    assert expected in hint
+    assert "future-provider" not in hint
+    assert "kobo" not in hint.casefold()
+
+
+@pytest.mark.parametrize("source", [
+    _source(status="idle"),
+    _source(status="success"),
+    _source(status="partial", enabled=False, sync_capable=False),
+])
+def test_no_problem_never_adds_fake_repair_action(source):
+    assert sync_source_card_guidance(source, None) == ""
+    assert sync_source_card_guidance(source, ("info", "information")) == ""
+
+
+def test_untrusted_alert_or_provider_text_never_becomes_advice():
+    source = _source(
+        provider_id="opaque-future",
+        source_id="private://secret/token",
+        error="https://private.invalid/?token=SECRET_CARD",
+        status="failed",
+    )
+    for alert in ("error", ("error",), ("unsupported", "SECRET_CARD"), [], None):
+        assert sync_source_card_guidance(source, alert) == ""
+    hint = sync_source_card_guidance(source, sync_source_attention(source))
+    assert "SECRET_CARD" not in hint
+    assert "private.invalid" not in hint
+    assert "private://" not in hint
+
+
+@pytest.mark.parametrize(("options", "text"), [
+    (dict(status="failed", error="https://private.invalid/SECRET_CARD"),
+     "examiner les détails du dernier cycle"),
+    (dict(status="partial", error="Synchronisation partielle",
+          phase_states=(NS(phase="discover_rights", status="partial"),)),
+     "examiner les détails du dernier cycle"),
+    (dict(status="failed", enabled=True, connected=False),
+     "reconnecter ce compte"),
+])
+def test_actual_gtk_card_keeps_problem_and_next_step_above_collapsed_details(
+    options, text, monkeypatch,
+):
+    def record_lines(widget, value):
+        widget.subtitle_lines = value
+    monkeypatch.setattr(Widget, "set_subtitle_lines", record_lines)
+    source = _source(provider_id="future-provider", source_id="synthetic-card",
+                     label="Compte fictif", **options)
+    window, _, calls, _, _ = _fixture(sources=[source])
+    group = window._sync_sources_box.children[0]
+    row = group.children[0]
+    assert row.subtitle_lines == 4
+    assert row.subtitle.startswith(sync_source_attention(source)[1] + "\n")
+    assert text in row.subtitle.splitlines()[1]
+    assert len(row.prefixes) == 1
+    detail = group.children[-1]
+    assert detail.label == "Détails techniques du dernier cycle"
+    assert detail.expanded is False
+    assert "Fournisseur : future-provider" in detail.child.label
+    assert "Synchronisation : " in detail.child.label
+    assert "SECRET_CARD" not in row.subtitle
+    assert "SECRET_CARD" not in detail.child.label
+    assert calls == [("sources", "alice")]
+    assert window.runner.tasks == []
+
+
+def test_healthy_card_is_compact_and_preserves_manual_sync_action(monkeypatch):
+    monkeypatch.setattr(Widget, "set_subtitle_lines",
+                        lambda widget, count: setattr(widget, "subtitle_lines", count))
+    source = _source(provider_id="future-provider", source_id="synthetic-card",
+                     label="Compte fictif", status="success", error="")
+    window, _, calls, _, _ = _fixture(sources=[source])
+    group = window._sync_sources_box.children[0]
+    row = group.children[0]
+    assert row.subtitle_lines == 4
+    assert row.subtitle.startswith("Fournisseur : future-provider\n")
+    assert "À faire :" not in row.subtitle
+    assert row.prefixes == []
+    assert group.children[-1].expanded is False
+    assert group.children[-1].child.label.startswith("Fournisseur : future-provider")
+    # The existing source action is still available, but no page rendering
+    # starts it or grants new permission.
+    assert row.suffixes[1].label == "Synchroniser Compte fictif"
+    assert calls == [("sources", "alice")]
+    assert window.runner.tasks == []
+
+
+def test_information_only_partial_is_not_relabelled_as_user_problem():
+    source = _source(
+        provider_id="future-provider", status="partial",
+        error="Synchronisation partielle",
+        phase_states=(
+            NS(phase="discover_rights", status="partial"),
+            NS(phase="materialize", status="success"),
+        ),
+    )
+    assert sync_source_attention(source) == (
+        "info", "Notices et droits : couverture partielle (information)")
+    assert sync_source_card_guidance(source, sync_source_attention(source)) == ""
