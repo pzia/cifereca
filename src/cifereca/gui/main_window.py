@@ -87,7 +87,6 @@ from .task_runner import TaskPriority, TaskRunner
 from .maintenance_result_view import MaintenanceResultView
 from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
 from .maintenance_line_widgets import build_maintenance_line
-from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
 from .activity_history_projection import activity_history_rows
@@ -1102,18 +1101,6 @@ class MainWindow(Adw.ApplicationWindow):
     def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
         return loans_controller._renew(self, loan, control)
 
-    def confirm_return(self, loan: Loan, control: Gtk.Widget) -> None:
-        return loans_controller.confirm_return(self, loan, control)
-
-    def _return_loan_result(self, result: Any, *, channel: str) -> None:
-        return loans_controller._return_loan_result(self, result, channel=channel)
-
-    def _return_loan(self, loan: Loan, control: Gtk.Widget) -> None:
-        return loans_controller._return_loan(self, loan, control)
-
-    def _return_loan_pnb(self, loan: Loan, control: Gtk.Widget) -> None:
-        return loans_controller._return_loan_pnb(self, loan, control)
-
     # ---------- search ----------
     def _query_controls(self, changed, activate, *, library=False):
         return query_widget_factory_controller.build_query_controls(
@@ -1587,26 +1574,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.runner.submit("Vérification du prêt ADEPT…", lambda: self.service.reconcile_adept_acquisition(acquisition_id), ok,
             lambda exc: self.show_error(str(exc), "Vérification ADEPT impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="adept-inventory")
-
-    def return_adept_from_detail(self, acquisition_id: str, control: Gtk.Widget) -> None:
-        def ok(_result):
-            verification = _result.get("verification")
-            suffix = " · état local vérifié" if verification == "confirmed" else (" · vérification locale non confirmée" if verification else "")
-            message="Retour enregistré, jeton absent" if verification=="confirmed" else "Commande exécutée, retour non confirmé"
-            result_message = message+" · fichiers conservés" + suffix
-            reporter = getattr(self, "_activity_result", None)
-            if callable(reporter):
-                reporter(result_message)
-            else:
-                self.toast(result_message, 7)
-            if getattr(self, "_displayed_loan", None):
-                self.loan_page.detail.show_loan(self._displayed_loan)
-            self.refresh_library(False)
-            refresh = getattr(self, 'refresh_loans', None)
-            if callable(refresh): refresh(True)
-        self.runner.submit("Restitution du prêt ADEPT…", lambda: self.service.return_adept_acquisition(acquisition_id), ok,
-            lambda exc: self.show_error(str(exc), "Restitution ADEPT impossible"), control=control,
-            priority=TaskPriority.USER_ACTION, kind="adept-return")
 
     def prepare_bnf_acsm_for_loan(self, loan: Loan, control: Gtk.Widget | None = None) -> None:
         from .bnf_acsm_action_controller import prepare_bnf_acsm
