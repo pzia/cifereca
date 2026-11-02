@@ -123,7 +123,6 @@ def test_non_acsm_download_cannot_be_misclassified_as_adobe_license(
 
 
 @pytest.mark.parametrize("args", [
-    ["acsm", "return", "loan-id", "--json"],
     ["profile", "list", "--json"],
     ["loans", "list", "--json"],
     ["contract", "--json"],
@@ -170,7 +169,7 @@ def test_top_level_exact_enum_is_mapped_only_for_acsm_request(monkeypatch):
     classified = run_failure(monkeypatch, payload, exit_code=1)
     assert classified.code == "adept_license_already_fulfilled_by_another_user"
     unrelated = run_failure(monkeypatch, payload, exit_code=10,
-                            args=["acsm", "return", "loan-id", "--json"])
+                            args=["profile", "list", "--json"])
     assert unrelated.code == "kobo_adept_failed"
 
 
