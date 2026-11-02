@@ -255,3 +255,44 @@ def test_changed_owner_directory_revokes_prior_missing_retirement_token(rig):
     assert result["reason"] == "path_out_of_scope"
     assert storage.placement_get(pid)["state"] == "missing"
     assert not path.exists()
+
+
+
+@pytest.mark.parametrize("swap_on_probe", [1, 2])
+def test_root_replaced_after_prepare_never_retires_old_sqlite_placement(
+    rig, tmp_path, monkeypatch, swap_on_probe,
+):
+    """Absence in a replacement mount is not the original root's absence."""
+    import shutil
+    from cifereca.core import missing_placement_retirement as module
+
+    storage, root, path, pid = rig
+    token = prepare(rig)["plan_token"]
+    original = storage.placement_get(pid)
+    original_mount = tmp_path / "library-original-mount"
+    real = module._physical_absence
+    calls = []
+
+    def swap_mount(owner, stored_path):
+        calls.append((owner, stored_path))
+        if len(calls) == swap_on_probe:
+            root.rename(original_mount)
+            (root / "alice" / "kobo").mkdir(parents=True)
+        return real(owner, stored_path)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_physical_absence", swap_mount)
+            outcome = retire(rig, token)
+        assert outcome == {"status": "blocked", "reason": "root_changed"}
+        assert storage.placement_get(pid) == original
+        assert not path.exists()
+    finally:
+        if original_mount.exists():
+            shutil.rmtree(root)
+            original_mount.rename(root)
+
+    # The original directory inode is now back, but the earlier failed
+    # attempt never deleted a row or acquired rights over replacement bytes.
+    assert storage.placement_get(pid) == original
+    assert retire(rig, token)["status"] == "retired"
