@@ -79,8 +79,8 @@ def toggle_state(db, source: SourceKey):
     # receives the new exact-scope, CAS-versioned source policy above.
     scope = source.scope
     if scope.account_id and (
-        not scope.account_id.strip()
-        or scope.account_id.strip() == (
+        scope.account_id != scope.account_id.strip()
+        or scope.account_id == (
             scope.provider_id + ":" + scope.credential_id + ":primary"
         )
     ):
