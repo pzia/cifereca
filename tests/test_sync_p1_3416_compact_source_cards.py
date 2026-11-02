@@ -1,4 +1,4 @@
-"""#3416: urgent per-source actions are visible; diagnostics are optional.
+"""#3416: urgent per-source actions are visible; detailed text is on hover.
 
 Tests exercise the actual GTK controller AST with headless widget doubles.
 No account, provider, network, source write, lease or acquisition is used.
@@ -86,13 +86,11 @@ def test_actual_gtk_card_keeps_problem_and_next_step_above_collapsed_details(
     assert row.subtitle.startswith(sync_source_attention(source)[1] + "\n")
     assert text in row.subtitle.splitlines()[1]
     assert len(row.prefixes) == 1
-    detail = group.children[-1]
-    assert detail.label == "Détails techniques du dernier cycle"
-    assert detail.expanded is False
-    assert "Fournisseur : future-provider" in detail.child.label
-    assert "Synchronisation : " in detail.child.label
+    assert len(group.children) == 1
+    assert row.tooltip.startswith("Fournisseur : future-provider")
+    assert "Synchronisation : " in row.tooltip
     assert "SECRET_CARD" not in row.subtitle
-    assert "SECRET_CARD" not in detail.child.label
+    assert "SECRET_CARD" not in row.tooltip
     assert calls == [("sources", "alice")]
     assert window.runner.tasks == []
 
@@ -109,8 +107,8 @@ def test_healthy_card_is_compact_and_preserves_manual_sync_action(monkeypatch):
     assert row.subtitle.startswith("Fournisseur : future-provider\n")
     assert "À faire :" not in row.subtitle
     assert row.prefixes == []
-    assert group.children[-1].expanded is False
-    assert group.children[-1].child.label.startswith("Fournisseur : future-provider")
+    assert len(group.children) == 1
+    assert row.tooltip.startswith("Fournisseur : future-provider")
     # The existing source action is still available, but no page rendering
     # starts it or grants new permission.
     assert row.suffixes[1].label == "Synchroniser Compte fictif"
