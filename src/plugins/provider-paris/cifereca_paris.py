@@ -129,6 +129,25 @@ DESCRIPTOR = ProviderDescriptor(
         AccountOptionField("base_url", "URL du portail",
                            default="https://bibliotheques.paris.fr",
                            legacy_config_key="base_url"),
+        # #4065: these values apply to the PRIMARY Paris borrower ONLY.
+        # Never inherit either value on a linked reader account: that requires
+        # an independently identified borrower-specific setting and UI.
+        AccountOptionField(
+            "manual_loan_limit_primary_digital",
+            "Compte principal · maximum personnel de prêts numériques",
+            default="4", value_type="unsigned_integer", min_value=0, max_value=99,
+            help_text="4 par défaut · DILICOM seulement. Plafond renseigné par vous, "
+                      "sans effet sur les droits réels, l'emprunt ou la synchronisation. "
+                      "Ne s'applique pas aux comptes lecteurs liés.",
+        ),
+        AccountOptionField(
+            "manual_loan_limit_primary_physical",
+            "Compte principal · maximum personnel de prêts physiques",
+            default="4", value_type="unsigned_integer", min_value=0, max_value=99,
+            help_text="4 par défaut · SYRACUSE seulement. Plafond renseigné par vous, "
+                      "distinct du quota officiel et sans effet sur la prolongation. "
+                      "Ne s'applique pas aux comptes lecteurs liés.",
+        ),
     ),
 )
 
