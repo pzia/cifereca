@@ -14,6 +14,7 @@ from .source_convergence import (
     ConvergencePlan, OriginEvidence, PlacementEvidence, SourceKey,
     plan_convergence,
 )
+from .canonical_recovery import _exact_borrower_bound_in_db
 from ..catalog import LocalCatalog
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 
@@ -137,25 +138,12 @@ def plan_existing_verified_presence(
         # _verified_copy checks the exact owner folder as the first path
         # component, and only needs that owner's name in this membership set.
         reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
-        binding = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
-            (scope.provider_id, scope.credential_id),
-        ).fetchone()
-        # A source's credential may own an arbitrarily large roster. Only
-        # this exact borrower can contribute local provider-origin evidence.
-        # Keep the cardinality check bounded, even on historical SQLite.
-        exact_accounts = db.execute(
-            "SELECT 1 FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=? "
-            "AND account_id=? LIMIT 2",
-            (scope.identity_id, scope.provider_id, scope.credential_id,
-             scope.account_id),
-        ).fetchall()
-        bound = (
-            binding == (scope.identity_id, 1)
-            and len(exact_accounts) == 1
-        )
+        # Positive local B evidence may suppress a fresh GET. It must
+        # therefore be tied not only to the exact borrower coordinates but
+        # also to the one currently enabled provider connection. A migrated
+        # account row with a foreign connection_id cannot satisfy this A.
+        # Reuse the bounded Core journal guard in this same SQLite snapshot.
+        bound = _exact_borrower_bound_in_db(db, scope)
         origins_raw = db.execute(
             "SELECT o.origin_link_id, o.identity_id, o.evidence_ref,"
             "s.branch_id, s.edition_id, s.right_id, s.reference_kind,"
