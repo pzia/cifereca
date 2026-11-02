@@ -94,6 +94,18 @@ def test_unknown_malformed_or_unqualified_events_are_not_given_a_license_cause(b
     assert adept_guidance_for_event(bad) == ""
 
 
+
+@pytest.mark.parametrize("code", [
+    "invalid_acsm", "adept_license_already_fulfilled_by_another_user",
+    "kobo_adept_timeout",
+])
+@pytest.mark.parametrize("operation", [
+    "profile list", "loans list", "capabilities", "status",
+])
+def test_acsmspecific_cause_requires_download_request_operation(code, operation):
+    assert adept_guidance_for_event(event(code, operation=operation)) == ""
+
+
 def test_retries_remain_unadvised_even_when_native_retryable_flag_is_true():
     label = adept_guidance_for_event(
         event("invalid_acsm", retryable=True)
