@@ -482,9 +482,27 @@ def _refresh_sync_page(self) -> None:
                 add_css(icon, severity)
                 row.add_prefix(icon)
             # Keep the full phase/account evidence below the prominent line.
+            # The two policy controls are independent of the source ON/OFF
+            # switch and of the last-run delivery result. Read only the
+            # existing Core broker state; never infer a server quota or a
+            # catalogue-sync capability from a source label.
+            from cifereca.gui.sync_source_controls_overview import (
+                sync_source_controls_overview,
+            )
+            control_overview = sync_source_controls_overview(source, broker)
+            # Preserve the existing first-line provider identity contract
+            # (including accessible name and old GTK consumers), while
+            # placing the two settings immediately under that fixed heading.
+            display_summary = presentation.summary
+            if control_overview:
+                head, separator, remainder = display_summary.partition("\n")
+                display_summary = (
+                    head + "\n" + control_overview
+                    + ("\n" + remainder if separator else "")
+                )
             row.set_subtitle(
                 (alert[1] + "\n" if alert is not None else "")
-                + presentation.summary
+                + display_summary
             )
             row.set_subtitle_lines(0)
         else:
