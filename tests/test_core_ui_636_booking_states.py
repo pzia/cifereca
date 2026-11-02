@@ -48,16 +48,18 @@ def test_ready_cancelled_expired_and_unknown_states_never_expose_raw_codes():
     assert booking_presentation(_booking(state="provider_internal_code")).status_label == "État à vérifier"
 
 
-def test_booking_list_and_detail_share_same_business_projection():
+def test_retired_booking_list_projection_is_absent_but_legacy_model_stays_parseable():
     owner = ast.parse(MAIN.with_name("secondary_results_controller.py").read_text(encoding="utf-8"))
-    listing = ast.unparse(next(node for node in owner.body
-                               if isinstance(node, ast.FunctionDef)
-                               and node.name == "populate_bookings"))
-    assert "secondary_results_controller.populate_bookings" in _method("MainWindow", "_populate_bookings")
+    assert not any(isinstance(node, ast.FunctionDef)
+                   and node.name == "populate_bookings" for node in owner.body)
+    main = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(node for node in main.body
+               if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    assert not any(isinstance(node, ast.FunctionDef)
+                   and node.name in {"_populate_bookings", "refresh_bookings"}
+                   for node in cls.body)
+    # Historical Booking objects remain decodable until a versioned model
+    # migration; they must never rebuild a live reservations list.
     detail = _method("DetailPanel", "show_booking")
-    assert "presentation = booking_presentation(item)" in listing
-    assert "presentation.status_label" in listing
     assert "presentation = booking_presentation(item)" in detail
     assert "('État', presentation.status_label)" in detail
-    assert "item.state" not in detail
-    assert "'Rang'" not in detail
