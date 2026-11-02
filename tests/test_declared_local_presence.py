@@ -107,37 +107,41 @@ def test_mutation_during_hash_is_revalidated_before_reporting_presence(rig, monk
 
 
 @pytest.mark.parametrize('failure_kind', ['file', 'sqlite'])
-def test_declared_presence_raw_journal_keeps_original_failure_and_scope(
+def test_declared_presence_failure_redacts_private_scope_and_exception(
     rig, monkeypatch, caplog, failure_kind,
 ):
-    """No new network/DRM attempt; raw journal retains the caught cause."""
+    """An unexpected local error is review-only, without any private output."""
     service, book, root, right, _ = rig
     apply(rig)
     monkeypatch.setattr(presence, 'acquisition_lock_file',
                         lambda: root.parent / 'presence.lock')
-    raw_cause = RuntimeError('synthetic original disk/SQL cause for this book')
+    signed = 'https://supplier.example.invalid/SIGNED?token=PRIVATE_BEARER'
+    raw_cause = RuntimeError('synthetic chained cause ' + signed)
     if failure_kind == 'file':
         def broken(*_args, **_kwargs):
-            raise OSError('synthetic read failure') from raw_cause
+            raise OSError('synthetic read failure ' + signed) from raw_cause
         monkeypatch.setattr(presence, 'revalidate_observed_file', broken)
-        expected = 'synthetic read failure'
     else:
         def broken(*_args, **_kwargs):
-            raise sqlite3.OperationalError('synthetic SQL failure') from raw_cause
+            raise sqlite3.OperationalError('synthetic SQL failure ' + signed) from raw_cause
         monkeypatch.setattr(presence, '_records', broken)
-        expected = 'synthetic SQL failure'
 
     earlier_bytes = book.read_bytes()
     with caplog.at_level(logging.WARNING, logger='cifereca'):
         outcome = check(rig)
-    assert outcome.status == 'needs_review' and outcome.reason == expected
+    assert outcome.status == 'needs_review'
+    assert outcome.reason == 'verification_unavailable'
+    assert outcome.read_only
     assert book.read_bytes() == earlier_bytes
     assert service.storage.acquisitions() == []
     assert service.storage.placements() == []
-    assert expected in caplog.text
-    assert str(raw_cause) in caplog.text
-    assert 'The above exception was the direct cause' in caplog.text
-    assert 'TRACE declared presence check failed' in caplog.text
-    for field in ('identity_id', 'provider_id', 'credential_id',
-                  'account_id', 'item_id'):
-        assert f"{field}={right[field]}" in caplog.text
+    assert 'TRACE declared presence check failed code=verification_unavailable' in caplog.text
+    for private in (
+        signed, 'PRIVATE_BEARER', str(book), str(root), str(raw_cause),
+        *(str(right[field]) for field in (
+            'identity_id', 'provider_id', 'credential_id',
+            'account_id', 'item_id',
+        )),
+    ):
+        assert private not in caplog.text
+        assert private not in repr(outcome)
