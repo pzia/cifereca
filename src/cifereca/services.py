@@ -1135,30 +1135,16 @@ class LibraryService:
         return library_projection.resolve_history_thumbnail(self, provider, record_id, title, author, year, default_url)
 
     def refresh_bookings(self, force: bool = False) -> list[Booking]:
-        account = self.current_account
-        epoch = self._account_context_epoch
-        key = self._key("bookings")
-        if not force:
-            cached = self.storage.cache_get("account", key)
-            if isinstance(cached, list):
-                rows = [Booking(**x) for x in cached]
-                if self._account_context_epoch == epoch and self.current_account is account:
-                    self.last_bookings = rows
-                return rows
-        session = self._session_for_account(account)
-        if not session.capabilities.bookings:
-            if self._account_context_epoch == epoch and self.current_account is account:
-                self.last_bookings = []
-            return []
-        rows = session.bookings(account)
-        serial = []
-        for row in rows:
-            d = asdict(row); d["raw"] = {}
-            serial.append(d)
-        self.storage.cache_put("account", key, serial, 300)
-        if self._account_context_epoch == epoch and self.current_account is account:
-            self.last_bookings = rows
-        return rows
+        """Retired reservations route (#4147): never consult provider or cache.
+
+        Keep this v1 entrypoint during the Core/plugin ABI transition so
+        stale UI callbacks and older installed plugins fail closed rather
+        than accidentally issuing ListBookings on a connected account.
+        In particular, `force=True` must not override the product policy.
+        This method neither connects nor reads provider/configuration/SQLite.
+        """
+        self.last_bookings = []
+        return []
 
     def provider_display_name(self, provider_id: str) -> str:
         plugin = self.registry.maybe_get(str(provider_id or "").strip().lower())
