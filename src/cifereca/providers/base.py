@@ -155,9 +155,10 @@ class ProviderDescriptor:
     interactive_authentication: bool = False
     # Optional declarative settings, backward-compatible with existing plugins.
     account_options: tuple[AccountOptionField, ...] = ()
-    borrower_scoped_options: tuple[BorrowerScopedOptionField, ...] = ()
     max_accounts_per_identity: int | None = None
     account_note: tuple[str, str] | None = None
+    # Append-only optional API extension: preserve historical positional args.
+    borrower_scoped_options: tuple[BorrowerScopedOptionField, ...] = ()
 
 
 class ProviderSession(ABC):
