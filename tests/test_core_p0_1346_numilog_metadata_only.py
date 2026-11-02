@@ -47,9 +47,20 @@ def _install(service, monkeypatch, tmp_path, identities=("default",)):
     accounts = [_account(identity, f"private-{identity}") for identity in identities]
     service.accounts = accounts
     for account in accounts:
-        service.storage.provider_connection_put({
+        # A private Numilog manifest belongs to a registered borrower, not
+        # just a credential-level connection. Preserve the production guard
+        # exercised by this real Core/Broker integration fixture.
+        connection_id = service.storage.provider_connection_put({
             "provider_id": "numilog", "credential_id": account.credential_id,
             "identity_id": account.identity_id, "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": connection_id,
+            "provider_id": account.provider_id,
+            "credential_id": account.credential_id,
+            "identity_id": account.identity_id,
+            "account_id": account.unique_id,
+            "label": "Synthetic Numilog borrower",
         })
         service._sessions[service._session_key(account.provider_id, account.credential_id)] = (
             _session(account.credential_id, calls)
