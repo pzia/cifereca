@@ -19,12 +19,12 @@ def sync_source_card_guidance(source: object, alert: object) -> str:
             or alert[0] not in {"error", "warning"}):
         return ""
     if getattr(source, "enabled", None) is not True:
-        return "À faire : activer cette source si vous souhaitez reprendre sa synchronisation."
+        return "À faire : activer la source si souhaité."
     if getattr(source, "connected", None) is not True:
-        return "À faire : reconnecter ce compte avant une nouvelle synchronisation."
+        return "À faire : reconnecter ce compte."
     return (
-        "À faire : examiner les détails du dernier cycle au survol du compte. "
-        "La relance n'est pas une correction garantie."
+        "À faire : examiner le dernier cycle au survol."
+        "Ne relancez qu'après vérification."
     )
 
 
