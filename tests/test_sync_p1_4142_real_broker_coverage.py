@@ -21,8 +21,13 @@ from tests.test_sync_p1_3416_informational_partial import source
 def real_broker_phase_states():
     # Directly invoke the actual Core broker projection: no service, storage
     # or login is needed for a source without the Kobo-local phase capability.
+    broker = NS(
+        _safe_phase_timestamp=SyncBroker._safe_phase_timestamp,
+        _source_id=lambda account: "sync:synthetic",
+        _materialization_state=lambda source_id: {},
+    )
     phases = SyncBroker._phase_states(
-        NS(), NS(provider_id="bnf-pret"),
+        broker, NS(provider_id="bnf-pret"),
         {"status": "partial", "last_attempt": "2026-11-02T05:29:06+00:00"},
         ("entitlements", "loan_auto_materialization"),
     )
