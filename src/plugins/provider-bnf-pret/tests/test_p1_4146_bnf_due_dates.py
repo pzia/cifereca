@@ -128,6 +128,7 @@ def test_different_identity_is_rejected_before_any_projection():
 def test_session_list_projection_and_repeat_read_do_not_trigger_mutations():
     session, account, _, state, calls, downloaded = connected()
     try:
+        before = len(calls)
         state["activity"] = activity(card("loan-1", "edition-1",
                                           value="01 janvier 2099 à 12:34"),
                                       card("loan-2", "edition-2",
@@ -141,7 +142,8 @@ def test_session_list_projection_and_repeat_read_do_not_trigger_mutations():
         assert [x.due_at for x in first] == [x.due_at for x in second]
         assert all(x.state == "active" for x in first)
         assert downloaded == []
-        assert not any(req.method == "POST" for req in calls)
+        assert all(method == "GET" and url == "/my_profile/activity"
+                   for method, _host, url in calls[before:])
     finally:
         session.close()
 
