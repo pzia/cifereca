@@ -20,6 +20,7 @@ fournisseur d'expirer naturellement un prêt.
 - [#4059](https://github.com/pzia/cifereca/pull/4059) : retrait
   Core/Plugins en **draft**, **non livré** ; ne pas interpréter son code
   comme déjà présent sur `main`.
+- Tranche Paris `provider-paris` 1.2.39 : `return_loan=False`, suppression de `ParisProviderSession.return_digital` et de `ParisClient.return_digital_loan` (plus aucun `ReturnDigitalLoan` dans le package). Les appels hérités à `ProviderSession.return_digital` refusent sans accès réseau. **Les façades Core anciennes peuvent encore écrire un checkpoint avant ce refus : leur neutralisation antérieure à toute mutation reste obligatoire.**
 
 La clôture de #4048 est interdite sans fusion des contrats mutationnels
 et les trois validations CI du commit exact.
