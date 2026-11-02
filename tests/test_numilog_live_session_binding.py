@@ -18,11 +18,10 @@ def source():
         capabilities=SimpleNamespace(personal_library=True),
     )
     storage = SimpleNamespace(
-        identity_for_connection=lambda provider, credential: "alice",
-        provider_connections=lambda *, identity_id: [{
-            "provider_id": "numilog", "credential_id": "secret-ref",
-            "enabled": True,
-        }],
+        provider_scope_account_bound=lambda **scope: scope == {
+            "identity_id": "alice", "provider_id": "numilog",
+            "credential_id": "secret-ref", "account_id": "account",
+        },
         entitlements=Mock(side_effect=AssertionError("stale rights read")),
     )
     service = SimpleNamespace(
