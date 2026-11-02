@@ -1415,9 +1415,14 @@ class ParisProviderSession(ProviderSession):
             book_id, public_site(url),
         )
         current = url
+        visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
             self.client._validate_pnb_redirect_url(current)
+            if current in visited_urls:
+                # The signed URL may carry borrower tokens: do not re-GET or log it.
+                raise ProviderConfigurationError("Boucle de redirections PNB détectée")
+            visited_urls.add(current)
             hop_started = time.monotonic()
             response = self.client._get_pnb_response(current)
             ensure_scope()
