@@ -101,8 +101,15 @@ def test_three_accounts_identity_scoping_archives_and_partial_manifest(tmp_path)
         assert len(service.storage.entitlements(provider_id="kobo")) == 3
         alice = service.library_entries(identity_id="alice")
         bob = service.library_entries(identity_id="bob")
-        assert len(alice) == len(bob) == 1
-        assert {p["account_id"] for p in alice[0]["possessions"]} == {"acc-1", "acc-2"}
+        # Two Kobo accounts can own the same edition. Without a published
+        # OriginLink, do not combine independent account-scoped remote rights
+        # in a single card (or overwrite another account's metadata).
+        assert len(alice) == 2 and len(bob) == 1
+        assert {row["possessions"][0]["account_id"] for row in alice} == {
+            "acc-1", "acc-2",
+        }
+        assert all(len(row["possessions"]) == 1 for row in alice)
+        assert len({row["key"] for row in alice}) == 2
         assert {p["account_id"] for p in bob[0]["possessions"]} == {"acc-3"}
         # An archived edition is visible but cannot masquerade as an active
         # remote_owned right; it never becomes local or downloadable.
