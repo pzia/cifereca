@@ -38,3 +38,22 @@ def test_missing_identity_fails_closed_before_reading_any_private_catalogue():
         "catalogue", ("local", "alice", False),
         "catalogue", ("local", "bob", False),
     ]
+
+
+
+def test_no_profile_local_search_never_calls_unscoped_legacy_reader():
+    from cifereca.core.search import LocalLibrarySearch
+
+    calls = []
+    def private_library(*, identity_id, scan):
+        calls.append((identity_id, scan))
+        return [
+            {"identity_id": "alice", "title": "ALICE_PRIVATE"},
+            {"identity_id": "bob", "title": "BOB_PRIVATE"},
+        ]
+
+    reader = LocalLibrarySearch(private_library)
+    assert reader.search("private", identity_id=None) == []
+    assert reader.search("private", identity_id="") == []
+    assert reader.search("private", identity_id=0) == []
+    assert calls == []
