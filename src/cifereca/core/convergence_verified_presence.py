@@ -108,6 +108,9 @@ def plan_existing_verified_presence(
 
     scope = snapshot.scope
     with storage._lock, storage._connect() as db:
+        # Owner, source receipts and physical placements must be observed in
+        # one consistent SQLite read snapshot, even across other processes.
+        db.execute("BEGIN")
         # Exact local B presence must belong to this identity's registered
         # physical directory. The full identity registry can be arbitrarily
         # large and is irrelevant to one provider/source plan. A duplicate
