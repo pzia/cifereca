@@ -142,14 +142,19 @@ def plan_existing_verified_presence(
             "WHERE provider_id=? AND credential_id=?",
             (scope.provider_id, scope.credential_id),
         ).fetchone()
-        account_bindings = db.execute(
-            "SELECT account_id FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
+        # A source's credential may own an arbitrarily large roster. Only
+        # this exact borrower can contribute local provider-origin evidence.
+        # Keep the cardinality check bounded, even on historical SQLite.
+        exact_accounts = db.execute(
+            "SELECT 1 FROM provider_accounts "
+            "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+            "AND account_id=? LIMIT 2",
+            (scope.identity_id, scope.provider_id, scope.credential_id,
+             scope.account_id),
         ).fetchall()
         bound = (
             binding == (scope.identity_id, 1)
-            and sum(a[0] == scope.account_id for a in account_bindings) == 1
+            and len(exact_accounts) == 1
         )
         origins_raw = db.execute(
             "SELECT o.origin_link_id, o.identity_id, o.evidence_ref,"
