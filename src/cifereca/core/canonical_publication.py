@@ -210,6 +210,15 @@ def publish_completed_acquisition(
         if (owner != (scope.identity_id, 1)
                 or registered_profile != (directory,)):
             raise ValueError("canonical_connection_or_profile_rebound")
+        # A legacy/imported SQLite registry can contain two identities that
+        # resolve to the very same physical library directory. The checked
+        # file hash does not make that shared path safe for either profile.
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (directory, scope.identity_id),
+        ).fetchone() is not None:
+            raise ValueError("canonical_profile_directory_ambiguous")
         # An authenticated credential may serve several borrower IDs.
         # Require one exact registered account, not a credential-only match
         # or an opportunistic first item. Upstream primary '' is legal.

@@ -159,6 +159,26 @@ def complete_selected_delivery(
             or directory in (".", "..") or "/" in directory or "\\" in directory):
         raise ValueError("canonical_delivery_profile_path_invalid")
 
+    def physical_owner_unique() -> bool:
+        # An imported/corrupt SQLite registry can map two identities onto
+        # one folder even if the modern schema has a UNIQUE index. A remote
+        # GET would then stage private bytes in the other user's namespace.
+        try:
+            registered = storage.identities()
+            return (sum(
+                item.get("directory_name") == directory
+                for item in registered
+            ) == 1 and any(
+                item.get("identity_id") == scope.identity_id
+                and item.get("directory_name") == directory
+                for item in registered
+            ))
+        except Exception:
+            return False
+
+    if not physical_owner_unique():
+        raise ValueError("canonical_delivery_profile_directory_ambiguous")
+
     # Create a new, isolated private namespace for this one request. Do not
     # adopt pre-existing provider files, matching SHA, old receipts or a
     # candidate located outside this Core-chosen profile staging directory.
@@ -192,6 +212,8 @@ def complete_selected_delivery(
         )
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
+        if not physical_owner_unique():
+            raise ValueError("canonical_delivery_profile_directory_ambiguous")
         if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}:
             expected = SourceReference(
                 scope, source.branch, source.edition_id, source.right_id, source.kind,
@@ -273,6 +295,8 @@ def complete_selected_delivery(
         digest = LocalCatalog.sha256(final)
         if not _same_file(final, before) or not current():
             raise ValueError("canonical_delivery_final_changed")
+        if not physical_owner_unique():
+            raise ValueError("canonical_delivery_profile_directory_ambiguous")
         # This receipt is a Core witness issued AFTER the verified, in-scope
         # candidate callback. It is deliberately distinct from provider A's
         # inventory evidence and signed-offer ID, and contains no private URL.
