@@ -82,3 +82,33 @@ def test_ambiguous_or_missing_historical_account_never_vetoes_current_right(
     assert case.service.owned_library_download_target(case.entry) is not None
     assert case.calls == []
     assert case.session.resolve_calls == []
+
+
+def test_other_active_borrower_right_does_not_disable_current_selected_right(
+    case,
+):
+    case.service.storage.entitlement_put({
+        **case.right,
+        "entitlement_id": "other-borrower-independent-owned-right",
+        "account_id": "other-borrower",
+        "revision_id": "other-borrower-revision",
+    })
+    before = case.service.storage.entitlements()
+    assert len(before) == 2
+    target = case.service.owned_library_download_target(case.entry)
+    assert target is not None
+    assert target.entitlement_id == "right-1"
+    assert case.service.storage.entitlements() == before
+    assert case.calls == []
+
+
+def test_competing_active_right_on_same_borrower_still_blocks_implicit_choice(
+    case,
+):
+    case.service.storage.entitlement_put({
+        **case.right,
+        "entitlement_id": "second-independent-right-same-borrower",
+        "revision_id": "separate-revision",
+    })
+    assert case.service.owned_library_download_target(case.entry) is None
+    assert case.calls == []
