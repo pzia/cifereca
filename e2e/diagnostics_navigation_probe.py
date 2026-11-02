@@ -1208,10 +1208,12 @@ def main() -> int:
             f["latest_task_future"] = future
             return future
         override(w.runner.pool, "submit", trace_submit)
-        override(w, "_return_loan", forbidden)
-        override(w, "_return_loan_pnb", forbidden)
-        # Only read-side capabilities are isolated; real renderers, window
-        # facades, row keys, actions and confirmation dialog remain in use.
+        # Retired voluntary-return methods must not be present, including
+        # on a historic plugin-controlled page. Keep read-only inspections.
+        assert not hasattr(w, "confirm_return")
+        assert not hasattr(w, "_return_loan")
+        assert not hasattr(w, "_return_loan_pnb")
+        assert not hasattr(w, "return_adept_from_detail")
         override(w.service, "can_download_loan", lambda loan: False)
         override(w.service, "adept_return_status_for_loan", lambda loan: {"status": "no_acquisition"})
         override(w.service, "local_placement_for_source", lambda **kw: None)
@@ -1419,34 +1421,18 @@ def main() -> int:
         assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
         report["checks"]["P0_loans_real_gtk_source_qualified_rows_and_detail"] = True
         capture("03g-loans-two-source-rows-selected-detail")
-        w.confirm_return(f["rows"][1], Gtk.Button())
-        later(250, loan_sync_return_dialog)
-
-    def loan_sync_return_dialog():
-        w = window[0]
-        dialogs = [node for node in Gtk.Window.list_toplevels()
-                   if isinstance(node, Adw.MessageDialog) and node.get_visible()
-                   and node.get_heading() == "Restituer ce prêt numérique ?"]
-        assert len(dialogs) == 1 and dialogs[0].get_mapped()
-        dialog = dialogs[0]
-        assert dialog.has_response("adept") and dialog.has_response("pnb")
-        assert not loan_sync_fixture["mutations"]
-        report["checks"]["P0_loan_return_real_gtk_separates_ADEPT_and_PNB"] = True
-        capture("03h-loan-return-confirmation")
-        cancel = next(node for node in walk(dialog)
-                      if isinstance(node, Gtk.Button)
-                      and str(node.get_label()).replace("_", "") == "Annuler")
-        loan_sync_fixture["dialog"] = dialog
-        report["pointer_actions"].append(device[0].click_widget(cancel))
-        later(250, loan_sync_return_cancelled)
-
-    def loan_sync_return_cancelled():
-        w = window[0]
-        f = loan_sync_fixture
-        assert not f["dialog"].get_visible()
+        # #4048: voluntary return is absent even by direct MainWindow API.
+        # A loan selection and ADEPT inventory remain read-only.
+        for forbidden_name in ("confirm_return", "_return_loan", "_return_loan_pnb",
+                               "_return_loan_result", "return_adept_from_detail"):
+            assert not hasattr(w, forbidden_name)
+        assert not [node for node in Gtk.Window.list_toplevels()
+                    if isinstance(node, Adw.MessageDialog) and node.get_visible()
+                    and "Restituer" in str(node.get_heading())]
         assert not f["mutations"] and w.service.last_loans == f["rows"]
         assert w.loan_page.selection.get_selected_item().key == f["keys"][1]
-        report["checks"]["P0_loan_return_XTEST_cancel_keeps_loan_without_mutation"] = True
+        report["checks"]["P1_4048_loan_gtk_no_voluntary_return_actions"] = True
+        capture("03h-loan-return-actions-absent")
         w.navigate("sync")
         await_route("sync", loan_sync_sources_rendered)
 
