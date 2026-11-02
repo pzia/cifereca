@@ -428,8 +428,11 @@ class BnfProviderSession(ProviderSession):
     def rights_observation_snapshot(self, account):
         """One authenticated BnF activity read -> positive scoped loan claims.
 
-        The HTML inventory is partial even when empty. In particular, neither
-        missing loans nor a resource title grant any negative or purchase right.
+        Complete coverage is supported only for the exact nonempty,
+        strictly validated active-loan widget and every loan's positive,
+        unambiguous rights projection. An empty/ambiguous/partial widget or
+        dropped/foreign row stays partial. Even a complete observation
+        never grants negative reconciliation, a purchase right or mutation.
         No ACSM/token call is made here; Core owns matching and acquisition.
         """
         # Same lock as connect/close and legacy loan GET. Freeze the mutable
@@ -529,14 +532,44 @@ class BnfProviderSession(ProviderSession):
                         account.provider_id, account.credential_id) != caller_scope
                     or core_binding() != owner_binding):
                 raise ProviderConfigurationError('account_scope_mismatch')
+            # A typed, complete active-loan branch is positive coverage of
+            # *loans only*. Require a one-to-one projection of every borrower
+            # row: an omitted invalid/unknown/foreign loan cannot silently
+            # turn a partial rights read into complete. Neither this flag nor
+            # pagination authorizes deletion, return, download or consent.
+            branches = inventory.branches if type(inventory) is LoanInventorySnapshot else ()
+            complete = (
+                type(inventory) is LoanInventorySnapshot
+                and inventory.status == 'success'
+                and len(branches) == 1
+                and branches[0].upstream == 'bnf_html'
+                and branches[0].medium == 'digital'
+                and branches[0].completeness == 'complete'
+                and branches[0].pagination_complete is True
+                and len(inventory.loans) > 0
+                and len(rights) == len(inventory.loans)
+                and all(
+                    type(loan) is Loan
+                    and loan.medium == 'digital'
+                    and loan.state == 'active'
+                    and (loan.source_provider, loan.source_credential,
+                         loan.source_account_id, loan.identity_id) == (
+                         self.provider_id, self.credential_id,
+                         scope.account_id, scope.identity_id)
+                    for loan in inventory.loans
+                )
+                and all(right.state == 'active' for right in rights)
+            )
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
                     scope.identity_id, scope.provider_id,
                     scope.credential_id, scope.account_id,
                 ),
                 rights=tuple(rights),
-                status='partial', coverage='partial',
-                pagination_complete=False, branch='bnf_html',
+                status='success' if complete else 'partial',
+                coverage='complete' if complete else 'partial',
+                pagination_complete=True if complete else False,
+                branch='bnf_html',
                 observed_at=observed, snapshot_ref='bnf_html.active_loans',
             )
 
