@@ -26,6 +26,10 @@ def invalidate_secondary_account_pages(window) -> None:
     window.service.last_history = []
     window.service.last_bookings = []
     window.history_objects = {}
+    # Legacy in-memory widgets may survive an on-the-fly plugin update;
+    # clear existing private rows without recreating the retired route.
+    if hasattr(window, "booking_objects"):
+        window.booking_objects = {}
     window._history_all_rows = []
     window._history_rows = []
     window._history_loaded_count = 0
@@ -36,6 +40,9 @@ def invalidate_secondary_account_pages(window) -> None:
             "Historique non chargé",
             "Ouvrez l’onglet Historique pour charger ce compte.",
         )
+    if hasattr(window, "booking_page"):
+        window.booking_page.show_rows([])
+        window.booking_page.detail.empty("Réservations retirées", "")
 
 
 def account_changed(window, dropdown, _pspec) -> None:
