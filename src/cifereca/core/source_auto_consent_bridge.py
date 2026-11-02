@@ -71,6 +71,20 @@ def toggle_state(db, source: SourceKey):
     spec = _POLICIES.get((source.scope.provider_id, source.kind))
     if spec is None:
         return None
+    # The old Sync source-id encoding maps an empty primary borrower to the
+    # literal text "provider:credential:primary". A real upstream borrower
+    # can have exactly that ID. A legacy source-wide ON row cannot identify
+    # which of those TWO accounts opted in, even when only one remains in the
+    # current account list. Deny the ambiguous *literal* borrower until it
+    # receives the new exact-scope, CAS-versioned source policy above.
+    scope = source.scope
+    if scope.account_id and (
+        scope.account_id != scope.account_id.strip()
+        or scope.account_id == (
+            scope.provider_id + ":" + scope.credential_id + ":primary"
+        )
+    ):
+        return "off"
     prefix, active, epoch_prefix = spec
     sid = _source_id(source.scope)
     row = db.execute(
