@@ -452,12 +452,19 @@ def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
     return path
 
 
-def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id):
-    """Find only an acquisition-attested unique placement, never by title."""
+def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id,
+                               account_id=None):
+    """Find a unique complete acquisition, optionally by exact borrower.
+
+    Legacy callers retain the broad lookup. Current owned-right admission
+    must supply account_id: another borrower's receipt is not proof of local
+    possession of the selected right.
+    """
     artifact_ids={str(row.get('artifact_id') or '') for row in self.storage.acquisitions()
                   if row.get('status')=='complete' and row.get('identity_id')==identity_id
                   and row.get('provider_id')==provider_id and row.get('credential_id')==credential_id
-                  and str(row.get('item_id') or '')==str(item_id)}
+                  and str(row.get('item_id') or '')==str(item_id)
+                  and (account_id is None or row.get('account_id')==account_id)}
     rows=[row for row in self.storage.placements() if row.get('state')=='present'
           and row.get('identity_id')==identity_id and row.get('artifact_id') in artifact_ids]
     if len(rows)!=1:return None
