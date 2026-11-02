@@ -291,3 +291,28 @@ def test_verified_copy_never_accepts_lexical_escape_from_owner_directory(tmp_pat
     assert _verified_copy(str(own), **opts) is True
     assert _verified_copy(str(root / "A" / ".." / "B" / "book.pdf"), **opts) is False
     assert _verified_copy(str(root / "A" / ".." / ".." / "EBooks" / "B" / "book.pdf"), **opts) is False
+
+
+
+def test_verified_presence_exact_borrower_amid_sibling_accounts(store, tmp_path):
+    """A large credential roster grants neither cross-borrower proof nor absence."""
+    source, snapshot = new_source(account="buyer-A")
+    for index in range(80):
+        register(store, "A", "seller", "card-A", account=f"sibling-{index}")
+    # Another borrower on the same credential cannot attest this A source.
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is False
+    register(store, "A", "seller", "card-A", account="buyer-A")
+    path = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", path, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is True
+
+    # The historical OriginLink and SHA survive a borrower registry change,
+    # but they cease to satisfy the now-disconnected account.
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE provider_accounts SET account_id='replaced-borrower' "
+            "WHERE identity_id='A' AND provider_id='seller' "
+            "AND credential_id='card-A' AND account_id='buyer-A'"
+        )
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is False
+    assert path.read_bytes() == BYTES
