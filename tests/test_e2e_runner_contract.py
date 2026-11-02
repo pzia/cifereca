@@ -29,6 +29,34 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     ]
 
 
+def test_p1_4118_bnf_real_gtk_search_detail_two_cover_acceptance():
+    runner = _module()
+    descriptor = runner.SCENARIOS["bnf-covers-1366"]
+    assert descriptor["plugin"] == "provider.bnf-pret"
+    assert descriptor["runner"] == "gtk-bnf-covers"
+    assert descriptor["fixture"] == "search-filters"
+    assert [name for name, _ in runner.select(None, "provider.bnf-pret")] == [
+        "bnf-covers-1366",
+    ]
+    probe = (ROOT / "e2e/bnf_cover_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "parse_search_page(SEARCH_HTML).records",
+        "parse_detail(",
+        "BnfProviderSession(",
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "httpx.MockTransport(image_response)",
+        "device[0].click_widget(window.search_global_button)",
+        'report["checks"]["two_real_gtk_search_images"]',
+        'report["checks"]["second_real_gtk_detail_cover"]',
+        'report["checks"]["missing_cover_no_image_get"]',
+        'report["checks"]["cache_shared_search_detail"]',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in probe
+    assert "session.borrow(" not in probe
+    assert "session.connect(" not in probe
+
+
 def test_1127_real_gtk_llm_consent_cancel_and_lifetime_1366_1600():
     runner = _module()
     probe = (ROOT / "e2e/llm_settings_probe.py").read_text(encoding="utf-8")
