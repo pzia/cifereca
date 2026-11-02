@@ -3,6 +3,7 @@ name: E2E Smoke
 on:
   workflow_dispatch:
   pull_request:
+    # BnF paths below cover Search/Detail without authentication.
     paths:
       - 'e2e/**'
       - 'src/cifereca/gui/**'
@@ -21,7 +22,6 @@ on:
       - 'src/plugins/home-page/**'
       - 'src/plugins/constellations/**'
       - 'src/plugins/recommendations/**'
-      # BnF Search/Detail cover contract (no authenticated provider calls).
       - 'src/plugins/provider-bnf-pret/cifereca_bnf_pret.py'
       - 'src/plugins/provider-bnf-pret/cifereca_bnf_pret_web.py'
       - 'scripts/ci-install-gtk-e2e-runtime.sh'
