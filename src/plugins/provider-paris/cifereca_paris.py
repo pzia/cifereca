@@ -27,6 +27,7 @@ from cifereca_paris_trace import (
 )
 from cifereca.plugin_api import (
     AccountOptionField,
+    BorrowerScopedOptionField,
     CredentialField,
     ProviderCapabilities,
     ProviderSearchCapabilities,
@@ -149,6 +150,16 @@ DESCRIPTOR = ProviderDescriptor(
                       "Ne s'applique pas aux comptes lecteurs liés.",
         ),
     ),
+    borrower_scoped_options=(BorrowerScopedOptionField(
+        key="manual_loan_limits_linked",
+        label="Plafond personnel du compte lié",
+        branches=(("digital", "Numérique · DILICOM"),
+                  ("physical", "Physique · SYRACUSE")),
+        default="4", min_value=0, max_value=99,
+        help_text="Indication locale uniquement. Les comptes liés sont séparés "
+                  "du principal et les deux branches ne se cumulent pas ; "
+                  "aucune incidence sur les droits de prêt ou la synchronisation.",
+    ),),
 )
 
 
