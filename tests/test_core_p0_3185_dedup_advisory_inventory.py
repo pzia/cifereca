@@ -175,3 +175,73 @@ def test_wrong_artifact_fingerprint_with_foreign_owner_is_unattributable(
     assert scoped.status == "partial"
     assert scoped.entries == ()
     assert store.metadata_get(key) is not None
+
+
+
+def test_ambiguous_directory_cannot_appear_as_actionable_dedup_queue(
+    store, tmp_path,
+):
+    key, (_one, _two, _foreign) = _checkpoint(store, tmp_path)
+    assert review_canonical_dedup_advisories(
+        store, identity_id="A",
+    ).pending_count == 1
+
+    # Corruption exists only in this disposable SQLite fixture; normal v14
+    # schema maintains a UNIQUE index over the directory namespace.
+    with store._lock, store._connect() as db:
+        db.execute("DROP INDEX uq_identity_directory_name")
+    store.identity_put({
+        "identity_id": "shadow", "label": "Synthetic alias",
+        "directory_name": "A",
+    })
+    try:
+        result = review_canonical_dedup_advisories(store, identity_id="A")
+        assert result.status == "partial"
+        assert result.pending_count == 0 and result.blocked_count == 1
+        assert result.entries[0].reason == "owner_directory_ambiguous"
+        assert store.metadata_get(key) is not None  # read-only
+    finally:
+        with store._lock, store._connect() as db:
+            db.execute("DELETE FROM identities WHERE identity_id='shadow'")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_directory_name "
+                "ON identities(directory_name)"
+            )
+    assert review_canonical_dedup_advisories(
+        store, identity_id="A",
+    ).pending_count == 1
+
+
+def test_deleted_identity_never_produces_green_advisory(store, tmp_path):
+    key, _ = _checkpoint(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute("DELETE FROM identities WHERE identity_id='A'")
+    review = review_canonical_dedup_advisories(store, identity_id="A")
+    assert review.status == "partial"
+    assert review.pending_count == 0 and review.blocked_count == 1
+    assert review.entries[0].reason == "owner_directory_unavailable"
+    assert store.metadata_get(key) is not None
+
+
+
+def test_invalid_profile_folder_cannot_be_advisory_owner(store, tmp_path):
+    key, _ = _checkpoint(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE identities SET directory_name='../outside' "
+            "WHERE identity_id='A'"
+        )
+    try:
+        result = review_canonical_dedup_advisories(store, identity_id="A")
+        assert result.status == "partial" and result.pending_count == 0
+        assert result.entries[0].reason == "owner_directory_unavailable"
+        assert store.metadata_get(key) is not None
+    finally:
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE identities SET directory_name='A' "
+                "WHERE identity_id='A'"
+            )
+    assert review_canonical_dedup_advisories(
+        store, identity_id="A",
+    ).pending_count == 1
