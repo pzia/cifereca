@@ -1368,12 +1368,29 @@ def _numilog_public_catalog_url(
             return None
         if cover:
             return value if not parsed.query else None
+        # An acquisition artifact or fulfillment token is never a product
+        # notice, regardless of which provider-qualified source produced
+        # the original public URL marker. No supplier host/path grammar.
+        if parsed.path.casefold().endswith((
+            ".acsm", ".lcpl", ".epub", ".pdf", ".zip",
+        )):
+            return None
         # A public product link is qualified by the producing Numilog
         # adapter's private-card parser. A raw SearchResult without this
         # evidence may not persist an arbitrary private/download URL.
-        if evidence != "numilog.library_title_link":
+        if evidence not in {
+            "numilog.library_title_link",
+            "numilog.public_search_product_card",
+        }:
             return None
-        if parsed.query not in ("", "ref=library"):
+        # The public search card has no authenticated-library legacy query.
+        # The optional ref=library belongs only to the exact private-card
+        # title link checked separately by the provider adapter.
+        allowed_queries = (
+            ("", "ref=library") if evidence == "numilog.library_title_link"
+            else ("",)
+        )
+        if parsed.query not in allowed_queries:
             return None
         return value
     except (ValueError, AttributeError, TypeError):
