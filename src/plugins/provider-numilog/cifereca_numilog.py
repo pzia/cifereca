@@ -514,7 +514,12 @@ class NumilogSession(ProviderSession):
                             if (row['lid'], row['variant']) not in ambiguous_rights
                         ]
                     self._diag('pagination bibliothèque',pages=page_index+1,items=len(rows))
-                    return rows
+                    # This page chain reached its official end without a
+                    # provider/network failure. Keep the distinction between
+                    # a complete private inventory and rows excluded as
+                    # ambiguous: discarded editions MUST keep coverage partial.
+                    # The legacy library() API still returns only its list.
+                    return (rows, not ambiguous_rights) if rights_observation else rows
                 url=next_url
             raise ProviderError('Numilog : bibliothèque trop paginée (>100 pages)')
         except ParseError as exc:
@@ -636,7 +641,18 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : propriétaire unique non attesté pour les achats'
                 )
-            rows = self._rows(rights_observation=True)
+            observed_page_chain = self._rows(rights_observation=True)
+            # Only the real bounded MesLivres reader can attest that every
+            # page was consumed. Legacy/testing readers returning a bare list
+            # remain conservative. A successful HTTP 200 alone cannot certify
+            # that every upstream row was valid.
+            if (type(observed_page_chain) is tuple
+                    and len(observed_page_chain) == 2
+                    and type(observed_page_chain[0]) is list
+                    and type(observed_page_chain[1]) is bool):
+                rows, pagination_attested = observed_page_chain
+            else:
+                rows, pagination_attested = observed_page_chain, False
             # Strict authenticated MesLivres: duplicates are ambiguous for
             # rights, unlike legacy library display deduplication.
             if (
@@ -688,16 +704,20 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; observations arrêtées'
                 )
-            # MesLivres pages are bounded and duplicate rows are discarded
-            # by _rows(): do NOT claim an exhaustive entitlement snapshot.
+            # Coverage describes this successfully consulted official
+            # MesLivres inventory, NEVER physical acquisitions or permission
+            # to infer removed rights. A duplicate card, bad upstream row or
+            # incomplete page chain prevents a complete observation.
+            complete = pagination_attested and len(observations) == len(rows)
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
                     caller_scope[0], 'numilog', self.credential_id,
                     expected_account,
                 ),
                 rights=tuple(observations),
-                status='partial', coverage='partial',
-                pagination_complete=False, branch='meslivres',
+                status='success' if complete else 'partial',
+                coverage='complete' if complete else 'partial',
+                pagination_complete=complete, branch='meslivres',
                 observed_at=observed, snapshot_ref='numilog.meslivres',
             )
 
