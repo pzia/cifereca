@@ -9,7 +9,10 @@ from tests.test_core_library_placement_identity_scope import _placement, _servic
 
 
 def _source_origin(service, *, identity, provider, credential, account,
-                   edition, artifact_id, token):
+                   edition, artifact_id, token, kind="purchase"):
+    # Source coordinates become immutable as soon as OriginLink is attached.
+    # Loan fixtures must insert the correct kind/branch from the beginning.
+    assert kind in {"purchase", "loan"}
     with service.storage._lock, service.storage._connect() as db:
         db.execute(
             "INSERT INTO source_references("
@@ -18,7 +21,8 @@ def _source_origin(service, *, identity, provider, credential, account,
             "evidence_kind,evidence_ref,created_at,updated_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (f"reference-{token}", identity, provider, credential, account,
-             "purchases", edition, f"right-{token}", "purchase", "active",
+             "loans" if kind == "loan" else "purchases",
+             edition, f"right-{token}", kind, "active",
              "provider_response", "positive-right-observation", 1, 1),
         )
         db.execute(

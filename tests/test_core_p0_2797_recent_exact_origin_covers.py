@@ -110,6 +110,48 @@ def test_second_attested_account_on_same_artifact_may_supply_its_own_cover(tmp_p
         rows = service.recent_acquisitions(identity_id="alice")
         assert len(rows) == 1 and rows[0]["placement_id"] == placement_id
         assert rows[0]["thumbnail_url"] == FOREIGN
+        # A purchase OriginLink is not a loan even for the same borrower.
+        assert rows[0]["metadata"]["cover_resolution"]["source"] == "entitlement"
+    finally:
+        service.close()
+
+
+def test_attested_loan_origin_prefers_loan_cover_not_purchase_for_same_borrower(tmp_path):
+    service = _service(tmp_path)
+    try:
+        artifact_id, placement_id = _local_source_named_book(service, tmp_path)
+        _source_origin(
+            service, identity="alice", provider="numilog",
+            credential="card-b", account="buyer-b", edition="edition-a",
+            artifact_id=artifact_id, token="b", kind="loan",
+        )
+        _source_entitlement(
+            service, credential="card-b", borrower="buyer-b", cover=GOOD,
+        )
+        _foreign_loan(service)
+        rows = service.recent_acquisitions(identity_id="alice")
+        assert len(rows) == 1 and rows[0]["placement_id"] == placement_id
+        assert rows[0]["thumbnail_url"] == FOREIGN
         assert rows[0]["metadata"]["cover_resolution"]["source"] == "loan"
+        assert GOOD not in repr(rows)
+    finally:
+        service.close()
+
+
+def test_purchase_origin_never_promotes_same_borrower_loan_cover_without_loan_link(tmp_path):
+    service = _service(tmp_path)
+    try:
+        artifact_id, placement_id = _local_source_named_book(service, tmp_path)
+        _source_origin(
+            service, identity="alice", provider="numilog",
+            credential="card-b", account="buyer-b", edition="edition-a",
+            artifact_id=artifact_id, token="b",
+        )
+        _foreign_loan(service)
+        rows = service.recent_acquisitions(identity_id="alice")
+        assert len(rows) == 1 and rows[0]["placement_id"] == placement_id
+        assert rows[0]["thumbnail_url"] is None
+        assert rows[0]["metadata"]["cover_resolution"]["status"] == "missing"
+        assert FOREIGN not in repr(rows)
     finally:
         service.close()

@@ -353,12 +353,14 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     # pair (even within one profile) is not evidence that its loan or purchase
     # belongs to this local Artifact. Only an exact Core provider OriginLink
     # joins remote cover metadata to a present placement.
-    origin_scopes: dict[tuple[str, str], set[tuple[str, str, str, str]]] = {}
-    for artifact, owner, provider, credential, account, edition in (
-        _verified_provider_origin_coordinates(self.storage, identity_id=identity_id)
+    origin_scopes: dict[tuple[str, str], set[tuple[str, str, str, str, str]]] = {}
+    for artifact, owner, provider, credential, account, edition, kind in (
+        _verified_provider_origin_coordinates(
+            self.storage, identity_id=identity_id, with_kind=True,
+        )
     ):
         origin_scopes.setdefault((owner, artifact), set()).add(
-            (provider, credential, account, edition)
+            (provider, credential, account, edition, kind)
         )
     loans_by_scope: dict[tuple[str, str, str, str, str], Loan] = {}
     for loan in self.last_loans:
@@ -445,11 +447,13 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             )
             if public:
                 cover_candidates.append(public)
-        for source_provider, credential, borrower, edition in origin_scopes.get(
+        for source_provider, credential, borrower, edition, source_kind in origin_scopes.get(
             (row_identity, str(placement.get("artifact_id") or "")), ()
         ):
             scope_key = (row_identity, source_provider, credential, borrower, edition)
-            loan = loans_by_scope.get(scope_key)
+            # A real provider loan cannot decorate a purchase-only OriginLink
+            # (and vice versa), even within the same account and edition.
+            loan = loans_by_scope.get(scope_key) if source_kind == "loan" else None
             if loan is not None:
                 value = cover_candidate(
                     loan.thumbnail_url, tier="origin", source="loan",
@@ -458,6 +462,10 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
                 if value:
                     cover_candidates.append(value)
             for entitlement in entitlements_by_scope.get(scope_key, ()):
+                entitlement_kind = entitlement.get("entitlement_type")
+                if not ((source_kind == "purchase" and entitlement_kind == "owned")
+                        or (source_kind == "loan" and entitlement_kind == "loan")):
+                    continue
                 emeta = dict(entitlement.get("metadata") or {})
                 value = cover_candidate(
                     emeta.get("cover_url") or emeta.get("thumbnail_url"),
@@ -593,7 +601,8 @@ def catalog_entries(self, *, state: str | None=None) -> list[dict[str, Any]]:
     return LocalCatalog(self.storage, self.library_dir()).entries(state=state)
 
 
-def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
+def _verified_provider_origin_coordinates(storage, *, identity_id: str | None,
+                                          with_kind: bool = False):
     """Read canonical provider provenance scoped to a *present* placement.
 
     A shared Artifact SHA is not proof that a different profile or provider
@@ -609,7 +618,7 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
         with storage._lock, storage._connect() as db:
             rows = db.execute(
                 "SELECT DISTINCT p.artifact_id,p.identity_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id "
+                "s.credential_id,s.account_id,s.edition_id,s.reference_kind "
                 "FROM placements p "
                 # A historical OriginLink remains for audit even if imported
                 # Artifact metadata are corrupt. It must not become a live
@@ -630,7 +639,7 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
                 "AND s.evidence_ref IS NOT NULL AND s.evidence_ref<>'' "
                 + ("AND p.identity_id=? " if identity_id else "")
                 + "ORDER BY p.identity_id,p.artifact_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id LIMIT 100001",
+                "s.credential_id,s.account_id,s.edition_id,s.reference_kind LIMIT 100001",
                 (identity_id,) if identity_id else (),
             ).fetchall()
     except (SqliteError, AttributeError):
@@ -643,11 +652,12 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
         # closed for every facet instead of projecting a partial source set.
         return ()
     return tuple(
-        (artifact, owner, provider, credential, account, edition)
-        for artifact, owner, provider, credential, account, edition in rows
+        (artifact, owner, provider, credential, account, edition, kind)
+        if with_kind else (artifact, owner, provider, credential, account, edition)
+        for artifact, owner, provider, credential, account, edition, kind in rows
         if all(type(field) is str and field for field in (
             artifact, owner, provider, credential, edition,
-        )) and type(account) is str
+        )) and type(account) is str and kind in ("purchase", "loan")
     )
 
 
@@ -893,9 +903,11 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     # Canonical OriginLinks enrich the *existing* local Artifact card.
     # Never use a title, mere SHA equality, or an unscoped provider/item ID to
     # attribute a purchase to a credential. Unresolved sources stay distinct.
-    exact_aliases: dict[tuple[str, str, str, str, str], set[str]] = {}
-    for artifact_id, owner, provider, credential, account, edition in (
-        _verified_provider_origin_coordinates(self.storage, identity_id=identity_id)
+    exact_aliases: dict[tuple[str, str, str, str, str, str], set[str]] = {}
+    for artifact_id, owner, provider, credential, account, edition, kind in (
+        _verified_provider_origin_coordinates(
+            self.storage, identity_id=identity_id, with_kind=True,
+        )
     ):
         local_key = local_artifact_keys.get((owner, artifact_id))
         if local_key is None:
@@ -955,7 +967,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         if source_ref not in entry.setdefault("source_refs", []):
             entry["source_refs"].append(source_ref)
         exact_aliases.setdefault(
-            (owner, provider, credential, account, edition), set(),
+            (owner, provider, credential, account, edition, kind), set(),
         ).add(local_key)
 
     # Multiple Artifacts for the same exact source cannot be disambiguated by
@@ -1003,7 +1015,15 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             str(entitlement.get("credential_id") or ""),
             str(entitlement.get("account_id") or ""), item_id,
         )
-        canonical_key = exact_source_alias.get(exact_scope)
+        # Match an exact provider SourceReference kind, not only borrower
+        # and edition. Licences without a typed purchase/loan attestation stay
+        # remote until an explicit mapping is available.
+        canonical_kind = (
+            "purchase" if entitlement_type == "owned"
+            else "loan" if entitlement_type == "loan" else None
+        )
+        typed_scope = (*exact_scope, canonical_kind) if canonical_kind else None
+        canonical_key = exact_source_alias.get(typed_scope)
         if canonical_key is None:
             # Display-only compatibility for a completed, exact-account
             # receipt with SHA-verified local bytes; no unverified catalogue
@@ -1017,7 +1037,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 )
             )
         if (provider_id == 'bnf-pret' and entitlement_type == 'loan'
-                and exact_source_alias.get(exact_scope) is None):
+                and exact_source_alias.get(typed_scope) is None):
             # A legacy manual-import display hint must never override an
             # exact canonical provider OriginLink for this borrower/edition.
             # Different physical Artifacts remain separate; only the loan
@@ -1026,7 +1046,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
         existing = merged.get(canonical_key, {})
         meta = dict(entitlement.get("metadata") or {})
-        loan = loans_by_key.get((provider_id, str(entitlement.get("credential_id") or ""), entitlement.get("account_id"), item_id))
+        # An active loan may share the same edition/account as an owned right;
+        # its title, cover and format must not decorate a purchase possession.
+        loan = (loans_by_key.get((
+            provider_id, str(entitlement.get("credential_id") or ""),
+            entitlement.get("account_id"), item_id,
+        )) if entitlement_type == "loan" else None)
         loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
         title = str(meta.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
         author = meta.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
