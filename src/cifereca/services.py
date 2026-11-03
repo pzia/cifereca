@@ -1988,29 +1988,21 @@ class LibraryService:
         return summary
 
     def adept_return_for_artifact(self, artifact_id: str, identity_id: str) -> dict[str, Any] | None:
-        if not artifact_id or not identity_id:
-            return None
-        for row in self.storage.acquisitions(status="complete"):
-            if row.get("artifact_id") != artifact_id or row.get("identity_id") != identity_id:
-                continue
-            binding = (row.get("metadata") or {}).get("adept_binding") or {}
-            if binding.get("return_available") and binding.get("loan_state") == "active" and self._adept_return_capability():
-                return {"acquisition_id": row["acquisition_id"], "profile_name": binding["adept_profile_name"]}
+        """Retired availability probe: never advertise voluntary ADEPT return."""
         return None
 
     def return_adept_acquisition(self, acquisition_id: str) -> dict[str, Any]:
-        try:
-            with InterProcessLock(acquisition_lock_file()):
-                return self._return_adept_acquisition(acquisition_id)
-        except LockBusyError as exc:
-            raise AttentionRequired("Une acquisition est déjà en cours.", code="acquisition_busy") from exc
+        """Reject a retired ADEPT return before locks, storage or runtime access."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
     def _return_adept_acquisition(self, acquisition_id: str) -> dict[str, Any]:
-        """Explicit return, exact origin/ID, fresh registry before and after CLI."""
-        return adept_acquisition_return.return_adept_acquisition(
-            self, acquisition_id, AttentionRequired=AttentionRequired,
-            ProviderConfigurationError=ProviderConfigurationError,
-            DrmMutationRequest=DrmMutationRequest, time=time,
+        """Also reject direct legacy/private callers, without any side effect."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
     def execute_drm_mutation(self, request: DrmMutationRequest) -> dict[str, Any]:
