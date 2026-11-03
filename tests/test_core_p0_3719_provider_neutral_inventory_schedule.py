@@ -39,6 +39,11 @@ def _source(tmp_path, *, provider="unknown-private-store", personal_library=True
             calls.append((a.identity_id, a.provider_id, options)) or {"library": 1}
         ),
     )
+    service._synchronize_scheduled_account_inventory = (
+        lambda a, **options: service.synchronize_account_source(
+            a, inventory_only=True, **options,
+        )
+    )
     service.accounts_for_identity = lambda identity=None: [
         a for a in service.accounts if identity is None or a.identity_id == identity
     ]
