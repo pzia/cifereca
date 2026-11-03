@@ -14,7 +14,8 @@ from cifereca.plugin_api.downloadable_resources import (
     DeliveryCandidate, DownloadCapability,
 )
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
-from tests.test_core_p0_3171_canonical_sync_stage import refs
+from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
+from tests.test_core_p0_3719_v2_execution import v2
 from tests.test_core_p0_3719_source_sync_consent import source, change
 
 
