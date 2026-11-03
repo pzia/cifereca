@@ -701,9 +701,9 @@ class SynchronizationBrokerImpl:
                     self._scheduled_inventory_requested.add(source_id)
             attempted += 1
             try:
-                result = self.synchronize_source(
+                result = self._synchronize_source_impl(
                     source_id, SyncRequest(identity_id=identity_id), control,
-                    _inventory_only=True,
+                    inventory_only=True,
                 )
             except Cancelled:
                 # Cancellation is a lifecycle signal, not a provider fault.
@@ -1117,7 +1117,12 @@ class SynchronizationBrokerImpl:
             },
         )
 
-    def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None, *, _inventory_only: bool = False) -> SyncResult:
+    def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
+        """Public plugin broker API: explicit source synchronization may acquire B."""
+        return self._synchronize_source_impl(source_id, request, control)
+
+    def _synchronize_source_impl(self, source_id: str, request: SyncRequest | None = None, control: Any = None, *, inventory_only: bool = False) -> SyncResult:
+        """Internal scheduler dispatch: inventory_only strictly forbids A→B."""
         try:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
@@ -1127,7 +1132,7 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "unknown_source"})
         # Only the scheduler uses this restrictive internal dispatch. A normal
         # source Sync still performs its independently consented A→B work.
-        if type(_inventory_only) is not bool:
+        if type(inventory_only) is not bool:
             return SyncResult(ok=False, facts={"reason": "invalid_request"})
         # The source_id is a stable digest of the exact identity/provider/
         # credential/account tuple. An explicit request must not override any
@@ -1189,7 +1194,7 @@ class SynchronizationBrokerImpl:
             if key in state
         }
         state.update(last_attempt=now, status="running", error="",
-                     scope="scheduled" if _inventory_only else "manual",
+                     scope="scheduled" if inventory_only else "manual",
                      identity_id=str(getattr(account, "identity_id", "") or ""))
         # Only a declared private-library inventory operation starts this
         # clock. A loan-only operation must not refresh or throttle it.
@@ -1201,7 +1206,7 @@ class SynchronizationBrokerImpl:
             # A scheduled refresh is not a public source Sync: only its
             # dedicated Core implementation can guarantee no delivery B.
             # Absence of that internal entry point must fail closed.
-            if _inventory_only:
+            if inventory_only:
                 scheduled = getattr(
                     self.service, "_synchronize_scheduled_account_inventory", None,
                 )
