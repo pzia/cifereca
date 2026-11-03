@@ -11,18 +11,17 @@ from cifereca.core.source_sync_consent import policy_key
 
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3719_v2_execution import v2
-from tests.test_core_p0_3171_canonical_sync_stage import refs
+from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
 
 
 @pytest.mark.parametrize("consent_mode", ["legacy", "source_wide"])
 def test_inventory_only_observes_a_without_selected_offer_or_get_even_when_consent_on(v2, consent_mode):
     service, db, root, calls = v2
-    # The fake service predates the internal inventory-only flag. Keep its
-    # existing A fixture but expose the new restrictive dispatch explicitly.
-    original = service._synchronize_account_source_impl
-    service._synchronize_account_source_impl = (
-        lambda account, *, deep=False, control=None, inventory_only=False:
-        original(account, deep=deep, control=control)
+    # Synthetic Core service models only the A observation, with no legacy
+    # personal-library reads. Its dedicated scheduled implementation is the
+    # same metadata-only fixture used by manual Sync.
+    service._synchronize_account_source_inventory_impl = (
+        service._synchronize_account_source_impl
     )
     service.resource_snapshot = replace(
         service.resource_snapshot, status="success", coverage="partial",
