@@ -58,13 +58,32 @@ class TaskRunner:
         if not isinstance(value, SyncResult):
             return "success"  # Legacy non-typed worker results are unchanged.
         facts = value.facts
-        if value.ok is True:
-            return "success"
         if isinstance(facts, Mapping):
             reason = facts.get("reason")
             status = facts.get("status")
             if reason == "operation_busy" or status == "operation_busy":
                 return "busy"
+            if status == "cancelled" or reason in {"cancelled", "source_sync_cancelled"}:
+                return "cancelled"
+            # A Core A→B summary is an observed result, not a GET error.
+            # Validate the closed counters before distinguishing pending/blocked
+            # from an actual delivery failure. A partial inventory alone gives
+            # no proof of a failed download.
+            execution = facts.get("canonical_execution")
+            if isinstance(execution, Mapping):
+                pending = execution.get("pending")
+                blocked = execution.get("blocked")
+                failed = execution.get("failed")
+                if all(type(n) is int and 0 <= n <= 1_000_000
+                       for n in (pending, blocked, failed)):
+                    if failed == 0 and blocked == 0 and pending:
+                        return "pending"
+                    if failed == 0 and blocked and pending == 0:
+                        return "blocked"
+            if status == "pending" or reason == "delivery_unconfirmed":
+                return "pending"
+            if status == "blocked":
+                return "blocked"
             if status == "partial":
                 return "partial"
             sources = facts.get("sources")
@@ -75,11 +94,17 @@ class TaskRunner:
                 ]
                 if statuses and all(item == "operation_busy" for item in statuses):
                     return "busy"
+                if statuses and all(item == "cancelled" for item in statuses):
+                    return "cancelled"
+                if statuses and all(item == "pending" for item in statuses):
+                    return "pending"
+                if statuses and all(item == "blocked" for item in statuses):
+                    return "blocked"
                 if statuses and "partial" in statuses and not any(
                     item in ("error", "failed", "retryable_error") for item in statuses
                 ):
                     return "partial"
-        return "failed"
+        return "success" if value.ok is True else "failed"
 
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
@@ -371,6 +396,9 @@ class TaskRunner:
                     business_status == "success",
                     None if business_status == "success" else (
                         "Synchronisation déjà en cours" if business_status == "busy"
+                        else "Synchronisation en attente de livraison" if business_status == "pending"
+                        else "Synchronisation bloquée" if business_status == "blocked"
+                        else "Synchronisation annulée" if business_status == "cancelled"
                         else "Synchronisation partielle" if business_status == "partial"
                         else "Échec de synchronisation" if kind_outcome == "ok"
                         else payload.user_message if isinstance(payload, UserFacingError)
