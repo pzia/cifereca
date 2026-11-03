@@ -66,3 +66,75 @@ def test_v2_archived_and_unknown_never_stage(tmp_path):
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
+
+
+def _deliver_guarded(session, account, observation, target, admission_current):
+    source = observation.source
+    return session.downloadable_selected_delivery_candidate_guarded(
+        account, edition_id=source.edition_id, resource_id=source.resource_id,
+        kind=source.kind, branch=source.branch,
+        selected_offer_id=observation.capability.offer_id,
+        target_dir=target, explicit_user_action=True,
+        admission_current=admission_current,
+    )
+
+
+def test_core_guarded_delivery_succeeds_only_with_live_admission(tmp_path):
+    session, (alice, _) = fixture()
+    try:
+        observation = _selected(session, alice)
+        callbacks = []
+        def admission_current():
+            callbacks.append(True)
+            return True
+        candidate = _deliver_guarded(
+            session, alice, observation, tmp_path, admission_current,
+        )
+        assert type(candidate) is DeliveryCandidate
+        assert candidate.source == observation.source
+        assert candidate.authorizes_publication is False
+        assert zipfile.is_zipfile(candidate.path)
+        # The guarded producer revalidates during staging, not just at entry.
+        assert len(callbacks) >= 3
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("revocation", [
+    "before", "before_write", "during_payload", "callback_error", "missing_callback",
+])
+def test_core_guarded_delivery_rejects_revocation_without_residual_file(
+    tmp_path, monkeypatch, revocation,
+):
+    import cifereca_reference as reference
+
+    session, (alice, _) = fixture()
+    try:
+        observation = _selected(session, alice)
+        state = {"enabled": revocation != "before"}
+        if revocation == "before_write":
+            session._before_write = lambda: state.update(enabled=False)
+        elif revocation == "during_payload":
+            original = reference.epub_bytes
+            def revoke_as_bytes_are_prepared(resource):
+                data = original(resource)
+                state["enabled"] = False
+                return data
+            monkeypatch.setattr(reference, "epub_bytes", revoke_as_bytes_are_prepared)
+
+        def admission_current():
+            if revocation == "callback_error":
+                raise RuntimeError("injected callback failure")
+            return state["enabled"]
+
+        with pytest.raises(
+            ProviderCapabilityError, match="reference_core_admission_revoked"
+        ):
+            _deliver_guarded(
+                session, alice, observation, tmp_path,
+                None if revocation == "missing_callback" else admission_current,
+            )
+        # No candidate escapes when OFF is observed even after bytes landed.
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
