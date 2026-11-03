@@ -95,10 +95,12 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
     kobo = selected.get("kobo")
     if type(kobo) is not dict or kobo.get("source") != "library_sync":
         return None
-    if (selected.get("drm", {}).get("raw_type") != "KDRM"
-            or selected.get("media_format", "").casefold() not in ("kepub", "epub")):
+    drm = selected.get("drm")
+    media = selected.get("media_format")
+    if (type(drm) is not dict or drm.get("raw_type") != "KDRM"
+            or type(media) is not str or media.casefold() not in ("kepub", "epub")):
         return None
-    source_format = selected.get("source_format", selected["media_format"])
+    source_format = selected.get("source_format", media)
     if (type(source_format) is not str or source_format.casefold()
             != selected["media_format"].casefold()):
         return None
