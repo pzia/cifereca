@@ -63,6 +63,22 @@ def diagnostic_task_business_result(
             scope.business_cancelled = True
         else:
             scope.business_failed = True
+    elif operation_kind in {"opening-sync", "deep-sync"} and type(result) is dict:
+        rows = result.get("identities")
+        if type(rows) is list and rows:
+            statuses = [
+                row.get("status") if type(row) is dict else None
+                for row in rows[:65]
+            ]
+            if len(rows) > 64 or any(
+                status not in {"success", "partial", "failed", "cancelled"}
+                for status in statuses
+            ) or "failed" in statuses:
+                scope.business_failed = True
+            elif "cancelled" in statuses:
+                scope.business_cancelled = True
+            elif "partial" in statuses:
+                scope.business_failed = True
 
 
 def numilog_task_reference() -> str | None:
