@@ -72,6 +72,7 @@ def _candidate(
 
 class PolicySession(ProviderSession):
     api_version = "2.3"
+    supports_acquisition_delegation = True  # Synthetic verified token scope
     supports_acquisition_display_profile = False
 
     def __init__(self, *args, payload_factory, supports_acsm=False, **kwargs):

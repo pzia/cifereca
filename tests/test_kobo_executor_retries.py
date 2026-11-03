@@ -31,6 +31,7 @@ class FakeKoboSession(ProviderSession):
         self.api_version = "2.3"
         self.display_profile = "Android"
         self.supports_acquisition_display_profile = True
+        self.supports_acquisition_delegation = True  # Synthetic verified scope
         self.supports_acquisition_acsm = False
         self.acquisition_modes: list[str] = []
         self.acquisition_profiles: list[str | None] = []

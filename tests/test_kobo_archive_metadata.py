@@ -38,6 +38,7 @@ def _artifact_result(request: dict) -> dict:
 
 class KoboSession(ProviderSession):
     api_version = "2.3"
+    supports_acquisition_delegation = True  # Synthetic verified token scope
     supports_acquisition_display_profile = False
 
     def __init__(
