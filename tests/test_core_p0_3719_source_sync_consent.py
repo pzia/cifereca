@@ -378,3 +378,78 @@ def test_internal_source_toggle_cannot_update_foreign_or_policy_metadata(source)
     assert db.metadata_get(policy_row) == before_policy
     assert broker.source_sync_consent(sid) == on
     assert calls == []
+
+
+@pytest.mark.parametrize("variant", ("guarded", "runtime_guarded"))
+def test_source_consent_accepts_guarded_only_v2_delivery_without_legacy_get(
+    source, variant,
+):
+    """A provider need not expose an unguarded content endpoint for Core Sync."""
+    service, db, root, calls, broker = source
+    del service.session.downloadable_selected_delivery_candidate
+    service.session.rights_selected_delivery_candidate = (
+        lambda *_args, **_kwargs: pytest.fail("unguarded legacy GET called")
+    )
+    captured_admission = []
+
+    def execute_runtime(request):
+        assert request["schema_version"] == 2
+        assert request["source"]["type"] == "kobo"
+        assert request["format"] == "pdf"
+        destination = request["destination"]
+        from pathlib import Path
+        Path(destination).write_bytes(BYTES)
+        return {"ok": True, "artifact": {"path": destination}}
+
+    service.execute_acquisition_request = execute_runtime
+
+    def selected_candidate(account, *, edition_id, resource_id, kind,
+                           branch, selected_offer_id, target_dir,
+                           explicit_user_action, admission_current,
+                           **extra):
+        assert explicit_user_action is True
+        assert account is service.account
+        assert (edition_id, resource_id, kind, branch) == (
+            service.source.edition_id, service.source.right_id,
+            service.source.kind, service.source.branch,
+        )
+        assert selected_offer_id == "offer-" + resource_id
+        assert admission_current() is True
+        calls.append("guarded")
+        path = target_dir / "received.pdf"
+        if variant == "runtime_guarded":
+            assert set(extra) == {"execute_runtime"}
+            extra["execute_runtime"]({
+                "schema_version": 2,
+                "source": {"type": "kobo", "provider": "synthetic"},
+                "destination": str(path),
+                "format": "pdf",
+            })
+        else:
+            assert extra == {}
+            path.write_bytes(BYTES)
+        captured_admission.append(admission_current)
+        return DeliveryCandidate(
+            service.resource_snapshot.resources[0].source,
+            selected_offer_id, path,
+        )
+
+    method = ("downloadable_selected_delivery_candidate_runtime_guarded"
+              if variant == "runtime_guarded"
+              else "downloadable_selected_delivery_candidate_guarded")
+    setattr(service.session, method, selected_candidate)
+
+    sid = broker._source_id(service.account)
+    assert broker.source_sync_consent(sid)["supported"] is True
+    assert change(source, True)["enabled"] is True
+    first = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert first["downloaded"] == 1
+    assert first["failed"] == first["pending"] == 0
+    assert calls == ["offer", "guarded"]
+    assert refs(db)[1] == 1 and len(db.placements()) == 1
+    assert all(not lease() for lease in captured_admission)
+
+    second = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert second["present_attested"] == 1 and second["downloaded"] == 0
+    assert calls == ["offer", "guarded"]
+    assert refs(db)[1] == 1 and len(db.placements()) == 1
