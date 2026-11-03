@@ -202,6 +202,20 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         # flag as False during an unrelated Settings save. Legacy *missing*
         # flags retain their historical compatibility.
         original_account = editor.get('original_account')
+        # Never copy opaque provider metadata from a *different* connection
+        # if a stale GTK editor was rebound or duplicated. A new row has no
+        # historical snapshot; an existing one must match exact account ID
+        # and provider. Preserve legacy provider casing only.
+        if (type(original_account) is dict and (
+                ('id' in original_account
+                 and original_account['id'] != account_id)
+                or ('provider' in original_account
+                    and (type(original_account['provider']) is not str
+                         or original_account['provider'].casefold()
+                         != provider_id.casefold()))):
+            raise SettingsValidationError(
+                'Origine du compte fournisseur incohérente : recharger les paramètres.'
+            )
         if (type(original_account) is dict
                 and original_account.get('id') == account_id
                 and 'enabled' in original_account
