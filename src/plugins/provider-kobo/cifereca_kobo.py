@@ -1324,7 +1324,7 @@ class KoboSession(ProviderSession):
             "descriptor_offer_attested" if offer_id else
             "descriptor_candidate_unqualified"
         )
-        delegated_attempted = False
+        delegated_resolver_called = False
         # Only the ONE descriptor candidate that reproduces the exact
         # runtime offer may be used for the delegated ContentKeys replay.
         # Vault can return an earlier, non-pinned content_access_book KDRM
@@ -1351,7 +1351,7 @@ class KoboSession(ProviderSession):
                 qualified_reason = "pinned_candidate_ambiguous"
             else:
                 try:
-                    delegated_attempted = True
+                    delegated_resolver_called = True
                     delegated = self.resolve_acquisition(right_id, mode="delegated")
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
@@ -1386,7 +1386,11 @@ class KoboSession(ProviderSession):
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
                     offer_id = ""
-                    qualified_reason = "delegated_provider_failed"
+                    qualified_reason = (
+                        "delegation_quarantined_after_previous_403"
+                        if getattr(self, "_cifereca_delegation_forbidden", False)
+                        else "delegated_provider_failed"
+                    )
         qualified = replace(
             right,
             delivery="available" if offer_id else "unknown",
@@ -1409,10 +1413,10 @@ class KoboSession(ProviderSession):
         _TRACE_LOG.debug(
             "TRACE kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
-            "delegated_attempted=%s",
+            "delegated_resolver_called=%s",
             right_id, "available" if offer_id else "unknown",
             qualified_reason, count, kdrm_present, kdrm_ready,
-            delegated_attempted,
+            delegated_resolver_called,
         )
         # One exact purchase preflight is never a branch-wide manifest,
         # even when the preceding Vault inventory was fully attested.
