@@ -72,6 +72,35 @@ def test_recent_materialization_to_other_identity_keeps_source():
             service.close()
 
 
+def test_recent_acquisitions_unowned_legacy_only_visible_in_default_identity():
+    # A placement without identity is not a shared entitlement to every
+    # profile. The Library view already assigns this legacy case to default.
+    with tempfile.TemporaryDirectory() as td:
+        service = _service(td)
+        try:
+            root = Path(td) / "EBooks"
+            legacy = root / "legacy" / "Unscoped.epub"
+            alex = root / "alex" / "Owned.epub"
+            _epub(legacy)
+            _epub(alex)
+            service.catalog_scan()
+            placements = {Path(row["path"]): row
+                          for row in service.storage.placements()}
+            assert placements[legacy.resolve()]["identity_id"] in (None, "")
+            assert placements[alex.resolve()]["identity_id"] == "alex"
+
+            default_paths = {Path(row["path"]) for row in
+                             service.recent_acquisitions(identity_id="default")}
+            alex_paths = {Path(row["path"]) for row in
+                          service.recent_acquisitions(identity_id="alex")}
+            assert legacy.resolve() in default_paths
+            assert alex.resolve() not in default_paths
+            assert alex.resolve() in alex_paths
+            assert legacy.resolve() not in alex_paths
+        finally:
+            service.close()
+
+
 def test_provider_quota_is_retryable_and_does_not_permanently_block_active_loan(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         service = _service(td)
