@@ -531,3 +531,39 @@ def test_complete_journal_with_matching_artifact_remains_recoverable(rig):
     assert completed.final_sha256 == journal(service.storage)[0][1][7:]
     assert service.calls == 1
     assert rows(service.storage) == (1, 1, 1, 1)
+
+
+def test_fresh_retry_repairs_staged_artifact_pointer_before_next_crash(
+    rig, monkeypatch,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    assert run(service, account, snapshot, root, lock_path, {source},
+               fake_delivery(service, root))[0].status == "failed"
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET artifact_id=? "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'",
+            ("sha256:" + "f" * 64,),
+        )
+
+    # The previous journal is poisoned: the retry must GET again. Inject
+    # another crash after its *new* receipt is committed, before publication.
+    assert run(service, account, snapshot, root, lock_path, {source},
+               fake_delivery(service, root))[0].status == "failed"
+    assert service.calls == 2
+    staged, artifact_id, _ = journal(service.storage)[0]
+    assert staged == "canonical_receipt_staged"
+    assert artifact_id is None
+
+    # No third GET: the repaired, exact checkpoint survives a second crash.
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", original,
+    )
+    recovered = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("repaired staged receipt must avoid another GET"),
+    )
+    assert recovered[0].status == "recovered"
+    assert service.calls == 2
+    assert rows(service.storage) == (1, 1, 1, 1)
