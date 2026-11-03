@@ -758,7 +758,11 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     if not capable:
         disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     elif not enabled:
-        disabled_reason = "Source désactivée ; synchronisation manuelle indisponible."
+        disabled_reason = (
+            "Source désactivée ; synchronisation manuelle indisponible."
+            if getattr(source, "enabled", None) is False
+            else "Activez cette source pour la synchroniser."
+        )
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
     else:
