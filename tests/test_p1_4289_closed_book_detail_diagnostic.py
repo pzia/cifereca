@@ -163,3 +163,44 @@ def test_anonymous_callbacks_are_explicitly_pinned_to_reviewed_stages():
         "verify_tab_order", "click_copy", "click_isbn",
         "begin_owned_book_action", "component_expand",
     }
+
+
+def test_owned_gtk_fixture_persists_exact_borrower_binding_before_entitlement():
+    """Regression #4289: a connected session alone cannot attest a purchase."""
+    tree = ast.parse(PROBE.read_text(encoding="utf-8"))
+    function = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "begin_owned_book_action"
+    )
+    calls = [
+        (node.lineno, node) for node in ast.walk(function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {
+            "provider_connection_put", "provider_account_put", "entitlement_put",
+        }
+    ]
+    order = [node.func.attr for _line, node in sorted(calls)]
+    assert order == [
+        "provider_connection_put", "provider_account_put", "entitlement_put",
+    ]
+    account = next(
+        node for line, node in calls
+        if node.func.attr == "provider_account_put"
+    )
+    assert len(account.args) == 1
+    assert isinstance(account.args[0], ast.Dict)
+    keys = [value.value for value in account.args[0].keys]
+            # noqa: E128
+    values = {key: value for key, value in zip(keys, account.args[0].values)}
+    for mandatory in (
+        "connection_id", "identity_id", "provider_id",
+        "credential_id", "account_id",
+    ):
+        assert mandatory in values
+    assert isinstance(values["connection_id"], ast.Name)
+    assert values["connection_id"].id == "connection_id"
+    assert isinstance(values["account_id"], ast.Attribute)
+    assert values["account_id"].attr == "unique_id"
+    assert isinstance(values["credential_id"], ast.Attribute)
+    assert values["credential_id"].attr == "credential_id"
