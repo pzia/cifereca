@@ -341,7 +341,7 @@ def test_corrupt_artifact_evidence_does_not_suppress_real_delivery(
         # Simulate an imported/previously corrupted database explicitly by
         # disabling that guard IN THIS THROWAWAY TEST DB only. The presence
         # reader must still fail closed when faced with persisted bad rows.
-        db.execute("DROP TRIGGER origin_artifact_sha_immutable")
+        db.execute("DROP TRIGGER trg_artifact_linked_sha_update")
         db.execute(
             "UPDATE artifacts SET sha256=?,size=? WHERE artifact_id=?",
             (sha256(changed).hexdigest(), len(changed), published.artifact_id),
