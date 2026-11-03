@@ -373,8 +373,8 @@ def sync_source_cycle_headline(source: object) -> str:
     severity = (
         "échec", "bloquée", "action nécessaire", "interrompue", "partielle",
         "source modifiée", "source désactivée", "source déconnectée",
-        "annulée", "non confirmée", "en cours", "non exécutée",
-        "réussie", "non disponible",
+        "annulée", "non confirmée", "déjà en cours", "en cours",
+        "non exécutée", "réussie", "non disponible",
     )
     local_status = next((value for value in severity
                          if any(state == value for _, state in local)), None)
