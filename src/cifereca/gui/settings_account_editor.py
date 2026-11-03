@@ -91,7 +91,13 @@ def build_provider_account_editor(
                 # Consult legacy defaults only for genuinely absent options.
                 provider_option = getattr(config, "provider_option", None)
                 if callable(provider_option):
-                    fallback = provider_option(provider_id, field.key, None)
+                    # A legacy value belongs to one exact connection. With
+                    # no credential_id, Config.provider_option reads the
+                    # provider's *first* account and could silently copy its
+                    # endpoint into another (or a newly created) account.
+                    fallback = provider_option(
+                        provider_id, field.key, None, credential_id=account_id,
+                    )
                 if not fallback and hasattr(config, "get"):
                     fallback = config.get(field.legacy_config_key)
             # Missing optional text has no value; never display "None".
