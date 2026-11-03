@@ -61,3 +61,38 @@ def test_sqlite_borrower_rebound_during_inventory_discards_positive_rows(rig):
     assert service.read_calls == 1
     assert result.status == "failed" and result.rights == ()
     assert result.coverage == "unknown"
+
+
+@pytest.mark.parametrize("phase", ("before", "during", "between_pages", "lookup_failed"))
+def test_source_disable_revokes_private_inventory_lease_without_positive_A(
+    rig, phase,
+):
+    """Disabled sources cannot fetch a first/next page or keep stale positives."""
+    service, _storage, _root = rig
+    original = service.snapshot
+    if phase == "before":
+        service.enabled = False
+    elif phase == "lookup_failed":
+        service.sync_source_enabled = lambda _: (_ for _ in ()).throw(
+            OSError("synthetic source-state unavailable")
+        )
+    else:
+        def read(_account, *, resume_cursor=""):
+            if resume_cursor:
+                pytest.fail("source disabled after first page: no next GET")
+            service.read_calls += 1
+            service.enabled = False
+            return replace(
+                original, resume_cursor="synthetic-next"
+                if phase == "between_pages" else "",
+            )
+        service.session.rights_observation_snapshot = read
+
+    if phase in ("before", "lookup_failed"):
+        service.session.rights_observation_snapshot = (
+            lambda _account: pytest.fail("disabled source: no first private GET")
+        )
+    result = read_account_rights_snapshot(service, service.account)
+    assert result.status == "failed" and result.rights == ()
+    assert result.coverage == "unknown"
+    assert service.read_calls == (1 if phase in ("during", "between_pages") else 0)
