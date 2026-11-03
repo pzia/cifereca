@@ -3019,13 +3019,14 @@ class Storage:
                 raise ValueError("device target outside managed directory")
             current = db.execute(
                 "SELECT device_placement_id,desired_state,"
-                "target_relative_path,metadata_json "
+                "target_relative_path,observed_state,last_observed_at,metadata_json "
                 "FROM device_placements WHERE device_id=? AND artifact_id=?",
                 (device_id, artifact_id),
             ).fetchone()
             if current is None:
                 raise ValueError("device target requires an existing intention")
-            placement_id, desired, existing_path, raw_metadata = current
+            (placement_id, desired, existing_path, observed_state,
+             last_observed_at, raw_metadata) = current
             metadata = self._json_load(raw_metadata)
             if (type(metadata) is not dict
                     or metadata.get("intent_identity_id") != identity_id):
@@ -3038,6 +3039,10 @@ class Storage:
                 raise ValueError("device target original path invalid")
             if desired != "keep":
                 raise ValueError("device target requires a keep intention")
+            if (observed_state != "unknown"
+                    or last_observed_at is not None
+                    or metadata != {"intent_identity_id": identity_id}):
+                raise ValueError("device target has prior observation")
             rows = db.execute(
                 "SELECT target_relative_path FROM device_placements "
                 "WHERE device_id=? AND artifact_id<>?",
