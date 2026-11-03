@@ -43,7 +43,8 @@ def _materialize_to_identity_locked(
     if not source or source.get("state") != "present":
         raise ProviderConfigurationError("Placement source local introuvable")
     owner = str(source.get("identity_id") or "")
-    if not owner or self.identity_by_id(owner) is None:
+    source_identity = self.identity_by_id(owner) if owner else None
+    if source_identity is None:
         raise ProviderConfigurationError("Provenance de l'identité source non attestée")
     target_identity = self.identity_by_id(target_identity_id)
     if target_identity is None or target_identity_id == owner:
@@ -56,6 +57,22 @@ def _materialize_to_identity_locked(
     if (not src.is_absolute() or ".." in src.parts or src.is_symlink()
             or not src.resolve().is_relative_to(root) or src.resolve() != src):
         raise ProviderConfigurationError("Emplacement source hors de la bibliothèque")
+    # The Placement owner, not merely the library root, must own the
+    # physical source. Otherwise a stale/foreign SQLite row can send another
+    # profile's bytes through the legacy noncanonical transfer path.
+    owner_directory = safe_library_component(
+        source_identity.directory_name or owner, "default",
+    )
+    owner_root = root / owner_directory
+    if (src == owner_root or not src.is_relative_to(owner_root)
+            or any(
+                other.identity_id != owner
+                and safe_library_component(
+                    other.directory_name or other.identity_id, "default",
+                ) == owner_directory
+                for other in self.identities
+            )):
+        raise ProviderConfigurationError("Emplacement source hors du profil propriétaire")
     if not src.is_file() and not src.is_dir():
         raise ProviderConfigurationError("Artifact source introuvable")
     is_bundle = src.is_dir()
