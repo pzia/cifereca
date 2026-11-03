@@ -147,3 +147,24 @@ def test_loan_only_provider_never_inherits_private_inventory_schedule(tmp_path):
         assert calls == []
     finally:
         service.storage.close()
+
+
+def test_scheduled_inventory_never_falls_back_to_public_sync_when_internal_missing(tmp_path):
+    """A plugin service without the Core-only ABI cannot invoke A→B by schedule."""
+    service, account, _session, calls = _source(tmp_path)
+    try:
+        del service._synchronize_scheduled_account_inventory
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker.set_inventory_refresh_schedule(sid, "on_start")
+        result = broker.synchronize_scheduled_inventory("fixture-identity", "startup")
+        assert not result.ok
+        assert result.facts == {
+            "phase": "discover_rights", "trigger": "startup",
+            "attempted": 1, "failed": 1, "acquisition_authorized": False,
+        }
+        assert calls == []
+        assert broker._state(sid).get("inventory_status") == "failed"
+        assert not broker._state(sid).get("inventory_last_success")
+    finally:
+        service.storage.close()
