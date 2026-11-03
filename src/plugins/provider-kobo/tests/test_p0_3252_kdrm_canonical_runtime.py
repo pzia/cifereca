@@ -233,3 +233,31 @@ def test_kdrm_foreign_identity_offer_not_reused_across_profiles():
     assert exact_kobo_offer_id(
         payload, **{**base, "kdrm_runtime_ready": False},
     ) == ""
+
+
+@pytest.mark.parametrize("container", ["delegation", "request", "context"])
+def test_nested_foreign_kdrm_replay_scope_cannot_qualify_offer(container):
+    session, vault, broker, account, _ = setup()
+    calls = ready(session, vault)
+    original = vault.acquisition
+
+    def foreign(product, **kwargs):
+        raw = original(product, **kwargs)
+        if kwargs.get("mode") == "delegated":
+            delegation = raw["acquisition"]["delegation"]
+            target = (
+                delegation if container == "delegation"
+                else delegation["content_access_request"] if container == "request"
+                else delegation["session_context"]
+            )
+            target["account_id"] = "other-upstream-account"
+        return raw
+
+    vault.acquisition = foreign
+    try:
+        row = selected(session, account, "book-1")
+        assert row.state == "active"
+        assert row.delivery == "unknown" and row.delivery_offer_id == ""
+        assert calls == [("book-1", "descriptor"), ("book-1", "delegated")]
+    finally:
+        session.close()
