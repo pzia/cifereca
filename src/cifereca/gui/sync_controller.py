@@ -348,19 +348,39 @@ def _refresh_sync_page(self) -> None:
         declared capability snapshot is metadata-only and identity-scoped.
         No switch, network request, sync job or download is created here.
         """
+        from cifereca.gui.sync_catalogue_overview import sync_catalogue_overview
+
+        def set_catalogue_summary(snapshot):
+            # Some legacy inline provider panels also use 'summary' as a
+            # local variable for a typed status dictionary. Never close over
+            # that mutable loop binding instead of the actual GTK label.
+            header = getattr(self, "_sync_summary", None)
+            if (header is not None
+                    and callable(getattr(header, "set_label", None))
+                    and callable(getattr(header, "get_label", None))
+                    and sync_action_scope_current(self, scope)):
+                # Only a closed, read-only capability count is shown. Never
+                # invent a catalogue-refresh control from search support.
+                header.set_label(header.get_label() + "\n"
+                                 + sync_catalogue_overview(snapshot))
+
         reader = getattr(self.service, "catalogue_source_capabilities", None)
         if not callable(reader):
+            set_catalogue_summary(None)
             return
         try:
             raw = reader(identity_id=scope.identity_id)
         except Exception:
             # A plugin/provider diagnostic can contain signed URLs, so do
             # not echo it. Personal-library sync cards remain available.
+            set_catalogue_summary(None)
             return
         if not sync_action_scope_current(self, scope):
             return
         if type(raw) not in (list, tuple) or len(raw) > 128:
+            set_catalogue_summary(None)
             return
+        set_catalogue_summary(raw)
         catalogues = []
         for item in raw:
             provider = getattr(item, "provider_id", None)
