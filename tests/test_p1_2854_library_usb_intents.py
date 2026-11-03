@@ -224,3 +224,32 @@ def test_missing_storage_or_profile_read_does_not_break_existing_actions(tmp_pat
     assert render(ctx) is None
     assert [a._cifereca_action_id for a in actions] == ["open-local"]
     assert not jobs
+
+
+def test_legacy_non_usb_device_binding_does_not_get_a_reader_action(tmp_path):
+    ctx = setup(tmp_path, devices=0)
+    db, _, _, window, _, _, actions, events, jobs, groups, _ = ctx
+    db.device_binding_put({
+        "device_id": "non-usb-legacy", "identity_id": "alice",
+        "label": "Stockage historique",
+        "enabled": True, "metadata": {"plugin_kind": "cloud"},
+    })
+    assert render(ctx) is None
+    assert [a._cifereca_action_id for a in actions] == ["open-local"]
+    assert groups == [] and db.device_placements() == [] and not jobs
+
+
+def test_rebound_usb_fingerprint_after_render_makes_old_click_inert(tmp_path):
+    ctx = setup(tmp_path)
+    db, _, _, window, _, _, actions, events, jobs, groups, _ = ctx
+    menu = render(ctx)
+    button, = menu.popover.child.children
+    old = db.device_binding_get("reader-0")
+    db.device_binding_put({
+        **old, "metadata": {"usb_fingerprint": "uuid-new-swap-9090"},
+    })
+    before = deepcopy(db.device_placements())
+    button.click()
+    assert db.device_placements() == before
+    assert not jobs
+    assert ("error", "Liseuses") in events
