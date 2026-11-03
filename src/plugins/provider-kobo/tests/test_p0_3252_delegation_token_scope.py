@@ -229,6 +229,7 @@ def test_public_and_authenticated_status_use_distinct_http_bearer_headers():
         # It MUST NOT be used as evidence: connect() only passes the
         # separately bearer-authenticated status to the scope qualifier.
         assert "acquisition_delegation" in public["capabilities"]
+        assert _authenticated_delegate_scope(public) is False
         assert _authenticated_delegate_scope(authenticated)
         assert observed == [
             ("GET", "/api/v2/status", None),
