@@ -35,8 +35,8 @@ def test_opening_success_records_exact_gtk_phases_without_worker_or_async_work(
     assert len(tasks) == 1
     args, _kwargs = tasks[0]
     args[2]({"identities": []})
-    report = monitor.snapshot()
-    phases = report["phases"]
+    report = monitor.performance_report()
+    phases = report["stats"]
     assert phases["opening-sync.model_update"]["p50_ms"] == pytest.approx(12.0)
     assert phases["opening-sync.render"]["p50_ms"] == pytest.approx(25.0)
     assert all(key.startswith("opening-sync.") for key in phases)
