@@ -210,7 +210,8 @@ def complete_selected_delivery(
         result = service.execute_acquisition_request(request)
         if not admission_current():
             raise ValueError("canonical_delivery_runtime_admission_changed")
-        if (type(result) is not dict or type(result.get("artifact")) is not dict
+        if (type(result) is not dict or result.get("ok") is not True
+                or type(result.get("artifact")) is not dict
                 or type(result["artifact"].get("path")) is not str):
             raise ValueError("canonical_delivery_runtime_result_invalid")
         produced = _physical_target(Path(result["artifact"]["path"]), root, directory)
