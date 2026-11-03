@@ -153,3 +153,18 @@ def test_retired_return_does_not_rewrite_a_historical_return_state(tmp_path: Pat
         assert service.storage.acquisition_get("acq-1") == before
     finally:
         service.close()
+
+
+def test_core_adept_return_helper_is_inert_even_for_direct_legacy_callers():
+    from cifereca.core.adept_acquisition_return import return_adept_acquisition
+
+    with pytest.raises(AttentionRequired) as caught:
+        return_adept_acquisition(
+            object(), "private-acquisition",
+            AttentionRequired=AttentionRequired,
+            ProviderConfigurationError=object(),
+            DrmMutationRequest=object(),
+            time=object(),
+        )
+    assert caught.value.code == "loan_return_removed"
+    assert "private-acquisition" not in str(caught.value)
