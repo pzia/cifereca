@@ -483,8 +483,8 @@ class TaskRunner:
                     task_id, remaining, label,
                     business_status == "success", feedback_error,
                 )
-                if (trace_kind in {"source-sync", "borrow", "opening-sync", "deep-sync"}
-                        and business_status in {"pending", "partial", "blocked", "busy", "cancelled"}):
+                if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
+                        and trace_kind in {"source-sync", "borrow", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
