@@ -22,6 +22,7 @@ from .query_controls import MultiSelect
 from .task_runner import TaskPriority
 from .loan_renewal_feedback import loan_renewal_feedback
 from .detail_model import fr_date
+from . import history_language_projection
 
 
 def _build_loans_page(self) -> MasterDetailPage:
@@ -94,14 +95,20 @@ def _render_loans(self) -> None:
             button.set_label(f"{label} · {counts.get(key, 0)}")
     ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
     wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
+    display_loans = []
     for loan in all_loans:
         if self.loan_filter != "all" and loan.medium != self.loan_filter:
             continue
-        raw = dict(loan.raw or {})
-        meta = dict(raw.get('_cifereca') or {}) if isinstance(raw.get('_cifereca'), dict) else raw
-        loan_languages = self._known_item_languages(loan.source_provider, loan.record_id or loan.id, meta)
-        if wanted_languages and not loan_languages.intersection(wanted_languages):
-            continue
+        display_loans.append(loan)
+    if wanted_languages and display_loans:
+        # The old per-loan _known_item_languages lookup read the entire
+        # SQLite catalogue on GTK even without a language filter. Reuse one
+        # fresh, local snapshot only for an actual filtered render.
+        display_loans = history_language_projection.loan_rows_with_languages(
+            display_loans, wanted_languages,
+            self.service.storage.catalog_entries(),
+        )
+    for loan in display_loans:
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
         # BnF (and other providers) can supply a verified author on the
