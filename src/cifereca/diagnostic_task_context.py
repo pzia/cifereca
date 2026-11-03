@@ -32,8 +32,10 @@ def diagnostic_task_reference() -> str | None:
     return scope.reference
 
 
-def diagnostic_task_business_result(result: object) -> None:
-    """Mark an attested typed SyncResult refusal without raising an exception.
+def diagnostic_task_business_result(
+    result: object, *, operation_kind: str | None = None,
+) -> None:
+    """Mark an attested Core business refusal without raising an exception.
 
     The Future still returns the original result, which consumers require to
     refresh UI/broker state. A business refusal must not emit a worker
@@ -45,6 +47,17 @@ def diagnostic_task_business_result(result: object) -> None:
         return
     from .plugin_api import SyncResult
     if isinstance(result, SyncResult) and result.ok is False:
+        scope.business_failed = True
+    elif (operation_kind == "borrow" and type(result) is dict
+          and type(result.get("status")) is str
+          and result.get("status") in {
+              "blocked", "unsupported", "failed", "cancelled",
+              "submitted", "verification_unavailable",
+          }
+          and type(result.get("reason_code")) is str
+          and type(result.get("provider_verified")) is bool):
+        # Only the explicit Core manual-borrow result contract is accepted.
+        # Arbitrary dicts returned by unrelated tasks are not business proof.
         scope.business_failed = True
 
 
