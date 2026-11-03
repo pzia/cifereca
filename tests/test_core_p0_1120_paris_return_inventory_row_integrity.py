@@ -8,6 +8,7 @@ from __future__ import annotations
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 
 from dataclasses import replace
+import json
 from types import SimpleNamespace as NS
 
 import pytest
@@ -89,6 +90,10 @@ def test_genuine_paris_loan_list_and_typed_empty_inventory_have_distinct_meaning
         from cifereca.core.loan_return_guard import return_key
         key = return_key("paris", "paris-a", "linked-b", loan.id)
         assert svc.storage.loan_return_claim(key, "archived")[0] is True
+        # Allow legacy recovery only after the at-most-once in-flight window.
+        archived = svc.storage.loan_return_state(key)
+        archived["requested_at"] = "2026-01-01T00:00:00+00:00"
+        svc.storage.metadata_set(key, json.dumps(archived))
         active = svc.verify_return_digital(loan)
         assert active["status"] == "still_active"
         assert active["provider_inventory_verified"] is False
