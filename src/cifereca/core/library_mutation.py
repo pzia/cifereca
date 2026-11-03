@@ -253,17 +253,31 @@ def _materialize_to_identity_locked(
         # Temporary file and exclusive link also refuse a dangling symlink
         # created concurrently at the final destination.
         fd, temporary = tempfile.mkstemp(prefix=".cifereca-send-", dir=dest_dir)
-        os.close(fd)
         temp = Path(temporary)
         journaled = False
         try:
-            opened = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            with os.fdopen(opened, "rb") as input_stream, temp.open("wb") as out:
-                if not stat.S_ISREG(os.fstat(input_stream.fileno()).st_mode):
-                    raise ProviderConfigurationError("Artifact source non régulier")
-                shutil.copyfileobj(input_stream, out)
-                out.flush()
-                os.fsync(out.fileno())
+            # Keep mkstemp's exclusive inode open: reopening the pathname
+            # would follow a symlink substituted after mkstemp and could
+            # overwrite unrelated bytes before the later SHA verification.
+            created = os.fstat(fd)
+            with os.fdopen(fd, "wb") as out:
+                opened = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(opened, "rb") as input_stream:
+                    if not stat.S_ISREG(os.fstat(input_stream.fileno()).st_mode):
+                        raise ProviderConfigurationError("Artifact source non régulier")
+                    shutil.copyfileobj(input_stream, out)
+                    out.flush()
+                    os.fsync(out.fileno())
+            # Even an equal-SHA replacement is not this newly created copy.
+            # Never link/replace a foreign inode or symlink as the recipient.
+            try:
+                staged = os.stat(temp, follow_symlinks=False)
+            except OSError as exc:
+                raise ProviderConfigurationError("Fichier temporaire modifié") from exc
+            if (not stat.S_ISREG(staged.st_mode)
+                    or (staged.st_dev, staged.st_ino) !=
+                       (created.st_dev, created.st_ino)):
+                raise ProviderConfigurationError("Fichier temporaire modifié")
             if sha256_file(temp) != source_digest or sha256_file(src) != source_digest:
                 raise ProviderConfigurationError("Source modifiée pendant la copie")
             if replace:
