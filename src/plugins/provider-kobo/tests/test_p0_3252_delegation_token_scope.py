@@ -10,7 +10,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
-from cifereca_kobo import DESCRIPTOR, KoboSession
+from cifereca_kobo import DESCRIPTOR, KoboSession, _authenticated_delegate_scope
 from cifereca_kobo_vault import KoboVaultError
 
 
@@ -183,3 +183,37 @@ def test_separate_credentials_do_not_share_delegation_attestation():
     finally:
         for session in sessions:
             session.close()
+
+
+def test_public_and_authenticated_status_use_distinct_http_bearer_headers():
+    """The status flag is a transport contract, not merely a mock argument."""
+    import httpx
+    from cifereca_kobo_vault import KoboVaultClient
+
+    observed = []
+    def respond(request):
+        observed.append((request.method, request.url.path,
+                         request.headers.get("Authorization")))
+        payload = {
+            "api_version": "2.3",
+            "capabilities": ["acquisition", "acquisition_delegation"],
+        }
+        if request.headers.get("Authorization") == "Bearer test-bearer":
+            payload["token_scopes"] = ["kobo.acquisition.delegate"]
+        return httpx.Response(200, json=payload)
+
+    client = KoboVaultClient(
+        "https://vault.invalid", "test-bearer",
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        public = client.status(authenticated=False)
+        authenticated = client.authenticated_capabilities()
+        assert not _authenticated_delegate_scope(public)
+        assert _authenticated_delegate_scope(authenticated)
+        assert observed == [
+            ("GET", "/api/v2/status", None),
+            ("GET", "/api/v2/status", "Bearer test-bearer"),
+        ]
+    finally:
+        client.close()
