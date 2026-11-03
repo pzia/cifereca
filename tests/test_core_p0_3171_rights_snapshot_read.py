@@ -16,11 +16,21 @@ STAMP = "2026-10-28T08:00:00+00:00"
 
 
 class FakeStorage:
-    def __init__(self, owners):
+    def __init__(self, owners, bound_accounts=()):
         self.owners = owners
+        self.bound_accounts = set(bound_accounts)
 
     def identity_for_connection(self, provider, credential):
         return self.owners.get((provider, credential))
+
+    def provider_scope_account_bound(
+        self, *, identity_id, provider_id, credential_id, account_id,
+    ):
+        return (
+            self.owners.get((provider_id, credential_id)) == identity_id
+            and (identity_id, provider_id, credential_id, account_id)
+            in self.bound_accounts
+        )
 
 
 class ProviderSession:
@@ -64,9 +74,70 @@ def rig(provider="provider-alpha", *, owner="A", credential="cred-A",
         _source_context_epoch=1,
         accounts=[account],
         _sessions={(provider, credential): session},
-        storage=FakeStorage({(provider, credential): owner}),
+        storage=FakeStorage(
+            {(provider, credential): owner},
+            {(owner, provider, credential, buyer)},
+        ),
     )
     return service, account, session
+
+
+@pytest.mark.parametrize("change", ["missing", "sibling_only", "foreign_owner"])
+def test_deleted_or_reassigned_sql_borrower_blocks_first_private_get(change):
+    service, account, session = rig()
+    if change == "missing":
+        service.storage.bound_accounts.clear()
+    elif change == "sibling_only":
+        service.storage.bound_accounts.clear()
+        service.storage.bound_accounts.add((
+            "A", "provider-alpha", "cred-A", "other-borrower",
+        ))
+    else:
+        service.storage.owners[("provider-alpha", "cred-A")] = "B"
+        service.storage.bound_accounts.clear()
+        service.storage.bound_accounts.add((
+            "B", "provider-alpha", "cred-A", "buyer-A",
+        ))
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert session.calls == 0
+
+
+def test_sql_borrower_removed_during_private_read_discards_entire_batch():
+    service, account, session = rig()
+
+    def revoke(_account):
+        service.storage.bound_accounts.clear()
+        return ProviderSession(
+            session.provider_id, session.credential_id,
+        ).rights_observation_snapshot(account)
+
+    session.reader = revoke
+    result = read_account_rights_snapshot(service, account)
+    assert session.calls == 1
+    assert result.status == "failed" and result.rights == ()
+    assert result.coverage == "unknown"
+    assert not result.authorizes_mutation
+
+
+def test_sql_borrower_removed_between_pages_prevents_next_private_get():
+    service, account, session = rig()
+    calls = []
+    first = ProviderSession(
+        session.provider_id, session.credential_id,
+    ).rights_observation_snapshot(account)
+
+    def paged(_account, *, resume_cursor=""):
+        calls.append(resume_cursor)
+        if resume_cursor:
+            pytest.fail("no private continuation after SQL borrower revocation")
+        service.storage.bound_accounts.clear()
+        return replace(first, resume_cursor="cursor-after-first")
+
+    session.rights_observation_snapshot = paged
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert calls == [""]
 
 
 @pytest.mark.parametrize("provider", ["provider-alpha", "provider-beta"])
