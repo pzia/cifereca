@@ -341,18 +341,41 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         return []
     default_identity_id = self.identities[0].identity_id if self.identities else None
     entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
-    loan_by_key: dict[tuple[str, str, str | None], Loan] = {}
+    # Remote covers can identify a borrower's private book. A provider/item
+    # pair (even within one profile) is not evidence that its loan or purchase
+    # belongs to this local Artifact. Only an exact Core provider OriginLink
+    # joins remote cover metadata to a present placement.
+    origin_scopes: dict[tuple[str, str], set[tuple[str, str, str, str]]] = {}
+    for artifact, owner, provider, credential, account, edition in (
+        _verified_provider_origin_coordinates(self.storage, identity_id=identity_id)
+    ):
+        origin_scopes.setdefault((owner, artifact), set()).add(
+            (provider, credential, account, edition)
+        )
+    loans_by_scope: dict[tuple[str, str, str, str, str], Loan] = {}
     for loan in self.last_loans:
         try:
-            loan_identity = loan.identity_id or self.identity_for_connection(loan.source_provider, loan.source_credential).identity_id
+            loan_identity = loan.identity_id or self.identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ).identity_id
         except Exception:
             loan_identity = loan.identity_id
-        loan_by_key[(loan.source_provider, str(loan.record_id or loan.id), loan_identity)] = loan
-    entitlements_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        # None is an unknown borrower, not the empty primary-account ID.
+        if type(loan.source_account_id) is not str or not loan_identity:
+            continue
+        loans_by_scope[(
+            loan_identity, loan.source_provider, loan.source_credential,
+            loan.source_account_id, str(loan.record_id or loan.id),
+        )] = loan
+    entitlements_by_scope: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for entitlement in self.storage.entitlements():
-        entitlements_by_key.setdefault(
-            (str(entitlement.get("provider_id") or ""), str(entitlement.get("item_id") or "")), []
-        ).append(entitlement)
+        key = (
+            entitlement.get("identity_id"), entitlement.get("provider_id"),
+            entitlement.get("credential_id"), entitlement.get("account_id"),
+            entitlement.get("item_id"),
+        )
+        if all(type(value) is str for value in key):
+            entitlements_by_scope.setdefault(key, []).append(entitlement)
     rows: list[dict[str, Any]] = []
     for placement in sorted(
         self.storage.placements(),
@@ -391,32 +414,24 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             )
             if public:
                 cover_candidates.append(public)
-        if item_id:
-            loan_candidates = [
-                loan_by_key.get((provider_id, item_id, row_identity)),
-                loan_by_key.get((provider_id, item_id, None)),
-            ]
-            loan = next((value for value in loan_candidates if value is not None), None)
-            if loan is None:
-                loan = next((
-                    value for (p, i, _identity), value in loan_by_key.items()
-                    if p == provider_id and i == item_id and (not row_identity or _identity == row_identity)
-                ), None)
+        for source_provider, credential, borrower, edition in origin_scopes.get(
+            (row_identity, str(placement.get("artifact_id") or "")), ()
+        ):
+            scope_key = (row_identity, source_provider, credential, borrower, edition)
+            loan = loans_by_scope.get(scope_key)
             if loan is not None:
                 value = cover_candidate(
                     loan.thumbnail_url, tier="origin", source="loan",
-                    evidence_id=f"{provider_id}:{item_id}", evidence_strength=90,
+                    evidence_id=f"{source_provider}:{edition}", evidence_strength=90,
                 )
                 if value:
                     cover_candidates.append(value)
-            for entitlement in entitlements_by_key.get((provider_id, item_id), []):
-                if row_identity and entitlement.get("identity_id") not in {row_identity, None, ""}:
-                    continue
+            for entitlement in entitlements_by_scope.get(scope_key, ()):
                 emeta = dict(entitlement.get("metadata") or {})
                 value = cover_candidate(
                     emeta.get("cover_url") or emeta.get("thumbnail_url"),
                     tier="origin", source="entitlement",
-                    evidence_id=str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}"),
+                    evidence_id=str(entitlement.get("entitlement_id") or f"{source_provider}:{edition}"),
                     evidence_strength=80,
                 )
                 if value:
