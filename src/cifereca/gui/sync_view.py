@@ -385,7 +385,7 @@ def sync_source_cycle_headline(source: object) -> str:
         # A green stage is not proof that files were placed and hashed.
         parts.append("Livraison locale : " + local_status +
                      (" (étape seulement)" if local_status == "réussie"
-                      and "placement" not in phases else ""))
+                      and phases.get("placement") != "réussie" else ""))
     return " · ".join(parts)
 
 

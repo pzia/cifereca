@@ -176,3 +176,50 @@ def test_real_failure_remains_above_busy_local_phase():
     assert sync_source_attention(source) == (
         "error", "Réception du fichier : échec — action nécessaire",
     )
+
+
+@pytest.mark.parametrize(("stages", "expected"), [
+    (
+        (phase("materialize", "success"), phase("placement", "not_supported")),
+        "Livraison locale : réussie (étape seulement)",
+    ),
+    (
+        (phase("fetch", "success"), phase("placement", "not_supported")),
+        "Livraison locale : réussie (étape seulement)",
+    ),
+    (
+        (phase("fetch", "success"), phase("placement", "success")),
+        "Livraison locale : réussie",
+    ),
+    (
+        (phase("materialize", "success"), phase("placement", "success")),
+        "Livraison locale : réussie",
+    ),
+    (
+        (phase("fetch", "failed"), phase("placement", "not_supported")),
+        "Livraison locale : échec",
+    ),
+])
+def test_placement_absent_or_unsupported_never_certifies_local_delivery(
+    stages, expected,
+):
+    """An upstream successful stage cannot stand in for a placement receipt."""
+    source = _source(
+        provider_id="fictional",
+        phase_states=(phase("discover_rights", "success"), *stages),
+    )
+    headline = sync_source_cycle_headline(source)
+    assert headline == "Inventaire distant : réussie · " + expected
+    assert headline in sync_source_presentation(source).summary
+
+
+def test_duplicate_placement_still_prevents_green_last_run_headline():
+    source = _source(
+        provider_id="fictional",
+        phase_states=(
+            phase("fetch", "success"),
+            phase("placement", "success"),
+            phase("placement", "not_supported"),
+        ),
+    )
+    assert sync_source_cycle_headline(source) == "Livraison locale : non confirmée"
