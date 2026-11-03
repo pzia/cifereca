@@ -131,6 +131,13 @@ def test_numilog_inventory_scheduler_matches_core_source_switch(
         broker = SynchronizationBrokerImpl(service)
         sid = broker._source_id(account)
         service.storage.metadata_set("sync.source.enabled." + sid, raw)
+        # This scheduling test rig uses a constant-True sync_source_enabled
+        # stub. Supply the production shared decoder for this parity case
+        # instead of asserting that the test stub reads persisted metadata.
+        from cifereca.core.source_enablement import source_enabled
+        service.sync_source_enabled = lambda _account: source_enabled(
+            service.storage.metadata_get("sync.source.enabled." + sid)
+        )
         assert service.sync_source_enabled(account) is expected
         assert broker._enabled(sid) is expected
         assert numilog_inventory_source_eligible(service, account) is expected
