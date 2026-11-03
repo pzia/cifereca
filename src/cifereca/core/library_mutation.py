@@ -449,7 +449,12 @@ def _materialize_to_identity_locked(
             if dest.is_symlink():
                 raise ProviderConfigurationError("Lien symbolique cible interdit")
         if is_bundle:
-            shutil.copytree(src, dest)
+            # The source manifest was verified before catalogue lookups and
+            # mkdir. A newly substituted member/parent symlink must be COPIED
+            # as a symlink, never followed into another identity's bytes.
+            # verified_target() rejects every resulting symlink before the
+            # recipient gains a Placement.
+            shutil.copytree(src, dest, symlinks=True)
             try:
                 if not verified_target(dest):
                     raise ProviderConfigurationError("Bundle copié non vérifié")
