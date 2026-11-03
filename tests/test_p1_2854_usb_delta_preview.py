@@ -256,3 +256,16 @@ def test_missing_local_artifact_is_blocked_without_claiming_new_rights():
     assert row.action == "blocked"
     assert row.reason == "owned_source_unverified"
     assert row.executable is False
+
+
+@pytest.mark.parametrize("invalid", [
+    "https://secret.invalid/?token=private", 3, True, None, [],
+])
+def test_malformed_intent_is_blocked_without_echoing_untrusted_text(invalid):
+    row = intent()
+    row["desired_state"] = invalid
+    result, = preview(placements=[row], scan_value=scan())
+    assert result.action == "blocked"
+    assert result.desired == "unknown"
+    assert result.reason == "invalid_intent"
+    assert result.executable is False
