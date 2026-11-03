@@ -4,8 +4,6 @@ The real read-only Core admission runs on disposable SQLite. A same-loan-ID
 right from another borrower/credential/edition or a purchase has no authority
 to decorate the new loan's receipt. No provider call or ADEPT execution.
 """
-from dataclasses import replace
-
 import pytest
 
 from cifereca.core.loan_acquisition_admission import resolve
