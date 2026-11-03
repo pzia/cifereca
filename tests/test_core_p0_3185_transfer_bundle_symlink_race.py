@@ -28,7 +28,7 @@ def test_bundle_symlink_injected_after_manifest_never_reads_foreign_profile(
     contents = b"same synthetic private audiobook content"
     track.write_bytes(contents)
     (source / "play.m3u8").write_text(
-        "#EXTM3U\\ndisc/track.mp3\\n", encoding="utf-8",
+        "#EXTM3U\ndisc/track.mp3\n", encoding="utf-8",
     )
     write_bundle_manifest(source, title="Alice synthetic audio", playlist="play.m3u8")
     pid = _placement(
