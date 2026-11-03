@@ -339,6 +339,11 @@ def sync_source_cycle_headline(source: object) -> str:
         "failed": "échec", "materialization_failed": "échec",
         "blocked": "bloquée", "attention_required": "action nécessaire",
         "interrupted": "interrompue", "cancelled": "annulée",
+        # Core already exposes these closed materialization stop causes in the
+        # phase detail; the short headline must not erase them as "unknown".
+        "source_changed": "source modifiée",
+        "source_disabled": "source désactivée",
+        "source_disconnected": "source déconnectée",
         "running": "en cours", "idle": "non exécutée",
         "not_supported": "non disponible",
     }
@@ -366,6 +371,7 @@ def sync_source_cycle_headline(source: object) -> str:
              for key in local_names if key in phases]
     severity = (
         "échec", "bloquée", "action nécessaire", "interrompue", "partielle",
+        "source modifiée", "source désactivée", "source déconnectée",
         "annulée", "non confirmée", "en cours", "non exécutée",
         "réussie", "non disponible",
     )
