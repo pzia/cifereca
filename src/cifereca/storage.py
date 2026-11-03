@@ -2973,6 +2973,89 @@ class Storage:
             )
             return placement_id
 
+    def device_usb_target_set(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+        target_relative_path: str,
+    ) -> str:
+        """Pin the destination of an *existing* USB keep intention only.
+
+        This is purely declarative, not filesystem I/O or a delivery claim.
+        A planned destination is immutable once set: changing it later would
+        risk orphaning a prior device file or its managed-write receipt.
+        An explicit migration/reconciliation must own that later operation.
+        """
+        from .core.device_usb_preview import _relative
+
+        if any(
+            type(value) is not str or not value or value != value.strip()
+            for value in (identity_id, device_id, artifact_id)
+        ):
+            raise ValueError("device target requires exact identifiers")
+        if not _relative(target_relative_path):
+            raise ValueError("device target relative path invalid")
+        # Reject filesystem-sensitive names even before mounting. The Core
+        # must never write a hidden Windows/FAT reserved special name on USB.
+        reserved = {"CON", "PRN", "AUX", "NUL"}
+        reserved.update(f"{prefix}{number}" for prefix in ("COM", "LPT")
+                        for number in range(1, 10))
+        for component in target_relative_path.split("/"):
+            if (component.endswith((".", " "))
+                    or len(component.encode("utf-8")) > 255
+                    or any(char in '<>:"|?*' for char in component)
+                    or component.split(".")[0].upper() in reserved):
+                raise ValueError("device target filesystem name invalid")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT identity_id,target_directory FROM device_bindings "
+                "WHERE device_id=?", (device_id,),
+            ).fetchone()
+            if binding is None or binding[0] != identity_id:
+                raise ValueError("device target requires exact bound identity")
+            managed = binding[1]
+            if (type(managed) is not str or not _relative(managed)
+                    or not target_relative_path.startswith(managed + "/")):
+                raise ValueError("device target outside managed directory")
+            current = db.execute(
+                "SELECT device_placement_id,desired_state,"
+                "target_relative_path,metadata_json "
+                "FROM device_placements WHERE device_id=? AND artifact_id=?",
+                (device_id, artifact_id),
+            ).fetchone()
+            if current is None:
+                raise ValueError("device target requires an existing intention")
+            placement_id, desired, existing_path, raw_metadata = current
+            metadata = self._json_load(raw_metadata)
+            if (type(metadata) is not dict
+                    or metadata.get("intent_identity_id") != identity_id):
+                raise ValueError("device target intent owner is unproven")
+            if type(existing_path) is str:
+                if existing_path != target_relative_path:
+                    raise ValueError("device target migration requires supervision")
+                return str(placement_id)
+            if existing_path is not None:
+                raise ValueError("device target original path invalid")
+            if desired != "keep":
+                raise ValueError("device target requires a keep intention")
+            rows = db.execute(
+                "SELECT target_relative_path FROM device_placements "
+                "WHERE device_id=? AND artifact_id<>?",
+                (device_id, artifact_id),
+            ).fetchall()
+            for (other,) in rows:
+                if (type(other) is str
+                        and other.casefold() == target_relative_path.casefold()):
+                    raise ValueError("device target path already reserved")
+            # The choice cannot change observed_state, last_observed_at or
+            # any opaque receipt/provider metadata from previous workers.
+            db.execute(
+                "UPDATE device_placements SET target_relative_path=?,"
+                "updated_at=? WHERE device_id=? AND artifact_id=?",
+                (target_relative_path, now, device_id, artifact_id),
+            )
+            return str(placement_id)
+
     def device_placement_get(self, device_id: str, artifact_id: str) -> dict[str, Any] | None:
         rows = self.device_placements(device_id=device_id, artifact_id=artifact_id)
         return rows[0] if rows else None
