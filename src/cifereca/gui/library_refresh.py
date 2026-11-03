@@ -110,6 +110,9 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         "Actualisation de la bibliothèque…", work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL,
         kind="library",
+        # An unprompted background refresh can finish during navigation.
+        # Callback failures belong to activity/diagnostics, not a modal.
+        origin="user" if control is not None else "automatic",
     )
 
 
@@ -160,4 +163,5 @@ def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
         "Actualisation des récupérations récentes…", work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL,
         kind="recent",
+        origin="user" if control is not None else "automatic",
     )
