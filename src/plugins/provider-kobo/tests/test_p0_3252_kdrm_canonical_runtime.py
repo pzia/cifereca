@@ -294,3 +294,23 @@ def test_kdrm_runtime_accepts_only_normative_media_and_upstream_pairs(
     if valid:
         assert source["candidate"]["source_format"] == upstream
         assert source["candidate"]["media_format"] == media
+
+
+def test_kdrm_opaque_offer_pins_flepub_vs_epub_upstream_route():
+    candidate = kdrm_candidate("book-1")
+    candidate["media_format"] = "epub"
+    candidate["source_format"] = "FLEPUB"
+    def qualify(row):
+        return exact_kobo_offer_id(
+            descriptor(product="book-1", candidate=row),
+            identity_id="identity-A", credential_id="synthetic-card",
+            account_id="alice", product_id="book-1", kdrm_runtime_ready=True,
+        )
+    pinned = qualify(candidate)
+    assert pinned.startswith("kobo.descriptor:")
+    from copy import deepcopy
+    modified = deepcopy(candidate)
+    modified["source_format"] = "EPUB"
+    other = qualify(modified)
+    assert other.startswith("kobo.descriptor:")
+    assert pinned != other
