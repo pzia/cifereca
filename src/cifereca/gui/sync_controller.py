@@ -581,9 +581,13 @@ def _refresh_sync_page(self) -> None:
                 # The previous failed/partial run remains in the tooltip but
                 # must not dominate the collapsed card of a voluntarily OFF
                 # account or contribute to active attention counts.
+                connection = (
+                    "Connectée" if getattr(source, "connected", None) is True
+                    else "Déconnectée"
+                )
                 row.set_subtitle(
                     "Synchronisation : désactivée · aucune synchronisation attendue\n"
-                    "Historique du dernier cycle, si disponible, au survol."
+                    f"Connexion : {connection} · dernier cycle au survol si disponible."
                 )
             else:
                 row.set_subtitle(
