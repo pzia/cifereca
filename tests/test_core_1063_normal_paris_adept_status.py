@@ -102,3 +102,43 @@ def test_ui_identity_switch_does_not_change_other_identity_status(tmp_path):
         ) is None
     finally:
         service.close()
+
+
+def test_malformed_local_ids_cannot_fabricate_ready_adept_configuration():
+    """An invalid ID's string representation is not an account/profile link."""
+    from types import SimpleNamespace as NS
+
+    valid = _connection("alice", "paris-a")
+    primary = _primary("alice", "paris-a")
+    assert _status([valid], [primary])["status"] == "ready"
+
+    for bad in (True, 17, ["alice"], {"identity": "alice"}):
+        assert _status([valid], [primary], identity=bad)["reason"] == "unknown_identity"
+    for bad in (True, 17, ["profile"], {"profile": "reader-a"}):
+        assert _status([valid], [primary], profile=bad)["reason"] == "missing_adept_profile"
+
+    # Before validation, matching str(True) / str(17) on both sides could
+    # present a locally "ready" connection that had never been identified.
+    for bad in (True, 17, ["paris-a"], {"credential": "paris-a"}):
+        connection = _connection("alice", bad)
+        synthetic = NS(
+            identity_id="alice", provider_id="paris",
+            credential_id=str(bad), is_primary=True,
+        )
+        assert _status([connection], [synthetic])["reason"] == "missing_paris_connection"
+
+        connection = _connection("alice", str(bad))
+        synthetic.credential_id = bad
+        assert _status([connection], [synthetic])["reason"] == "missing_primary_account"
+
+
+def test_non_text_borrower_identity_never_matches_textual_identity():
+    from types import SimpleNamespace as NS
+
+    connection = _connection("17", "paris-a")
+    bogus = NS(
+        identity_id=17, provider_id="paris",
+        credential_id="paris-a", is_primary=True,
+    )
+    assert _status([connection], [bogus], identity="17")["reason"] == "missing_primary_account"
+    assert _status([connection], [_primary("17", "paris-a")], identity="17")["status"] == "ready"
