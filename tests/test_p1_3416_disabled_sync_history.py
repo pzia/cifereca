@@ -6,6 +6,9 @@ a read-only CoreUI concern. Active sources must keep their real failure alerts.
 from types import SimpleNamespace
 
 from cifereca.gui.sync_source_card_guidance import sync_source_card_guidance
+from cifereca.gui.sync_source_controls_overview import (
+    sync_schedule_status_subtitle, sync_file_consent_subtitle,
+)
 from cifereca.gui.sync_view import sync_source_attention, sync_source_presentation
 
 
@@ -99,3 +102,43 @@ def test_disabled_source_never_reports_disconnected_account_as_active_incident()
     source.connected = False
     assert sync_source_attention(source) is None
     assert "Désactivée" in sync_source_presentation(source).sync_label
+
+
+def test_scheduled_inventory_off_is_described_as_suspended_not_running():
+    active = sync_schedule_status_subtitle("periodic", 60, available=True)
+    suspended = sync_schedule_status_subtitle("periodic", 60, available=False)
+    assert "Périodique" in active and "suspendue" not in active
+    assert "Programmation suspendue" in suspended
+    assert "Mode enregistré : Périodique" in suspended
+    assert "Aucune actualisation automatique attendue" in suspended
+    assert "N'autorise aucun téléchargement" in suspended
+    assert "Au démarrage" in sync_schedule_status_subtitle(
+        "on_start", 30, available=False
+    )
+    assert "suspendue" not in sync_schedule_status_subtitle(
+        "manual", 30, available=False
+    ).lower()
+
+
+def test_suspended_file_consent_keeps_on_preference_without_effective_delivery():
+    on = sync_file_consent_subtitle(enabled=True, available=True)
+    suspended = sync_file_consent_subtitle(enabled=True, available=False)
+    off = sync_file_consent_subtitle(enabled=False, available=False)
+    assert "Activé :" in on
+    assert "Autorisation enregistrée mais suspendue" in suspended
+    assert "Aucun nouveau téléchargement automatique attendu" in suspended
+    assert "Désactivé :" in off
+    assert "Les fichiers déjà reçus sont conservés." in suspended
+    assert "suspendue" not in off
+
+
+def test_invalid_schedule_projection_never_reflects_supplier_payload():
+    for mode, interval, available in (
+        ("https://private.test/?token=x", 30, True),
+        ("periodic", True, True),
+        ("on_start", 0, True),
+        ("on_start", 60, None),
+    ):
+        assert sync_schedule_status_subtitle(mode, interval, available=available) == (
+            "Planification des notices indisponible."
+        )
