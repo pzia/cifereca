@@ -141,10 +141,21 @@ def read_account_rights_snapshot(service, account: Account, *,
         # even the FIRST private inventory GET or another pagination page.
         # Require the exact persisted borrower joined to the active connection
         # on every pre/post-provider-read check, independently of session.accounts.
-        return storage.provider_scope_account_bound(
-            identity_id=scope.identity_id, provider_id=scope.provider_id,
-            credential_id=scope.credential_id, account_id=scope.account_id,
-        ) is True
+        try:
+            exact_bound = storage.provider_scope_account_bound(
+                identity_id=scope.identity_id, provider_id=scope.provider_id,
+                credential_id=scope.credential_id, account_id=scope.account_id,
+            ) is True
+        except Exception:
+            # SQL/backend failures may include private account coordinates.
+            # Emit only a fixed diagnostic, with no provider exception text.
+            exact_bound = False
+        if not exact_bound:
+            _LOG.warning(
+                "TRACE rights snapshot read failed "
+                "code=canonical_rights_core_binding_changed"
+            )
+        return exact_bound
 
     reader_kind = "optional_unavailable"
     try:
