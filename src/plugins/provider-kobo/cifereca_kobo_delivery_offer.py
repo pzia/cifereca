@@ -249,7 +249,11 @@ def exact_kobo_offer_id(
             # Only library_sync's pinned delivery plus separate content-key
             # replay is supported by the negotiated public Kobo-Adept ABI.
             continue
-        eligible.append((kind, handling, raw_drm, fmt + ":" + (source or "")))
+        # For KDRM the upstream wire-format affects the DRM recipe, so the
+        # opaque offer must pin it as well. No change to legacy plain/ACSM IDs.
+        route = (fmt + ":" + source_fmt.strip().lower()
+                 if raw_drm == "KDRM" else fmt)
+        eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
     # Two different candidate routes must not be arbitrarily conflated,
     # including multiple signed URLs of the same declared format.
     if len(eligible) != 1:
