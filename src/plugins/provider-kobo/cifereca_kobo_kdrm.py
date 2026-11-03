@@ -115,8 +115,10 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
             or type(media) is not str or media.casefold() not in ("kepub", "epub")):
         return None
     source_format = selected.get("source_format", media)
-    if (type(source_format) is not str or source_format.casefold()
-            != selected["media_format"].casefold()):
+    if (type(source_format) is not str
+            or (media.casefold(), source_format.casefold()) not in {
+                ("kepub", "kepub"), ("epub", "flepub"), ("epub", "epub"),
+            }):
         return None
     platform = kobo.get("platform", kobo.get("display_profile"))
     if platform is not None and not _bounded_text(platform, 128):
