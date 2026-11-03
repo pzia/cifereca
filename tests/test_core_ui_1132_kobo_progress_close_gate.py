@@ -110,38 +110,24 @@ def test_live_kobo_progress_and_summary_preserve_existing_path():
     assert effects == ["render", "activity"]
 
 
-def test_legacy_kobo_timer_never_enqueues_duplicate_automatic_backup():
-    configure, queued = _method("_configure_kobo_backup_timer")
-    calls = []
-    host = NS(
-        _closed=False,
-        _kobo_backup_timer_id=None,
-        service=NS(kobo_backup_enabled=lambda: True),
-        run_kobo_backup=lambda *args: calls.append(args),
-    )
-    configure(host, run_now=True)
-    configure(host, run_now=False)
-    assert queued == []
-    assert calls == []
-    assert host._kobo_backup_timer_id is None
+def test_retired_legacy_timer_has_no_runtime_or_facade_entry_point():
+    """#3198: scheduling is Core per source, not an inert GTK compatibility API.
 
-
-def test_legacy_kobo_timer_clears_old_source_and_respects_closed_window():
-    configure, queued = _method("_configure_kobo_backup_timer")
-    calls = []
-    host = NS(
-        _closed=False,
-        _kobo_backup_timer_id=47,
-        service=NS(kobo_backup_enabled=lambda: True),
-        run_kobo_backup=lambda *args: calls.append(args),
-    )
-    configure(host, run_now=True)
-    assert host._kobo_backup_timer_id is None
-    assert queued == []
-    assert calls == []
-    host._closed = True
-    host._kobo_backup_timer_id = 48
-    configure(host, run_now=True)
-    assert host._kobo_backup_timer_id == 48
-    assert queued == []
-    assert calls == []
+    Old timer IDs are still cleared by window_close, covered separately.
+    Keep manual Kobo acquisition and its close-gated callbacks tested above.
+    """
+    root = SOURCE.parent
+    controller = ast.parse(SOURCE.read_text(encoding="utf-8"))
+    facade = ast.parse((root / "main_window.py").read_text(encoding="utf-8"))
+    functions = {
+        node.name for node in controller.body if isinstance(node, ast.FunctionDef)
+    }
+    methods = {
+        node.name
+        for cls in facade.body if isinstance(cls, ast.ClassDef)
+        for node in cls.body if isinstance(node, ast.FunctionDef)
+    }
+    assert "_configure_kobo_backup_timer" not in functions
+    assert "_configure_kobo_backup_timer" not in methods
+    assert "run_kobo_backup" in functions
+    assert "run_kobo_backup" in methods
