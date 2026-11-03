@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from cifereca_kobo_delivery_offer import _safe_https_get
+from cifereca_kobo_delivery_offer import _safe_https_get, _kdrm_raw_type
 
 
 def _bounded_text(value, limit=8192):
@@ -121,7 +121,7 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
         return None
     drm = selected.get("drm")
     media = selected.get("media_format")
-    if (type(drm) is not dict or drm.get("raw_type") != "KDRM"
+    if (type(drm) is not dict or not _kdrm_raw_type(drm.get("raw_type"))
             or type(media) is not str or media.casefold() not in ("kepub", "epub")):
         return None
     source_format = selected.get("source_format", media)
