@@ -1,6 +1,9 @@
 """Loaded search set: local filtering never calls provider services."""
 from dataclasses import dataclass, asdict
 from cifereca.core.search import filter_loaded_results, file_format
+from cifereca.core.document_filter import (
+    public_document_classification, filter_loaded_with_documentary_proofs,
+)
 
 FIELDS = ('all', 'title', 'author', 'isbn', 'subject', 'series', 'collection', 'language')
 
@@ -14,8 +17,10 @@ class QueryState:
     languages: tuple[str, ...] = ()
 
     def filter(self, rows):
-        return filter_loaded_results(rows, self.text, field=self.field, scope=self.scope,
-                                     providers=self.providers, content_types=self.types, languages=self.languages)
+        return filter_loaded_with_documentary_proofs(
+            rows, self.text, field=self.field, scope=self.scope,
+            providers=self.providers, content_types=self.types, languages=self.languages,
+        )
 
 
 def result_row(item):
@@ -36,7 +41,14 @@ def result_row(item):
         and item.owned is True
         and meta.get('search_provenance') != 'known_catalog_stale'
     )
-    return {**asdict(item), 'key': item.id, 'item_id': item.record_id,
+    result = asdict(item)
+    # asdict() includes every ClassificationEvidence.raw_code, which is
+    # upstream-supplied and may contain sensitive data. Publish only the
+    # versioned, fixed-vocabulary UI projection; never emit provenance raw.
+    result['document_classification'] = public_document_classification(
+        getattr(item, 'document_classification', None)
+    )
+    return {**result, 'key': item.id, 'item_id': item.record_id,
             'provider_id': item.source_provider, 'media_format': file_format(item.format),
             'state': 'remote_owned' if private_numilog_purchase else 'remote_catalog'}
 
