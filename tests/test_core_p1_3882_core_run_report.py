@@ -149,7 +149,7 @@ def test_cli_exact_run_integrates_core_event_and_stays_source_scoped(
 
     core.library.synchronize_account_source = sync
     target = tmp_path / "cli.zip"
-    with __import__("pytest").LogCaptureFixture if False else _LoggerInfo():
+    with _LoggerInfo():
         assert cli.main([
             "sync", "run", "--provider", "kobo", "--identity", "profile-a",
             "--confirm", "--report", str(target),
