@@ -27,6 +27,7 @@ def test_opening_success_records_exact_gtk_phases_without_worker_or_async_work(
     host, tasks, effects = _host()
     monitor = UiPerfMonitor(measurement_origin="simulated")
     host.ui_perf = monitor
+    monitor.enable_detailed_capture(True)
     # These are exact in-memory instants, not Paris/BnF response times.
     ticks = iter((10.0, 10.012, 10.012, 10.037))
     monkeypatch.setattr("time.perf_counter", lambda: next(ticks))
@@ -40,6 +41,13 @@ def test_opening_success_records_exact_gtk_phases_without_worker_or_async_work(
     assert phases["opening-sync.model_update"]["p50_ms"] == pytest.approx(12.0)
     assert phases["opening-sync.render"]["p50_ms"] == pytest.approx(25.0)
     assert all(key.startswith("opening-sync.") for key in phases)
+    assert [
+        (event["category"], event["phase"], event["trigger"])
+        for event in report["events"]
+    ] == [
+        ("opening-sync", "model_update", expected_trigger),
+        ("opening-sync", "render", expected_trigger),
+    ]
     assert [item[0] for item in effects] == [
         "dashboard", "loans", "library", "recent",
     ]
