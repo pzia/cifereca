@@ -3,6 +3,7 @@
 Read-only Library projection, disposable SQLite v14 and synthetic local bytes.
 No entitlement can attach to a different reference_kind with matching book ID.
 """
+from cifereca.models import Loan
 from cifereca.core.library_projection import _verified_provider_origin_coordinates
 from tests.test_core_library_placement_identity_scope import _service
 from tests.test_core_p0_2797_originlink_library_projection import (
@@ -105,5 +106,32 @@ def test_existing_six_coordinate_reader_is_preserved_by_opt_in_kind(tmp_path):
         )
         assert typed == (old[0] + ("purchase",),)
         assert service.storage.placement_get(pid)["state"] == "present"
+    finally:
+        service.close()
+
+
+def test_owned_possession_cannot_inherit_loan_cover_from_same_account(tmp_path):
+    service = _service(tmp_path)
+    try:
+        artifact_id, pid = _local_artifact(service, tmp_path, owner="alice")
+        _claim(service, artifact_id, token="purchase")
+        _entitlement(
+            service, identity="alice", credential="card-a",
+            account="buyer-a", edition="edition-a",
+        )
+        private_loan_cover = "https://private.example/LOAN_ONLY_COVER"
+        service.last_loans = [Loan(
+            id="loan-a", provider="Numilog", medium="digital",
+            record_id="edition-a", title="A different loan title",
+            thumbnail_url=private_loan_cover,
+            source_provider="numilog", source_credential="card-a",
+            source_account_id="buyer-a", identity_id="alice",
+        )]
+        rows = service.library_entries(identity_id="alice", scan=False)
+        assert len(rows) == 1 and rows[0]["placement_id"] == pid
+        assert rows[0]["possessions"][0]["kind"] == "owned"
+        assert rows[0]["thumbnail_url"] is None
+        assert private_loan_cover not in repr(rows)
+        assert "A different loan title" not in repr(rows)
     finally:
         service.close()
