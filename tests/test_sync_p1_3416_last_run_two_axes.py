@@ -116,3 +116,31 @@ def test_visible_sync_row_shows_two_axes_without_new_runner_or_provider_io():
     assert "Livraison locale : échec" in account_row.subtitle
     assert not window.runner.tasks
     assert all(call[0] == "sources" for call in calls)
+
+
+@pytest.mark.parametrize(("stop_code", "visible"), [
+    ("source_changed", "source modifiée"),
+    ("source_disabled", "source désactivée"),
+    ("source_disconnected", "source déconnectée"),
+])
+def test_core_bounded_stop_reason_is_visible_without_losing_real_failure(stop_code, visible):
+    """These are already published Core phase codes, not supplier strings."""
+    source = _source(
+        provider_id="fictional", status="partial",
+        phase_states=(phase("discover_rights", "success"),
+                      phase("materialize", stop_code)),
+    )
+    headline = sync_source_cycle_headline(source)
+    assert headline == f"Inventaire distant : réussie · Livraison locale : {visible}"
+    assert headline in sync_source_presentation(source).summary
+
+    with_actual_failure = _source(
+        provider_id="fictional", phase_states=(
+            phase("materialize", stop_code), phase("fetch", "failed"),
+        ),
+    )
+    assert sync_source_cycle_headline(with_actual_failure) == "Livraison locale : échec"
+
+    # A free-text payload, even one resembling a source code, is not a state.
+    hostile = _source(phase_states=(phase("materialize", "private://" + stop_code),))
+    assert sync_source_cycle_headline(hostile) == "Livraison locale : non confirmée"
