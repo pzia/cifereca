@@ -90,6 +90,26 @@ def _candidate_format_ok(path: Path, fmt: str) -> bool:
     return False
 
 
+def _attested_kobo_http_headers(selected: dict) -> dict[str, str]:
+    """Keep only the non-secret S3 requester-pays marker from a KV offer.
+
+    Never relay arbitrary provider-supplied headers (not even a supplied
+    Authorization/Cookie) through the public transport. KV advertises this
+    exact, non-credential constant for Kobo redirects to requester-pays S3.
+    An ambiguous or altered declaration cannot activate it.
+    """
+    headers = {"Accept": "application/octet-stream"}
+    provided = selected.get("headers")
+    if type(provided) is dict:
+        marks = [
+            value for key, value in provided.items()
+            if type(key) is str and key.casefold() == "x-amz-request-payer"
+        ]
+        if marks == ["requester"]:
+            headers["x-amz-request-payer"] = "requester"
+    return headers
+
+
 def stage_selected_candidate(session, account: Account, *, edition_id,
                              right_id, kind, branch, delivery_offer_id,
                              target_dir, explicit_user_action=False,
@@ -286,7 +306,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 # plugin additionally checks borrower, broker and staging.
                 admission_current=lambda: (bound() and stage_current()
                                            and core_current()),
-                headers={"Accept": "application/octet-stream"},
+                headers=_attested_kobo_http_headers(selected),
                 timeout=30, max_bytes=_MAX_DELIVERY_BYTES, max_redirects=8,
             )
             staged = True
