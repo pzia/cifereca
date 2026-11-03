@@ -3563,17 +3563,27 @@ class LibraryService:
                 loan_id=loan.id, attention_code=attention_code,
             )
 
-    def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None, inventory_only: bool = False) -> dict[str, Any]:
-        """Synchronize one exact source; scheduled inventory has no acquisition."""
+    def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Synchronize one exact account/source without changing account selection."""
         return sync_coordination._synchronize_account_source_impl(
             self, account, deep=deep, control=control,
-            inventory_only=inventory_only,
         )
 
-    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None, inventory_only: bool = False) -> dict[str, Any]:
+    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
         return sync_coordination.synchronize_account_source(
             self, account, deep=deep, control=control,
-            inventory_only=inventory_only,
+        )
+
+    def _synchronize_account_source_inventory_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Core-only, strictly metadata/rights observation; never materialize."""
+        return sync_coordination._synchronize_account_source_impl(
+            self, account, deep=deep, control=control, inventory_only=True,
+        )
+
+    def _synchronize_scheduled_account_inventory(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Dedicated scheduled path; never expose inventory-only as public Sync ABI."""
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control, inventory_only=True,
         )
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
