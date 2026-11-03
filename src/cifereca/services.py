@@ -1604,67 +1604,60 @@ class LibraryService:
         )
 
     def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-            return self.return_digital(loan)
-        try:
-            with InterProcessLock(self._return_operation_lock_file(loan)):
-                return self._return_loan_prefer_adept_guarded(loan)
-        except LockBusyError:
-            return {
-                "status": "attention_required", "scope": "adobe_first_paris",
-                "code": "loan_return_busy", "retry": "verification_only",
-            }
+        """Removed voluntary return: reject before lock, scope, storage or runtime."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
     def _return_loan_prefer_adept_guarded(self, loan: Loan) -> dict[str, Any]:
-        """Adobe-first, then Paris inventory; never automatically send PNB POST."""
-        import uuid
-        from .core.loan_return_guard import return_key, return_ref
-        from .core.return_adept_orchestrator import adept_return_key, public_state
-        return return_adept_orchestrator.return_loan_prefer_adept(
-            self, loan, uuid=uuid, return_ref=return_ref,
-            adept_return_key=adept_return_key, public_state=public_state,
-            AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG,
+        """Reject even a direct legacy guarded call before touching dependencies."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Read-only first inspection; restart recovery never mutates ADEPT."""
-        from .core.return_adept_orchestrator import adept_return_key
+        """Historical return receipt only; NEVER initiate or replay a return.
+
+        Legacy receipts remain consultable across updates. Reading this API
+        does not call Adobe, Paris inventory, or any retired mutation path.
+        """
+        from .core.return_adept_orchestrator import adept_return_key, public_state
         if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
             return {"status": "not_requested", "scope": "adobe_first_paris"}
         try:
             account, _session, _key = self._return_loan_identity(loan)
-        except AttentionRequired as exc:
+            key = adept_return_key(
+                loan.source_provider, loan.source_credential,
+                str(account.unique_id or "primary"), str(loan.id),
+            )
+            row = self.storage.loan_return_state(key)
+        except (AttentionRequired, ValueError, TypeError, KeyError):
             return {
                 "status": "failed", "scope": "adobe_first_paris",
-                "code": return_adept_orchestrator.return_preflight_code(exc),
+                "code": "loan_return_borrower_unproven",
+                "retry": "none",
             }
-        key = adept_return_key(
-            loan.source_provider, loan.source_credential,
-            str(account.unique_id or "primary"), str(loan.id),
-        )
-        if self.storage.loan_return_state(key) is None:
+        if row is None:
             return {"status": "not_requested", "scope": "adobe_first_paris"}
-        return self.return_loan_prefer_adept(loan)
+        if type(row) is not dict:
+            return {"status": "failed", "scope": "adobe_first_paris", "retry": "none"}
+        return {**public_state(row), "retry": "none"}
 
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        if str(loan.source_provider).lower() != "paris":
-            return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
-        try:
-            with InterProcessLock(self._return_operation_lock_file(loan)):
-                return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
-        except LockBusyError:
-            return {
-                "status": "attention_required", "scope": "provider_pnb_only",
-                "code": "loan_return_busy", "retry": "verification_only",
-            }
-
-    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        """PNB provider return with an at-most-once POST until verified."""
-        return provider_loan_return.return_digital(
-            self, loan, explicit_retry=explicit_retry, _TRACE_LOG=_TRACE_LOG,
+        """Reject a retired provider return before locks, claims or HTTP."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
-
+    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
+        """Reject direct legacy provider calls before access to supplier state."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
     def pnb_preferences(self) -> dict[str, Any]:
         return self._session_for_account().digital_preferences(self.current_account)
