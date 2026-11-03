@@ -74,9 +74,20 @@ def _current_expiry(envelope: dict[str, Any]) -> bool:
     return True
 
 
+def kdrm_runtime_ready(session: object) -> bool:
+    """Positive capability for Kobo KDRM; never probe private data."""
+    try:
+        broker = session.runtime_capabilities
+        modes = broker.acquisition("kobo").modes
+        return (isinstance(modes, (tuple, list, frozenset, set))
+                and "kobo_kdrm" in modes)
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return False
+
+
 def exact_kobo_offer_id(
     payload: Any, *, identity_id: str, credential_id: str,
-    account_id: str, product_id: str,
+    account_id: str, product_id: str, kdrm_runtime_ready: bool = False,
 ) -> str:
     """Qualify an observed, single, executable selected GET candidate.
 
@@ -160,6 +171,7 @@ def exact_kobo_offer_id(
         known_drm = {
             "SignedNoDrm": (frozenset({"none"}), False),
             "AdobeDrm": (frozenset({"adobe", "adobe_adept"}), True),
+            "KDRM": (frozenset({"kobo_kdrm"}), True),
         }
         if raw_drm not in known_drm:
             continue
@@ -205,12 +217,22 @@ def exact_kobo_offer_id(
         elif (kind == "http" and handling == "http_plain"
               and raw_drm == "SignedNoDrm" and fmt in {"epub", "pdf", "kepub"}):
             pass
+        elif (kind == "http" and handling == "kobo_kdrm"
+              and raw_drm == "KDRM" and fmt in {"epub", "kepub"}
+              and kdrm_runtime_ready is True):
+            # The pinned signed URL is NOT itself a readable EPUB. A delegated
+            # Kobo content-access recipe and the DRM runtime are mandatory.
+            pass
         else:
             continue
         source = candidate.get("source")
         if source is None and type(candidate.get("kobo")) is dict:
             source = candidate["kobo"].get("source")
         if source is not None and (type(source) is not str or len(source) > 128):
+            continue
+        if raw_drm == "KDRM" and source != "library_sync":
+            # Only library_sync's pinned delivery plus separate content-key
+            # replay is supported by the negotiated public Kobo-Adept ABI.
             continue
         eligible.append((kind, handling, raw_drm, fmt + ":" + (source or "")))
     # Two different candidate routes must not be arbitrarily conflated,
