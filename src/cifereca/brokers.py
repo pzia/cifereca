@@ -1226,6 +1226,20 @@ class SynchronizationBrokerImpl:
                 if type(result.get(name)) is int and 0 <= result[name] <= 1_000_000
             }
             changed = sum(facts.values())
+            # Preserve only the exact Core A→B execution envelope in the
+            # typed business receipt. It is observation, never permission
+            # to GET, deduplicate or publish a file. Reject partial/malformed
+            # envelopes rather than fabricating absent failures or zeroes.
+            from .core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+            execution = result.get("canonical_execution")
+            if (type(execution) is dict
+                    and set(execution) == set(CANONICAL_EXECUTION_STATUSES)
+                    and all(type(execution[name]) is int
+                            and 0 <= execution[name] <= 1_000_000
+                            for name in CANONICAL_EXECUTION_STATUSES)):
+                facts["canonical_execution"] = {
+                    name: execution[name] for name in CANONICAL_EXECUTION_STATUSES
+                }
             # Review-required books are NOT modifications and must not
             # inflate SyncResult.changed. Expose only a bounded aggregate,
             # never candidate paths, titles, loan IDs or personal metadata.
