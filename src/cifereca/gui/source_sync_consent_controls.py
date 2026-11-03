@@ -6,7 +6,6 @@ from gi.repository import Gtk, Adw
 
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_action_scope import sync_action_scope_current
-from .sync_source_controls_overview import sync_file_consent_subtitle
 
 
 def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, scope: Any, group: Any) -> None:
@@ -60,6 +59,9 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
         if sync_action_scope_current(window, scope):
             window._refresh_sync_page()
 
+    # AST-isolated GTK harnesses compile this widget function on its own.
+    # Resolve the pure, provider-neutral formatter inside that function.
+    from cifereca.gui.sync_source_controls_overview import sync_file_consent_subtitle
     if configured and state['valid']:
         row.set_subtitle(sync_file_consent_subtitle(
             enabled=enabled,
