@@ -306,7 +306,9 @@ def _run_observed_canonical_convergence(
             candidate_session = None
         if candidate_session is not None and any(
             callable(getattr_static(candidate_session, name, None))
-            for name in ("downloadable_selected_delivery_candidate",
+            for name in ("downloadable_selected_delivery_candidate_runtime_guarded",
+                         "downloadable_selected_delivery_candidate_guarded",
+                         "downloadable_selected_delivery_candidate",
                          "rights_selected_delivery_candidate")
         ):
             from .canonical_selected_delivery import complete_selected_delivery
