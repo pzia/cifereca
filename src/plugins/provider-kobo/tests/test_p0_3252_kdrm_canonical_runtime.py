@@ -57,7 +57,10 @@ def delegated(product, *, account_id="alice", keys=False):
 
 def ready(session, vault, *, delegated_error=None):
     session.runtime_capabilities = NS(
-        acquisition=lambda provider: NS(modes=("kobo_kdrm",))
+        acquisition=lambda provider: NS(
+            available=True, compatible=True, operational=True,
+            modes=("kobo_kdrm",),
+        )
     )
     calls = []
 
