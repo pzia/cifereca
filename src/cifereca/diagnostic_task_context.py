@@ -14,6 +14,7 @@ _LOG = logging.getLogger('cifereca')
 class _Scope:
     reference: str | None = None
     business_failed: bool = False
+    business_cancelled: bool = False
 
 
 _CURRENT: ContextVar[_Scope | None] = ContextVar('diagnostic_task', default=None)
@@ -58,7 +59,10 @@ def diagnostic_task_business_result(
           and type(result.get("provider_verified")) is bool):
         # Only the explicit Core manual-borrow result contract is accepted.
         # Arbitrary dicts returned by unrelated tasks are not business proof.
-        scope.business_failed = True
+        if result["status"] == "cancelled":
+            scope.business_cancelled = True
+        else:
+            scope.business_failed = True
 
 
 def numilog_task_reference() -> str | None:
@@ -82,8 +86,11 @@ def diagnostic_task_scope():
         # broken log handler must not change the result of an operation.
         _CURRENT.reset(token)
         if scope.reference is not None:
-            if outcome == 'success' and scope.business_failed:
-                outcome = 'failed'
+            if outcome == 'success':
+                if scope.business_cancelled:
+                    outcome = 'cancelled'
+                elif scope.business_failed:
+                    outcome = 'failed'
             try:
                 level = (logging.ERROR if outcome == 'failed' else
                          logging.WARNING if outcome == 'cancelled' else logging.INFO)
