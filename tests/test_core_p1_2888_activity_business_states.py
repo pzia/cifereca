@@ -170,3 +170,26 @@ def test_stale_profile_source_scope_without_core_call_is_not_success(caplog):
         assert "Succès inventé" not in caplog.text
     finally:
         runner.close()
+
+
+
+def test_cancelled_source_receipt_has_cancelled_task_ref_not_failure(caplog):
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        for facts in (
+            {"status": "cancelled"},
+            {"reason": "source_sync_cancelled"},
+            {"sources": {"source-a": {"status": "cancelled"}}},
+        ):
+            caplog.clear()
+            with diagnostic_task_scope():
+                ref = diagnostic_task_reference()
+                diagnostic_task_business_result(SyncResult(ok=False, facts=facts))
+            assert f"task_ref={ref} status=cancelled" in caplog.text
+            assert f"task_ref={ref} status=failed" not in caplog.text
+        caplog.clear()
+        with diagnostic_task_scope():
+            ref = diagnostic_task_reference()
+            diagnostic_task_business_result(SyncResult(
+                ok=False, facts={"status": "partial"},
+            ))
+        assert f"task_ref={ref} status=failed" in caplog.text
