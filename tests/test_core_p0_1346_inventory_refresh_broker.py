@@ -111,7 +111,7 @@ def test_periodic_policy_only_dispatches_on_due_periodic_tick(tmp_path):
         assert len(calls) == 1
         state = broker._state(sid)
         assert state["last_attempt"] and state["last_success"]
-        assert state["scope"] == "manual"  # existing stable sync reporting, not acquisition
+        assert state["scope"] == "scheduled"  # explicit inventory-only dispatch, not a manual acquisition
     finally:
         service.storage.close()
 
