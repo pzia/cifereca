@@ -107,11 +107,11 @@ def test_exact_fresh_missing_is_only_an_upload_candidate_with_owned_sha():
 
 
 def test_shas_match_before_present_is_rendered_as_verified_skip():
-    evidence = scan(files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_A)})
+    evidence = scan(files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_A, regular_file=True)})
     matching, = preview(scan_value=evidence)
     assert (matching.action, matching.observed) == ("skip", "present")
     conflict, = preview(scan_value=scan(
-        files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_B)},
+        files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_B, regular_file=True)},
     ))
     assert conflict.action == "blocked"
     assert conflict.reason == "source_or_device_sha_unverified"
@@ -124,14 +124,15 @@ def test_shas_match_before_present_is_rendered_as_verified_skip():
     "Books/Paris/../other.epub",
 ])
 def test_invalid_relative_path_is_never_treated_as_managed(bad_path):
-    state = scan(files={"artifact-a": UsbObservedFile(bad_path, SHA_A)})
+    state = scan(files={"artifact-a": UsbObservedFile(bad_path, SHA_A, regular_file=True)})
     result, = preview(scan_value=state)
-    assert result.action == "blocked"
+    assert result.action == "verify"
     assert result.observed == "unknown"
+    assert result.executable is False
 
 
 def test_remove_requires_prior_exact_managed_write_receipt_and_new_confirmation():
-    obs = scan(files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_A)})
+    obs = scan(files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_A, regular_file=True)})
     values = [intent(desired="remove")]
     no_proof, = preview(placements=values, scan_value=obs)
     assert (no_proof.action, no_proof.reason) == (
@@ -218,7 +219,7 @@ def test_two_identities_and_three_devices_remain_independently_scoped(tmp_path):
 
 def test_preview_does_not_mutate_caller_evidence_or_persistent_state():
     b, p = binding(), [intent()]
-    state = scan(files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_A)})
+    state = scan(files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_A, regular_file=True)})
     sources = local()
     receipts = {"artifact-a": UsbManagedReceipt(
         "alice", "reader-a", FINGERPRINT, FILE_PATH, SHA_A,
@@ -268,4 +269,29 @@ def test_malformed_intent_is_blocked_without_echoing_untrusted_text(invalid):
     assert result.action == "blocked"
     assert result.desired == "unknown"
     assert result.reason == "invalid_intent"
+    assert result.executable is False
+
+
+@pytest.mark.parametrize("regular", [False, None, "true", 1])
+def test_non_regular_usb_entries_cannot_attest_presence_or_absence(regular):
+    observed = scan(files={
+        "artifact-a": UsbObservedFile(FILE_PATH, SHA_A, regular_file=regular),
+    })
+    keep, = preview(scan_value=observed)
+    remove, = preview(placements=[intent(desired="remove")], scan_value=observed)
+    assert (keep.action, keep.observed) == ("verify", "unknown")
+    assert (remove.action, remove.observed) == ("verify", "unknown")
+
+
+def test_ambiguous_scanned_paths_invalidate_full_scan_including_absence():
+    observed = scan(files={
+        "artifact-external": UsbObservedFile(
+            FILE_PATH, SHA_A, regular_file=True,
+        ),
+        "artifact-second": UsbObservedFile(
+            "books/paris/A.epub", SHA_B, regular_file=True,
+        ),
+    })
+    result, = preview(scan_value=observed)
+    assert (result.action, result.observed) == ("verify", "unknown")
     assert result.executable is False
