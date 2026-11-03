@@ -190,7 +190,7 @@ def plan_verified_canonical_reference_migration(
                     "WHERE s.identity_id=? AND s.provider_id=? "
                     "AND s.credential_id=? AND s.account_id=? "
                     "AND s.edition_id=? AND s.evidence_kind='provider_response' "
-                "AND o.origin_kind='provider' "
+                    "AND o.origin_kind='provider' "
                     "AND o.identity_id=? AND o.artifact_id=? "
                     "AND o.evidence_ref IS NOT NULL AND o.evidence_ref!=''",
                     (owner, provider, cred, account, item, owner, artifact),
