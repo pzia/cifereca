@@ -24,32 +24,53 @@ _UNSET_PERSONAL_IDENTITY = object()  # None is a legitimate legacy identity.
 # Only protocol metadata with a known public vocabulary may reach diagnostics.
 # The public /status endpoint is still an untrusted HTTP response.
 _PUBLIC_VAULT_CAPABILITIES = frozenset({
-    "catalog_search", "library_search", "library", "acquisition",
-    "acquisition_delegation",
+    # KVault Provider API v2.3.3 (pzia/KVault/src/worker.js): public
+    # /status advertises ALL capabilities, including token-restricted ones.
+    "catalog_search", "library_search", "library_manifest",
+    "acquisition_info", "acquisition_drm_metadata",
+    "acquisition_display_profiles", "acquisition_acsm_export",
+    "acquisition_library_sync", "acquisition_delegation",
+    # Compatibility with older v2 provider facades.
+    "library", "acquisition",
 })
 _PUBLIC_ACQUISITION_ACCESS = frozenset({
     "configured", "unknown", "available", "disabled", "unavailable",
-    "denied", "forbidden", "requires_scope",
+    "denied", "forbidden", "requires_scope", "not_configured",
 })
 
 
 def _authenticated_delegate_scope(status: Any) -> bool:
-    """Require an exact bearer-scoped grant, never the global service list.
+    """Read KVault's EFFECTIVE token capabilities from authenticated /status.
 
-    Even GET /status with Authorization may return only static capabilities.
-    Missing, malformed and contradictory scope fields are not permissions.
+    KVault v2.3.3 does not return token_scopes/scopes. With a bearer, its
+    capabilities are filtered by hasApiScope(token, capability.scope).
+    Anonymous /status advertises ALL capabilities and must never be used as
+    authorization. Only connect() supplies this helper with an authenticated
+    response, bound to the live client/token/generation. capability_details
+    describes server features, not a user's token grants.
     """
     if type(status) is not dict:
         return False
-    claims = [
-        status[name] for name in ("token_scopes", "scopes")
-        if name in status
-    ]
-    return (
-        bool(claims)
-        and all(type(rows) is list and all(type(x) is str for x in rows)
-                and "kobo.acquisition.delegate" in rows for rows in claims)
-    )
+    capabilities = status.get("capabilities")
+    if (type(capabilities) is not list
+            or any(type(value) is not str for value in capabilities)
+            or "acquisition_delegation" not in capabilities
+            or not ({"acquisition_info", "acquisition"} & set(capabilities))):
+        return False
+    # A scoped token alone is insufficient if no Kobo credentials are
+    # available on the server to resolve the delegated recipe.
+    if status.get("acquisition_access") == "not_configured":
+        return False
+    # Future explicit scope claims can only narrow, never expand, the
+    # current capability grant. Ignore unfiltered capability_details.
+    for field in ("token_scopes", "scopes"):
+        if field in status:
+            values = status[field]
+            if (type(values) is not list
+                    or any(type(value) is not str for value in values)
+                    or "kobo.acquisition.delegate" not in values):
+                return False
+    return True
 
 
 def _vault_token_fingerprint(client: Any) -> bytes | None:
@@ -396,13 +417,21 @@ class KoboSession(ProviderSession):
             else None
         )
         runtime_modes = set(getattr(runtime, "modes", ()) or ())
-        vault_acquisition = "acquisition" in self.capability_names
+        # KVault v2.3.3 calls the read-only offer route acquisition_info.
+        # Older provider facades used the generic acquisition identifier.
+        vault_acquisition = bool(
+            self.capability_names & {"acquisition_info", "acquisition"}
+        )
         self.supports_acquisition_acsm = (
             vault_acquisition and "adobe_adept" in runtime_modes
+            and ("acquisition" in self.capability_names
+                 or "acquisition_acsm_export" in self.capability_names)
         )
         self.supports_acquisition_display_profile = (
             vault_acquisition
             and bool(runtime_modes & {"kobo_delegated", "kobo_kdrm"})
+            and ("acquisition" in self.capability_names
+                 or "acquisition_display_profiles" in self.capability_names)
         )
         account = self.client.account()
         account_id = _vault_account_id(account)
@@ -449,7 +478,7 @@ class KoboSession(ProviderSession):
             self.client is connecting_client
             and connecting_token_fingerprint is not None
             and connecting_token_fingerprint == _vault_token_fingerprint(self.client)
-            and "acquisition" in self.capability_names
+            and vault_acquisition
             and "acquisition_delegation" in self.capability_names
             and delegation_details.get("available") is not False
             and delegation_details.get("enabled") is not False
