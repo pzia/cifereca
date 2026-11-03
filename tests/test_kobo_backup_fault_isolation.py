@@ -23,6 +23,7 @@ def _write_epub(path: Path) -> None:
 
 class BackupSession(ProviderSession):
     api_version = "2.3"
+    supports_acquisition_delegation = True  # Synthetic verified token scope
     supports_acquisition_display_profile = False
     supports_acquisition_acsm = False
 
