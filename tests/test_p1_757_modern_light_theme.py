@@ -158,3 +158,26 @@ def test_original_prototype_is_adapted_not_reapplied_to_every_gtk_window():
     assert "#1d5fcb" in css and "#f7faff" in css
     assert "window, window.background, .background" not in css
     assert "button, .button" not in css
+
+
+def _relative_luminance(rgb):
+    channels = [int(rgb[i:i + 2], 16) / 255.0 for i in (1, 3, 5)]
+    linear = [channel / 12.92 if channel <= 0.04045
+              else ((channel + 0.055) / 1.055) ** 2.4
+              for channel in channels]
+    return sum(weight * value for weight, value in zip((0.2126, 0.7152, 0.0722), linear))
+
+
+def _contrast(left, right):
+    a, b = sorted((_relative_luminance(left), _relative_luminance(right)), reverse=True)
+    return (a + 0.05) / (b + 0.05)
+
+
+@pytest.mark.parametrize(("ink", "surface"), [
+    ("#ffffff", "#1d5fcb"),  # selected navigation and primary actions
+    ("#152641", "#f7faff"),  # body and title text
+    ("#4e6482", "#f7faff"),  # muted informational labels
+    ("#12315f", "#e5eefc"),  # documentary badges
+])
+def test_v2_text_palette_meets_wcag_aa_normal_text_ratio(ink, surface):
+    assert _contrast(ink, surface) >= 4.5
