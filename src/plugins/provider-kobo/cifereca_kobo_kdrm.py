@@ -74,6 +74,20 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
     if (type(request) is not dict or type(context) is not dict
             or not _no_embedded_keys(request)):
         return None
+    # A foreign borrower/product nested in a delegated envelope is just as
+    # disqualifying as one at top-level. Never select a matching sibling while
+    # replaying a different account's content-key request.
+    for container in (delegation, request, context, selected, selected.get("kobo")):
+        if container is None:
+            continue
+        if type(container) is not dict:
+            return None
+        for key, expected in (
+            ("account_id", account_id), ("identity_id", identity_id),
+            ("credential_id", credential_id), ("product_id", product_id),
+        ):
+            if key in container and container[key] != expected:
+                return None
     url = request.get("url")
     if (not _safe_https_get({"url": url, "method": request.get("method"),
                              "transport": "https"})
