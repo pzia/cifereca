@@ -168,11 +168,6 @@ def test_stale_context_cannot_mutate_intents(tmp_path, change):
     elif change == "local_missing":
         window.service.exists = False
     elif change == "placement_reassigned":
-        db.placement_put({
-            "placement_id": placement_id, "artifact_id": ARTIFACT,
-            "identity_id": "bob", "path": str(saved), "state": "present",
-            "provider_id": "local", "source_item_id": "book-1",
-        }) if False else None
         window.service.storage.placement_get = lambda _id: {
             "placement_id": placement_id, "artifact_id": ARTIFACT,
             "identity_id": "bob", "state": "present",
