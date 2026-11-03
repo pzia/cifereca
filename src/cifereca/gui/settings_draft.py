@@ -212,7 +212,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 or ('provider' in original_account
                     and (type(original_account['provider']) is not str
                          or original_account['provider'].casefold()
-                         != provider_id.casefold()))):
+                         != provider_id.casefold())))):
             raise SettingsValidationError(
                 'Origine du compte fournisseur incohérente : recharger les paramètres.'
             )
