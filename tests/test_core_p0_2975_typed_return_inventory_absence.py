@@ -5,10 +5,13 @@ Provider reads are synthetic. No actual PNB POST, ADEPT call or rights changes.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from cifereca.core.loan_return_guard import return_key
+from cifereca.plugin_api import AttentionRequired
 from cifereca.plugin_api.loan_inventory import (
     LoanBranchCoverage, LoanInventoryScope, LoanInventorySnapshot,
 )
@@ -39,6 +42,19 @@ def _enable_typed(session, *, status="success", loans=(), coverage="unknown"):
     return calls
 
 
+
+def _seed_historical_claim(service, loan):
+    """Only fixtures may create an old pending claim: never a new return POST."""
+    key = return_key(
+        loan.source_provider, loan.source_credential,
+        loan.source_account_id, loan.id,
+    )
+    assert service.storage.loan_return_claim(key, "pre-upgrade")[0] is True
+    row = service.storage.loan_return_state(key)
+    row["requested_at"] = "2026-01-01T00:00:00+00:00"
+    service.storage.metadata_set(key, json.dumps(row))
+    return key
+
 @pytest.mark.parametrize(("status", "coverage"), [
     ("success", "unknown"),
     ("success", "partial"),
@@ -55,16 +71,16 @@ def test_empty_typed_read_never_proves_return_without_complete_dilicom(
     calls = _enable_typed(session, status=status, coverage=coverage)
     service = _library(tmp_path, session=session)
     try:
-        result = service.return_digital(loan)
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert calls == [] and session.posts == []
+        _seed_historical_claim(service, loan)
+        result = service.verify_return_digital(loan)
         assert result["status"] == "verification_unavailable"
         assert result["verification"] == "unavailable"
         assert result["provider_inventory_verified"] is False
-        assert session.posts == [(loan.id, "linked-b")]
-        assert calls == ["linked-b"]
-        again = service.verify_return_digital(loan)
-        assert again["status"] == "verification_unavailable"
-        assert calls == ["linked-b", "linked-b"]
-        assert len(session.posts) == 1
+        assert calls == ["linked-b"] and session.posts == []
     finally:
         service.close()
 
@@ -75,12 +91,12 @@ def test_exact_positive_typed_loan_remains_active_despite_partial_sibling_branch
     calls = _enable_typed(session, status="partial", loans=(loan,))
     service = _library(tmp_path, session=session)
     try:
-        outcome = service.return_digital(loan)
+        _seed_historical_claim(service, loan)
+        outcome = service.verify_return_digital(loan)
         assert outcome["status"] == "still_active"
         assert outcome["verification"] == "still_present"
         assert outcome["provider_inventory_verified"] is False
-        assert calls == ["linked-b"]
-        assert len(session.posts) == 1
+        assert calls == ["linked-b"] and session.posts == []
     finally:
         service.close()
 
@@ -91,12 +107,12 @@ def test_explicit_complete_typed_dilicom_branch_can_attest_absence(tmp_path):
     calls = _enable_typed(session, coverage="complete")
     service = _library(tmp_path, session=session)
     try:
-        result = service.return_digital(loan)
+        _seed_historical_claim(service, loan)
+        result = service.verify_return_digital(loan)
         assert result["status"] == "provider_return_confirmed"
         assert result["provider_inventory_verified"] is True
         assert result["verification"] == "provider_absent"
-        assert calls == ["linked-b"]
-        assert len(session.posts) == 1
+        assert calls == ["linked-b"] and session.posts == []
     finally:
         service.close()
 
@@ -136,11 +152,11 @@ def test_inflight_typed_return_rejects_changed_context_before_confirming_absence
     session.loan_inventory_snapshot = snapshot
     session.loans = lambda _: pytest.fail("legacy second read forbidden")
     try:
-        result = service.return_digital(loan)
+        _seed_historical_claim(service, loan)
+        result = service.verify_return_digital(loan)
         assert result["status"] == "verification_unavailable"
         assert result["provider_inventory_verified"] is False
-        assert calls == ["linked-b"]
-        assert session.posts == [(loan.id, "linked-b")]
+        assert calls == ["linked-b"] and session.posts == []
     finally:
         service._sessions["paris::paris-a"] = original_session
         service.accounts = original_accounts
