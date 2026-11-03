@@ -3563,17 +3563,18 @@ class LibraryService:
                 loan_id=loan.id, attention_code=attention_code,
             )
 
-    def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        """Synchronize one explicit account/source without changing account selection.
+    def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None, inventory_only: bool = False) -> dict[str, Any]:
+        """Synchronize one exact source; scheduled inventory has no acquisition."""
+        return sync_coordination._synchronize_account_source_impl(
+            self, account, deep=deep, control=control,
+            inventory_only=inventory_only,
+        )
 
-        This is the Core-owned primitive used by the public sync broker.  It
-        deliberately isolates one source so disabling or failing a provider does
-        not prevent the other sources from being synchronized.
-        """
-        return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
-
-    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
+    def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None, inventory_only: bool = False) -> dict[str, Any]:
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control,
+            inventory_only=inventory_only,
+        )
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""
