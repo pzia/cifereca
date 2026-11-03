@@ -334,6 +334,11 @@ class KoboSession(ProviderSession):
         # binding as provenance, but never keep the session ACTIVE on failure.
         # The delegated-scope denial is preserved until a verified success.
         self.connected = False
+        # Pin the credential across public status, /account and the optional
+        # bearer-scoped status. A token swap mid-handshake must not combine
+        # another owner's account with a new bearer grant.
+        connecting_client = self.client
+        connecting_token_fingerprint = _vault_token_fingerprint(self.client)
         self.capability_names = set()
         self.capability_details = {}
         self.supports_acquisition_acsm = False
@@ -439,9 +444,15 @@ class KoboSession(ProviderSession):
                 # The optional scope probe must not deny ordinary library
                 # access; it fails closed for delegated requests only.
                 pass
+        delegation_details = self.capability_details.get("acquisition_delegation", {})
         self.supports_acquisition_delegation = (
-            "acquisition" in self.capability_names
+            self.client is connecting_client
+            and connecting_token_fingerprint is not None
+            and connecting_token_fingerprint == _vault_token_fingerprint(self.client)
+            and "acquisition" in self.capability_names
             and "acquisition_delegation" in self.capability_names
+            and delegation_details.get("available") is not False
+            and delegation_details.get("enabled") is not False
             and _authenticated_delegate_scope(authenticated_status)
             and self._delegation_runtime_ready()
         )
