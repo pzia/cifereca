@@ -1774,24 +1774,6 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
 # The first 0.9.2 prototype intentionally has no brand-specific reader UI.
 
 
-def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-    """Retire the legacy GUI timer without launching a second Kobo batch.
-
-    Opening synchronization has its own Core coordination and acquisition lock.
-    A GUI idle callback must never start another global backup, including
-    after a settings save or a delayed startup event. The interval is retained
-    only for backwards-compatible configuration reads (#1346).
-    """
-    if getattr(self, "_closed", False):
-        return
-    if self._kobo_backup_timer_id is not None:
-        try:
-            GLib.source_remove(self._kobo_backup_timer_id)
-        except Exception:
-            pass
-        self._kobo_backup_timer_id = None
-
-
 def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
     if getattr(self, "_closed", False):
         return
