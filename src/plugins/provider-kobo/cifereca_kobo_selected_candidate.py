@@ -239,7 +239,9 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 if not callable(runtime_execute) or admission_current is None:
                     raise ProviderCapabilityError("kobo_candidate_runtime_unavailable")
                 require_core()
-                delegated = session.resolve_acquisition(right_id, mode="delegated")
+                delegated = session.resolve_acquisition(
+                    right_id, mode="delegated", include_acsm=False,
+                )
                 if not bound():
                     raise ProviderCapabilityError("kobo_candidate_owner_changed")
                 require_core()

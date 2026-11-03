@@ -74,6 +74,20 @@ def _current_expiry(envelope: dict[str, Any]) -> bool:
     return True
 
 
+def _kdrm_raw_type(value: Any) -> bool:
+    """Accept only Kobo Vault's normalized KDRM raw labels.
+
+    The KVault worker classifies `KDRM` and `KoboDRM` (punctuation/case
+    variants) into family kobo_kdrm, while preserving the exact source
+    DRMType in `drm.raw_type`. This never upgrades arbitrary unknown DRM.
+    """
+    return (
+        type(value) is str and 0 < len(value) <= 80
+        and re.sub(r"[^a-z0-9]", "", value.casefold())
+        in {"kdrm", "kobodrm"}
+    )
+
+
 def kdrm_runtime_ready(session: object) -> bool:
     """Positive capability for Kobo KDRM; never probe private data."""
     try:
@@ -183,11 +197,13 @@ def exact_kobo_offer_id(
             **{name: (frozenset({"none"}), False) for name in plain_raw},
             **{name: (frozenset({"adobe", "adobe_adept"}), True)
                for name in adobe_raw},
-            "KDRM": (frozenset({"kobo_kdrm"}), True),
         }
-        if raw_drm not in known_drm:
+        if _kdrm_raw_type(raw_drm):
+            families, required_protected = frozenset({"kobo_kdrm"}), True
+        elif raw_drm in known_drm:
+            families, required_protected = known_drm[raw_drm]
+        else:
             continue
-        families, required_protected = known_drm[raw_drm]
         nested = drm if type(drm) is dict else {}
         if ("drm_type" in candidate and candidate["drm_type"] != raw_drm):
             continue
@@ -220,7 +236,7 @@ def exact_kobo_offer_id(
                                 for v in declared)):
             continue
         fmt = declared[0].strip().lower()
-        if raw_drm == "KDRM":
+        if _kdrm_raw_type(raw_drm):
             # Contract 1.3: EPUB output can carry an upstream FLEPUB
             # source. Accept only these attested pairs, not arbitrary
             # contradictory formats; plain/ACSM retain the strict equality.
@@ -258,7 +274,7 @@ def exact_kobo_offer_id(
               and raw_drm in plain_raw and fmt in {"epub", "pdf", "kepub"}):
             pass
         elif (kind == "http" and handling == "kobo_kdrm"
-              and raw_drm == "KDRM" and fmt in {"epub", "kepub"}
+              and _kdrm_raw_type(raw_drm) and fmt in {"epub", "kepub"}
               and kdrm_runtime_ready is True):
             # The pinned signed URL is NOT itself a readable EPUB. A delegated
             # Kobo content-access recipe and the DRM runtime are mandatory.
@@ -270,14 +286,14 @@ def exact_kobo_offer_id(
             source = candidate["kobo"].get("source")
         if source is not None and (type(source) is not str or len(source) > 128):
             continue
-        if raw_drm == "KDRM" and source != "library_sync":
+        if _kdrm_raw_type(raw_drm) and source != "library_sync":
             # Only library_sync's pinned delivery plus separate content-key
             # replay is supported by the negotiated public Kobo-Adept ABI.
             continue
         # For KDRM the upstream wire-format affects the DRM recipe, so the
         # opaque offer must pin it as well. No change to legacy plain/ACSM IDs.
         route = (fmt + ":" + source_fmt.strip().lower()
-                 if raw_drm == "KDRM" else fmt)
+                 if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
     # Two different candidate routes must not be arbitrarily conflated,
     # including multiple signed URLs of the same declared format.

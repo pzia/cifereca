@@ -77,7 +77,9 @@ def test_delegated_denial_does_not_block_independent_descriptor_path():
         assert result["acquisition"]["mode"] == "descriptor"
         assert calls == [("edition-1", {
             "revision_id": None, "mode": "descriptor",
-            "display_profile": None, "include_acsm": None,
+            # Disabling the optional Adobe export is explicit even when
+            # the current provider has no ADEPT runtime/capability.
+            "display_profile": None, "include_acsm": False,
         })]
     finally:
         session.close()
