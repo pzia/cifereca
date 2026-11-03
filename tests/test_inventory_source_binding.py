@@ -67,7 +67,7 @@ class InventorySourceBindingTests(unittest.TestCase):
 
     def test_disabled_corrupt_or_non_boolean_enablement_never_grants(self):
         for provider in PROVIDERS:
-            for value in ('0', 'false', '', 'TRUE', 1, True, [], {}):
+            for value in ('0', 'false', '', 'on_start', 'unknown', 1, True, [], {}):
                 with self.subTest(provider=provider, value=value):
                     service, account, _, state = rig(provider)
                     state.enabled = value
@@ -80,7 +80,7 @@ class InventorySourceBindingTests(unittest.TestCase):
 
     def test_explicit_inventory_aliases_remain_compatible(self):
         for provider in PROVIDERS:
-            for value in ('1', 'true', 'yes', 'on'):
+            for value in ('1', 'true', 'yes', 'on', 'TrUe', ' YES ', ' On '):
                 with self.subTest(provider=provider, value=value):
                     service, account, _, state = rig(provider)
                     state.enabled = value
