@@ -145,3 +145,28 @@ def test_opening_scope_correlates_partial_without_inventing_task_ref(caplog):
                 "identities": [{"status": "cancelled"}],
             }, operation_kind="deep-sync")
         assert f"task_ref={ref} status=cancelled" in caplog.text
+
+
+
+def test_stale_profile_source_scope_without_core_call_is_not_success(caplog):
+    runner, displayed, flush, logger = _runner()
+    calls = []
+    try:
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            # The UI's exact source scope was invalidated before execution:
+            # its worker returns None without entering the source broker.
+            runner.submit(
+                "Ancien profil", lambda: None, ok=calls.append,
+                kind="source-sync", origin="user",
+                success_toast="Succès inventé",
+            )
+            flush()
+        assert calls == [None]  # UI refresh owns its stale-scope guard.
+        finish = [args for name, args in displayed if name == "finished"]
+        assert finish[0][3] is False
+        assert finish[0][-1] == "cancelled"
+        assert "business_status=cancelled" in caplog.text
+        assert "status=success" not in caplog.text
+        assert "Succès inventé" not in caplog.text
+    finally:
+        runner.close()
