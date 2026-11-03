@@ -208,5 +208,19 @@ class LocalTransferCheckpoint:
         if os.path.lexists(temporary):
             if self._pin(temporary) != data["pin"]:
                 raise ValueError("local_transfer_copy_changed")
+            # A completed transfer does not own whatever pathname now
+            # happens to be named like its staged copy. An independent
+            # process could replace the temporary inode immediately after
+            # _pin returned; never unlink that replacement on cleanup.
+            try:
+                current = os.stat(temporary, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("local_transfer_copy_changed") from exc
+            observed = [
+                current.st_dev, current.st_ino,
+                current.st_size, current.st_mtime_ns,
+            ]
+            if not stat.S_ISREG(current.st_mode) or observed != data["pin"]:
+                raise ValueError("local_transfer_copy_changed")
             temporary.unlink()
             sync_directory(self.destination_dir)
