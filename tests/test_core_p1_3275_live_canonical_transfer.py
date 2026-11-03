@@ -189,7 +189,7 @@ def test_retry_after_canonical_commit_repairs_projection_without_second_copy(
         with pytest.raises(RuntimeError, match="synthetic_projection_interruption"):
             service.materialize_to_identity(placement_a, "bob")
         assert canon_rows(service.storage)["origin_links"] == 2
-        b = root / "bob" / ("shared" if source_projection == "missing" else "local") / "book.pdf"
+        b = root / "bob" / "shared" / "book.pdf"
         inode = b.stat().st_ino
         retry = service.materialize_to_identity(placement_a, "bob")
         assert Path(retry["path"]) == b
