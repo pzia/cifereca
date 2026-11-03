@@ -54,7 +54,7 @@ def test_explicit_off_hides_historical_blockage_from_current_attention():
     assert sync_source_card_guidance(source, None) == ""
     window, _, _, _, _ = _fixture(sources=[source])
     row = window._sync_sources_box.children[0].children[0]
-    assert row.subtitle.startswith("Désactivée · aucune synchronisation attendue")
+    assert row.subtitle.startswith("Synchronisation : désactivée · aucune synchronisation attendue")
     assert "activer la source" not in row.subtitle.casefold()
     assert "Synchronisation : Désactivée" in row.tooltip
 
