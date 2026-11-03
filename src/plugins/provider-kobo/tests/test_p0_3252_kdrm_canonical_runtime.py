@@ -62,6 +62,16 @@ def ready(session, vault, *, delegated_error=None):
             modes=("kobo_kdrm",),
         )
     )
+    # The pre-existing KDRM suite starts from a synthetic connected session
+    # rather than connect(). Model the new exact bearer-scoped attestation
+    # explicitly; the actual handshake is tested separately in the P0 scope
+    # matrix. Neither credential nor token ever leaves this in-memory fake.
+    from cifereca_kobo import _vault_token_fingerprint
+    vault.token = "SYNTHETIC_ATTESTED_BEARER"
+    session.supports_acquisition_delegation = True
+    session._delegation_bound_client = vault
+    session._delegation_bound_generation = session._personal_binding_generation
+    session._delegation_token_fingerprint = _vault_token_fingerprint(vault)
     calls = []
 
     def acquisition(product, **kwargs):

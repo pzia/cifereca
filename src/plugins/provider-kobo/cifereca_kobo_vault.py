@@ -220,6 +220,14 @@ class KoboVaultClient:
         # only as a compatibility escape hatch for older v2 deployments.
         return self._json("GET", "/status", authenticated=authenticated)
 
+    def authenticated_capabilities(self) -> dict[str, Any]:
+        """Request /status with this client's bearer, never anonymous metadata.
+
+        The response still needs explicit token-scoped grants: the global
+        capability list alone cannot attest acquisition delegation.
+        """
+        return self.status(authenticated=True)
+
     def account(self) -> dict[str, Any]:
         payload = self._json("GET", "/account")
         account = payload.get("account")
