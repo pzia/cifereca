@@ -18,6 +18,10 @@ def show_error(window, message: str, title: str = "Une erreur est survenue", *, 
     dialog.set_default_response("ok")
     dialog.set_close_response("ok")
     dialog.present()
+    # Log only a positively presented *unavailable-action* modal, not every
+    # routine validation error or an exception from creating GTK widgets.
+    from .ui_dialog_observation import observe_unavailable_dialog
+    observe_unavailable_dialog(window, title=title, message=display_message)
 
 
 def show_attention(window, message: str, *, code: str = "attention_required", Adw) -> None:
