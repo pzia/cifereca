@@ -129,10 +129,16 @@ def matches_classified_type(item: DocumentClassification, selected: str) -> bool
 
 def search_medium_label(item: DocumentClassification) -> str:
     """One closed label per document nature; unknown stays visibly unknown."""
-    if item.medium.status != "attested" or item.document_kind.status != "attested":
+    if item.medium.status != "attested":
         return "Support indéterminé"
-    kind = item.document_kind.value
     medium = item.medium.value
+    if item.document_kind.status != "attested":
+        return (
+            "Support numérique · type de document indéterminé"
+            if medium == "digital"
+            else "Support physique · type de document indéterminé"
+        )
+    kind = item.document_kind.value
     if kind == "book":
         return "Livre numérique" if medium == "digital" else "Livre imprimé"
     if kind == "comics":
