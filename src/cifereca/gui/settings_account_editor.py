@@ -77,21 +77,30 @@ def build_provider_account_editor(
     for field in getattr(descriptor, "account_options", ()):
         entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
         entry.set_title(field.label)
-        fallback = None
-        if field.legacy_config_key:
-            # Preserve historical provider-level overrides before global defaults.
-            provider_option = getattr(config, "provider_option", None)
-            if callable(provider_option):
-                fallback = provider_option(provider_id, field.key, None)
-            if not fallback and hasattr(config, "get"):
-                fallback = config.get(field.legacy_config_key)
-        # Missing optional text has no value; never persist a synthesized "None".
-        default = field.default if type(field.default) is str else ""
-        selected = next(
-            (value for value in (options.get(field.key), fallback, default)
-             if type(value) is str and value),
-            "",
-        )
+        if field.key in options:
+            # Explicitly persisted empty strings are intentional. Never
+            # resurrect a retired global/provider default over an existing
+            # per-account value during an unrelated Settings save.
+            stored = options[field.key]
+            selected = stored if type(stored) is str else ""
+            # A malformed stored value is separately flagged above, so an
+            # unrelated save cannot replace it with a plausible default.
+        else:
+            fallback = None
+            if field.legacy_config_key:
+                # Consult legacy defaults only for genuinely absent options.
+                provider_option = getattr(config, "provider_option", None)
+                if callable(provider_option):
+                    fallback = provider_option(provider_id, field.key, None)
+                if not fallback and hasattr(config, "get"):
+                    fallback = config.get(field.legacy_config_key)
+            # Missing optional text has no value; never display "None".
+            default = field.default if type(field.default) is str else ""
+            selected = next(
+                (value for value in (fallback, default)
+                 if type(value) is str and value),
+                "",
+            )
         entry.set_text(selected)
         group.add(entry)
         option_fields[field.key] = entry
