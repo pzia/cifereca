@@ -98,6 +98,13 @@ window.cifereca-modern-light button.suggested-action {
   background-color: @cifereca_light_accent;
   color: white;
 }
+window.cifereca-modern-light switch:checked {
+  background-color: @cifereca_light_accent;
+}
+window.cifereca-modern-light progressbar progress,
+window.cifereca-modern-light scale highlight {
+  background-color: @cifereca_light_accent;
+}
 window.cifereca-modern-light button:focus-visible,
 window.cifereca-modern-light entry:focus-visible,
 window.cifereca-modern-light row:focus-visible,
