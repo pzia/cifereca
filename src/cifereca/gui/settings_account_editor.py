@@ -102,7 +102,30 @@ def build_provider_account_editor(
                         provider_id, field.key, None, credential_id=account_id,
                     )
                 if not fallback and hasattr(config, "get"):
-                    fallback = config.get(field.legacy_config_key)
+                    # A legacy global value has no credential coordinate.
+                    # It can only be attributed safely if this is the one
+                    # existing connection for that provider. In particular,
+                    # never import an old endpoint/profile into a second
+                    # account merely because its own option is missing.
+                    read_accounts = getattr(config, "provider_accounts", None)
+                    provider_rows = ()
+                    if callable(read_accounts):
+                        try:
+                            configured = read_accounts()
+                            if type(configured) in (tuple, list):
+                                provider_rows = tuple(
+                                    row for row in configured
+                                    if type(row) is dict
+                                    and type(row.get("provider")) is str
+                                    and row["provider"].casefold() == provider_id.casefold()
+                                )
+                        except Exception:
+                            # Ambiguous history must not authorize a fallback.
+                            provider_rows = ()
+                    if (len(provider_rows) == 1
+                            and type(provider_rows[0].get("id")) is str
+                            and provider_rows[0]["id"] == account_id):
+                        fallback = config.get(field.legacy_config_key)
             # Missing optional text has no value; never display "None".
             default = field.default if type(field.default) is str else ""
             selected = next(
