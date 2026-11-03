@@ -130,4 +130,5 @@ def invalidate_search_snapshot(window):
         finish()
 
     window.runner.submit('Actualisation de la recherche locale…', work, done, failed,
-                         priority=TaskPriority.NORMAL, kind='search-known')
+                         priority=TaskPriority.NORMAL, kind='search-known',
+                         origin='automatic')
