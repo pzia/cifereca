@@ -119,3 +119,12 @@ def test_worker_correlation_reuses_existing_task_ref_without_fabrication(caplog)
         with diagnostic_task_scope():
             diagnostic_task_business_result(blocked, operation_kind="borrow")
         assert "TRACE task correlation" not in caplog.text
+        caplog.clear()
+        with diagnostic_task_scope():
+            ref = diagnostic_task_reference()
+            diagnostic_task_business_result({
+                "status": "cancelled",
+                "reason_code": "borrow_scope_changed",
+                "provider_verified": False,
+            }, operation_kind="borrow")
+        assert f"task_ref={ref} status=cancelled" in caplog.text
