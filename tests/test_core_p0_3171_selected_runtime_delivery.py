@@ -144,3 +144,50 @@ def test_runtime_guarded_candidate_cannot_substitute_or_skip_runtime_proof(
     assert db.placements() == [] and db.entitlements() == []
     assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
     assert calls == ["offer", "runtime"]
+
+
+@pytest.mark.parametrize("tamper", ("replace_inode", "rewrite_in_place"))
+def test_runtime_guarded_cannot_swap_bytes_at_witnessed_path(source, tamper):
+    """The same candidate path is not proof of the runtime's original bytes."""
+    service, db, root, calls, _broker = source
+    change(source, True)
+
+    def guarded(_account, *, admission_current, execute_runtime,
+                edition_id, resource_id, kind, branch, selected_offer_id,
+                target_dir, explicit_user_action):
+        assert admission_current() is True and explicit_user_action is True
+        calls.append("runtime")
+        produced = target_dir / "runtime.pdf"
+
+        def runtime(request):
+            assert request["destination"] == str(produced)
+            produced.write_bytes(BYTES)
+            return {"ok": True, "artifact": {"path": str(produced)}}
+
+        service.execute_acquisition_request = runtime
+        execute_runtime({
+            "schema_version": 2,
+            "source": {"type": "kobo", "provider": "synthetic"},
+            "format": "pdf", "destination": str(produced),
+        })
+        if tamper == "replace_inode":
+            replacement = target_dir / "replacement.pdf"
+            replacement.write_bytes(BYTES)
+            replacement.replace(produced)
+        else:
+            # Preserve the inode and size while changing the content.
+            mutated = bytearray(BYTES)
+            mutated[-1] ^= 1
+            produced.write_bytes(mutated)
+        return DeliveryCandidate(
+            service.resource_snapshot.resources[0].source,
+            selected_offer_id, produced,
+        )
+
+    service.session.downloadable_selected_delivery_candidate_runtime_guarded = guarded
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["failed"] == 1
+    assert db.placements() == [] and db.entitlements() == []
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
+    assert calls == ["offer", "runtime"]
