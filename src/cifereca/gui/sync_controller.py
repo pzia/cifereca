@@ -582,7 +582,7 @@ def _refresh_sync_page(self) -> None:
                 # must not dominate the collapsed card of a voluntarily OFF
                 # account or contribute to active attention counts.
                 row.set_subtitle(
-                    "Désactivée · aucune synchronisation attendue\n"
+                    "Synchronisation : désactivée · aucune synchronisation attendue\n"
                     "Historique du dernier cycle, si disponible, au survol."
                 )
             else:
