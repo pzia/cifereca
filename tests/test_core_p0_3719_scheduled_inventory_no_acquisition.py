@@ -3,13 +3,19 @@
 Real disposable Core SQLite; synthetic v2 provider, no network or ADEPT.
 """
 from dataclasses import replace
+import json
+
+import pytest
+
+from cifereca.core.source_sync_consent import policy_key
 
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3719_v2_execution import v2
 from tests.test_core_p0_3171_canonical_sync_stage import refs
 
 
-def test_inventory_only_observes_a_without_selected_offer_or_get_even_when_consent_on(v2):
+@pytest.mark.parametrize("consent_mode", ["legacy", "source_wide"])
+def test_inventory_only_observes_a_without_selected_offer_or_get_even_when_consent_on(v2, consent_mode):
     service, db, root, calls = v2
     # The fake service predates the internal inventory-only flag. Keep its
     # existing A fixture but expose the new restrictive dispatch explicitly.
@@ -21,6 +27,17 @@ def test_inventory_only_observes_a_without_selected_offer_or_get_even_when_conse
     service.resource_snapshot = replace(
         service.resource_snapshot, status="success", coverage="partial",
     )
+    if consent_mode == "source_wide":
+        # The canonical source-wide ON policy is persisted independently of
+        # the scheduled inventory opt-in; it must not trigger A→B here.
+        scope = service.resource_snapshot.scope
+        db.metadata_set(policy_key(scope), json.dumps({
+            "schema": "cifereca.source-sync-consent/1",
+            "scope": [scope.identity_id, scope.provider_id,
+                      scope.credential_id, scope.account_id],
+            "enabled": True, "revision": "a" * 32,
+        }))
+        service._canonical_persisted_consent = None
 
     discovery = synchronize_account_source(
         service, service.account, inventory_only=True,
