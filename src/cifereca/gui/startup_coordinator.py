@@ -157,9 +157,15 @@ def connect_configured_sources(
         if callable(connect_with_caller)
         else window.service.connect_configured
     )
+    # Startup and plugin activation are not user actions. A failed GTK
+    # completion callback remains recorded in TaskRunner activity/diagnostics,
+    # but must not open an unsolicited modal over the first loaded page.
+    # An explicit reconnect retains its user-origin error presentation.
+    task_origin = "user" if caller_category == "explicit_refresh" else "automatic"
     window.runner.submit(
         "Connexion aux providers…", connect, ok, err, control=control,
         priority=TaskPriority.PROVIDER_SYNC, kind="provider-connect",
+        origin=task_origin,
     )
     return False
 
