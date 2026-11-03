@@ -73,20 +73,30 @@ def _materialize_to_identity_locked(
             raise ProviderConfigurationError("Artifact source non régulier")
         source_digest = sha256_file(src)
 
+    from .transfer_storage_policy import (
+        TRANSFER_STORAGE_CLASS, directory_for_storage_class,
+    )
+
+    # Q025: the destination *storage class* is independent of source
+    # provider provenance. Keep the original provider on the new placement
+    # and catalogue projection; never mint a recipient supplier right.
     provider = str(source.get("provider_id") or "shared")
+    destination_folder = directory_for_storage_class(TRANSFER_STORAGE_CLASS)
     identity_part = safe_library_component(
         target_identity.directory_name or target_identity_id, "default",
     )
-    provider_part = safe_library_component(provider, "local")
+    storage_part = safe_library_component(destination_folder, "shared")
+    legacy_provider_part = safe_library_component(provider, "local")
     identity_dir = root / identity_part
-    expected_dir = identity_dir / provider_part
+    expected_dir = identity_dir / storage_part
+    legacy_dir = identity_dir / legacy_provider_part
     # Do this before the service creates any directories: a symlink to an
     # external directory must not be followed by mkdir or by a later copy.
     if (identity_dir.is_symlink() or expected_dir.is_symlink()
             or identity_dir.resolve() != identity_dir
             or expected_dir.resolve() != expected_dir):
         raise ProviderConfigurationError("Répertoire cible symbolique interdit")
-    dest_dir = self.library_identity_provider_dir(target_identity_id, provider)
+    dest_dir = self.library_identity_provider_dir(target_identity_id, destination_folder)
     if (dest_dir.is_symlink() or dest_dir.resolve() != expected_dir
             or not dest_dir.resolve().is_relative_to(root)):
         raise ProviderConfigurationError("Répertoire cible hors bibliothèque")
@@ -164,9 +174,15 @@ def _materialize_to_identity_locked(
         if checkpoint is not None:
             checkpoint.finish(path)
 
-    def verified_target(path: Path) -> bool:
-        if (path.is_symlink() or path.resolve() != path
-                or not path.is_relative_to(dest_dir)):
+    def verified_target(path: Path, *, historical: bool = False) -> bool:
+        # Existing A→B receipts under provider folders are valid and must
+        # remain where B originally received them. A *new* copy, however,
+        # always uses B/shared. Historical reuse still requires the exact
+        # donor/placement metadata gate below, not a matching name or SHA.
+        accepted = path.parent == dest_dir or (
+            historical and path.parent == legacy_dir
+        )
+        if path.is_symlink() or path.resolve() != path or not accepted:
             return False
         if is_bundle:
             if not path.is_dir() or any(p.is_symlink() for p in path.rglob("*")):
@@ -184,7 +200,13 @@ def _materialize_to_identity_locked(
     for row in self.storage.placements():
         meta = row.get("metadata") or {}
         if (row.get("identity_id") == target_identity_id
-                and row.get("provider_id") in (None, provider)
+                and (row.get("provider_id") in (None, provider)
+                     # A previously received copy may have been projected
+                     # as 'shared' when the donor's provider was unknown.
+                     # Exact transfer-origin evidence below still decides
+                     # reuse; the folder name alone never does.
+                     or (row.get("provider_id") == "shared"
+                         and Path(str(row.get("path") or "")).parent == dest_dir))
                 and (row.get("source_item_id") is None
                      or str(row.get("source_item_id") or "") == str(item_id or ""))
                 and row.get("artifact_id") == artifact_id
@@ -192,7 +214,8 @@ def _materialize_to_identity_locked(
                 and type(meta) is dict
                 and meta.get("materialized_from") == placement_id):
             path = Path(str(row.get("path") or ""))
-            if path.parent == dest_dir and path != src and verified_target(path):
+            if (path.parent in {dest_dir, legacy_dir} and path != src
+                    and verified_target(path, historical=True)):
                 exact_provenance = (
                     meta.get("transfer_kind") == "local_copy"
                     and meta.get("file_origin_identity_id") == owner
@@ -227,7 +250,7 @@ def _materialize_to_identity_locked(
             if sha256_file(temp) != source_digest or sha256_file(src) != source_digest:
                 raise ProviderConfigurationError("Source modifiée pendant la copie")
             if replace:
-                if not verified_target(dest):
+                if not verified_target(dest, historical=True):
                     raise ProviderConfigurationError("Destination modifiée pendant la copie")
                 os.replace(temp, dest)
             else:
@@ -243,6 +266,13 @@ def _materialize_to_identity_locked(
                 temp.unlink(missing_ok=True)
 
     recovered = checkpoint.recover() if checkpoint is not None and owned_copy is None else None
+    # An *already verified* historical B copy can carry the old generic
+    # 'shared' provider projection. Do not reassign that existing Placement
+    # to the donor's now-enriched provider just to repair a catalogue row.
+    recipient_provider = (
+        owned_copy[1].get("provider_id") or provider
+        if owned_copy is not None else provider
+    )
     if owned_copy:
         dest, existing = owned_copy
         if not is_bundle and os.path.samefile(src, dest):
@@ -255,7 +285,7 @@ def _materialize_to_identity_locked(
                 return {
                     "status": "unchanged", "path": str(dest),
                     "placement_id": existing["placement_id"],
-                    "target_identity_id": target_identity_id, "provider_id": provider,
+                    "target_identity_id": target_identity_id, "provider_id": recipient_provider,
                 }
             # Canonical publication survived, but its descriptive projection
             # did not. Repair it below using the SAME verified copy.
@@ -302,6 +332,7 @@ def _materialize_to_identity_locked(
             "materialized_from": placement_id,
             "artifact_kind": "bundle" if is_bundle else "file",
             "transfer_kind": "local_copy",
+            "storage_class": TRANSFER_STORAGE_CLASS,
             "file_origin_identity_id": owner,
         }
         if is_bundle:
@@ -310,7 +341,7 @@ def _materialize_to_identity_locked(
             placement_meta["file_size"] = int(size_stat.st_size)
         new_placement_id = self.storage.placement_put({
             "artifact_id": artifact_id, "path": str(dest),
-            "identity_id": target_identity_id, "provider_id": provider,
+            "identity_id": target_identity_id, "provider_id": recipient_provider,
             "source_item_id": item_id, "state": "present",
             "last_seen_at": int(time.time()), "metadata": placement_meta,
         })
@@ -328,25 +359,26 @@ def _materialize_to_identity_locked(
         metadata.update({
             "path": str(dest), "materialized_from": placement_id,
             "file_origin_identity_id": owner, "transfer_kind": "local_copy",
+            "storage_class": TRANSFER_STORAGE_CLASS,
         })
         self.storage.catalog_entry_put({
             "artifact_id": artifact_id, "placement_id": new_placement_id,
             "title": source_entry.get("title") or src.stem,
             "author": source_entry.get("author"),
             "media_format": source_entry.get("media_format") or src.suffix.lstrip(".").lower(),
-            "identity_id": target_identity_id, "provider_id": provider, "item_id": item_id,
+            "identity_id": target_identity_id, "provider_id": recipient_provider, "item_id": item_id,
             "local_state": "local", "metadata": metadata,
         })
     else:
         indexed = self.catalog_index_path(
             dest, title=str(source_entry.get("title") or src.stem), item_id=item_id,
-            identity_id=target_identity_id, provider_id=provider,
+            identity_id=target_identity_id, provider_id=recipient_provider,
         )
         new_placement_id = indexed.get("placement_id") if type(indexed) is dict else None
     return {
         "status": status, "path": str(dest),
         "placement_id": new_placement_id,
-        "target_identity_id": target_identity_id, "provider_id": provider,
+        "target_identity_id": target_identity_id, "provider_id": recipient_provider,
     }
 
 
