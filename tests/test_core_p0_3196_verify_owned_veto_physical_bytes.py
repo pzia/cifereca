@@ -56,7 +56,14 @@ def test_incorrect_historical_bytes_never_block_exact_owned_download(
                        ("0" * 64, "sha256:" + digest))
     else:
         path.unlink()
-    assert _lookup(case) is not None if change != "missing_file" else _lookup(case) is None
+    # A physical symlink is no longer a readable legacy Placement either:
+    # strict local-book opening must not follow a substituted inode, even
+    # when the linked file happens to have the same bytes. This is stricter
+    # than the former four-key lookup, not an acquisition/reconciliation veto.
+    if change in {"missing_file", "symlink_same_bytes"}:
+        assert _lookup(case) is None
+    else:
+        assert _lookup(case) is not None
     assert _lookup(case, account_id="account") is None
     target = case.service.owned_library_download_target(case.entry)
     assert target is not None and target.entitlement_id == "right-1"
