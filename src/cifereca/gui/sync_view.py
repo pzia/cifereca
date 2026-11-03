@@ -702,14 +702,19 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
 
 
 def sync_source_presentation(source: object, *, canonical: bool = False) -> SyncSourcePresentation:
-    enabled = getattr(source, "enabled", None) is True
+    raw_enabled = getattr(source, "enabled", None)
+    enabled = raw_enabled is True
     connected = getattr(source, "connected", None) is True
     capable = getattr(source, "sync_capable", None) is True
     # Preserve stable action labels for non-Kobo sources; the GTK row and
     # task label provide the disambiguated provider presentation (#980).
     label = _safe_sync_source_label(source)
 
-    activation = "Activée" if enabled else "Désactivée"
+    activation = (
+        "Activée" if raw_enabled is True else
+        "Désactivée" if raw_enabled is False else
+        "Non confirmée"
+    )
     connection = "Connectée" if connected else "Déconnectée"
 
     # Use the same closed, phase-aware severity projection for the primary
@@ -726,11 +731,15 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
 
     if not capable:
         sync_label = "Non prise en charge"
-    elif getattr(source, "enabled", None) is False:
+    elif raw_enabled is False:
         sync_label = "Désactivée · aucune synchronisation attendue"
     elif alert is not None and alert[0] == "error":
         # Failed/blocked Core phases win over source-wide historical success.
         sync_label = "Échec"
+    elif raw_enabled is not True:
+        # Missing/malformed activation is not evidence that a source is OFF,
+        # nor permission to show a historical success as current state.
+        sync_label = "Activation non confirmée"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
@@ -773,8 +782,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     elif not enabled:
         disabled_reason = (
             "Source désactivée ; synchronisation manuelle indisponible."
-            if getattr(source, "enabled", None) is False
-            else "Activez cette source pour la synchroniser."
+            if raw_enabled is False
+            else "Activation non confirmée ; actualisez la source avant de synchroniser."
         )
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
@@ -843,6 +852,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     # Previous success is historical context, not the current run's state.
     if (status in {"partial", "error", "failed", "blocked",
                    "attention_required", "cancelled", "interrupted", "skipped"}
+            or raw_enabled is not True
             or (alert is not None and alert[0] == "error")
             or status not in {"ok", "success", "idle"}) and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
