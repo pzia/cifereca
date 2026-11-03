@@ -291,6 +291,8 @@ class KoboSession(ProviderSession):
         self._delegation_bound_client = None
         self._delegation_bound_generation = None
         self._delegation_token_fingerprint = None
+        self._cifereca_delegation_forbidden = False
+        self._cifereca_delegation_attempts_saved = 0
 
     def _delegation_runtime_ready(self) -> bool:
         """Check actual executable runtime modes, not declared names alone."""
@@ -451,11 +453,11 @@ class KoboSession(ProviderSession):
                 self._delegation_bound_client = self.client
                 self._delegation_bound_generation = self._personal_binding_generation
                 self._delegation_token_fingerprint = token_fingerprint
-        # Reauthorization only takes effect after a *validated* authenticated
-        # account identity and optional scope probe, not an attempted connect.
-        # A malformed /account response must not clear the former denial.
-        self._cifereca_delegation_forbidden = False
-        self._cifereca_delegation_attempts_saved = 0
+        # Only a new positive bearer-scope proof clears a prior delegated
+        # HTTP 403. An authenticated account alone is not reauthorization.
+        if self.supports_acquisition_delegation:
+            self._cifereca_delegation_forbidden = False
+            self._cifereca_delegation_attempts_saved = 0
         self.connected = True
         self._accounts = [Account(
             display_name=display,
