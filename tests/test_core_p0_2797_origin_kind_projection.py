@@ -14,15 +14,9 @@ def _claim(service, artifact_id, *, token, kind="purchase"):
     _source_origin(
         service, identity="alice", provider="numilog",
         credential="card-a", account="buyer-a",
-        edition="edition-a", artifact_id=artifact_id, token=token,
+        edition="edition-a", artifact_id=artifact_id,
+        token=token, kind=kind,
     )
-    if kind == "loan":
-        with service.storage._lock, service.storage._connect() as db:
-            db.execute(
-                "UPDATE source_references SET reference_kind=?,branch_id=? "
-                "WHERE source_reference_id=?",
-                ("loan", "loans", "reference-" + token),
-            )
 
 
 def _loan_entitlement(service):
