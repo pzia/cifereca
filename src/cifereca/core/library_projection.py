@@ -334,6 +334,12 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     must never be queried to decorate a current placement.
     """
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+    # A recent-acquisitions view belongs to one profile, never a union.
+    # Unscoped v0.7 local placements belong only to the default identity,
+    # exactly as in library_entries(); SQLite ownership remains unchanged.
+    if not identity_id:
+        return []
+    default_identity_id = self.identities[0].identity_id if self.identities else None
     entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
     loan_by_key: dict[tuple[str, str, str | None], Loan] = {}
     for loan in self.last_loans:
@@ -355,12 +361,13 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     ):
         if placement.get("state") != "present":
             continue
-        if identity_id and placement.get("identity_id") not in {identity_id, None, ""}:
+        placement_identity = placement.get("identity_id") or default_identity_id
+        if placement_identity != identity_id:
             continue
         entry = entries.get(str(placement.get("placement_id"))) or {}
         metadata = dict(entry.get("metadata") or {})
         provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
-        row_identity = placement.get("identity_id") or identity_id
+        row_identity = placement_identity
         item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
         cover_candidates = []
         embedded = cover_candidate(
