@@ -47,7 +47,8 @@ def test_send_ignores_catalogue_not_owned_by_source_placement(tmp_path, bad_kind
         result = service.materialize_to_identity(pid, receiver)
         assert Path(result["path"]).read_bytes() == source.read_bytes()
         projected = [r for r in service.storage.catalog_entries()
-                     if r.get("identity_id") == receiver]
+                     if r.get("identity_id") == receiver
+                     and r.get("placement_id") == result["placement_id"]]
         assert len(projected) == 1
         assert projected[0]["title"] == source.stem
         assert projected[0]["author"] in (None, "")
