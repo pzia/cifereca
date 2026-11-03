@@ -439,6 +439,12 @@ def test_kdrm_offer_cannot_be_reinterpreted_as_plain_https(
 
 def test_plain_offer_remains_direct_even_on_runtime_capable_kobo_session():
     session, vault, broker, account, _ = setup()
+    session.runtime_capabilities = NS(
+        acquisition=lambda provider: NS(
+            available=True, compatible=True, operational=True,
+            modes=("kobo_kdrm",),
+        )
+    )
     try:
         direct = selected(session, account, "book-1").delivery_offer_id
         assert direct.startswith("kobo.descriptor:")
