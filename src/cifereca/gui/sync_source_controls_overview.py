@@ -7,6 +7,48 @@ This module never writes policies or invokes a synchronization operation.
 from __future__ import annotations
 
 
+def sync_schedule_status_subtitle(mode: object, interval: object, *, available: bool) -> str:
+    """Describe persisted scheduling without calling it effective while OFF."""
+    if (type(mode) is not str or mode not in {"manual", "on_start", "periodic"}
+            or type(interval) is not int or not 15 <= interval <= 10080
+            or type(available) is not bool):
+        return "Planification des notices indisponible."
+    if mode == "manual":
+        return (
+            "Manuelle : les notices et droits ne sont pas actualisés "
+            "automatiquement. Les téléchargements sont réglés séparément."
+        )
+    if mode == "on_start":
+        detail = f"Au démarrage (intervalle minimal {interval} min)"
+    else:
+        detail = f"Périodique (intervalle {interval} min, si ordonnanceur actif)"
+    if not available:
+        return (
+            "Programmation suspendue : source désactivée ou déconnectée. "
+            f"Mode enregistré : {detail}. "
+            "Aucune actualisation automatique attendue tant que la source reste indisponible. "
+            "N'autorise aucun téléchargement."
+        )
+    return detail + ". N'autorise aucun téléchargement."
+
+
+def sync_file_consent_subtitle(*, enabled: bool, available: bool) -> str:
+    """An ON preference suspended by source OFF is not effective consent."""
+    if type(enabled) is not bool or type(available) is not bool:
+        return "Réglage des fichiers indisponible."
+    if enabled and not available:
+        return (
+            "Autorisation enregistrée mais suspendue : source désactivée ou déconnectée. "
+            "Aucun nouveau téléchargement automatique attendu tant que la source reste indisponible. "
+            "Les fichiers déjà reçus sont conservés."
+        )
+    return (
+        ("Activé : la synchronisation peut recevoir les fichiers disponibles de ce compte. "
+         if enabled else "Désactivé : aucune nouvelle livraison automatique pour ce compte. ")
+        + "Les fichiers déjà reçus sont conservés."
+    )
+
+
 def sync_source_controls_overview(source: object, broker: object) -> str:
     """Show inventory scheduling and file consent independently in the header.
 

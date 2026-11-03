@@ -577,11 +577,24 @@ def _refresh_sync_page(self) -> None:
                 sync_source_card_guidance,
             )
             next_step = sync_source_card_guidance(source, alert)
-            row.set_subtitle(
-                (alert[1] + "\n" if alert is not None else "")
-                + (next_step + "\n" if next_step else "")
-                + display_summary
-            )
+            if getattr(source, "enabled", None) is False:
+                # The previous failed/partial run remains in the tooltip but
+                # must not dominate the collapsed card of a voluntarily OFF
+                # account or contribute to active attention counts.
+                connection = (
+                    "Connectée" if getattr(source, "connected", None) is True
+                    else "Déconnectée"
+                )
+                row.set_subtitle(
+                    "Synchronisation : désactivée · aucune synchronisation attendue\n"
+                    f"Connexion : {connection} · dernier cycle au survol si disponible."
+                )
+            else:
+                row.set_subtitle(
+                    (alert[1] + "\n" if alert is not None else "")
+                    + (next_step + "\n" if next_step else "")
+                    + display_summary
+                )
             row.set_subtitle_lines(2)
             # Full closed-state details remain available on hover/focus,
             # without inserting a new child into any source card. Legacy

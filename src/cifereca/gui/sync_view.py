@@ -594,6 +594,11 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     """
     if getattr(source, "sync_capable", None) is not True:
         return None
+    # A voluntarily OFF source has no active sync failure. Its old run and
+    # phase states remain inspectable as history, but may not add a red alert
+    # to the current identity's dashboard. Unknown enabled != explicit OFF.
+    if getattr(source, "enabled", None) is False:
+        return None
     # Each candidate is a fixed UI label. Phase and status values are used
     # solely as dictionary keys; arbitrary upstream data never becomes text.
     candidates: list[tuple[str, str]] = []
@@ -710,6 +715,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
 
     if not capable:
         sync_label = "Non prise en charge"
+    elif getattr(source, "enabled", None) is False:
+        sync_label = "Désactivée · aucune synchronisation attendue"
     elif alert is not None and alert[0] == "error":
         # Failed/blocked Core phases win over source-wide historical success.
         sync_label = "Échec"
@@ -751,7 +758,11 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     if not capable:
         disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     elif not enabled:
-        disabled_reason = "Activez cette source pour la synchroniser."
+        disabled_reason = (
+            "Source désactivée ; synchronisation manuelle indisponible."
+            if getattr(source, "enabled", None) is False
+            else "Activez cette source pour la synchroniser."
+        )
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
     else:
@@ -763,9 +774,16 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         f"Synchronisation : {sync_label}"
     )
     cycle_headline = sync_source_cycle_headline(source)
+    phase_summary = sync_source_phase_summary(source)
+    if getattr(source, "enabled", None) is False and capable:
+        # Never erase the previous attempt or success. Clearly label the old
+        # Core phase records as historical rather than current actionable UI.
+        if last_attempt:
+            summary += f"\nDernier essai avant désactivation : {last_attempt}"
+        if cycle_headline or phase_summary:
+            summary += "\nHistorique du dernier cycle avant désactivation :"
     if cycle_headline:
         summary += "\n" + cycle_headline
-    phase_summary = sync_source_phase_summary(source)
     if phase_summary:
         summary += "\n" + phase_summary
     if sync_source_informational_partial(source):
