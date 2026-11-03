@@ -539,10 +539,16 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
 
                     admitted_epoch = source_context_epoch(self)
                     admitted_snapshots = []
-                    canonical = observe_canonical_rights_in_sync(
-                        self, account, cancelled=cancelled_for_rights,
-                        snapshot_sink=admitted_snapshots.append,
-                    )
+                    # #4281: the first typed loan inventory and the second
+                    # canonical rights/resources observation have distinct
+                    # costs. Keep both reads fresh; measure their wall time
+                    # independently without treating elapsed time as an HTTP
+                    # request count, and without altering their admission.
+                    with measure("canonical_resources_ms"):
+                        canonical = observe_canonical_rights_in_sync(
+                            self, account, cancelled=cancelled_for_rights,
+                            snapshot_sink=admitted_snapshots.append,
+                        )
                     if canonical is not None:
                         result["canonical_rights"] = canonical
                         if canonical["status"] != "success":
