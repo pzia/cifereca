@@ -108,11 +108,8 @@ def refresh_settings_diagnostics(
     # via the dedicated Diagnostics page, not dumped synchronously in Settings.
     diagnostics_text = _canonical_settings_report(window.service, version, {
         "transport": "httpx local direct",
-        "base_url": (
-            window.config.paris_base_url()
-            if hasattr(window.config, "paris_base_url")
-            else window.config.get("base_url")
-        ),
+        # Endpoints belong to provider descriptors/account options. A single
+        # historical Paris base_url is not a meaningful global system status.
         "ui": "GTK4/libadwaita",
         "cover_pipeline": window.covers.stats(),
         "history_cover_search": window.history_cover_resolver.stats(),
