@@ -162,7 +162,8 @@ def record_completed_delivery_for_recovery(
             raise ValueError("canonical_intake_account_rebound")
         row = db.execute(
             "SELECT provider_id,credential_id,account_id,item_id,identity_id,"
-            "status,metadata_json FROM acquisition_ledger WHERE acquisition_id=?",
+            "status,artifact_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id=?",
             (record_id,),
         ).fetchone()
         coords = (
@@ -183,8 +184,10 @@ def record_completed_delivery_for_recovery(
             # The same supplier offer may be legally reissued after the
             # original file was removed. A NEW completed GET and its new
             # receipt replace only this *non-authoritative* retry checkpoint,
-            # never the provider/ADEPT historical OriginLinks.
-            if row[6] != data or row[5] != _STAGED:
+            # never the provider/ADEPT historical OriginLinks. Reset a
+            # corrupt, non-null Artifact pointer even when the new bytes and
+            # receipt JSON are identical: another crash must remain retryable.
+            if row[7] != data or row[5] != _STAGED or row[6] is not None:
                 db.execute(
                     "UPDATE acquisition_ledger SET status=?,"
                     "metadata_json=?,artifact_id=NULL,updated_at=? "
@@ -217,7 +220,8 @@ def recover_completed_delivery(
     with storage._lock, storage._connect() as db:
         row = db.execute(
             "SELECT provider_id,credential_id,account_id,item_id,identity_id,"
-            "status,metadata_json FROM acquisition_ledger WHERE acquisition_id=?",
+            "status,artifact_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id=?",
             (record_id,),
         ).fetchone()
         if row is None or row[:5] != (
@@ -225,15 +229,21 @@ def recover_completed_delivery(
             source.edition_id, scope.identity_id,
         ) or row[5] not in (_STAGED, "complete"):
             return None
+        # A staged receipt has not published an Artifact yet. A completed
+        # journal must name the EXACT final SHA of its receipt. Otherwise an
+        # inconsistent operation record cannot be reinterpreted as a verified
+        # delivery, even when the physical file itself still hashes correctly.
+        if row[5] == _STAGED and row[6] is not None:
+            return None
         if not _exact_borrower_bound_in_db(db, scope):
             return None
         try:
             # A damaged operation journal cannot permanently trap the source
             # in a broken recovery loop. A valid receipt record is bounded by
             # the source coordinates, offer, pathname and two receipt refs.
-            if type(row[6]) is not str or len(row[6]) > 65536:
+            if type(row[7]) is not str or len(row[7]) > 65536:
                 return None
-            raw = json.loads(row[6], object_pairs_hook=_unique_checkpoint_fields)
+            raw = json.loads(row[7], object_pairs_hook=_unique_checkpoint_fields)
             if (type(raw) is not dict or raw.get("schema") != _SCHEMA
                     or raw.get("source") != _scope(source)
                     or raw.get("offer_id") != offer_id
@@ -245,6 +255,10 @@ def recover_completed_delivery(
                     or type(raw.get("adept_receipt")) is not str
                     or len(raw["adept_receipt"]) > 1024
                     or any(ch in raw["adept_receipt"] for ch in "\x00\r\n")):
+                return None
+            if (row[5] == "complete" and (
+                    type(raw.get("sha256")) is not str
+                    or row[6] != "sha256:" + raw["sha256"])):
                 return None
             completed = CompletedDelivery(
                 source=source, delivery_offer_id=offer_id,
