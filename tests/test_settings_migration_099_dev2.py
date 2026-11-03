@@ -161,6 +161,15 @@ class SaveSettings(unittest.TestCase):
                 self.window._configure_kobo_backup_timer.assert_not_called()
         self.assertEqual(self.window.reconnect_sources.call_count, 2)
 
+    def test_settings_save_succeeds_on_coreui_without_retired_timer_port(self):
+        """A neutral MainWindow can omit the legacy GUI backup timer API."""
+        delattr(self.window, '_configure_kobo_backup_timer')
+        self.assertTrue(self.ns['save_settings']())
+        task = self.runner.submit.call_args.args
+        task[2](task[1]())
+        self.window._populate_accounts.assert_called_once()
+        self.window.toast.assert_not_called()  # activity reporter is optional
+
     def test_new_installation_has_no_experimental_permission_default(self):
         from cifereca.config_defaults import DEFAULT_CONFIG
         self.assertNotIn('experimental_actions', DEFAULT_CONFIG)
