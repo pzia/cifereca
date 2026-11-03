@@ -76,7 +76,7 @@ def test_unknown_private_provider_can_explicitly_schedule_inventory(tmp_path, pr
         result = broker.synchronize_scheduled_inventory("fixture-identity", "startup")
         assert result.ok and result.facts["attempted"] == 1
         assert result.facts["acquisition_authorized"] is False
-        assert calls == [("fixture-identity", provider, {"deep": False, "control": None})]
+        assert calls == [("fixture-identity", provider, {"deep": False, "control": None, "inventory_only": True})]
         state = broker._state(sid)
         assert state["inventory_status"] == "success"
         assert state["inventory_last_attempt"] and state["inventory_last_success"]
