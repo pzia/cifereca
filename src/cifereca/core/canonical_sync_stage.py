@@ -76,6 +76,16 @@ def persist_attested_source_references(
                 or len(profile) != 1
                 or type(profile[0][0]) is not str or not profile[0][0]):
             raise ValueError("canonical_rights_core_binding_changed")
+        # A corrupt/imported registry can duplicate one physical directory
+        # across identities despite the current UNIQUE index. Reject the
+        # entire positive A batch before writing source references; an exact
+        # account binding alone cannot establish an exclusive profile owner.
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (profile[0][0], scope.identity_id),
+        ).fetchone() is not None:
+            raise ValueError("canonical_rights_core_binding_changed")
         exact_accounts = db.execute(
             "SELECT 1 FROM provider_accounts "
             "WHERE connection_id=? AND identity_id=? AND provider_id=? "
