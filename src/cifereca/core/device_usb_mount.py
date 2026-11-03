@@ -124,7 +124,7 @@ def observe_linux_usb_mount(
             or type(binding.get("device_id")) is not str
             or not binding["device_id"]
             or binding.get("enabled") is not True
-            or type(mountpoint) is not Path
+            or not isinstance(mountpoint, Path)
             or not mountpoint.is_absolute()
             or ".." in mountpoint.parts):
         return None
