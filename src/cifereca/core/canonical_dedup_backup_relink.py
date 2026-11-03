@@ -132,7 +132,8 @@ def relink_canonical_duplicate_backup_paths(
                 "o.source_reference_id=s.source_reference_id "
                 "WHERE s.identity_id=? AND s.provider_id=? "
                 "AND s.credential_id=? AND s.account_id=? "
-                "AND s.edition_id=? AND o.origin_kind='provider' "
+                "AND s.edition_id=? AND s.evidence_kind='provider_response' "
+                "AND o.origin_kind='provider' "
                 "AND o.identity_id=? AND o.artifact_id=? "
                 "AND o.evidence_ref IS NOT NULL AND o.evidence_ref!=''",
                 (identity, provider, credential, account, item,
