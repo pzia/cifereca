@@ -502,8 +502,17 @@ def main():
                             obtain=service.obtain_owned_library_item, refresh=window.refresh_library,
                             recent=window.refresh_recent, calls=[], refreshed=[], recents=[],
                             provider=provider, product=product, resume=False)
-        service.storage.provider_connection_put({"provider_id": provider, "credential_id": account.credential_id,
-            "identity_id": owner, "label": label + " fictif ciblé"})
+        # #4289/#3171: an owned test fixture needs the exact persisted
+        # connection/borrower pair. Do not weaken Core's admission check.
+        connection_id = service.storage.provider_connection_put({
+            "provider_id": provider, "credential_id": account.credential_id,
+            "identity_id": owner, "label": label + " fictif ciblé",
+        })
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "identity_id": owner,
+            "provider_id": provider, "credential_id": account.credential_id,
+            "account_id": account.unique_id, "label": label + " fictif ciblé",
+        })
         service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": provider,
             "credential_id": account.credential_id, "account_id": account.unique_id, "identity_id": owner,
             "item_id": product, "revision_id": "r1", "entitlement_type": "owned", "state": "active",
