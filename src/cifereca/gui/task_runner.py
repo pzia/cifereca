@@ -78,7 +78,10 @@ class TaskRunner:
         from cifereca.plugin_api import SyncResult
         from collections.abc import Mapping
         if not isinstance(value, SyncResult):
-            return "success"  # Legacy non-typed worker results are unchanged.
+            # A stale GTK source-action scope returns None before the Core is
+            # called. Completing that worker is not proof of a source Sync;
+            # never mint a positive task receipt or provider event for it.
+            return "cancelled" if value is None else "success"
         facts = value.facts
         if isinstance(facts, Mapping):
             reason = facts.get("reason")
