@@ -136,3 +136,30 @@ def test_probe_and_exporter_use_only_reviewed_function_names():
     assert type(parsed) is list
     assert set(parsed) == mod._BOOK_DETAIL_STAGES
     assert len(parsed) <= 64
+
+
+def test_anonymous_callbacks_are_explicitly_pinned_to_reviewed_stages():
+    tree = ast.parse(PROBE.read_text(encoding="utf-8"))
+    mod = exporter()
+    seen = set()
+    for call in ast.walk(tree):
+        if (not isinstance(call, ast.Call)
+                or not isinstance(call.func, ast.Name)
+                or call.func.id != "later"
+                or len(call.args) < 2
+                or not isinstance(call.args[1], ast.Lambda)):
+            continue
+        callback = call.args[1].body
+        assert isinstance(callback, ast.Call)
+        assert isinstance(callback.func, ast.Name)
+        label = [kw.value.value for kw in call.keywords
+                 if kw.arg == "public_stage"
+                 and isinstance(kw.value, ast.Constant)
+                 and type(kw.value.value) is str]
+        assert label == [callback.func.id]
+        assert label[0] in mod._BOOK_DETAIL_STAGES
+        seen.add(label[0])
+    assert seen == {
+        "verify_tab_order", "click_copy", "click_isbn",
+        "begin_owned_book_action", "component_expand",
+    }
