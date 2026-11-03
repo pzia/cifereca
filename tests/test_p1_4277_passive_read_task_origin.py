@@ -15,6 +15,7 @@ GUI = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
 
 def _submissions(path, kind):
     module = ast.parse((GUI / path).read_text(encoding="utf-8"))
+    matches = []
     for node in ast.walk(module):
         if not isinstance(node, ast.Call):
             continue
@@ -23,7 +24,8 @@ def _submissions(path, kind):
         keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
         target = keywords.get("kind")
         if isinstance(target, ast.Constant) and target.value == kind:
-            yield keywords
+            matches.append((node.lineno, keywords))
+    return [keywords for _line, keywords in sorted(matches)]
 
 
 def _string_keyword(submission, field):
