@@ -1015,7 +1015,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
         existing = merged.get(canonical_key, {})
         meta = dict(entitlement.get("metadata") or {})
-        loan = loans_by_key.get((provider_id, str(entitlement.get("credential_id") or ""), entitlement.get("account_id"), item_id))
+        # An active loan may share the same edition/account as an owned right;
+        # its title, cover and format must not decorate a purchase possession.
+        loan = (loans_by_key.get((
+            provider_id, str(entitlement.get("credential_id") or ""),
+            entitlement.get("account_id"), item_id,
+        )) if entitlement_type == "loan" else None)
         loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
         title = str(meta.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
         author = meta.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
