@@ -283,6 +283,8 @@ class ReferenceSession(ProviderSession):
         admission_current,
     ):
         """Core-owned live admission; never turn an OFF source into staged bytes."""
+        if not callable(admission_current):
+            raise ProviderCapabilityError("reference_core_admission_revoked")
         return self._downloadable_selected_delivery_candidate(
             account, edition_id=edition_id, resource_id=resource_id,
             kind=kind, branch=branch, selected_offer_id=selected_offer_id,
