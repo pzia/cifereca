@@ -16,6 +16,7 @@ from cifereca.storage import Storage
 
 class KoboSession(ProviderSession):
     api_version = "2.3"
+    supports_acquisition_delegation = True  # Synthetic verified token scope
     supports_acquisition_display_profile = False
     supports_acquisition_acsm = False
 
