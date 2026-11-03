@@ -41,6 +41,14 @@ def _rig(tmp_path):
             or {"library": 1}
         ),
     )
+    # Synthetic service explicitly implements the restrictive private
+    # inventory entry point. A missing entry point must not fall back to
+    # public synchronization (which can acquire books).
+    source._synchronize_scheduled_account_inventory = (
+        lambda a, **options: source.synchronize_account_source(
+            a, inventory_only=True, **options,
+        )
+    )
     connection_id = storage.provider_connection_put({
         "identity_id": "alice", "provider_id": "kobo",
         "credential_id": "vault-alice", "enabled": True,
