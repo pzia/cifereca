@@ -7,6 +7,9 @@ complete correlated Core event stream. Those are separate gates of #3882.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
+import logging
+import threading
 import hashlib
 import hmac
 import json
@@ -21,7 +24,7 @@ _STATUSES = frozenset({"success", "complete", "partial", "failed", "busy", "skip
 _REASON_CODES = frozenset({
     "source_disabled", "operation_busy", "source_not_found", "source_not_configured",
     "source_sync_partial", "account_ambiguous", "cancelled", "sync_unavailable",
-    "invalid_sync_result",
+    "invalid_sync_result", "source_sync_failed", "source_sync_cancelled",
 })
 _KINDS = frozenset({"purchase", "loan", "notice", "internal"})
 _STATES = frozenset({"active", "inactive", "unknown"})
@@ -118,18 +121,9 @@ def audit_source_counts(storage, account, *, pseudonym_key: bytes | None = None,
 
 
 def _safe_result(result: dict[str, object]) -> dict[str, object]:
-    status = result.get("status")
-    code = result.get("code")
-    outcome: dict[str, object] = {
-        "status": status if type(status) is str and status in _STATUSES else "failed",
-    }
-    if type(code) is str and code in _REASON_CODES:
-        outcome["code"] = code
-    for key in ("downloaded", "completed", "scanned", "unchanged", "pending", "errors"):
-        value = result.get(key)
-        if type(value) is int and 0 <= value <= 1_000_000:
-            outcome[key] = value
-    return outcome
+    # The CLI and ZIP must use exactly the same closed Core projection.
+    from .sync_cli_contract import safe_sync_result
+    return safe_sync_result(result)
 
 
 # ZIP audit members are closed DTOs, not arbitrary dictionaries. Even a
@@ -401,6 +395,74 @@ def _safe_audit_snapshot(value: object) -> dict[str, object]:
     return result
 
 
+@contextmanager
+def collect_source_sync_core_events(provider_id: str):
+    """Observe only attested Core events inside this exact synchronous CLI call.
+
+    No journal replay, timestamp pairing or global log-level changes. Events
+    from other threads/sources and arbitrary plugin log messages are rejected.
+    """
+    from .diagnostic_source_sync import public_fields
+
+    records: list[dict[str, object]] = []
+    worker = threading.get_ident()
+
+    class _CoreObserver(logging.Handler):
+        def emit(self, record):
+            if threading.get_ident() != worker or len(records) >= 33:
+                return
+            payload = getattr(record, "_cifereca_journal_payload", None)
+            if (type(payload) is not dict or payload.get("category") != "SYNC"
+                    or payload.get("operation") != "source sync"):
+                return
+            fields = public_fields(payload.get("detail"))
+            if fields and fields["provider_id"] == provider_id:
+                records.append(fields)
+
+    logger = logging.getLogger("cifereca")
+    handler = _CoreObserver()
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+
+
+def _closed_core_events(
+    events: object, *, run_ref: str, provider_id: str,
+) -> tuple[list[dict[str, object]], bool]:
+    """Allow only existing Core source-sync facts from the selected invocation."""
+    from .diagnostic_source_sync import (
+        CANONICAL_EXECUTION_STATUSES, public_fields,
+    )
+
+    accepted: list[dict[str, object]] = []
+    truncated = False
+    if type(events) is not list:
+        return accepted, False
+    for item in events:
+        if len(accepted) >= 32:
+            truncated = True
+            break
+        fields = public_fields(item)
+        if not fields or fields["provider_id"] != provider_id:
+            truncated = True
+            continue
+        row: dict[str, object] = {
+            "run_ref": run_ref, "origin": "core_source_sync",
+            "provider_id": fields["provider_id"],
+            "phase": fields["phase"], "status": fields["status"],
+            "code": fields["code"],
+        }
+        for key in ("task_ref", "duration_ms", "loans", "library", *(
+            "canonical_" + state for state in CANONICAL_EXECUTION_STATUSES
+        )):
+            if key in fields:
+                row[key] = fields[key]
+        accepted.append(row)
+    return accepted, truncated
+
+
 # CLI phases are observations made by this command, never Core/HTTP proof.
 # A provider-controlled exception, URL or task payload is not a report event.
 _CLI_EVENT_PHASES = frozenset({
@@ -519,6 +581,7 @@ def _report_summary(
     *, outcome: dict[str, object], exit_code: int, before: object,
     after: object, evidence_coverage: str, last_cli_phase: str | None = None,
     issue_cli_phase: str | None = None,
+    core_event_coverage: str = "cli_milestones_only",
 ) -> bytes:
     """Bounded human-readable overview of evidence already in the ZIP.
 
@@ -532,7 +595,11 @@ def _report_summary(
             and outcome["status"] in _STATUSES else "failed"
         ),
         f"exit_code: {exit_code}",
-        f"coverage: {evidence_coverage}; no HTTP/correlated journal proof",
+        f"coverage: {evidence_coverage}; " + (
+            "same-call Core source-sync evidence; no per-item/HTTP proof"
+            if core_event_coverage == "cli_and_core_source_sync"
+            else "no HTTP/correlated journal proof"
+        ),
     ]
     if type(last_cli_phase) is str and last_cli_phase in _CLI_EVENT_PHASES:
         lines.append(f"last_cli_phase: {last_cli_phase}")
@@ -563,6 +630,7 @@ def write_sync_report(
     before: dict[str, object], after: dict[str, object],
     result: dict[str, object], started_at: str, exit_code: int,
     cli_events: list[dict[str, object]] | None = None,
+    core_events: list[dict[str, object]] | None = None,
 ) -> None:
     """Atomic non-overwriting ZIP; no raw HTTP captures or personal identifiers."""
     if not isinstance(destination, Path) or destination.name in {"", ".", ".."}:
@@ -595,6 +663,26 @@ def write_sync_report(
     events, events_truncated = _closed_cli_events(
         cli_events, run_ref=run_ref, outcome=safe_result,
     )
+    core_observations, core_truncated = _closed_core_events(
+        core_events, run_ref=run_ref, provider_id=account.provider_id,
+    )
+    # A Core terminal code may enrich the projected business result only if
+    # its exact source and terminal status agree with the returned Core value.
+    matching_terminals = [
+        event for event in core_observations if event["phase"] == "completed"
+        and event["status"] == safe_result["status"]
+    ]
+    if len(matching_terminals) == 1 and "code" not in safe_result:
+        safe_result["code"] = matching_terminals[0]["code"]
+        events[-1]["code"] = safe_result["code"]
+    # Keep CLI milestones before/after in their original order; insert Core
+    # observations at the synchronous source-sync boundary, never at an
+    # inferred timestamp from an unrelated task.
+    sync_end = next((
+        i for i, event in enumerate(events)
+        if event["phase"] == "sync" and event["status"] != "started"
+    ), len(events) - 1)
+    events[sync_end:sync_end] = core_observations
     cli_phases = [
         event["phase"] for event in events if event["phase"] in _CLI_EVENT_PHASES
     ]
@@ -623,8 +711,13 @@ def write_sync_report(
             and after.get("physical_verification") == "bounded_sha256_checked"
             else "canonical_sqlite_graph_without_filesystem"
         ),
-        "event_coverage": "cli_milestones_only",
+        "event_coverage": (
+            "cli_and_core_source_sync"
+            if matching_terminals else "cli_milestones_only"
+        ),
         "cli_events_truncated": events_truncated,
+        "core_events_truncated": core_truncated,
+        "core_source_sync_events": len(core_observations),
         "cli_last_phase": cli_phases[-1] if cli_phases else "not_observed",
         "cli_issue_phase": issue_phases[-1] if issue_phases else "none",
         "build_identity": identity,
@@ -634,6 +727,7 @@ def write_sync_report(
         evidence_coverage=manifest["evidence_coverage"],
         last_cli_phase=cli_phases[-1] if cli_phases else None,
         issue_cli_phase=issue_phases[-1] if issue_phases else None,
+        core_event_coverage=manifest["event_coverage"],
     )
     parts = {
         "manifest.json": _json_bytes(manifest),
