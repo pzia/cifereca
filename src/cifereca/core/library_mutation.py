@@ -266,6 +266,13 @@ def _materialize_to_identity_locked(
                 temp.unlink(missing_ok=True)
 
     recovered = checkpoint.recover() if checkpoint is not None and owned_copy is None else None
+    # An *already verified* historical B copy can carry the old generic
+    # 'shared' provider projection. Do not reassign that existing Placement
+    # to the donor's now-enriched provider just to repair a catalogue row.
+    recipient_provider = (
+        owned_copy[1].get("provider_id") or provider
+        if owned_copy is not None else provider
+    )
     if owned_copy:
         dest, existing = owned_copy
         if not is_bundle and os.path.samefile(src, dest):
@@ -278,7 +285,7 @@ def _materialize_to_identity_locked(
                 return {
                     "status": "unchanged", "path": str(dest),
                     "placement_id": existing["placement_id"],
-                    "target_identity_id": target_identity_id, "provider_id": provider,
+                    "target_identity_id": target_identity_id, "provider_id": recipient_provider,
                 }
             # Canonical publication survived, but its descriptive projection
             # did not. Repair it below using the SAME verified copy.
@@ -334,7 +341,7 @@ def _materialize_to_identity_locked(
             placement_meta["file_size"] = int(size_stat.st_size)
         new_placement_id = self.storage.placement_put({
             "artifact_id": artifact_id, "path": str(dest),
-            "identity_id": target_identity_id, "provider_id": provider,
+            "identity_id": target_identity_id, "provider_id": recipient_provider,
             "source_item_id": item_id, "state": "present",
             "last_seen_at": int(time.time()), "metadata": placement_meta,
         })
@@ -359,19 +366,19 @@ def _materialize_to_identity_locked(
             "title": source_entry.get("title") or src.stem,
             "author": source_entry.get("author"),
             "media_format": source_entry.get("media_format") or src.suffix.lstrip(".").lower(),
-            "identity_id": target_identity_id, "provider_id": provider, "item_id": item_id,
+            "identity_id": target_identity_id, "provider_id": recipient_provider, "item_id": item_id,
             "local_state": "local", "metadata": metadata,
         })
     else:
         indexed = self.catalog_index_path(
             dest, title=str(source_entry.get("title") or src.stem), item_id=item_id,
-            identity_id=target_identity_id, provider_id=provider,
+            identity_id=target_identity_id, provider_id=recipient_provider,
         )
         new_placement_id = indexed.get("placement_id") if type(indexed) is dict else None
     return {
         "status": status, "path": str(dest),
         "placement_id": new_placement_id,
-        "target_identity_id": target_identity_id, "provider_id": provider,
+        "target_identity_id": target_identity_id, "provider_id": recipient_provider,
     }
 
 
