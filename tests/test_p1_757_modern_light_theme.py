@@ -143,6 +143,7 @@ def test_all_v2_visual_selectors_are_window_scoped_without_global_token_override
         ".sidebar", ".book-row", ".login-card", ".sync-source-panel",
         ".book-tag", ".detail-title", ".page-title", ".facet-value",
         "button.suggested-action", "button:focus-visible",
+        "switch:checked", "progressbar progress", "scale highlight",
     ):
         assert surface in css
     assert "button.destructive-action" not in css
