@@ -511,9 +511,23 @@ class SynchronizationBrokerImpl:
             with self._numilog_consent_plans.lock:
                 self._numilog_consent_plans.entries.clear()
         else:
-            self.service.storage.metadata_set(
-                self._preference_key(source_id), "1" if enabled else "0",
-            )
+            # Legacy Kobo/BnF acquisition consent has a pinned generation
+            # distinct from this source enablement preference. Advance that
+            # existing generation atomically with each source ON/OFF change,
+            # so OFF->ON cannot revive an in-flight legacy GET. Unknown
+            # inventory-only providers have no legacy acquisition generation.
+            from .core.source_auto_consent_bridge import _consent_generation_key
+            from .core.source_sync_consent import scope_for_account
+            revision_key = _consent_generation_key(scope_for_account(account))
+            if revision_key is not None:
+                self.service.storage.metadata_set_with_revision(
+                    self._preference_key(source_id),
+                    "1" if enabled else "0", revision_key,
+                )
+            else:
+                self.service.storage.metadata_set(
+                    self._preference_key(source_id), "1" if enabled else "0",
+                )
         self._notify()
         return self._ref(account)
 
