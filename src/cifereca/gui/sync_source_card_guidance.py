@@ -18,10 +18,19 @@ def sync_source_card_guidance(source: object, alert: object) -> str:
     if (type(alert) is not tuple or len(alert) != 2
             or alert[0] not in {"error", "warning"}):
         return ""
-    if getattr(source, "enabled", None) is not True:
+    # Only explicit False attests OFF or a lost connection. A missing or
+    # malformed Core state must not be presented as a request to enable or
+    # reconnect; those actions may be inappropriate for this exact source.
+    enabled = getattr(source, "enabled", None)
+    if enabled is False:
         return "À faire : activer la source si souhaité."
-    if getattr(source, "connected", None) is not True:
+    if enabled is not True:
+        return "À faire : vérifier l’activation de cette source."
+    connected = getattr(source, "connected", None)
+    if connected is False:
         return "À faire : reconnecter ce compte."
+    if connected is not True:
+        return "À faire : vérifier la connexion de cette source."
     return "À faire : examiner le dernier cycle au survol."
 
 
