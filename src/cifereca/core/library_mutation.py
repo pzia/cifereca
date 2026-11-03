@@ -200,7 +200,13 @@ def _materialize_to_identity_locked(
     for row in self.storage.placements():
         meta = row.get("metadata") or {}
         if (row.get("identity_id") == target_identity_id
-                and row.get("provider_id") in (None, provider)
+                and (row.get("provider_id") in (None, provider)
+                     # A previously received copy may have been projected
+                     # as 'shared' when the donor's provider was unknown.
+                     # Exact transfer-origin evidence below still decides
+                     # reuse; the folder name alone never does.
+                     or (row.get("provider_id") == "shared"
+                         and Path(str(row.get("path") or "")).parent == dest_dir))
                 and (row.get("source_item_id") is None
                      or str(row.get("source_item_id") or "") == str(item_id or ""))
                 and row.get("artifact_id") == artifact_id
