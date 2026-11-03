@@ -190,7 +190,7 @@ def test_reconnect_same_account_without_scope_introspection_preserves_denial():
 
 
 @pytest.mark.parametrize("failed_stage", ["status", "account"])
-def test_failed_reconnect_revokes_active_session_without_losing_403_or_account(failed_stage):
+def test_failed_reconnect_keeps_delegation_denial_without_token_scope_proof(failed_stage):
     provider, fake = session({"id": "reader-alice"})
     try:
         assert provider.connect()[0].unique_id == "reader-alice"
@@ -209,7 +209,8 @@ def test_failed_reconnect_revokes_active_session_without_losing_403_or_account(f
         fake.fail_stage = None
         assert provider.connect()[0].unique_id == "reader-alice"
         assert provider.connected is True
-        assert provider._cifereca_delegation_forbidden is False
-        assert provider._cifereca_delegation_attempts_saved == 0
+        # /account alone cannot reauthorize a bearer-scoped delegation.
+        assert provider._cifereca_delegation_forbidden is True
+        assert provider._cifereca_delegation_attempts_saved == 7
     finally:
         provider.close()
