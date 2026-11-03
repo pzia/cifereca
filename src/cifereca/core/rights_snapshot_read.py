@@ -136,11 +136,15 @@ def read_account_rights_snapshot(service, account: Account, *,
                 and getattr(session, "provider_id", None) == scope.provider_id
                 and getattr(session, "credential_id", None) == scope.credential_id):
             return False
-        return (
-            storage.identity_for_connection(
-                scope.provider_id, scope.credential_id,
-            ) == scope.identity_id
-        )
+        # A connected credential may outlive a deleted or rebound upstream
+        # borrower. A connection-to-identity match alone must not authorize
+        # even the FIRST private inventory GET or another pagination page.
+        # Require the exact persisted borrower joined to the active connection
+        # on every pre/post-provider-read check, independently of session.accounts.
+        return storage.provider_scope_account_bound(
+            identity_id=scope.identity_id, provider_id=scope.provider_id,
+            credential_id=scope.credential_id, account_id=scope.account_id,
+        ) is True
 
     reader_kind = "optional_unavailable"
     try:
