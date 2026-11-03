@@ -79,3 +79,41 @@ def test_first_account_value_is_never_used_as_another_disabled_account_default(t
     assert _render(config, target, "second") == ""
     assert _render(config, {}, "new") == "https://descriptor.example"
     assert config.get("source_sync_consent") is None
+
+def test_legacy_global_value_requires_one_exact_configured_owner(tmp_path):
+    config = Config(tmp_path / "settings.json")
+    config.set("old_endpoint", "https://old-unscoped.example")
+    sole = {
+        "id": "sole", "provider": "future-provider", "identity_id": "default",
+        "enabled": False, "options": {},
+    }
+    other = {
+        "id": "other", "provider": "future-provider", "identity_id": "another",
+        "enabled": False, "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(sole)])
+    before = deepcopy(config.data)
+    assert _render(config, sole, "sole") == "https://old-unscoped.example"
+    assert _render(config, sole, "unrecorded") == "https://descriptor.example"
+    assert _render(config, {}, "new") == "https://descriptor.example"
+    assert config.data == before
+
+    # The old unscoped value has no proof of belonging to either account.
+    config.set("providers.accounts", [deepcopy(sole), deepcopy(other)])
+    before_multiple = deepcopy(config.data)
+    assert _render(config, sole, "sole") == "https://descriptor.example"
+    assert _render(config, other, "other") == "https://descriptor.example"
+    assert config.data == before_multiple
+    assert not config.path.exists()
+
+
+def test_legacy_global_value_never_leaks_between_provider_names(tmp_path):
+    config = Config(tmp_path / "settings.json")
+    config.set("old_endpoint", "https://provider-A-private.example")
+    row = {
+        "id": "same-id", "provider": "another-provider",
+        "enabled": False, "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(row)])
+    assert _render(config, row, "same-id") == "https://descriptor.example"
+    assert not config.path.exists()
