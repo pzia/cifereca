@@ -337,7 +337,8 @@ def sync_source_cycle_headline(source: object) -> str:
     known = {
         "success": "réussie", "partial": "partielle",
         "failed": "échec", "materialization_failed": "échec",
-        "blocked": "bloquée", "attention_required": "action nécessaire",
+        "blocked": "bloquée", "busy": "déjà en cours",
+        "attention_required": "action nécessaire",
         "interrupted": "interrompue", "cancelled": "annulée",
         # Core already exposes these closed materialization stop causes in the
         # phase detail; the short headline must not erase them as "unknown".
@@ -401,7 +402,8 @@ def sync_source_phase_summary(source: object) -> str:
         "idle": "Jamais exécutée", "running": "En cours",
         "success": "Réussie", "partial": "Partielle",
         "failed": "Échec", "cancelled": "Annulée",
-        "blocked": "Bloquée", "attention_required": "Action nécessaire",
+        "blocked": "Bloquée", "busy": "Déjà en cours",
+        "attention_required": "Action nécessaire",
         "interrupted": "Interrompue", "unknown": "État inconnu",
         "not_supported": "Non prise en charge",
         "materialization_failed": "Indisponible",
@@ -626,6 +628,7 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
             "failed": ("error", "échec — action nécessaire"),
             "materialization_failed": ("error", "échec — action nécessaire"),
             "blocked": ("error", "bloqué — action nécessaire"),
+            "busy": ("warning", "déjà en cours"),
             "attention_required": ("warning", "action nécessaire"),
             "interrupted": ("warning", "interrompu"),
             "partial": ("warning", "résultat partiel"),
@@ -669,6 +672,8 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
         candidates.append(("error", "Synchronisation : échec — action nécessaire"))
     elif status in {"blocked", "attention_required"}:
         candidates.append(("warning", "Synchronisation : action nécessaire"))
+    elif status == "busy":
+        candidates.append(("warning", "Synchronisation : déjà en cours"))
     elif status == "interrupted":
         # A non-finished run needs visibility even without provider details
         # or a phase projection. It must never launch a retry automatically.
@@ -740,6 +745,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         sync_label = prefix + (f" · {last_attempt}" if last_attempt else "")
     elif status == "blocked":
         sync_label = "Bloquée"
+    elif status == "busy":
+        sync_label = "Déjà en cours"
     elif status == "attention_required":
         sync_label = "Action nécessaire"
     elif status == "cancelled":
