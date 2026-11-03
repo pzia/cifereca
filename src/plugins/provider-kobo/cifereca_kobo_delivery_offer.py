@@ -171,9 +171,18 @@ def exact_kobo_offer_id(
         # own DRM fields disagree. The executor may read family/protected
         # separately, so a plausible raw_type must not override contradictory
         # nested/root flags to manufacture one "available" offer.
+        # KV v2.3.3 keeps Kobo's original DRMType as raw_type, while
+        # normalizing the semantic family separately. Real raw values for
+        # unprotected books include "None" and "DRMFree", not only the
+        # legacy synthetic "SignedNoDrm" spelling.
+        plain_raw = frozenset({
+            "SignedNoDrm", "None", "NoDrm", "DRMFree", "drmfree",
+        })
+        adobe_raw = frozenset({"AdobeDrm", "Adobe"})
         known_drm = {
-            "SignedNoDrm": (frozenset({"none"}), False),
-            "AdobeDrm": (frozenset({"adobe", "adobe_adept"}), True),
+            **{name: (frozenset({"none"}), False) for name in plain_raw},
+            **{name: (frozenset({"adobe", "adobe_adept"}), True)
+               for name in adobe_raw},
             "KDRM": (frozenset({"kobo_kdrm"}), True),
         }
         if raw_drm not in known_drm:
@@ -222,15 +231,31 @@ def exact_kobo_offer_id(
                         ("epub", "epub"),
                     }):
                 continue
-        elif len({v.strip().lower() for v in declared}) != 1:
-            continue
+        else:
+            # KVault distinguishes media_format (normalized, e.g. epub)
+            # from source_format (upstream wire label, e.g. EPUB3).
+            # Only explicitly known full-book source variants are equivalent.
+            # NEVER accept *_SAMPLE or unknown labels as a full purchase.
+            normalized_source = candidate.get("source_format", declared[0])
+            if type(normalized_source) is not str:
+                continue
+            accepted_formats = {
+                "epub": frozenset({"epub", "epub3", "epub3fl", "flepub"}),
+                "kepub": frozenset({"kepub"}),
+                "pdf": frozenset({"pdf"}),
+                "acsm": frozenset({"acsm"}),
+            }
+            if normalized_source.strip().casefold() not in accepted_formats.get(
+                fmt, frozenset()
+            ):
+                continue
         # A verified HTTPS acquisition link is not by itself proof of an
         # executable ADEPT/KDRM pipeline. Only conservative known paths.
         if (kind == "acsm" and handling == "adobe_adept"
-                and raw_drm == "AdobeDrm" and fmt == "acsm"):
+                and raw_drm in adobe_raw and fmt == "acsm"):
             pass
         elif (kind == "http" and handling == "http_plain"
-              and raw_drm == "SignedNoDrm" and fmt in {"epub", "pdf", "kepub"}):
+              and raw_drm in plain_raw and fmt in {"epub", "pdf", "kepub"}):
             pass
         elif (kind == "http" and handling == "kobo_kdrm"
               and raw_drm == "KDRM" and fmt in {"epub", "kepub"}
