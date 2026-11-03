@@ -97,36 +97,20 @@ def test_acsm_stages_preserve_admission_provider_adept_index_receipt_order():
     )
 
 
-def test_return_facades_keep_lock_and_distinct_mutation_seams():
-    for name, delegated in (
-        ("return_loan_prefer_adept", "self._return_loan_prefer_adept_guarded"),
-        ("return_digital", "self._return_digital_guarded"),
+def test_legacy_return_facades_reject_before_lock_or_delegate():
+    """Retired return commands must have no executable lock/provider seam."""
+    for name in (
+        "return_loan_prefer_adept", "_return_loan_prefer_adept_guarded",
+        "return_digital", "_return_digital_guarded",
+        "return_adept_acquisition", "_return_adept_acquisition",
     ):
         facade = _method(name)
-        calls = _calls(facade)
-        assert "InterProcessLock" in calls
-        assert delegated in calls
-        # The non-Paris return path intentionally bypasses the Paris lock.
-        # Verify that the *Paris* delegated call remains inside its lock.
-        guarded = [
-            node for node in ast.walk(facade)
-            if isinstance(node, ast.With) and any(
-                isinstance(item.context_expr, ast.Call)
-                and ast.unparse(item.context_expr.func) == "InterProcessLock"
-                for item in node.items
-            )
-        ]
-        assert len(guarded) == 1
-        assert delegated in _calls(guarded[0])
-    assert "return_adept_orchestrator.return_loan_prefer_adept" in _calls(
-        _method("_return_loan_prefer_adept_guarded")
-    )
-    assert "provider_loan_return.return_digital" in _calls(
-        _method("_return_digital_guarded")
-    )
-    assert "return_adept_orchestrator.return_loan_prefer_adept" not in _calls(
-        _method("return_digital")
-    )
+        assert isinstance(facade.body[1], ast.Raise)
+        expression = ast.unparse(facade.body[1])
+        assert "AttentionRequired" in expression
+        assert "loan_return_removed" in expression
+        assert _calls(facade) == ["AttentionRequired"]
+
 
 
 def test_unbound_paris_borrower_fails_before_provider_and_ledger(tmp_path, monkeypatch):
