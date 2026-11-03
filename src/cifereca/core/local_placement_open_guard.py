@@ -1,22 +1,22 @@
-"""P0 #2797/#2847: Core-only path scope for opening an existing local Placement.
+"""P0 #2797/#2847: no-follow local book open across profile-owned roots.
 
 The SQLite owner is not permission to follow a symlink to another profile.
-No provider calls, migrations, transfers, downloads, or filesystem mutation.
+Legacy/manual explicit Placement paths outside the configured library remain
+readable (no new root restriction). No provider I/O, transfer or file mutation.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
-
-from .library_audit_roots import configured_identity_roots
 
 
 def scoped_existing_placement_path(service, placement, *, identity_id: str) -> Path:
-    """Return a present path inside the exact configured owner root, no-follow.
+    """Resolve without symlinks and refuse another configured profile's roots.
 
-    Explicitly owned Placements may live in the library identity directory or
-    the separate configured Kobo identity/kobo root. A legacy unowned Placement
-    may live elsewhere under the default library root, but not inside a
-    registered *different* identity's directory.
+    The active library root and optional separate Kobo backup root may be
+    trusted mount points. Storage.placement_put already stores a resolved
+    absolute path; if its path later becomes a symlink, opening must fail
+    instead of silently changing its physical owner.
     """
     stored = placement.get("path")
     if type(stored) is not str or not stored:
@@ -24,63 +24,59 @@ def scoped_existing_placement_path(service, placement, *, identity_id: str) -> P
     raw = Path(stored).expanduser()
     if not raw.is_absolute() or ".." in raw.parts:
         raise ValueError("local_placement_path_unavailable")
-    rows = service.config.identities()
-    identity = next((row for row in rows if row.get("id") == identity_id), None)
-    if identity is None:
-        raise ValueError("local_placement_identity_unknown")
 
+    rows = service.config.identities()
+    if not any(row.get("id") == identity_id for row in rows):
+        raise ValueError("local_placement_identity_unknown")
     owner = placement.get("identity_id")
-    legacy = owner in (None, "")
-    if legacy:
-        # Only the first profile owns historical NULL identity placements.
+    if owner in (None, ""):
+        # An unowned v0.7 path belongs solely to the default identity. It
+        # must not become a synthetic shared right between two profiles.
         if not rows or rows[0].get("id") != identity_id:
             raise ValueError("local_placement_legacy_scope_unknown")
-        candidates = (service.library_dir(),)
-    else:
-        if owner != identity_id:
-            raise ValueError("local_placement_identity_mismatch")
-        candidates = configured_identity_roots(
-            service.config, identity_id,
-        )[identity_id]
+    elif owner != identity_id:
+        raise ValueError("local_placement_identity_mismatch")
 
-    for candidate in candidates:
-        try:
-            anchor = Path(candidate).expanduser()
-            if not legacy:
-                # The configured library/backup root itself may be a trusted
-                # mount symlink, but the appended identity component may not
-                # be redirected to another owner's physical directory.
-                owner_component = (
-                    anchor if anchor.name == identity["directory_name"]
-                    else anchor.parent
-                )
-                if (owner_component.name != identity["directory_name"]
-                        or owner_component.is_symlink()):
-                    continue
-            physical_anchor = anchor.resolve(strict=True)
-            relative = raw.relative_to(physical_anchor)
-            if not relative.parts:
+    try:
+        # Do NOT follow a substituted file or ancestor symlink after the
+        # Placement was indexed. A configured mount is still usable because
+        # the persisted path was canonicalized by Storage.placement_put.
+        resolved = raw.resolve(strict=True)
+        if resolved != raw:
+            raise ValueError("local_placement_symlink")
+
+        library_root = Path(service.library_dir()).expanduser().resolve(strict=False)
+        backup_setting = service.config.get("kobo_backup.directory", "")
+        if backup_setting and type(backup_setting) is not str:
+            raise ValueError("local_placement_backup_root_invalid")
+        if type(backup_setting) is str and backup_setting.strip():
+            backup_root = Path(os.path.expandvars(os.path.expanduser(
+                backup_setting.strip(),
+            )))
+            if not backup_root.is_absolute():
+                backup_root = library_root / backup_root
+            backup_root = backup_root.resolve(strict=False)
+        else:
+            backup_root = library_root
+
+        # An Alice Placement pointing to Bob's registered physical directory
+        # (by corrupt/imported SQLite, or after relocation) is not Alice's
+        # file. Unlike a blanket library-root restriction, this preserves
+        # historical explicitly owned local files on external drives.
+        for row in rows:
+            if row.get("id") == identity_id:
                 continue
-            if legacy:
-                # A NULL owner is assigned to the default identity only; it
-                # cannot adopt an existing other profile's directory.
-                others = {
-                    row.get("directory_name") for row in rows
-                    if row.get("id") != identity_id
-                }
-                if relative.parts[0] in others:
-                    continue
-            current = physical_anchor
-            for part in relative.parts:
-                current = current / part
-                if current.is_symlink():
-                    raise ValueError("local_placement_symlink")
-            resolved = raw.resolve(strict=True)
-            if resolved.is_relative_to(physical_anchor):
-                return resolved
-        except (OSError, ValueError, RuntimeError):
-            continue
-    raise ValueError("local_placement_path_out_of_scope")
+            other = row.get("directory_name")
+            if type(other) is not str or not other:
+                raise ValueError("local_placement_foreign_owner_unknown")
+            if (
+                resolved.is_relative_to(library_root / other)
+                or resolved.is_relative_to(backup_root / other / "kobo")
+            ):
+                raise ValueError("local_placement_foreign_owner_root")
+        return resolved
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("local_placement_path_unavailable") from exc
 
 
 __all__ = ["scoped_existing_placement_path"]
