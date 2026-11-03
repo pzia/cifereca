@@ -133,7 +133,7 @@ def test_existing_legacy_hardlink_from_this_placement_is_repaired(tmp_path):
 def test_dangling_destination_symlink_is_rejected_without_external_write(tmp_path):
     service = _service(tmp_path)
     src, placement = _source(service, tmp_path)
-    target = tmp_path / "EBooks" / "bob" / "local" / "Book.epub"
+    target = tmp_path / "EBooks" / "bob" / "shared" / "Book.epub"
     target.parent.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "external.epub"
     target.symlink_to(outside)
