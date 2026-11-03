@@ -59,7 +59,7 @@ def _authenticated_delegate_scope(status: Any) -> bool:
         return False
     # A scoped token alone is insufficient if no Kobo credentials are
     # available on the server to resolve the delegated recipe.
-    if status.get("acquisition_access") == "not_configured":
+    if status.get("acquisition_access") != "configured":
         return False
     # Future explicit scope claims can only narrow, never expand, the
     # current capability grant. Ignore unfiltered capability_details.
