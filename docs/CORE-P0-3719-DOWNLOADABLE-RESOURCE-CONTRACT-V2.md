@@ -168,6 +168,22 @@ C'est un **opt-in distinct** : priorité sur l'extension guarded précédente,
 uniquement avec un consentement Core vivant. Les ABI v1/v2 des autres providers
 ne changent pas. Tout échec ferme le parcours, **sans repli**.
 
+**Route mixte (Core #3719).** Lorsqu'une même session propose à la fois
+des livraisons directes HTTPS/ACSM et des offres DRM, elle peut ajouter le
+classificateur local facultatif
+`downloadable_selected_delivery_requires_runtime(account, *,
+edition_id, resource_id, kind, branch, selected_offer_id) -> bool`.
+Il doit être **pur**, sans I/O ni stockage de droits, et décider uniquement à
+partir de l'offre opaque **exacte** qui a été attestée puis sera revérifiée
+par le provider. `True` impose la méthode `runtime_guarded` et sa preuve
+d'exécution Core ; `False` exige la méthode distincte
+`downloadable_selected_delivery_candidate_guarded`, avec contrôle vivant
+du consentement pendant HTTPS, puis ADEPT Core pour une réponse ACSM.
+Classificateur absent : comportement précédent strict, runtime obligatoire.
+Exception, type non booléen ou méthode guarded absente : **refus sans repli**
+sur l'ABI non gardée. Le Core ne connaît aucun nom de fournisseur pour choisir
+la route et le DTO candidat ne peut pas désactiver l'obligation runtime.
+
 Le Core possède seul `execute_runtime(request)`, fermeture **à usage unique**,
 valide pour cette tentative exacte sous verrou. Elle exige une recette typée,
 une sortie EPUB/PDF neuve dans le dossier de tentative Core, `ok=True`,

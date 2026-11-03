@@ -191,3 +191,103 @@ def test_runtime_guarded_cannot_swap_bytes_at_witnessed_path(source, tamper):
     assert db.placements() == [] and db.entitlements() == []
     assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
     assert calls == ["offer", "runtime"]
+
+
+def test_runtime_capable_session_can_use_guarded_direct_offer_without_drm(
+    source,
+):
+    """A direct HTTP/PDF offer must not be mislabeled a failed DRM runtime."""
+    service, db, root, calls, _broker = source
+    change(source, True)
+    routes = []
+
+    def requires_runtime(account, *, edition_id, resource_id, kind,
+                         branch, selected_offer_id):
+        routes.append(selected_offer_id)
+        assert account is service.account
+        return False
+
+    def direct(_account, *, admission_current, edition_id, resource_id,
+               kind, branch, selected_offer_id, target_dir,
+               explicit_user_action):
+        assert admission_current() is True
+        assert explicit_user_action is True
+        calls.append("direct")
+        file = target_dir / "direct.pdf"
+        file.write_bytes(BYTES)
+        return DeliveryCandidate(
+            service.resource_snapshot.resources[0].source,
+            selected_offer_id, file,
+        )
+
+    def unexpected_runtime(*_args, **_kwargs):
+        pytest.fail("a direct offer must not execute Core DRM runtime")
+
+    service.session.downloadable_selected_delivery_requires_runtime = requires_runtime
+    service.session.downloadable_selected_delivery_candidate_guarded = direct
+    service.session.downloadable_selected_delivery_candidate_runtime_guarded = unexpected_runtime
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert len(db.placements()) == 1
+    assert Path(db.placements()[0]["path"]).read_bytes() == BYTES
+    assert calls == ["offer", "direct"]
+    assert len(routes) == 1
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["present_attested"] == 1
+    assert second["canonical_execution"]["downloaded"] == 0
+    assert calls == ["offer", "direct"]
+
+
+@pytest.mark.parametrize("route", ("invalid", "exception", "unguarded"))
+def test_runtime_route_classifier_never_downgrades_to_legacy_candidate(
+    source, route,
+):
+    service, db, root, calls, _broker = source
+    change(source, True)
+
+    def classify(*_args, **_kwargs):
+        if route == "exception":
+            raise RuntimeError("synthetic private classifier failure")
+        return [] if route == "invalid" else False
+
+    def no_runtime(*_args, **_kwargs):
+        pytest.fail("unqualified runtime route must not acquire bytes")
+
+    service.session.downloadable_selected_delivery_requires_runtime = classify
+    service.session.downloadable_selected_delivery_candidate_runtime_guarded = no_runtime
+    if route != "unguarded":
+        service.session.downloadable_selected_delivery_candidate_guarded = no_runtime
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["failed"] == 1
+    assert db.placements() == [] and db.entitlements() == []
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
+    assert calls == ["offer"]
+
+
+def test_exact_runtime_route_still_requires_core_execution_proof(source):
+    service, db, root, calls, _broker = source
+    change(source, True)
+
+    service.session.downloadable_selected_delivery_requires_runtime = (
+        lambda *_args, **_kwargs: True
+    )
+
+    def skip_runtime(_account, *, admission_current, execute_runtime,
+                     edition_id, resource_id, kind, branch, selected_offer_id,
+                     target_dir, explicit_user_action):
+        assert admission_current() is True
+        calls.append("runtime")
+        forged = target_dir / "unattested.pdf"
+        forged.write_bytes(BYTES)
+        return DeliveryCandidate(
+            service.resource_snapshot.resources[0].source,
+            selected_offer_id, forged,
+        )
+
+    service.session.downloadable_selected_delivery_candidate_runtime_guarded = skip_runtime
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["failed"] == 1
+    assert db.placements() == [] and db.entitlements() == []
+    assert calls == ["offer", "runtime"]
