@@ -166,17 +166,17 @@ def test_cancellation_is_not_swallowed_or_followed_by_sibling_refresh(
             )
 
         visited = []
-        def interrupt(self, source_id, request=None, control=None, *, _inventory_only=False):
-            # Scheduled work must retain cancellation semantics when routed
-            # through the restrictive internal source Sync.
-            assert _inventory_only is True
+        def interrupt(self, source_id, request=None, control=None, *, inventory_only=False):
+            # Scheduled work retains cancellation through the private broker
+            # path, never through the public source Sync ABI.
+            assert inventory_only is True
             visited.append(source_id)
             if failure == "raised_cancelled":
                 raise Cancelled("cancelled by user")
             control.cancel()
             return SyncResult(ok=True, changed=1)
 
-        monkeypatch.setattr(SynchronizationBrokerImpl, "synchronize_source", interrupt)
+        monkeypatch.setattr(SynchronizationBrokerImpl, "_synchronize_source_impl", interrupt)
         control = _CancelControl()
         with pytest.raises(Cancelled):
             broker.synchronize_scheduled_inventory("alice", "startup", control=control)
