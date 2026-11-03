@@ -26,7 +26,7 @@ def test_explicit_empty_value_is_not_resurrected_from_legacy_or_descriptor():
     }
     editor, _, _, _ = _render(
         "future-provider", data=saved, descriptor_options=[OPTION],
-        provider_values={("future-provider", "endpoint"): "https://provider.example"},
+        provider_values={("future-provider", "endpoint", "future-account"): "https://provider.example"},
         legacy_values={"deprecated.endpoint": "https://global.example"},
     )
     assert editor["option_fields"]["endpoint"].text == ""
@@ -79,8 +79,9 @@ def test_malformed_explicit_value_is_not_hidden_by_plausible_legacy_default(malf
 
 def test_missing_option_still_uses_declared_legacy_fallback_in_correct_order():
     from_provider, _, _, _ = _render(
-        "future-provider", descriptor_options=[OPTION],
-        provider_values={("future-provider", "endpoint"): "https://provider.example"},
+        "future-provider", data={"id": "future-account", "options": {}},
+        descriptor_options=[OPTION],
+        provider_values={("future-provider", "endpoint", "future-account"): "https://provider.example"},
         legacy_values={"deprecated.endpoint": "https://global.example"},
     )
     assert from_provider["option_fields"]["endpoint"].text == "https://provider.example"
