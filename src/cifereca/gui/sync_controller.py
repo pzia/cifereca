@@ -1720,7 +1720,34 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     def ok(summary: dict[str, Any]) -> None:
         if getattr(self, "_closed", False):
             return
-        self._render_dashboard(); self._populate_loans(self.service.last_loans); self.refresh_library(False); self.refresh_recent()
+        from time import perf_counter
+
+        def record_gtk_phase(phase: str, started: float) -> None:
+            # This callback runs on GTK. Count only the local model/render
+            # cost, not provider HTTP, background Core work, or async Library
+            # refreshes scheduled below. UiPerfMonitor bounds the samples.
+            record = getattr(getattr(self, "ui_perf", None), "record_phase", None)
+            if not callable(record):
+                return
+            try:
+                record(
+                    "opening-sync", phase, (perf_counter() - started) * 1000,
+                    trigger=("user" if control is not None else
+                             "maintenance" if deep else "automatic"),
+                    outcome="success",
+                )
+            except Exception:
+                # Optional performance capture may never break Sync delivery.
+                pass
+
+        started = perf_counter()
+        self._render_dashboard()
+        record_gtk_phase("model_update", started)
+        started = perf_counter()
+        self._populate_loans(self.service.last_loans)
+        record_gtk_phase("render", started)
+        self.refresh_library(False)
+        self.refresh_recent()
         acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
         attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
         errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
