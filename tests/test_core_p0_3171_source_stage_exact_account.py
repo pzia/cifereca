@@ -8,6 +8,7 @@ import pytest
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register
+from tests.test_core_p0_3171_canonical_sync_stage import rig
 
 
 def test_source_reference_stage_exact_account_amid_many_siblings(tmp_path):
