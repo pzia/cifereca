@@ -81,7 +81,8 @@ def test_light_mode_uses_one_additive_scoped_overlay_for_all_core_and_plugin_pag
     install_css(window, Gtk=gtk, Gdk=gdk, Adw=adw)
     assert len(providers) == 3  # legacy Core installer keeps its contract
     assert manager.calls == ["notify::dark"]
-    assert registrations[-1][1] is not providers[-1]  # no V2 double install
+    assert registrations[-1][1] is providers[-1]  # base CSS still reinstalls
+    assert sum(item.css == MODERN_LIGHT_CSS for item in providers) == 1
 
 
 def test_dark_mode_never_receives_the_v2_light_palette_even_when_changed_live():
