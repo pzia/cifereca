@@ -61,7 +61,8 @@ def test_editing_second_account_or_creating_new_never_imports_first_account_url(
         "https://legacy-global.example" if has_global else "https://descriptor.example"
     )
     assert _render(config, second, "second") == fallback
-    assert _render(config, {}, "third-new") == fallback
+    # New sources are never initialized from a retired global value.
+    assert _render(config, {}, "third-new") == "https://descriptor.example"
     assert config.data == before
     assert not config.path.exists()
 
