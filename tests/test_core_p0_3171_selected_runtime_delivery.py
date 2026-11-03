@@ -291,3 +291,25 @@ def test_exact_runtime_route_still_requires_core_execution_proof(source):
     assert result["canonical_execution"]["failed"] == 1
     assert db.placements() == [] and db.entitlements() == []
     assert calls == ["offer", "runtime"]
+
+
+
+@pytest.mark.parametrize("method", (
+    "downloadable_selected_delivery_candidate_guarded",
+    "downloadable_selected_delivery_candidate_runtime_guarded",
+))
+def test_declared_broken_guarded_abi_never_falls_back_to_unchecked_get(
+    source, method,
+):
+    """A malformed live-consent opt-in must not select the legacy candidate."""
+    service, db, root, calls, _broker = source
+    change(source, True)
+    assert callable(service.session.downloadable_selected_delivery_candidate)
+    setattr(service.session, method, "malformed-provider-method")
+
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["failed"] == 1
+    assert db.placements() == [] and db.entitlements() == []
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
+    assert calls == ["offer"]

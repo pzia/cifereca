@@ -66,11 +66,22 @@ def complete_selected_delivery(
     # callback, which it MUST compose at every external GET hop and chunk.
     guarded_name = "downloadable_selected_delivery_candidate_guarded"
     runtime_guarded_name = "downloadable_selected_delivery_candidate_runtime_guarded"
+    guarded_reader = getattr_static(session, guarded_name, None)
+    runtime_reader = getattr_static(session, runtime_guarded_name, None)
+    # A declared opt-in with an invalid ABI is not an absent opt-in. Never
+    # silently downgrade its source-revision-pinned GET to an older, unguarded
+    # candidate method when a provider update is incomplete or malformed.
+    # Passive discovery must not evaluate provider properties or issue I/O.
+    if callable(consent_still_current) and any(
+        value is not None and not callable(value)
+        for value in (guarded_reader, runtime_reader)
+    ):
+        raise ValueError("canonical_delivery_guarded_contract_invalid")
     runtime_guarded = (callable(consent_still_current)
-                       and callable(getattr_static(session, runtime_guarded_name, None)))
+                       and callable(runtime_reader))
     guarded = (runtime_guarded or
                (callable(consent_still_current)
-                and callable(getattr_static(session, guarded_name, None))))
+                and callable(guarded_reader)))
     reader_name = (
         runtime_guarded_name if runtime_guarded else
         guarded_name if guarded else
