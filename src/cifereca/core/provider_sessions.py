@@ -898,7 +898,16 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     self.current_identity = self.identity_by_id(self.current_account.identity_id) or self.current_identity
     self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
     self.primary = self.current_account
-    loans = self.refresh_identity_loans(force=True)
+    if caller_category == "startup/connect_configured" and source_scope is None:
+        # GTK queues the opening Sync as soon as this first connection
+        # completes. It makes its own fresh, validated loan/rights reads.
+        # A forced loan refresh here would duplicate the two Paris ListLoans
+        # branches (and the BnF activity read) before that canonical cycle.
+        # disconnect_configured() already revoked the previous UI loans.
+        # Keep explicit reconnects and targeted CLI connections unchanged.
+        loans = []
+    else:
+        loans = self.refresh_identity_loans(force=True)
     return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors, "connection_failures": public_failures}
 
 
