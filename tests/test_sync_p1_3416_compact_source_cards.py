@@ -21,8 +21,6 @@ from tests.test_core_ui_1347_sync_action_scope import (
      "examiner le dernier cycle"),
     (dict(status="failed", connected=False, enabled=True),
      "reconnecter ce compte"),
-    (dict(status="blocked", connected=True, enabled=False),
-     "activer la source"),
     (dict(status="partial", connected=True, enabled=True),
      "examiner le dernier cycle"),
 ])
@@ -45,6 +43,21 @@ def test_problem_guidance_is_source_scoped_and_actionable(fields, expected):
 def test_no_problem_never_adds_fake_repair_action(source):
     assert sync_source_card_guidance(source, None) == ""
     assert sync_source_card_guidance(source, ("info", "information")) == ""
+
+
+def test_explicit_off_hides_historical_blockage_from_current_attention():
+    source = _source(
+        provider_id="future-provider", enabled=False, connected=True,
+        status="blocked",
+    )
+    assert sync_source_attention(source) is None
+    assert sync_source_card_guidance(source, None) == ""
+    window, _, _, _, _ = _fixture(sources=[source])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.subtitle.startswith("Désactivée · aucune synchronisation attendue")
+    assert "activer la source" not in row.subtitle.casefold()
+    assert "Synchronisation : Désactivée" in row.tooltip
+
 
 
 def test_untrusted_alert_or_provider_text_never_becomes_advice():
