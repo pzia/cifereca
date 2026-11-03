@@ -131,20 +131,13 @@ def return_preflight_code(exc: BaseException) -> str:
     return "loan_return_borrower_unproven"
 
 
-# LibraryService retains the shared loan-operation lock. Dependencies and the
-# historical public guard helpers are imported/injected by its facade at call
-# time; the mutation/checkpoint/verification body below keeps its original order.
+# Retired mutation helper: kept importable only to reject historical callers.
+# Its non-mutating receipt/status projection remains available above.
 def return_loan_prefer_adept(
     self, loan: Any, *, uuid, return_ref, adept_return_key, public_state,
     AttentionRequired, _TRACE_LOG,
 ) -> dict[str, Any]:
-    """Adobe-first, then Paris inventory; never automatically send PNB POST.
-
-    Durable claim is written *before* ADEPT. A retry, double-click or
-    restart only reads ADEPT/Paris inventories: Adobe is never re-mutated.
-    """
-
-    """Retired Adobe-first return cannot claim, fetch or mutate a loan."""
+    """Reject the obsolete Adobe-first mutation before any provider access."""
     raise AttentionRequired(
         "Restitution volontaire retirée de Cifereca.",
         code="loan_return_removed",
