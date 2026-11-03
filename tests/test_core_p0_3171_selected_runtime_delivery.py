@@ -11,6 +11,8 @@ import pytest
 
 from cifereca.core.sync_coordination import synchronize_account_source
 from cifereca.plugin_api.downloadable_resources import DeliveryCandidate
+from tests.test_core_p0_3171_canonical_sync_stage import rig
+from tests.test_core_p0_3719_v2_execution import v2
 from tests.test_core_p0_3719_source_sync_consent import source, change
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
 
