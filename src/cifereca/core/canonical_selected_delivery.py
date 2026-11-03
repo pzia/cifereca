@@ -189,6 +189,8 @@ def complete_selected_delivery(
     # as B. Legacy providers never see this callback.
     runtime_used = [False]
     runtime_artifact_path: list[Path | None] = [None]
+    runtime_artifact_digest: list[str | None] = [None]
+    runtime_artifact_stat: list[os.stat_result | None] = [None]
 
     def execute_selected_runtime(request):
         if runtime_used[0] or not admission_current():
@@ -221,7 +223,18 @@ def complete_selected_delivery(
         # A successful runtime call witnesses exactly this produced target,
         # never any other bytes the plugin might return from the same staging
         # directory. The proof stays ephemeral and cannot be forged by a DTO.
+        # The provider still controls its callback after the runtime returns.
+        # Bind the proof to the actual bytes and inode produced NOW, not only
+        # to a path that the provider can overwrite before returning a DTO.
+        witnessed = os.stat(produced, follow_symlinks=False)
+        if not stat.S_ISREG(witnessed.st_mode) or witnessed.st_size <= 0:
+            raise ValueError("canonical_delivery_runtime_artifact_invalid")
+        digest = LocalCatalog.sha256(produced)
+        if not _same_file(produced, witnessed):
+            raise ValueError("canonical_delivery_runtime_artifact_changed")
         runtime_artifact_path[0] = produced
+        runtime_artifact_stat[0] = witnessed
+        runtime_artifact_digest[0] = digest
         return result
     # The staging namespace belongs to this failed attempt until the Core
     # issues a completed delivery receipt. Failed GET, invalid candidates and
@@ -274,6 +287,12 @@ def complete_selected_delivery(
         if runtime_guarded and (runtime_artifact_path[0] is None
                                 or received != runtime_artifact_path[0]):
             raise ValueError("canonical_delivery_runtime_artifact_mismatch")
+        if runtime_guarded and (
+            runtime_artifact_stat[0] is None
+            or not _same_file(received, runtime_artifact_stat[0])
+            or LocalCatalog.sha256(received) != runtime_artifact_digest[0]
+        ):
+            raise ValueError("canonical_delivery_runtime_artifact_changed")
         if received.stat().st_size <= 0:
             raise ValueError("canonical_delivery_candidate_empty")
         kind = detect_artifact_format(received)
@@ -334,6 +353,11 @@ def complete_selected_delivery(
                 or inspection.protected is True or not valid):
             raise ValueError("canonical_delivery_final_invalid")
         digest = LocalCatalog.sha256(final)
+        if (runtime_guarded and (
+            not _same_file(final, runtime_artifact_stat[0])
+            or digest != runtime_artifact_digest[0]
+        )):
+            raise ValueError("canonical_delivery_runtime_artifact_changed")
         if not _same_file(final, before) or not current():
             raise ValueError("canonical_delivery_final_changed")
         if not physical_owner_unique():
