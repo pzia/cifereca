@@ -44,6 +44,15 @@ class Storage:
     def metadata_set(self, key, value):
         import json
         self.values[key] = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+    def metadata_set_with_revision(self, key, value, revision_key):
+        # In-memory contract double. SQLite transactional rollback and epoch
+        # monotonicity are exercised by the dedicated real-Storage P0 tests.
+        from secrets import token_hex
+        if type(key) is not str or type(revision_key) is not str or key == revision_key:
+            raise ValueError("invalid_acquisition_policy_revision")
+        if value not in ("0", "1"):
+            raise ValueError("invalid_acquisition_policy_revision")
+        self.values.update({revision_key: token_hex(16), key: value})
     def artifacts(self): return []
 
 
