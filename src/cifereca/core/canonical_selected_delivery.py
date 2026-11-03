@@ -65,9 +65,14 @@ def complete_selected_delivery(
     # unchanged; only a guarded producer receives a live Core admission
     # callback, which it MUST compose at every external GET hop and chunk.
     guarded_name = "downloadable_selected_delivery_candidate_guarded"
-    guarded = (callable(consent_still_current)
-               and callable(getattr_static(session, guarded_name, None)))
+    runtime_guarded_name = "downloadable_selected_delivery_candidate_runtime_guarded"
+    runtime_guarded = (callable(consent_still_current)
+                       and callable(getattr_static(session, runtime_guarded_name, None)))
+    guarded = (runtime_guarded or
+               (callable(consent_still_current)
+                and callable(getattr_static(session, guarded_name, None))))
     reader_name = (
+        runtime_guarded_name if runtime_guarded else
         guarded_name if guarded else
         "downloadable_selected_delivery_candidate"
         if getattr_static(session, "downloadable_selected_delivery_candidate", None) is not None
@@ -177,6 +182,41 @@ def complete_selected_delivery(
     attempt.mkdir(mode=0o700)
     created = os.stat(attempt, follow_symlinks=False)
     attempt_inode = (created.st_dev, created.st_ino)
+
+    # Optional, provider-neutral Core runtime bridge. An adapter may supply
+    # an opaque DRM recipe, but only this live, already-admitted operation
+    # can execute it. Neither the recipe nor the runtime result is persisted
+    # as B. Legacy providers never see this callback.
+    runtime_used = [False]
+
+    def execute_selected_runtime(request):
+        if runtime_used[0] or not admission_current():
+            raise ValueError("canonical_delivery_runtime_admission_changed")
+        if (type(request) is not dict or request.get("schema_version") != 2
+                or type(request.get("source")) is not dict
+                or request["source"].get("type") not in ("kobo", "acsm")
+                or type(request.get("destination")) is not str):
+            raise ValueError("canonical_delivery_runtime_recipe_invalid")
+        destination = Path(request["destination"])
+        # No plugin-selected target outside the exact Core-owned attempt.
+        # No overwrite of an already-existing candidate or unrelated file.
+        if (not destination.is_absolute() or destination.parent != attempt
+                or destination.suffix.casefold() not in (".epub", ".pdf")
+                or destination.is_symlink() or destination.exists()
+                or type(request.get("format")) is not str
+                or request["format"].casefold() != destination.suffix[1:].casefold()):
+            raise ValueError("canonical_delivery_runtime_target_invalid")
+        runtime_used[0] = True
+        result = service.execute_acquisition_request(request)
+        if not admission_current():
+            raise ValueError("canonical_delivery_runtime_admission_changed")
+        if (type(result) is not dict or type(result.get("artifact")) is not dict
+                or type(result["artifact"].get("path")) is not str):
+            raise ValueError("canonical_delivery_runtime_result_invalid")
+        produced = _physical_target(Path(result["artifact"]["path"]), root, directory)
+        if produced != destination.resolve(strict=True):
+            raise ValueError("canonical_delivery_runtime_artifact_foreign")
+        return result
     # The staging namespace belongs to this failed attempt until the Core
     # issues a completed delivery receipt. Failed GET, invalid candidates and
     # rejected ADEPT results must not leave signed ACSM/partial bytes behind.
@@ -189,18 +229,21 @@ def complete_selected_delivery(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
                 "selected_offer_id": offer.delivery_offer_id}
-               if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}
+               if reader_name in {"downloadable_selected_delivery_candidate", guarded_name,
+                                  runtime_guarded_name}
                else {"right_id": source.right_id,
                      "delivery_offer_id": offer.delivery_offer_id}),
             kind=source.kind, branch=source.branch,
             target_dir=attempt, explicit_user_action=True,
             **({"admission_current": admission_current} if guarded else {}),
+            **({"execute_runtime": execute_selected_runtime} if runtime_guarded else {}),
         )
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
         if not physical_owner_unique():
             raise ValueError("canonical_delivery_profile_directory_ambiguous")
-        if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}:
+        if reader_name in {"downloadable_selected_delivery_candidate", guarded_name,
+                           runtime_guarded_name}:
             expected = SourceReference(
                 scope, source.branch, source.edition_id, source.right_id, source.kind,
             )
