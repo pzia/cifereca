@@ -213,3 +213,82 @@ def test_installed_reference_provider_v2_receives_epub_then_restarts_without_get
         assert db.placements() == placements and refs(db)[1] == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('reenable', [False, True])
+def test_installed_reference_guarded_off_on_during_staging_never_publishes(
+    v2, monkeypatch, reenable,
+):
+    """#3719: real installed provider + real SQLite policy + Core A→B, no fake GET."""
+    from types import SimpleNamespace
+    from cifereca.brokers import SynchronizationBrokerImpl
+    from cifereca.core.source_convergence import SourceKey
+    from tests.test_core_p0_3171_atomic_publication_v14 import register
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] /
+                                   'src' / 'plugins' / 'provider-reference'))
+    from cifereca_reference import ReferenceSession
+
+    service, db, root, _calls = v2
+    session = ReferenceSession(
+        credential_id='reference-card', label='Offline',
+        credentials={}, options={'accounts': 'one'},
+    )
+    account = session.connect()[0]
+    account.identity_id = 'A'
+    session.identity_broker = SimpleNamespace(accounts=lambda identity_id=None: (
+        SimpleNamespace(
+            scope_version=2, provider_id='reference',
+            credential_id='reference-card', account_id=account.unique_id,
+            identity_id='A',
+        ),
+    ))
+    session._resources = tuple(
+        row for row in session._resources if row.edition_id == 'epub-002'
+    )
+    register(db, 'A', 'reference', 'reference-card', account=account.unique_id)
+    service.account = account
+    service.accounts = [account]
+    service.session = session
+    service._sessions = {service._session_key('reference', 'reference-card'): session}
+    snapshot = session.downloadable_resource_snapshot(account)
+    assert len(snapshot.resources) == 1 and snapshot.resources[0].right is None
+    ref = snapshot.resources[0].source
+    service.source = SourceKey(
+        ref.scope, ref.edition_id, ref.resource_id, ref.kind, ref.branch,
+    )
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    try:
+        on = broker.set_source_sync_consent(
+            sid, enabled=True, expected_revision=None,
+        )
+        assert on['enabled'] is True
+        transitions = []
+
+        def revoke_mid_delivery():
+            off = broker.set_source_sync_consent(
+                sid, enabled=False, expected_revision=on['revision'],
+            )
+            transitions.append(off['revision'])
+            if reenable:
+                again = broker.set_source_sync_consent(
+                    sid, enabled=True, expected_revision=off['revision'],
+                )
+                assert again['enabled'] is True
+                assert again['revision'] != on['revision']
+                transitions.append(again['revision'])
+
+        # Deterministically revoke after Core has authorized the exact offer,
+        # before the provider writes the first byte to the private staging dir.
+        session._before_write = revoke_mid_delivery
+        result = synchronize_account_source(service, account)
+        assert result['canonical_execution']['downloaded'] == 0
+        assert result['status'] == 'partial'
+        assert session._delivery_calls == 1
+        assert len(transitions) == (2 if reenable else 1)
+        assert refs(db)[1] == 0 and db.placements() == []
+        assert db.acquisitions() == []
+        assert list((root / 'A' / '.canonical-delivery').glob('run-*')) == []
+    finally:
+        session.close()
