@@ -642,6 +642,31 @@ def _opening_sync_covers_visible_accounts(self) -> bool:
         return False
 
 
+def _record_configured_connect_phase(logger, attempt, phase, started, outcome):
+    """Closed wall timing of one configured provider, not an HTTP timer.
+
+    Connect may include several supplier requests or local work. An
+    operation_ref links the phase to the existing diagnostic attempt without
+    serializing the account, credential, request or exception payload.
+    """
+    if phase not in {"create_session", "session_connect", "account_registration"}:
+        return
+    if outcome not in {"returned", "raised"}:
+        return
+    try:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if not 0 <= elapsed_ms <= 600_000:
+            return
+        logger.info(
+            "EVENT provider connect_phase operation_ref=%s provider_id=%s "
+            "phase=%s outcome=%s duration_ms=%s",
+            attempt.operation_ref, attempt.provider_id, phase, outcome,
+            elapsed_ms,
+        )
+    except Exception:
+        pass  # optional telemetry cannot change provider connection semantics
+
+
 def connect_configured(self, *, logger, caller_category: str = "other",
                        source_scope: tuple[str, str, str] | None = None) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
@@ -824,36 +849,71 @@ def connect_configured(self, *, logger, caller_category: str = "other",
         session = None
         invoked = False
         try:
-            session = plugin.create_session(
-                credential_id=credential_id,
-                label=str(row.get("label") or plugin.descriptor.display_name),
-                credentials=dict(row.get("credentials") or {}),
-                options=dict(row.get("options") or {}),
-                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-            )
+            create_started = time.monotonic()
+            create_returned = False
+            try:
+                session = plugin.create_session(
+                    credential_id=credential_id,
+                    label=str(row.get("label") or plugin.descriptor.display_name),
+                    credentials=dict(row.get("credentials") or {}),
+                    options=dict(row.get("options") or {}),
+                    config=self.config, storage=self.storage,
+                    diagnostics=self.diagnostics,
+                )
+                create_returned = True
+            finally:
+                _record_configured_connect_phase(
+                    logger, attempt, "create_session", create_started,
+                    "returned" if create_returned else "raised",
+                )
             logger.info("TRACE provider connect begin kind=configured")
             invoked = True
             attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
-            accounts = session.connect()
+            connect_started = time.monotonic()
+            connect_returned = False
+            try:
+                accounts = session.connect()
+                connect_returned = True
+            finally:
+                _record_configured_connect_phase(
+                    logger, attempt, "session_connect", connect_started,
+                    "returned" if connect_returned else "raised",
+                )
             if getattr(session, "connected", None) is not True:
                 raise ProviderConfigurationError("provider_not_connected")
             logger.info("TRACE provider connect end account_count=%s dt=%.3fs", len(accounts), time.monotonic()-item_started)
-            self._sessions[key] = session
-            connection_id = self.storage.provider_connection_put({
-                "identity_id": identity_id, "provider_id": provider_id, "credential_id": credential_id,
-                "label": str(row.get("label") or plugin.descriptor.display_name), "enabled": True,
-            })
-            for account in accounts:
-                account.identity_id = identity_id
-                self.storage.provider_account_put({
-                    "connection_id": connection_id, "identity_id": identity_id, "provider_id": provider_id,
-                    "credential_id": credential_id, "account_id": account.unique_id,
-                    "label": account.display_name or ("Compte principal" if account.is_primary else "Compte lié"),
-                    "is_primary": account.is_primary,
-                    "metadata": {"barcode": account.barcode},
+            registration_started = time.monotonic()
+            registration_returned = False
+            try:
+                self._sessions[key] = session
+                connection_id = self.storage.provider_connection_put({
+                    "identity_id": identity_id, "provider_id": provider_id,
+                    "credential_id": credential_id,
+                    "label": str(row.get("label") or plugin.descriptor.display_name),
+                    "enabled": True,
                 })
-            all_accounts.extend(accounts)
-            connected.append(key)
+                for account in accounts:
+                    account.identity_id = identity_id
+                    self.storage.provider_account_put({
+                        "connection_id": connection_id, "identity_id": identity_id,
+                        "provider_id": provider_id,
+                        "credential_id": credential_id,
+                        "account_id": account.unique_id,
+                        "label": account.display_name or (
+                            "Compte principal" if account.is_primary else "Compte lié"
+                        ),
+                        "is_primary": account.is_primary,
+                        "metadata": {"barcode": account.barcode},
+                    })
+                all_accounts.extend(accounts)
+                connected.append(key)
+                registration_returned = True
+            finally:
+                _record_configured_connect_phase(
+                    logger, attempt, "account_registration",
+                    registration_started,
+                    "returned" if registration_returned else "raised",
+                )
             attempt.emit(self.diagnostics, "terminal", "success", "connected")
             _publish_connection_success(
                 self.diagnostics, self.registry, provider_id,
