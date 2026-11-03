@@ -62,3 +62,35 @@ def test_empty_primary_borrower_and_disabled_connection(tmp_path):
             persist_attested_source_references(storage, snapshot)
     finally:
         storage.close()
+
+
+def test_source_reference_stage_rejects_shared_physical_profile_directory(tmp_path):
+    """An authenticated A must not write beneath an ambiguous B owner."""
+    storage = Storage(tmp_path / "state.sqlite")
+    try:
+        key, snapshot = new_source()
+        register(storage, "A", "seller", "card-A", account="buyer-A")
+        # Normally unique by schema; reproduce a corrupted/imported v14 DB.
+        with storage._lock, storage._connect() as db:
+            db.execute("DROP INDEX uq_identity_directory_name")
+        storage.identity_put({
+            "identity_id": "shadow", "label": "Conflicting owner",
+            "directory_name": "A",
+        })
+        with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+            persist_attested_source_references(storage, snapshot)
+        with storage._lock, storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM source_references").fetchone() == (0,)
+            db.execute("DELETE FROM identities WHERE identity_id='shadow'")
+            db.execute(
+                "CREATE UNIQUE INDEX uq_identity_directory_name "
+                "ON identities(directory_name)"
+            )
+        # The same source and positive A can be committed after restoring
+        # exclusive folder ownership, with no invented B or origin links.
+        assert persist_attested_source_references(storage, snapshot) == 1
+        with storage._lock, storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone() == (0,)
+            assert db.execute("SELECT COUNT(*) FROM placements").fetchone() == (0,)
+    finally:
+        storage.close()
