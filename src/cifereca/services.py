@@ -1838,7 +1838,12 @@ class LibraryService:
         if source_type == "acsm":
             return dict(self._required_plugin_service("drm.ade").execute(request))
         if source_type == "kobo":
-            return dict(self._required_plugin_service("drm.kobo-kdrm").execute(request))
+            # source.type=kobo is the Kobo-Adept public DRM recipe, NOT an
+            # HTTP-plain candidate. The installed runtime plugin publishes
+            # download_request (schema v2), not a drm.kobo-kdrm plugin ID.
+            # Core owns the selected destination and independent final SHA.
+            runtime = self._required_plugin_service("runtime.kobo-adept")
+            return dict(runtime.download_request(request))
         raise ProviderConfigurationError(f"Type de source d'acquisition non supporté: {source_type or 'unknown'}")
 
     def _originating_adept_profile_id(self, identity_id: str, profile_name: str) -> str | None:

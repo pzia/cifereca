@@ -1079,7 +1079,10 @@ class KoboSession(ProviderSession):
         is returned, never the payload or those URLs.
         """
         from dataclasses import replace
-        from cifereca_kobo_delivery_offer import exact_kobo_offer_id
+        from cifereca_kobo_delivery_offer import (
+            exact_kobo_offer_id, kdrm_runtime_ready,
+        )
+        from cifereca_kobo_kdrm import scoped_kdrm_source
 
         if (explicit_user_action is not True
                 or type(right_id) is not str
@@ -1155,7 +1158,36 @@ class KoboSession(ProviderSession):
         offer_id = exact_kobo_offer_id(
             payload, identity_id=identity_id, credential_id=self.credential_id,
             account_id=account_id, product_id=right_id,
+            kdrm_runtime_ready=kdrm_runtime_ready(self),
         )
+        # A KDRM descriptor URL alone is NOT an executable offer: the
+        # runtime needs a separately authenticated replay recipe to obtain
+        # ContentKeys locally. This second POST is selected-only, never an
+        # inventory/backup call, and no KDRM secrets enter the snapshot.
+        if offer_id:
+            described = payload["acquisition"]["candidates"]
+            kdrm = next((row for row in described
+                         if type(row) is dict and
+                         row.get("handling") == "kobo_kdrm"), None)
+            if kdrm is not None:
+                try:
+                    delegated = self.resolve_acquisition(right_id, mode="delegated")
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+                    source = scoped_kdrm_source(
+                        delegated, kdrm, product_id=right_id, account_id=account_id,
+                        identity_id=identity_id, credential_id=self.credential_id,
+                    )
+                    if source is None:
+                        offer_id = ""
+                except ProviderCapabilityError:
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
+                    offer_id = ""
+                except (KoboVaultError, ProviderError):
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
+                    offer_id = ""
         qualified = replace(
             right,
             delivery="available" if offer_id else "unknown",
@@ -1237,7 +1269,7 @@ class KoboSession(ProviderSession):
     def downloadable_selected_delivery_candidate_guarded(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
-        admission_current,
+        admission_current, execute_runtime=None,
     ):
         """Core #3171 opt-in: exact v2 candidate with live revocable consent.
 
@@ -1264,6 +1296,7 @@ class KoboSession(ProviderSession):
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
             admission_current=admission_current,
+            runtime_execute=execute_runtime,
         )
         try:
             current = (
@@ -1291,6 +1324,21 @@ class KoboSession(ProviderSession):
             ),
             selected_offer_id=selected_offer_id,
             path=Path(path), provider_hint=hint,
+        )
+
+    def downloadable_selected_delivery_candidate_runtime_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current, execute_runtime,
+    ):
+        """Optional Core runtime callback; no plugin-managed runtime service."""
+        if not callable(execute_runtime):
+            raise ProviderCapabilityError("kobo_candidate_runtime_unavailable")
+        return self.downloadable_selected_delivery_candidate_guarded(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current, execute_runtime=execute_runtime,
         )
 
     def rights_selected_delivery_offer_snapshot(
@@ -1371,7 +1419,7 @@ class KoboSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
-        admission_current=None,
+        admission_current=None, runtime_execute=None,
     ):
         """Optional Core #3171 selected-candidate ABI; never a final receipt.
 
@@ -1386,6 +1434,7 @@ class KoboSession(ProviderSession):
             target_dir=target_dir,
             explicit_user_action=explicit_user_action,
             admission_current=admission_current,
+            runtime_execute=runtime_execute,
         )
 
     def backup_manifest(self) -> list[dict[str, Any]]:
@@ -1651,10 +1700,12 @@ class KoboSession(ProviderSession):
             ensure_acquisition_scope()
             if expected_offer_id is not None:
                 from cifereca_kobo_delivery_offer import exact_kobo_offer_id
+                from cifereca_kobo_delivery_offer import kdrm_runtime_ready
                 current = exact_kobo_offer_id(
                     result, identity_id=expected_identity_id,
                     credential_id=self.credential_id,
                     account_id=account_id, product_id=product_id,
+                    kdrm_runtime_ready=kdrm_runtime_ready(self),
                 )
                 if current != expected_offer_id:
                     raise ProviderCapabilityError("kobo_delivery_offer_changed")

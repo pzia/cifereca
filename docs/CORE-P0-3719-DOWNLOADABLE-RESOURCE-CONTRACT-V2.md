@@ -151,3 +151,42 @@ wrong resource/profile/branch/offer and staging paths, source OFF and account
 rebind. The installed offline reference provider supplies a real synthetic EPUB
 with absent right metadata through its v2 adapter; Core validates and publishes
 it, then a fresh Sync epoch reuses its exact placement without another delivery.
+
+
+## Extension optionnelle — DRM runtime canonique supervisé (#3252, 03/11/2026)
+
+Pour un candidat qui exige un exécuteur DRM plutôt qu'un simple GET HTTP,
+le plugin peut exposer
+`downloadable_selected_delivery_candidate_runtime_guarded(account, *,
+edition_id, resource_id, kind, branch, selected_offer_id, target_dir,
+explicit_user_action, admission_current, execute_runtime)`.
+C'est un **opt-in distinct** : priorité sur l'extension guarded précédente,
+uniquement avec un consentement Core vivant. Les ABI v1/v2 des autres providers
+ne changent pas. Tout échec ferme le parcours, **sans repli**.
+
+Le Core possède seul `execute_runtime(request)`, fermeture **à usage unique**,
+valide pour cette tentative exacte sous verrou. Elle exige une recette typée,
+une sortie EPUB/PDF neuve dans le dossier de tentative Core, `ok=True`,
+un chemin Artifact correspondant exactement à la destination demandée, puis
+revalide le consentement. Le Core vérifie ensuite la structure non protégée,
+le SHA, la provenance et la transaction finale ; le plugin ne crée jamais B.
+Après réussite/échec le callback est périmé et le staging échoué est nettoyé.
+
+Pour Kobo/KDRM, `source.type=kobo` est transmis au service
+`runtime.kobo-adept.download_request` installé (contrat public v8, schema v2).
+Un candidat `handling=kobo_kdrm` est qualifiable seulement avec la capability
+KDRM disponible et opérationnelle, la livraison HTTPS épinglée
+`library_sync`, une recette déléguée `content_access_request` **exactement
+liée au compte/produit**, et le contexte `device_id/user_id` obtenu par
+Vault. Seul Adept rejoue la requête pour obtenir des `ContentKeys`, qui ne
+doivent pas apparaître dans les appels provider/Core ni dans les journaux.
+Un 403, un compte changé, une recette absente, un consentement révoqué, un
+format inconnu ou un runtime manquant **laissent la ressource A en attente**,
+sans GET HTTP simplifié, sans suppression et sans prétendre à une livraison.
+
+Cette tranche est testée avec huit achats/KEPUB **synthétiques** et une
+publication SQLite v14 isolée. Elle ne constitue pas encore une recette Kobo
+réelle, et n'élargit pas les garanties aux variantes KDRM non attestées par
+la réponse de Vault. Les couples format de sortie / format source admis
+pour la variante KDRM épinglée sont KEPUB/KEPUB, EPUB/FLEPUB (Kobo-Adept
+1.3) et EPUB/EPUB ; toute autre divergence reste non qualifiée.

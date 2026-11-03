@@ -16,14 +16,18 @@ import httpx
 from cifereca.plugin_api import (
     Account, HTTPX_TRANSPORT, ProviderCapabilityError, ProviderError,
 )
-from cifereca_kobo_delivery_offer import exact_kobo_offer_id, _safe_https_get
+from cifereca_kobo_delivery_offer import (
+    exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
+)
+from cifereca_kobo_kdrm import scoped_kdrm_source
 
 _MAX_DELIVERY_BYTES = 128 * 1024 * 1024
 _MAX_ACSM_BYTES = 2 * 1024 * 1024
 
 
 def _single_admitted_candidate(payload, offer_id, *, identity_id,
-                               credential_id, account_id, product_id):
+                               credential_id, account_id, product_id,
+                               kdrm_ready=False):
     """Re-use EXACTLY the existing descriptor classifier, not a parallel right.
 
     The full envelope is checked first, including all foreign/ambiguous
@@ -32,7 +36,8 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
     """
     scope = dict(identity_id=identity_id, credential_id=credential_id,
                  account_id=account_id, product_id=product_id)
-    if exact_kobo_offer_id(payload, **scope) != offer_id:
+    if exact_kobo_offer_id(payload, **scope,
+                           kdrm_runtime_ready=kdrm_ready) != offer_id:
         raise ProviderCapabilityError("kobo_candidate_offer_changed")
     acquisition = payload.get("acquisition")
     candidates = acquisition.get("candidates") if type(acquisition) is dict else None
@@ -45,7 +50,8 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
         singleton = dict(payload, acquisition=dict(
             acquisition, candidates=[candidate],
         ))
-        if exact_kobo_offer_id(singleton, **scope) == offer_id:
+        if exact_kobo_offer_id(singleton, **scope,
+                               kdrm_runtime_ready=kdrm_ready) == offer_id:
             matches.append(candidate)
     if len(matches) != 1:
         raise ProviderCapabilityError("kobo_candidate_descriptor_ambiguous")
@@ -55,11 +61,15 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
     if (selected.get("kind") == "acsm"
             and selected.get("handling") == "adobe_adept"
             and fmt == "acsm"):
-        return selected["url"], "acsm"
+        return selected["url"], "acsm", "acsm", selected
     if (selected.get("kind") == "http"
             and selected.get("handling") == "http_plain"
             and fmt in ("epub", "pdf", "kepub")):
-        return selected["url"], "epub" if fmt == "kepub" else fmt
+        return selected["url"], "epub" if fmt == "kepub" else fmt, "plain", selected
+    if (selected.get("kind") == "http"
+            and selected.get("handling") == "kobo_kdrm"
+            and fmt in ("epub", "kepub") and kdrm_ready):
+        return selected["url"], "epub", "kdrm", selected
     raise ProviderCapabilityError("kobo_candidate_unsupported_route")
 
 
@@ -83,7 +93,7 @@ def _candidate_format_ok(path: Path, fmt: str) -> bool:
 def stage_selected_candidate(session, account: Account, *, edition_id,
                              right_id, kind, branch, delivery_offer_id,
                              target_dir, explicit_user_action=False,
-                             admission_current=None):
+                             admission_current=None, runtime_execute=None):
     """Exactly one Core-selected purchase, fresh POST, then one isolated GET.
 
     A signed URL can rotate without changing the offer ID, but the supplier
@@ -202,10 +212,10 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
         require_core()
-        url, fmt = _single_admitted_candidate(
+        url, fmt, delivery_mode, selected = _single_admitted_candidate(
             payload, delivery_offer_id, identity_id=caller[0],
             credential_id=caller[2], account_id=caller[3],
-            product_id=right_id,
+            product_id=right_id, kdrm_ready=kdrm_runtime_ready(session),
         )
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
@@ -219,6 +229,49 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
         staged = False
         accepted = False
         try:
+            if delivery_mode == "kdrm":
+                # Kobo DRM is NOT an HTTP download. Only the Core's one-shot
+                # guarded runtime callback can fulfill a delegated key replay.
+                # A missing runtime leaves the exact resource unfulfilled.
+                if not callable(runtime_execute) or admission_current is None:
+                    raise ProviderCapabilityError("kobo_candidate_runtime_unavailable")
+                require_core()
+                delegated = session.resolve_acquisition(right_id, mode="delegated")
+                if not bound():
+                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
+                require_core()
+                source = scoped_kdrm_source(
+                    delegated, selected, product_id=right_id,
+                    account_id=caller[3], identity_id=caller[0],
+                    credential_id=caller[2],
+                )
+                if source is None:
+                    raise ProviderCapabilityError("kobo_candidate_kdrm_recipe_unavailable")
+                if not stage_current():
+                    raise ProviderCapabilityError("kobo_candidate_staging_rebound")
+                request = {
+                    "schema_version": 2, "source": source,
+                    "destination": str(candidate), "format": fmt,
+                    "options": {"force": False},
+                }
+                # Runtime can leave a partially written target on failure.
+                # Always clean it inside our opened staging inode.
+                staged = True
+                try:
+                    runtime_execute(request)
+                except Exception:
+                    if not core_current():
+                        raise ProviderCapabilityError("kobo_candidate_admission_changed") from None
+                    raise ProviderCapabilityError("kobo_candidate_runtime_failed") from None
+                require_core()
+                if not bound():
+                    raise ProviderCapabilityError("kobo_candidate_owner_changed")
+                if not stage_current():
+                    raise ProviderCapabilityError("kobo_candidate_staging_rebound")
+                if not _candidate_format_ok(candidate, fmt):
+                    raise ProviderCapabilityError("kobo_candidate_format_invalid")
+                accepted = True
+                return candidate, ""
             if not bound():
                 raise ProviderCapabilityError("kobo_candidate_owner_changed")
             require_core()
