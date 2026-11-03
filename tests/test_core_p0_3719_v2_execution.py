@@ -292,3 +292,74 @@ def test_installed_reference_guarded_off_on_during_staging_never_publishes(
         assert list((root / 'A' / '.canonical-delivery').glob('run-*')) == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('corruption', ['invalid_status', 'invalid_resource'])
+def test_corrupt_v2_selected_offer_cannot_abort_other_admitted_resources(
+    v2, corruption,
+):
+    """#3171: one invalid selected v2 DTO must not veto another valid offer."""
+    from cifereca.core.source_convergence import SourceKey
+
+    service, db, root, _calls = v2
+    original = service.resource_snapshot.resources[0]
+    other = replace(original, source=replace(
+        original.source, edition_id='another-edition',
+        resource_id='another-resource',
+    ))
+    service.resource_snapshot = replace(
+        service.resource_snapshot, resources=(original, other),
+    )
+    other_source = SourceKey(
+        other.source.scope, other.source.edition_id,
+        other.source.resource_id, other.source.kind, other.source.branch,
+    )
+    service._canonical_persisted_consent = (
+        lambda _account: frozenset({service.source, other_source})
+    )
+    selected_calls = []
+    delivery_calls = []
+
+    def selected(_account, *, edition_id, **kwargs):
+        selected_calls.append(edition_id)
+        observation = original if edition_id == original.source.edition_id else other
+        reply = replace(
+            service.resource_snapshot, resources=(replace(
+                observation,
+                capability=DownloadCapability('available', 'v2-exact-offer'),
+            ),),
+            status='partial', coverage='partial', pagination_complete=False,
+        )
+        if observation is original:
+            # An installed plugin can return a dataclass with corrupted
+            # fields despite its constructor's validation. The Core must
+            # reject that exact claim, never recover via the v1 producer.
+            if corruption == 'invalid_status':
+                object.__setattr__(reply, 'status', 'invalid')
+            else:
+                object.__setattr__(reply.resources[0], 'source', None)
+        return reply
+
+    def candidate(_account, *, edition_id, selected_offer_id, target_dir,
+                  **kwargs):
+        delivery_calls.append(edition_id)
+        assert edition_id == other.source.edition_id
+        assert selected_offer_id == 'v2-exact-offer'
+        path = target_dir / 'selected-other.pdf'
+        path.write_bytes(BYTES)
+        return DeliveryCandidate(other.source, selected_offer_id, path)
+
+    service.session.downloadable_selected_offer_snapshot = selected
+    service.session.downloadable_selected_delivery_candidate = candidate
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail('v2 error cannot retry the v1 offer')
+    )
+    result = synchronize_account_source(service, service.account)
+
+    assert selected_calls == [original.source.edition_id, other.source.edition_id]
+    assert delivery_calls == [other.source.edition_id]
+    assert result['canonical_execution']['downloaded'] == 1
+    assert result['canonical_execution']['pending'] == 1
+    assert result['status'] == 'partial'
+    assert len(db.placements()) == refs(db)[1] == 1
+    assert Path(db.placements()[0]['path']).is_file()
