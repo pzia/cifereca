@@ -22,7 +22,7 @@ _READ_CHUNK = 1024 * 1024
 
 def _safe_scope(root: Path, path: Path) -> bool:
     """All path components must be real directories, not symlink redirects."""
-    if (type(root) is not Path or type(path) is not Path
+    if (not isinstance(root, Path) or not isinstance(path, Path)
             or not root.is_absolute() or not path.is_absolute()
             or ".." in root.parts or ".." in path.parts
             or root == path):
@@ -57,7 +57,7 @@ def attest_local_usb_source(
     operation: callers must execute it off the GTK/UI thread.
     """
     if (type(identity_id) is not str or not identity_id
-            or type(identity_root) is not Path
+            or not isinstance(identity_root, Path)
             or not isinstance(artifact, Mapping)
             or not isinstance(placement, Mapping)
             or type(max_bytes) is not int or not 1 <= max_bytes <= _MAX_BOOK_BYTES
