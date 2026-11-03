@@ -191,7 +191,11 @@ def environment(tmp_path):
 
 def test_builtin_reader_route_and_standard_shell_builder(tmp_path):
     assert "readers" in [page.route for page in Pages().pages()]
-    w = NS(_build_readers_page=lambda: "reader-page", plugin_manager=None)
+    w = NS(plugin_manager=None)
+    for route in ("dashboard", "loans", "search", "history", "library",
+                  "readers", "recent", "sync", "tools", "settings"):
+        setattr(w, f"_build_{route}_page",
+                lambda route=route: "reader-page" if route == "readers" else route)
     built = build_standard_page(
         w, "readers", Gtk=NS(Label=lambda **kw: None),
         PluginManagerPage=lambda *args: None,
