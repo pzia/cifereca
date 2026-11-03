@@ -162,7 +162,8 @@ def record_completed_delivery_for_recovery(
             raise ValueError("canonical_intake_account_rebound")
         row = db.execute(
             "SELECT provider_id,credential_id,account_id,item_id,identity_id,"
-            "status,metadata_json FROM acquisition_ledger WHERE acquisition_id=?",
+            "status,artifact_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id=?",
             (record_id,),
         ).fetchone()
         coords = (
@@ -183,8 +184,10 @@ def record_completed_delivery_for_recovery(
             # The same supplier offer may be legally reissued after the
             # original file was removed. A NEW completed GET and its new
             # receipt replace only this *non-authoritative* retry checkpoint,
-            # never the provider/ADEPT historical OriginLinks.
-            if row[6] != data or row[5] != _STAGED:
+            # never the provider/ADEPT historical OriginLinks. Reset a
+            # corrupt, non-null Artifact pointer even when the new bytes and
+            # receipt JSON are identical: another crash must remain retryable.
+            if row[7] != data or row[5] != _STAGED or row[6] is not None:
                 db.execute(
                     "UPDATE acquisition_ledger SET status=?,"
                     "metadata_json=?,artifact_id=NULL,updated_at=? "
