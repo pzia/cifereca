@@ -27,11 +27,12 @@ def binding(*, device="reader-a", identity="alice", enabled=True, metadata=None)
 
 
 def intent(*, device="reader-a", artifact="artifact-a", desired="keep",
-           observed="present", observed_at=NOW - 600):
+           observed="present", observed_at=NOW - 600, owner="alice"):
     return {
         "device_id": device, "artifact_id": artifact,
         "desired_state": desired, "observed_state": observed,
         "last_observed_at": observed_at,
+        "metadata": {"intent_identity_id": owner},
     }
 
 
@@ -188,6 +189,7 @@ def test_two_identities_and_three_devices_remain_independently_scoped(tmp_path):
             "device_id": device_id, "artifact_id": "same-artifact",
             "desired_state": desired, "observed_state": "present",
             "last_observed_at": NOW - 3600,
+            "metadata": {"intent_identity_id": owner},
         })
     before_bindings = deepcopy(db.device_bindings())
     before_placements = deepcopy(db.device_placements())
@@ -228,3 +230,29 @@ def test_preview_does_not_mutate_caller_evidence_or_persistent_state():
     )
     assert result[0].action == "skip"
     assert (b, p, state, sources, receipts) == before
+
+
+def test_legacy_or_reassigned_device_intent_cannot_leak_another_profile():
+    for legacy in (None, {}, {"intent_identity_id": "bob"}):
+        row = intent()
+        row["metadata"] = legacy
+        with pytest.raises(ValueError, match="unproven placement owner"):
+            preview(placements=[row], scan_value=scan())
+
+    # Device identity may have changed while an old placement survived.
+    row = intent(owner="alice")
+    with pytest.raises(ValueError, match="unproven placement owner"):
+        preview(
+            identity="bob",
+            target=binding(identity="bob"),
+            placements=[row],
+            scan_value=scan(identity="bob"),
+            local_value={"artifact-a": UsbLocalArtifact("bob", SHA_A, True)},
+        )
+
+
+def test_missing_local_artifact_is_blocked_without_claiming_new_rights():
+    row, = preview(scan_value=scan(), local_value={})
+    assert row.action == "blocked"
+    assert row.reason == "owned_source_unverified"
+    assert row.executable is False
