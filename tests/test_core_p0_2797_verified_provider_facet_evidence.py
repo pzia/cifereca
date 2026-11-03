@@ -74,3 +74,47 @@ def test_provider_facet_requires_provider_origin_not_adept_only(tmp_path):
         assert path.is_file()
     finally:
         store.close()
+
+
+def test_corrupt_or_empty_artifact_cannot_create_canonical_supplier_facet(tmp_path):
+    """Retain real OriginLink history, but never attach bad Artifact B proof."""
+    store = Storage(tmp_path / "state.sqlite")
+    try:
+        source, snapshot = new_source()
+        register(store, "A", "seller", "card-A")
+        path = target(tmp_path, "A")
+        published = publish(store, tmp_path / "EBooks", path, source, snapshot)
+        expected = (published.artifact_id, "A", "seller", "card-A",
+                    "buyer-A", "edition")
+        assert _origins(store) == (expected,)
+
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE artifacts SET size=0 WHERE artifact_id=?",
+                (published.artifact_id,),
+            )
+        assert _origins(store) == ()
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE artifacts SET size=? WHERE artifact_id=?",
+                (path.stat().st_size, published.artifact_id),
+            )
+        assert _origins(store) == (expected,)
+
+        with store._lock, store._connect() as db:
+            # Reproduce an imported/older corrupt DB in this disposable test
+            # only: production v14 protects linked Artifact.sha256 by trigger.
+            db.execute("DROP TRIGGER trg_artifact_linked_sha_update")
+            db.execute(
+                "UPDATE artifacts SET sha256=? WHERE artifact_id=?",
+                ("a" * 64, published.artifact_id),
+            )
+        assert _origins(store) == ()
+        with store._lock, store._connect() as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM origin_links WHERE artifact_id=?",
+                (published.artifact_id,),
+            ).fetchone() == (1,)
+        assert path.is_file()
+    finally:
+        store.close()

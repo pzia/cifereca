@@ -558,6 +558,14 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
                 "SELECT DISTINCT p.artifact_id,p.identity_id,s.provider_id,"
                 "s.credential_id,s.account_id,s.edition_id "
                 "FROM placements p "
+                # A historical OriginLink remains for audit even if imported
+                # Artifact metadata are corrupt. It must not become a live
+                # supplier facet or fold a remote possession onto B when the
+                # Artifact's content identifier/size cannot attest B.
+                "JOIN artifacts a ON a.artifact_id=p.artifact_id "
+                "AND a.artifact_id='sha256:'||a.sha256 AND a.size>0 "
+                "AND length(a.sha256)=64 "
+                "AND a.sha256 NOT GLOB '*[^0-9a-f]*' "
                 "JOIN origin_links o ON o.artifact_id=p.artifact_id "
                 "AND o.identity_id=p.identity_id "
                 "JOIN source_references s "
