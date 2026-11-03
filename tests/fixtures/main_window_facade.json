@@ -1275,12 +1275,6 @@
     "decorators": [],
     "async": false
   },
-  "MainWindow._configure_kobo_backup_timer": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[arg(arg='run_now', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=False)], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
   "MainWindow.run_kobo_backup": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='manual', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True), Constant(value=None)])",
     "returns": "Constant(value=None)",
