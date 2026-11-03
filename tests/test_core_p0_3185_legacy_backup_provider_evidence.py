@@ -11,7 +11,7 @@ from cifereca.core.canonical_dedup_reference_plan import (
     plan_verified_canonical_reference_migration,
 )
 from cifereca.locking import InterProcessLock
-from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows
+from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
 from tests.test_core_p0_3185_canonical_backup_relink import (
     rig, backup, relink, saved,
 )
