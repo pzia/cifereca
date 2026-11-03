@@ -127,11 +127,6 @@ class TaskRunner:
             return "cancelled"
         return "failed"
 
-    def _business_outcome(self, value: Any, kind: str) -> str:
-        if kind == "borrow":
-            return self._borrow_outcome(value)
-        return self._source_sync_outcome(value, kind)
-
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -299,7 +294,10 @@ class TaskRunner:
             outcome_status = "success"
             try:
                 value = fn(report) if with_progress else fn()
-                business = self._business_outcome(value, trace_kind)
+                business = (
+                    self._borrow_outcome(value) if trace_kind == "borrow"
+                    else self._source_sync_outcome(value, trace_kind)
+                )
                 if business != "success":
                     outcome_status = "failed"
                     if trace_kind == "borrow":
@@ -372,7 +370,8 @@ class TaskRunner:
             business_status = (
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
                 if outcome[0] == "error"
-                else self._business_outcome(outcome[1], trace_kind)
+                else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
+                      else self._source_sync_outcome(outcome[1], trace_kind))
             )
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
