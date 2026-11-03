@@ -74,6 +74,10 @@ Elle retourne le même **DeliveryCandidate** typé et scopé que le lecteur v2.
 La découverte est passive (sans appel de propriété Python du provider) ;
 **elle est sélectionnée seulement si l'exécuteur Core possède déjà son
 lecteur de consentement vivant**. Une méthode absente conserve le v2 existant.
+Un adaptateur v2 peut n'exposer **que** ce candidat gardé (ou le candidat
+`_runtime_guarded` ci-dessous), sans exposer un GET non gardé : l'activation
+du consentement source et le dispatch Core reconnaissent cette ABI, sans
+repli implicite sur v1 ou un candidat non sécurisé.
 Une exception ou un candidat invalide de cette méthode **n'active aucun
 repli** par le v2/v1 historique.
 
