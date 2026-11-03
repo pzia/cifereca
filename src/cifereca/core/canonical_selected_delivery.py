@@ -244,6 +244,42 @@ def complete_selected_delivery(
     try:
         if not current():
             raise ValueError("canonical_delivery_source_rebound")
+        # A provider may have both direct HTTPS/ACSM offers and DRM-runtime
+        # offers in one account. Mere presence of its runtime method is not
+        # evidence that THIS exact offered resource needs DRM. The optional
+        # route classifier is local, typed and must be bound to the opaque
+        # selected offer; an absent classifier preserves the strict
+        # runtime-required default. A malformed/raising classifier is never
+        # permission to try the unguarded legacy candidate ABI.
+        if runtime_guarded:
+            route_name = "downloadable_selected_delivery_requires_runtime"
+            route_reader = getattr_static(session, route_name, None)
+            if route_reader is not None:
+                if not callable(route_reader):
+                    raise ValueError("canonical_delivery_runtime_route_invalid")
+                try:
+                    required = getattr(session, route_name)(
+                        account, edition_id=source.edition_id,
+                        resource_id=source.right_id, kind=source.kind,
+                        branch=source.branch,
+                        selected_offer_id=offer.delivery_offer_id,
+                    )
+                except Exception:
+                    raise ValueError("canonical_delivery_runtime_route_unavailable") from None
+                if type(required) is not bool:
+                    raise ValueError("canonical_delivery_runtime_route_invalid")
+                if required is False:
+                    if not callable(getattr_static(session, guarded_name, None)):
+                        raise ValueError("canonical_delivery_guarded_route_unavailable")
+                    # Direct HTTPS remains guarded at each transport hop;
+                    # ACSM is independently fulfilled by Core ADEPT below.
+                    # KDRM remains runtime-required by the offer-bound
+                    # classifier, which the provider must verify again.
+                    runtime_guarded = False
+                    reader_name = guarded_name
+                    guarded = True
+                if not current():
+                    raise ValueError("canonical_delivery_source_rebound")
         candidate = getattr(session, reader_name)(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
