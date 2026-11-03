@@ -2018,6 +2018,14 @@ class LibraryService:
         and return in the following plugin release. Existing acquisition handlers
         remain source-compatible.
         """
+        # P1 #4048: refuse removed voluntary returns before accessing even
+        # a previously installed runtime adapter or its plugin manager.
+        operation = getattr(request, "operation", None)
+        if type(operation) is str and operation.casefold() == "return":
+            raise AttentionRequired(
+                "Restitution volontaire retirée de Cifereca.",
+                code="loan_return_removed",
+            )
         manager = self._plugin_manager
         if manager is None:
             raise AttentionRequired(
