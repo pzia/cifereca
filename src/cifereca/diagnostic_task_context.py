@@ -52,13 +52,17 @@ def diagnostic_task_business_result(
         facts = result.facts
         cancelled = False
         if isinstance(facts, Mapping):
+            status, reason = facts.get("status"), facts.get("reason")
             cancelled = (
-                facts.get("status") == "cancelled"
-                or facts.get("reason") in {"cancelled", "source_sync_cancelled"}
+                (type(status) is str and status == "cancelled")
+                or (type(reason) is str
+                    and reason in {"cancelled", "source_sync_cancelled"})
             )
             sources = facts.get("sources")
             if (not cancelled and isinstance(sources, Mapping) and sources
-                    and all(isinstance(row, Mapping) and row.get("status") == "cancelled"
+                    and all(isinstance(row, Mapping)
+                            and type(row.get("status")) is str
+                            and row.get("status") == "cancelled"
                             for row in sources.values())):
                 cancelled = True
         if cancelled:
