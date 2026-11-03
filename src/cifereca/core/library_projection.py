@@ -340,7 +340,15 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     if not identity_id:
         return []
     default_identity_id = self.identities[0].identity_id if self.identities else None
-    entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
+    # A catalogue row is descriptive metadata, not a physical ownership
+    # proof. Keep every possible row until its Placement owner and Artifact
+    # are known; dict-by-placement would silently select a foreign row.
+    entries_by_placement: dict[str, list[dict[str, Any]]] = {}
+    for candidate in self.storage.catalog_entries():
+        if candidate.get("placement_id"):
+            entries_by_placement.setdefault(
+                str(candidate["placement_id"]), [],
+            ).append(candidate)
     # Remote covers can identify a borrower's private book. A provider/item
     # pair (even within one profile) is not evidence that its loan or purchase
     # belongs to this local Artifact. Only an exact Core provider OriginLink
@@ -387,7 +395,30 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         placement_identity = placement.get("identity_id") or default_identity_id
         if placement_identity != identity_id:
             continue
-        entry = entries.get(str(placement.get("placement_id"))) or {}
+        # A migrated or corrupt catalogue may point a different profile's
+        # private title/cover at a valid local Placement. A matching ID alone
+        # does not give the catalogue row authority over that Placement.
+        # Unscoped v0.7 descriptive rows are visible to the default profile
+        # only, matching the historical unowned Placement rule above.
+        eligible = [
+            candidate for candidate in entries_by_placement.get(
+                str(placement.get("placement_id")), (),
+            )
+            if (
+                candidate.get("identity_id") == placement_identity
+                or (
+                    candidate.get("identity_id") in (None, "")
+                    and placement_identity == default_identity_id
+                )
+            )
+            and (
+                not candidate.get("artifact_id")
+                or candidate.get("artifact_id") == placement.get("artifact_id")
+            )
+        ]
+        # More than one owner-matching candidate remains ambiguous: never
+        # choose whichever metadata row happened to be loaded last.
+        entry = eligible[0] if len(eligible) == 1 else {}
         metadata = dict(entry.get("metadata") or {})
         provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
         row_identity = placement_identity
