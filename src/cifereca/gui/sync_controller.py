@@ -583,7 +583,7 @@ def _refresh_sync_page(self) -> None:
                 # account or contribute to active attention counts.
                 row.set_subtitle(
                     "Désactivée · aucune synchronisation attendue\n"
-                    "Dernier cycle conservé avant désactivation (détails au survol)."
+                    "Historique du dernier cycle, si disponible, au survol."
                 )
             else:
                 row.set_subtitle(
