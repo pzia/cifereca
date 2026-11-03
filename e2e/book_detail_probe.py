@@ -34,6 +34,11 @@ from native_capture import pointer
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 
+# Public diagnostic checkpoint names are reviewed *function identifiers*, not
+# supplier metadata or private widget labels. Every new checkpoint requires a
+# deliberate source update; no provider callback can create a public name.
+_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","begin_owned_book_action","begin_numilog_index_resume","owned_book_select","owned_book_action_visible","owned_book_action_completed","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered"])
+
 TITLE = "Camille, le détail UX"
 METADATA = {
     "authors": ["Alice Exemple", "Bob Exemple"],
@@ -220,6 +225,13 @@ def main():
 
     def later(ms, fn):
         def run():
+            # A failure may happen in a nested GTK event after this callback.
+            # Retain only its last reviewed entry point; never serialize an
+            # exception or a free-form callback name into public CI evidence.
+            name = getattr(fn, "__name__", "")
+            report["public_stage"] = (
+                name if name in _PUBLIC_STAGE_CODES else "callback_other"
+            )
             try:
                 fn()
             except Exception as exc:
@@ -1028,6 +1040,7 @@ def main():
             super().__init__(application_id="org.cifereca.BookDetailUXE2E")
         def do_activate(self):
             nonlocal window, device
+            report["public_stage"] = "activation"
             window = MainWindow(self, core.config, core.library, core.diagnostics)
             if args.geometry_1300:
                 window.set_title("Cifereca geometry E2E 1300")
