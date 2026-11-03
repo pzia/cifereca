@@ -156,3 +156,17 @@ def test_no_trust_in_untyped_status_or_external_metadata():
     assert classification_from_row(row).meta_type == "UNKNOWN"
     assert QueryState(scope="digital").filter([row]) == []
     assert QueryState(scope="unknown").filter([row])
+
+
+@pytest.mark.parametrize("medium,label", [
+    ("physical", "Support physique · type de document indéterminé"),
+    ("digital", "Support numérique · type de document indéterminé"),
+])
+def test_attested_medium_is_preserved_even_if_document_kind_is_unknown(medium, label):
+    proof = DocumentClassification(medium=attested(medium))
+    assert search_medium_label(proof) == label
+    row = result_row(notice("untyped", medium="digital", doc=proof))
+    assert QueryState(scope=medium).filter([row])
+    other = "physical" if medium == "digital" else "digital"
+    assert QueryState(scope=other).filter([row]) == []
+    assert QueryState(types=("ebook",)).filter([row]) == []
