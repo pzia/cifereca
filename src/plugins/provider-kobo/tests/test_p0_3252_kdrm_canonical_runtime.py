@@ -314,3 +314,70 @@ def test_kdrm_opaque_offer_pins_flepub_vs_epub_upstream_route():
     other = qualify(modified)
     assert other.startswith("kobo.descriptor:")
     assert pinned != other
+
+
+@pytest.mark.parametrize("container", ("top", "acquisition", "delegation", "request", "context"))
+@pytest.mark.parametrize("field,value", (
+    ("provider", "another-supplier"),
+    ("source_provider", "another-supplier"),
+    ("provider", True),
+))
+def test_kdrm_delegated_recipe_rejects_foreign_or_malformed_provider_at_any_level(
+    container, field, value,
+):
+    """A later delegated response cannot contradict the attested Kobo offer."""
+    from cifereca_kobo_kdrm import scoped_kdrm_source
+
+    payload = delegated("book-1")
+    delegation = payload["acquisition"]["delegation"]
+    target = {
+        "top": payload,
+        "acquisition": payload["acquisition"],
+        "delegation": delegation,
+        "request": delegation["content_access_request"],
+        "context": delegation["session_context"],
+    }[container]
+    target[field] = value
+    assert scoped_kdrm_source(
+        payload, kdrm_candidate("book-1"),
+        product_id="book-1", account_id="alice",
+        identity_id="identity-A", credential_id="synthetic-card",
+    ) is None
+
+
+def test_foreign_delegated_provider_never_starts_kdrm_runtime_or_plain_http(
+    tmp_path, monkeypatch,
+):
+    session, vault, broker, account, _ = setup()
+    calls = ready(session, vault)
+    original = vault.acquisition
+
+    def foreign(product, **kwargs):
+        payload = original(product, **kwargs)
+        if kwargs.get("mode") == "delegated":
+            payload["provider"] = "foreign-provider"
+        return payload
+
+    monkeypatch.setattr(
+        HTTPX_TRANSPORT, "attested_https_download",
+        lambda **kwargs: pytest.fail("foreign provider must not GET plaintext"),
+    )
+    runtime_calls = []
+
+    def forbidden_runtime(request):
+        runtime_calls.append(request)
+        pytest.fail("foreign provider must not execute DRM")
+
+    try:
+        # The first exact selection was legitimate. A different delegated
+        # producer must still be rejected by the later delivery boundary.
+        observed = selected(session, account, "book-1")
+        assert observed.delivery == "available"
+        vault.acquisition = foreign
+        with pytest.raises(ProviderCapabilityError, match="kdrm_recipe_unavailable"):
+            deliver(session, account, "book-1", observed.delivery_offer_id,
+                    tmp_path, forbidden_runtime)
+        assert runtime_calls == [] and list(tmp_path.iterdir()) == []
+        assert any(mode == "delegated" for _, mode in calls)
+    finally:
+        session.close()
