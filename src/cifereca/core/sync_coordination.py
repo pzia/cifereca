@@ -40,6 +40,28 @@ from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
 
+def _record_opening_observation_timing(detail: dict, phase: str, started: float) -> None:
+    """Aggregate scoped Core phase wall time; NOT provider HTTP request counts.
+
+    A phase invocation can be a no-op, include local work, or execute multiple
+    supplier calls. Export only bounded numeric counters with closed phase
+    names, never borrower identifiers or provider-controlled payloads.
+    Broken optional measurement must not change Sync outcomes.
+    """
+    if phase not in ("loan_inventory", "canonical_resources"):
+        return
+    try:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if not 0 <= elapsed_ms <= 86_400_000:
+            return
+        phases = detail.setdefault("source_observation_timing", {})
+        row = phases.setdefault(phase, {"attempts": 0, "elapsed_ms": 0})
+        row["attempts"] = min(1_000_000, row["attempts"] + 1)
+        row["elapsed_ms"] = min(86_400_000, row["elapsed_ms"] + elapsed_ms)
+    except Exception:
+        pass
+
+
 def _sync_loan_inventory_observation(self, account: Account, session: Any):
     """Read exactly once, preserving v1 Core normalization until migration.
 
@@ -985,9 +1007,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # Preserve legacy positive normalization while typed
                     # snapshots carry coverage; neither allows unproven
                     # negative rights changes or a second provider read.
-                    snapshot, account_loans = _sync_loan_inventory_observation(
-                        self, account, session,
-                    )
+                    try:
+                        snapshot, account_loans = _sync_loan_inventory_observation(
+                            self, account, session,
+                        )
+                    finally:
+                        _record_opening_observation_timing(
+                            detail, "loan_inventory", loan_started,
+                        )
                     logger.info(
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
@@ -1109,9 +1136,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     from .canonical_sync_stage import observe_canonical_rights_in_sync
                     admitted_epoch = source_context_epoch(self)
                     admitted_snapshots = []
-                    canonical = observe_canonical_rights_in_sync(
-                        self, account, snapshot_sink=admitted_snapshots.append,
-                    )
+                    rights_started = time.monotonic()
+                    try:
+                        canonical = observe_canonical_rights_in_sync(
+                            self, account, snapshot_sink=admitted_snapshots.append,
+                        )
+                    finally:
+                        _record_opening_observation_timing(
+                            detail, "canonical_resources", rights_started,
+                        )
                     if canonical is not None:
                         rights_detail = detail.setdefault("canonical_rights", {
                             "sources": 0, "observed": 0,
