@@ -194,6 +194,19 @@ def complete_selected_delivery(
     created = os.stat(attempt, follow_symlinks=False)
     attempt_inode = (created.st_dev, created.st_ino)
 
+    def attempt_current() -> bool:
+        # A provider callback (or another process) may rename the private
+        # run and place unrelated bytes under the same pathname. The name,
+        # profile root and SHA alone do not prove that THIS Core-created
+        # staging namespace produced the candidate.
+        try:
+            current_attempt = os.stat(attempt, follow_symlinks=False)
+            return (stat.S_ISDIR(current_attempt.st_mode)
+                    and (current_attempt.st_dev, current_attempt.st_ino)
+                        == attempt_inode)
+        except OSError:
+            return False
+
     # Optional, provider-neutral Core runtime bridge. An adapter may supply
     # an opaque DRM recipe, but only this live, already-admitted operation
     # can execute it. Neither the recipe nor the runtime result is persisted
@@ -204,6 +217,8 @@ def complete_selected_delivery(
     runtime_artifact_stat: list[os.stat_result | None] = [None]
 
     def execute_selected_runtime(request):
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
         if runtime_used[0] or not admission_current():
             raise ValueError("canonical_delivery_runtime_admission_changed")
         if (type(request) is not dict or request.get("schema_version") != 2
@@ -222,6 +237,8 @@ def complete_selected_delivery(
             raise ValueError("canonical_delivery_runtime_target_invalid")
         runtime_used[0] = True
         result = service.execute_acquisition_request(request)
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
         if not admission_current():
             raise ValueError("canonical_delivery_runtime_admission_changed")
         if (type(result) is not dict or result.get("ok") is not True
@@ -306,6 +323,8 @@ def complete_selected_delivery(
         )
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
         if not physical_owner_unique():
             raise ValueError("canonical_delivery_profile_directory_ambiguous")
         if reader_name in {"downloadable_selected_delivery_candidate", guarded_name,
@@ -407,6 +426,8 @@ def complete_selected_delivery(
             raise ValueError("canonical_delivery_runtime_artifact_changed")
         if not _same_file(final, before) or not current():
             raise ValueError("canonical_delivery_final_changed")
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
         if not physical_owner_unique():
             raise ValueError("canonical_delivery_profile_directory_ambiguous")
         # This receipt is a Core witness issued AFTER the verified, in-scope
