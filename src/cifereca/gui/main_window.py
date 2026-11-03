@@ -1554,9 +1554,6 @@ class MainWindow(Adw.ApplicationWindow):
     def _kobo_selected(self, row: BookListItem | None) -> None:
         self._library_selected(row)
 
-    def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-        return sync_controller._configure_kobo_backup_timer(self, run_now=run_now)
-
     def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
         return sync_controller.run_kobo_backup(self, manual, control)
 
