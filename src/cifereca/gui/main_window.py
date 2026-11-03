@@ -480,6 +480,7 @@ class MainWindow(Adw.ApplicationWindow):
             lambda: collect_cached_book_details(services, book, identity_id=identity_id),
             done, lambda _exc: None,
             priority=TaskPriority.METADATA, kind="detail-cache",
+            origin="automatic",
         )
 
     def _add_nav_row(self, route: str, label: str, icon_name: str) -> None:
@@ -1261,6 +1262,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.runner.submit(
             "Chargement de l'historique…", lambda: self.service.refresh_history(force=force), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
+            origin="user" if control is not None else "automatic",
         )
 
     def _history_book_row(self, x: HistoryItem) -> BookListItem:
