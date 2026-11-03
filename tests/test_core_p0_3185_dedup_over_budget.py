@@ -63,6 +63,9 @@ def test_overflow_is_not_no_duplicates_or_a_new_maintenance_permission(
         pytest.fail("oversized set must not hash an arbitrary subset")
 
     monkeypatch.setattr(canonical_post_placement, "_verified_copy", forbid_hash)
+    # Previous successful checkpoint emits its own INFO. Scope captured logs
+    # to the saturated replay rather than the entire fixture lifecycle.
+    caplog.clear()
     with pytest.raises(ValueError, match="canonical_dedup_candidates_over_budget"):
         verified_post_placement_duplicates(
             store, library_root=root, placement_id=first.placement_id,
