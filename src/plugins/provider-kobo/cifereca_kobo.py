@@ -1286,8 +1286,8 @@ class KoboSession(ProviderSession):
             raise ProviderCapabilityError("kobo_delivery_offer_right_unobserved")
         if right.delivery == "unavailable":
             # A known archive is not a rejected HTTP offer or a KDRM error.
-            _TRACE_LOG.debug(
-                "TRACE kobo selected_offer product_id=%s outcome=unavailable "
+            _TRACE_LOG.info(
+                "EVENT kobo selected_offer product_id=%s outcome=unavailable "
                 "reason=archived_no_acquisition", right_id,
             )
             # Keep the exact positive purchase, but do not POST a descriptor
@@ -1305,8 +1305,8 @@ class KoboSession(ProviderSession):
         except (KoboVaultError, ProviderCapabilityError, ProviderError) as error:
             # This is the ACTUAL selected descriptor failure. Status is
             # included only when the upstream exception actually supplied it.
-            _TRACE_LOG.debug(
-                "TRACE kobo selected_offer product_id=%s phase=descriptor "
+            _TRACE_LOG.info(
+                "EVENT kobo selected_offer product_id=%s phase=descriptor "
                 "outcome=error error_type=%s http_status=%s",
                 right_id, type(error).__name__,
                 getattr(error, "status_code", None),
@@ -1410,8 +1410,8 @@ class KoboSession(ProviderSession):
             any(type(row) is dict and row.get("handling") == "kobo_kdrm"
                 for row in candidates) if type(candidates) is list else False
         )
-        _TRACE_LOG.debug(
-            "TRACE kobo selected_offer product_id=%s outcome=%s reason=%s "
+        _TRACE_LOG.info(
+            "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
             "delegated_resolver_called=%s",
             right_id, "available" if offer_id else "unknown",
