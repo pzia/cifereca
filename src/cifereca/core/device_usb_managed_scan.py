@@ -8,6 +8,7 @@ marked complete. An executor must repeat mount/source/target checks under lock.
 from __future__ import annotations
 
 from hashlib import sha256
+from itertools import islice
 import os
 from pathlib import Path
 import stat
@@ -179,8 +180,15 @@ def scan_managed_usb(
             start = os.fstat(fd)
             if not stat.S_ISDIR(start.st_mode) or start.st_dev != expected_dev:
                 return False
+            # A single adversarial/full USB directory may have millions of
+            # entries. Never materialize its entire iterator before enforcing
+            # a bound. Even directories and filenames without valid book
+            # extensions count towards the cap.
+            limit = _MAX_FILES + _MAX_DIRS
             with os.scandir(fd) as listing:
-                entries = list(listing)
+                entries = list(islice(listing, limit + 1))
+            if len(entries) > limit:
+                return False
             for entry in entries:
                 name = entry.name
                 if (not _relative(name) or "/" in name

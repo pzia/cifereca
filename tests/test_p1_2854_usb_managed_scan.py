@@ -351,3 +351,40 @@ def test_two_physical_files_with_casefold_colliding_paths_invalidate_scan(
         identity_id="alice", binding=binding(),
         mountpoint=volume, placements=[],
     ) is None
+
+
+def test_large_usb_directory_is_bounded_before_entries_are_materialized(
+    tmp_path, monkeypatch,
+):
+    volume, _managed = roots(tmp_path)
+    fake_usb_attestation(monkeypatch)
+    requested = {"count": 0}
+
+    class GuardedDirectoryListing:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            requested["count"] += 1
+            if requested["count"] > 3:
+                raise AssertionError("unbounded scandir materialization")
+            # Entry properties must never be accessed because exceeding the
+            # enumeration cap aborts *before* processing any observed file.
+            return object()
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(scanner, "_MAX_FILES", 1)
+        scoped.setattr(scanner, "_MAX_DIRS", 1)
+        scoped.setattr(scanner.os, "scandir", lambda fd: GuardedDirectoryListing())
+        observed = scanner.scan_managed_usb(
+            identity_id="alice", binding=binding(),
+            mountpoint=volume, placements=[],
+        )
+    assert observed is None
+    assert requested["count"] == 3
