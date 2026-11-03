@@ -11,6 +11,7 @@ from .source_context import source_context_epoch
 from dataclasses import replace
 from inspect import getattr_static
 import logging
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -197,13 +198,29 @@ def qualify_selected_offers(
             )
         except Cancelled:
             raise
-        except Exception:
-            # Provider preflight is optional. No invented offer, GET, or right
-            # follows a refusal; no raw exception or private URL is logged.
+        except Exception as error:
+            # A selected preflight may refuse BEFORE the provider's own
+            # descriptor instrumentation. Record the *actual* stable code
+            # rather than turning every pending book into a guessed HTTP 403.
+            # Only closed ProviderCapabilityError codes are accepted from the
+            # message; arbitrary upstream error bodies or signed URLs are
+            # never interpreted as a diagnostic classification.
             if not current():
                 raise ValueError("canonical_offer_source_rebound") from None
-            _LOG.warning("TRACE selected offer unavailable provider_id=%s",
-                         scope.provider_id)
+            from ..plugin_api import ProviderCapabilityError
+            reason = "provider_preflight_exception"
+            if type(error) is ProviderCapabilityError:
+                candidate = str(error)
+                if re.fullmatch(r"[a-z][a-z0-9_]{0,95}", candidate):
+                    reason = candidate
+                else:
+                    reason = "provider_capability_refused"
+            _LOG.info(
+                "EVENT canonical selected_offer provider_id=%s product_id=%s "
+                "outcome=unknown phase=provider_preflight reason=%s "
+                "exception_type=%s",
+                scope.provider_id, key.right_id, reason, type(error).__name__,
+            )
             continue
         if cancelled():
             raise Cancelled("canonical_offer_preflight_cancelled")
