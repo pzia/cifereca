@@ -119,3 +119,17 @@ def test_legacy_unowned_file_is_default_only_but_not_inside_bob_root(tmp_path):
             service.local_book_path(poisoned, identity_id="alice")
     finally:
         service.close()
+
+
+def test_explicitly_owned_external_legacy_file_remains_openable(tmp_path):
+    service = _service(tmp_path)
+    try:
+        external = tmp_path / "manual-drive" / "alice-book.epub"
+        external.parent.mkdir(parents=True)
+        external.write_bytes(b"explicit manual import")
+        pid = _placement(service, external, identity_id="alice")
+        assert service.local_book_path(pid, identity_id="alice") == external.resolve()
+        with pytest.raises(ProviderConfigurationError):
+            service.local_book_path(pid, identity_id="bob")
+    finally:
+        service.close()
