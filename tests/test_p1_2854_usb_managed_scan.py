@@ -233,7 +233,7 @@ def test_duplicate_targets_ambiguous_even_if_no_physical_file(
     volume, _ = roots(tmp_path)
     fake_usb_attestation(monkeypatch)
     rows = [intent(artifact="a", path=DEST),
-            intent(artifact="b", path=DEST.lower())]
+            intent(artifact="b", path="Books/Cifereca/FIRST.epub")]
     assert scanner.scan_managed_usb(
         identity_id="alice", binding=binding(),
         mountpoint=volume, placements=rows,
@@ -338,3 +338,16 @@ def test_new_unsited_intent_does_not_invent_a_device_path(tmp_path, monkeypatch)
     assert next(iter(seen.files)).startswith("untracked:")
     # The companion preview correction #4399 prohibits missing/unplanned
     # target from being treated as an upload candidate.
+
+
+def test_two_physical_files_with_casefold_colliding_paths_invalidate_scan(
+    tmp_path, monkeypatch,
+):
+    volume, managed = roots(tmp_path)
+    (managed / "First.epub").write_bytes(BOOK)
+    (managed / "first.epub").write_bytes(BOOK + b"2")
+    fake_usb_attestation(monkeypatch)
+    assert scanner.scan_managed_usb(
+        identity_id="alice", binding=binding(),
+        mountpoint=volume, placements=[],
+    ) is None
