@@ -147,6 +147,15 @@ def preview_usb_delta(
                 or placement["artifact_id"] in seen):
             # A cross-device/corrupt row must not be exposed by this view.
             raise ValueError("invalid or cross-device placement")
+        # device_placements historically has no identity column. A device
+        # binding can be re-assigned without clearing old intentions, so its
+        # current owner is NOT evidence that each row belongs to that owner.
+        # Require the intent's original exact identity in the row metadata;
+        # fail closed rather than show a previous profile's artifact ID.
+        intent_meta = placement.get("metadata")
+        if (type(intent_meta) is not dict
+                or intent_meta.get("intent_identity_id") != identity_id):
+            raise ValueError("unproven placement owner")
         artifact_id = placement["artifact_id"]
         seen.add(artifact_id)
         desired = placement.get("desired_state")
