@@ -1,7 +1,9 @@
 """Loaded search set: local filtering never calls provider services."""
 from dataclasses import dataclass, asdict
 from cifereca.core.search import filter_loaded_results, file_format
-from cifereca.core.document_filter import public_document_classification
+from cifereca.core.document_filter import (
+    public_document_classification, filter_loaded_with_documentary_proofs,
+)
 
 FIELDS = ('all', 'title', 'author', 'isbn', 'subject', 'series', 'collection', 'language')
 
@@ -15,8 +17,10 @@ class QueryState:
     languages: tuple[str, ...] = ()
 
     def filter(self, rows):
-        return filter_loaded_results(rows, self.text, field=self.field, scope=self.scope,
-                                     providers=self.providers, content_types=self.types, languages=self.languages)
+        return filter_loaded_with_documentary_proofs(
+            rows, self.text, field=self.field, scope=self.scope,
+            providers=self.providers, content_types=self.types, languages=self.languages,
+        )
 
 
 def result_row(item):
