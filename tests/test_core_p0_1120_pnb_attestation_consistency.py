@@ -10,6 +10,7 @@ from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 import json
 
 import pytest
+from cifereca.plugin_api import AttentionRequired
 
 from cifereca.core.loan_return_guard import (
     provider_absence_attested, public_return_state, return_key,
@@ -107,7 +108,9 @@ def test_conflicting_durable_success_rechecked_in_inventory_only(
         assert session.checks == ["linked-b"]
         assert session.posts == []
         assert service.storage.loan_return_state(key)["verification"] == "provider_absent"
-        assert service.return_digital(loan)["provider_inventory_verified"] is True
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
         assert session.posts == []
     finally:
         service.close()
