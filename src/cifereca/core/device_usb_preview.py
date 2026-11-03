@@ -218,7 +218,8 @@ def preview_usb_delta(
                         if verified else ("blocked", "owned_source_unverified")
                     )
         result.append(UsbPreviewRow(
-            artifact_id=artifact_id, desired=desired if type(desired) is str else "unknown",
+            artifact_id=artifact_id,
+            desired=desired if type(desired) is str and desired in ("keep", "remove") else "unknown",
             observed=current, last_known=known, last_observed_at=ts,
             action=action, reason=reason,
         ))
