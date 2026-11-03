@@ -45,6 +45,51 @@ et **« données effectivement revalidées chez Kobo »**. Un vrai forçage
 serveur nécessite un contrat explicite avec scope, singleflight, anti-abus
 et signal de fraîcheur/repli ; ne pas le simuler par plusieurs GET.
 
+## Authentification : le token Vault n'est pas le token Kobo (#3252)
+
+**Contrat serveur vérifié :** `pzia/KVault/src/worker.js` sur `main`
+(commit `dd2bcbe84908750c1983a2b4c81891164ddde861`).
+
+- `GET /api/v2/status` **sans** bearer annonce les **capacités globales**,
+  dont `acquisition_delegation`. Cette liste ne constitue pas une autorisation.
+- Le **même GET avec** le bearer du credential Cifereca authentifie ce token
+  et filtre `capabilities` selon ses scopes effectifs. Le droit
+  `kobo.acquisition.delegate` se matérialise dans la liste par
+  `acquisition_delegation`. La route de consultation des offres est nommée
+  `acquisition_info` (et non `acquisition`). Les entrées
+  `capability_details`, non filtrées, ne prouvent **aucun** scope.
+  L'API v2.3.3 **ne renvoie pas** `token_scopes` / `scopes` sur `/status`.
+- `POST /api/v2/library/{product_id}/acquisition` vérifie d'abord
+  `kobo.acquisition.read`, puis exige `kobo.acquisition.delegate` seulement
+  pour `{"mode":"delegated"}`.
+- **Les tokens API Vault créés sans scopes explicites n'ont PAS
+  `kobo.acquisition.delegate`** : leurs valeurs par défaut sont
+  `kobo.catalog.read`, `kobo.library.read`, `kobo.acquisition.read`.
+  Le parcours de gestion du Vault (`POST /api/v2/vault/{uid_hash}/api-tokens`)
+  permet une émission explicite avec la liste des quatre scopes. La valeur
+  émise n'est remise qu'à la création ; la configuration Cifereca doit être
+  mise à jour localement et une reconnexion doit revalider le nouveau bearer.
+  Ne jamais transmettre cette valeur dans un ticket.
+- La présence d'une capacité `acquisition_delegation` dans le statut
+  **authentifié** ne suffit toujours pas à une livraison : les credentials
+  Kobo conservés dans Vault doivent être disponibles
+  (`acquisition_access=configured`), le runtime être opérationnel,
+  l'achat et l'offre exacte admissibles, et le GET/DRM validés.
+- Un **403 Vault pour scope insuffisant** ne peut pas être corrigé par
+  le `refresh_token` Kobo. Ne pas boucler ni rafraîchir Kobo automatiquement
+  sur ce 403 ; émettre un nouveau **token Vault** autorisé. Côté Kobo
+  sous-jacent, la gestion d'un **401 d'access token Kobo expiré** est une
+  opération indépendante du backend, et ne doit jamais affaiblir les
+  autorisations Vault.
+
+**Vérification de capacité sans acquisition** : après reconnexion, la vue
+diagnostique du provider Kobo doit exposer
+`delegation_available=true`. L'état brut de `/status` est contrôlable
+localement avec un GET authentifié ; ne communiquer que l'indicateur
+`"acquisition_delegation" in capabilities`, ni bearer ni réponse complète
+dans GitHub. Un refus reste non-réessayable tant que la réautorisation du
+token Vault n'a pas été attestée.
+
 ## Opérations et frais réseau
 
 | Déclencheur | Ce qu'il force | Ce qu'il ne force **pas** |

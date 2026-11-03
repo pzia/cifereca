@@ -27,15 +27,28 @@ class Vault:
 
     def status(self, *, authenticated=False):
         self.calls.append(("status", authenticated))
-        capabilities = ["acquisition", "acquisition_delegation"] if self.public else ["acquisition"]
-        result = {"api_version": "2.3", "capabilities": capabilities}
+        # pzia/KVault/src/worker.js v2Status: public lists *all* server
+        # capabilities; bearer status lists only those permitted by scopes.
+        capabilities = (
+            ["acquisition_info", "acquisition_display_profiles",
+             "acquisition_delegation"] if self.public
+            else ["acquisition_info", "acquisition_display_profiles"]
+        )
+        result = {
+            "api_version": "2.3", "contract_revision": "2.3.3",
+            "service": "kobo-vault", "capabilities": capabilities,
+            "acquisition_access": "configured" if authenticated else "unknown",
+        }
         if authenticated:
             if not self.introspection:
                 raise KoboVaultError("synthetic unavailable", code="http_error", status_code=404)
+            if not self.scope:
+                result["capabilities"] = [
+                    item for item in capabilities
+                    if item != "acquisition_delegation"
+                ]
             if self.scopes is not None:
                 result["token_scopes"] = self.scopes
-            elif self.scope:
-                result["token_scopes"] = ["kobo.acquisition.delegate"]
         return result
 
     def authenticated_capabilities(self):
@@ -106,7 +119,7 @@ def test_delegate_requires_public_capability_bearer_scope_and_runtime(
     "kobo.acquisition.delegate", True, ["kobo.acquisition.delegated"],
 ])
 def test_invalid_or_unrelated_bearer_claims_never_trigger_delegated_post(scopes):
-    vault = Vault(scopes=scopes)
+    vault = Vault(scope=True, scopes=scopes)
     session = _connect(vault)
     try:
         with pytest.raises(ProviderCapabilityError, match="missing_delegation_scope"):
@@ -195,11 +208,14 @@ def test_public_and_authenticated_status_use_distinct_http_bearer_headers():
         observed.append((request.method, request.url.path,
                          request.headers.get("Authorization")))
         payload = {
-            "api_version": "2.3",
-            "capabilities": ["acquisition", "acquisition_delegation"],
+            "api_version": "2.3", "contract_revision": "2.3.3",
+            "service": "kobo-vault",
+            "capabilities": ["acquisition_info", "acquisition_delegation"],
+            "acquisition_access": (
+                "configured" if request.headers.get("Authorization")
+                else "unknown"
+            ),
         }
-        if request.headers.get("Authorization") == "Bearer test-bearer":
-            payload["token_scopes"] = ["kobo.acquisition.delegate"]
         return httpx.Response(200, json=payload)
 
     client = KoboVaultClient(
@@ -209,7 +225,11 @@ def test_public_and_authenticated_status_use_distinct_http_bearer_headers():
     try:
         public = client.status(authenticated=False)
         authenticated = client.authenticated_capabilities()
-        assert not _authenticated_delegate_scope(public)
+        # The anonymous status advertises acquisition_delegation too.
+        # It MUST NOT be used as evidence: connect() only passes the
+        # separately bearer-authenticated status to the scope qualifier.
+        assert "acquisition_delegation" in public["capabilities"]
+        assert _authenticated_delegate_scope(public) is False
         assert _authenticated_delegate_scope(authenticated)
         assert observed == [
             ("GET", "/api/v2/status", None),
