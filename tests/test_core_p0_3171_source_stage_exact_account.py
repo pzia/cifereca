@@ -8,6 +8,7 @@ import pytest
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register
+from tests.test_core_p0_3171_canonical_sync_stage import rig
 
 
 def test_source_reference_stage_exact_account_amid_many_siblings(tmp_path):
@@ -94,3 +95,59 @@ def test_source_reference_stage_rejects_shared_physical_profile_directory(tmp_pa
             assert db.execute("SELECT COUNT(*) FROM placements").fetchone() == (0,)
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("disabled", ("0", "false", "unexpected"))
+def test_source_reference_transaction_rejects_disabled_persisted_source(
+    tmp_path, disabled,
+):
+    """An already authenticated positive A cannot bypass source OFF in SQL."""
+    from cifereca.core.source_auto_consent_bridge import _source_id
+
+    storage = Storage(tmp_path / "state.sqlite")
+    try:
+        source, snapshot = new_source()
+        register(storage, "A", "seller", "card-A")
+        key = "sync.source.enabled." + _source_id(snapshot.scope)
+        storage.metadata_set(key, disabled)
+        with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
+            persist_attested_source_references(storage, snapshot)
+        with storage._lock, storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM source_references").fetchone() == (0,)
+        storage.metadata_set(key, "1")
+        assert persist_attested_source_references(storage, snapshot) == 1
+        assert persist_attested_source_references(storage, snapshot) == 0
+    finally:
+        storage.close()
+
+
+def test_source_disabled_after_private_inventory_before_a_commit_blocks_handoff(
+    rig, monkeypatch,
+):
+    """Only the SQL writer can close the final read-to-commit enablement gap."""
+    from cifereca.core import canonical_sync_stage
+    from cifereca.core.source_auto_consent_bridge import _source_id
+    from cifereca.core.sync_coordination import synchronize_account_source
+    from tests.test_core_p0_3171_canonical_sync_stage import refs
+
+    service, storage, _root = rig
+    original = canonical_sync_stage.persist_attested_source_references
+    key = "sync.source.enabled." + _source_id(service.snapshot.scope)
+
+    def revoke_before_sql(store, snapshot, **kwargs):
+        # The private reader has already returned A with its in-memory lease
+        # valid. The real Core service reads this durable switch; the fixture
+        # intentionally keeps its old cached boolean to test the SQL fence.
+        store.metadata_set(key, "0")
+        return original(store, snapshot, **kwargs)
+
+    monkeypatch.setattr(
+        canonical_sync_stage, "persist_attested_source_references",
+        revoke_before_sql,
+    )
+    result = synchronize_account_source(service, service.account)
+    assert service.read_calls == 1
+    assert result["status"] == "partial"
+    assert result["canonical_rights"]["status"] == "failed"
+    assert "canonical_execution" not in result
+    assert refs(storage) == ([], 0)

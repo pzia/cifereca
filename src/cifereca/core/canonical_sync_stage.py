@@ -95,6 +95,18 @@ def persist_attested_source_references(
         ).fetchall()
         if len(exact_accounts) != 1:
             raise ValueError("canonical_rights_core_binding_changed")
+        # The source may be disabled after the private inventory's final
+        # in-memory check but before this transaction. Check the same durable
+        # switch as Sync inside BEGIN IMMEDIATE, without recursively calling
+        # Storage or consulting a stale boolean from a provider callback.
+        from .source_auto_consent_bridge import _source_id
+        from .source_enablement import source_enabled
+        enabled = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            ("sync.source.enabled." + _source_id(scope),),
+        ).fetchone()
+        if not source_enabled(enabled[0] if enabled else None):
+            raise ValueError("canonical_rights_core_binding_changed")
         for row in admitted:
             coords = (
                 scope.identity_id, scope.provider_id, scope.credential_id,
