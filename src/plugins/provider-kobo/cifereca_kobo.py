@@ -1298,28 +1298,44 @@ class KoboSession(ProviderSession):
         )
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        kdrm_ready = kdrm_runtime_ready(self)
         offer_id = exact_kobo_offer_id(
             payload, identity_id=identity_id, credential_id=self.credential_id,
             account_id=account_id, product_id=right_id,
-            kdrm_runtime_ready=kdrm_runtime_ready(self),
+            kdrm_runtime_ready=kdrm_ready,
         )
-        # A KDRM descriptor URL alone is NOT an executable offer: the
-        # runtime needs a separately authenticated replay recipe to obtain
-        # ContentKeys locally. This second POST is selected-only, never an
-        # inventory/backup call, and no KDRM secrets enter the snapshot.
-        if offer_id:
+        # Only the ONE descriptor candidate that reproduces the exact
+        # runtime offer may be used for the delegated ContentKeys replay.
+        # Vault can return an earlier, non-pinned content_access_book KDRM
+        # candidate alongside the supported library_sync candidate. Taking
+        # the first KDRM entry would reject the valid pinned route.
+        # Conversely, a selected plain/ACSM offer must not invoke delegated
+        # just because an unrelated KDRM candidate is also advertised.
+        if offer_id.startswith("kobo.runtime:"):
             described = payload["acquisition"]["candidates"]
-            kdrm = next((row for row in described
-                         if type(row) is dict and
-                         row.get("handling") == "kobo_kdrm"), None)
-            if kdrm is not None:
+            pinned = [
+                row for row in described
+                if type(row) is dict and row.get("handling") == "kobo_kdrm"
+                and exact_kobo_offer_id(
+                    {**payload, "acquisition": {
+                        **payload["acquisition"], "candidates": [row],
+                    }},
+                    identity_id=identity_id, credential_id=self.credential_id,
+                    account_id=account_id, product_id=right_id,
+                    kdrm_runtime_ready=kdrm_ready,
+                ) == offer_id
+            ]
+            if len(pinned) != 1:
+                offer_id = ""
+            else:
                 try:
                     delegated = self.resolve_acquisition(right_id, mode="delegated")
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
                     source = scoped_kdrm_source(
-                        delegated, kdrm, product_id=right_id, account_id=account_id,
-                        identity_id=identity_id, credential_id=self.credential_id,
+                        delegated, pinned[0], product_id=right_id,
+                        account_id=account_id, identity_id=identity_id,
+                        credential_id=self.credential_id,
                     )
                     if source is None:
                         offer_id = ""
