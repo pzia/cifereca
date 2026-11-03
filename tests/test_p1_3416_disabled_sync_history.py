@@ -142,3 +142,30 @@ def test_invalid_schedule_projection_never_reflects_supplier_payload():
         assert sync_schedule_status_subtitle(mode, interval, available=available) == (
             "Planification des notices indisponible."
         )
+
+
+def test_unknown_activation_or_connection_never_receives_false_repair_advice():
+    # Errors remain visible, but an untyped/missing signal is not proof the
+    # user disabled the source or that a remote session is disconnected.
+    for unknown in (None, "false", 0, 1, {}, []):
+        activation = _source(enabled=unknown)
+        alert = sync_source_attention(activation)
+        assert alert is not None and alert[0] == "error"
+        guidance = sync_source_card_guidance(activation, alert)
+        assert guidance == "À faire : vérifier l’activation de cette source."
+        assert "activer la source si souhaité" not in guidance
+
+        connection = _source(enabled=True)
+        connection.connected = unknown
+        alert = sync_source_attention(connection)
+        assert alert is not None and alert[0] == "error"
+        guidance = sync_source_card_guidance(connection, alert)
+        assert guidance == "À faire : vérifier la connexion de cette source."
+        shown = sync_source_presentation(connection)
+        assert shown.connection_label == "Non confirmée"
+        assert shown.action_enabled is False
+    disconnected = _source(enabled=True)
+    disconnected.connected = False
+    assert sync_source_card_guidance(
+        disconnected, sync_source_attention(disconnected),
+    ) == "À faire : reconnecter ce compte."

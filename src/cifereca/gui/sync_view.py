@@ -704,7 +704,8 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
 def sync_source_presentation(source: object, *, canonical: bool = False) -> SyncSourcePresentation:
     raw_enabled = getattr(source, "enabled", None)
     enabled = raw_enabled is True
-    connected = getattr(source, "connected", None) is True
+    raw_connected = getattr(source, "connected", None)
+    connected = raw_connected is True
     capable = getattr(source, "sync_capable", None) is True
     # Preserve stable action labels for non-Kobo sources; the GTK row and
     # task label provide the disambiguated provider presentation (#980).
@@ -715,7 +716,14 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         "Désactivée" if raw_enabled is False else
         "Non confirmée"
     )
-    connection = "Connectée" if connected else "Déconnectée"
+    # Broker boolean flags require exact typing. Unknown/malformed does not
+    # attest a disconnected account; show a neutral state without allowing a
+    # source action or deriving any provider-specific reconnection policy.
+    connection = (
+        "Connectée" if raw_connected is True else
+        "Déconnectée" if raw_connected is False else
+        "Non confirmée"
+    )
 
     # Use the same closed, phase-aware severity projection for the primary
     # status text and its attention icon. A failed local GET/placement phase
@@ -786,7 +794,11 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
             else "Activation non confirmée ; actualisez la source avant de synchroniser."
         )
     elif not connected:
-        disabled_reason = "Reconnectez ce compte avant de synchroniser."
+        disabled_reason = (
+            "Reconnectez ce compte avant de synchroniser."
+            if raw_connected is False else
+            "Connexion non confirmée ; actualisez cette source avant de synchroniser."
+        )
     else:
         disabled_reason = ""
 
