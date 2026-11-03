@@ -627,6 +627,21 @@ def _configured_rows_for_source(rows, *, source_scope, default_identity):
     return matches
 
 
+def _opening_sync_covers_visible_accounts(self) -> bool:
+    """True only if the next opening Sync will inventory every visible source.
+
+    A source can be connected for consultation yet excluded from Sync. When
+    the enabled-state check is unavailable or ambiguous, keep the established
+    forced refresh rather than silently withholding its loans.
+    """
+    try:
+        identity_id = self.current_identity.identity_id
+        accounts = self.accounts_for_identity(identity_id)
+        return all(self.sync_source_enabled(account) is True for account in accounts)
+    except Exception:
+        return False
+
+
 def connect_configured(self, *, logger, caller_category: str = "other",
                        source_scope: tuple[str, str, str] | None = None) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
@@ -898,12 +913,16 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     self.current_identity = self.identity_by_id(self.current_account.identity_id) or self.current_identity
     self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
     self.primary = self.current_account
-    if caller_category == "startup/connect_configured" and source_scope is None:
+    if (caller_category == "startup/connect_configured"
+            and source_scope is None
+            and _opening_sync_covers_visible_accounts(self)):
         # GTK queues the opening Sync as soon as this first connection
         # completes. It makes its own fresh, validated loan/rights reads.
         # A forced loan refresh here would duplicate the two Paris ListLoans
         # branches (and the BnF activity read) before that canonical cycle.
         # disconnect_configured() already revoked the previous UI loans.
+        # Preserve the initial read for a connected source excluded from Sync;
+        # no later automatic inventory would otherwise populate its loans.
         # Keep explicit reconnects and targeted CLI connections unchanged.
         loans = []
     else:
