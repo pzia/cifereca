@@ -144,3 +144,35 @@ def test_core_bounded_stop_reason_is_visible_without_losing_real_failure(stop_co
     # A free-text payload, even one resembling a source code, is not a state.
     hostile = _source(phase_states=(phase("materialize", "private://" + stop_code),))
     assert sync_source_cycle_headline(hostile) == "Livraison locale : non confirmée"
+
+
+def test_local_busy_phase_is_visible_in_both_sync_headline_and_attention():
+    """Core's busy is contention, never a successful local placement."""
+    source = _source(
+        provider_id="fictional", status="running",
+        phase_states=(
+            phase("discover_rights", "success"),
+            phase("fetch", "busy"),
+            phase("materialize", "running"),
+        ),
+    )
+    expected = "Inventaire distant : réussie · Livraison locale : déjà en cours"
+    assert sync_source_cycle_headline(source) == expected
+    assert expected in sync_source_presentation(source).summary
+    assert sync_source_attention(source) == (
+        "warning", "Réception du fichier : déjà en cours",
+    )
+
+
+def test_real_failure_remains_above_busy_local_phase():
+    source = _source(
+        provider_id="fictional", status="partial",
+        phase_states=(
+            phase("fetch", "failed"),
+            phase("placement", "busy"),
+        ),
+    )
+    assert sync_source_cycle_headline(source) == "Livraison locale : échec"
+    assert sync_source_attention(source) == (
+        "error", "Réception du fichier : échec — action nécessaire",
+    )
