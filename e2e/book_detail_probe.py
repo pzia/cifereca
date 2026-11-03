@@ -223,12 +223,12 @@ def main():
         save()
         app.quit()
 
-    def later(ms, fn):
+    def later(ms, fn, *, public_stage=None):
         def run():
-            # A failure may happen in a nested GTK event after this callback.
-            # Retain only its last reviewed entry point; never serialize an
-            # exception or a free-form callback name into public CI evidence.
-            name = getattr(fn, "__name__", "")
+            # An inline lambda has __name__ == '<lambda>'. Every lambda in
+            # this synthetic probe supplies a *literal*, reviewed target
+            # function name, never a provider label or free-form exception.
+            name = public_stage if type(public_stage) is str else getattr(fn, "__name__", "")
             report["public_stage"] = (
                 name if name in _PUBLIC_STAGE_CODES else "callback_other"
             )
@@ -402,7 +402,7 @@ def main():
         # Exercise the native tab order between the two per-value actions.
         device.key("Tab", True)
         device.key("Tab", False)
-        later(100, lambda: verify_tab_order(copy, lookup))
+        later(100, lambda: verify_tab_order(copy, lookup), public_stage="verify_tab_order")
 
     def verify_tab_order(copy, lookup):
         assert lookup.has_focus(), "Tab ne rejoint pas la recherche de la même valeur"
@@ -411,7 +411,7 @@ def main():
         device.key("Tab", False)
         device.key("Shift_L", False)
         report["checks"]["per_value_tab_order"] = True
-        later(100, lambda: click_copy(copy))
+        later(100, lambda: click_copy(copy), public_stage="click_copy")
 
     def click_copy(button):
         assert button.has_focus(), "Focus copie perdu"
@@ -439,7 +439,7 @@ def main():
         search = next((b for k, b in buttons.items() if k.startswith("Rechercher en ligne")), None)
         assert search is not None, "Loupe ISBN absente"
         assert search.grab_focus() is not False
-        later(250, lambda: click_isbn(search))
+        later(250, lambda: click_isbn(search), public_stage="click_isbn")
 
     def click_isbn(button):
         assert button.has_focus(), "Focus recherche perdu"
@@ -634,7 +634,7 @@ def main():
             db.execute("DELETE FROM entitlements WHERE entitlement_id='gtk-owned-right'")
             db.execute("DELETE FROM provider_connections WHERE provider_id=? AND credential_id='gtk-owned-credential'", (owned_action["provider"],))
         if owned_action["provider"] == "kobo":
-            later(160, lambda: begin_owned_book_action("numilog"))
+            later(160, lambda: begin_owned_book_action("numilog"), public_stage="begin_owned_book_action")
             return
         window._library_entries_cache = [dict(entry, key="ux942-library")]
         window._render_library()
@@ -900,7 +900,7 @@ def main():
         toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button)
                       and w.get_label() == "Lire la suite")
         component["summary_toggle"] = toggle
-        later(200, lambda: component_expand(toggle))
+        later(200, lambda: component_expand(toggle), public_stage="component_expand")
 
     def component_expand(toggle):
         assert toggle.get_mapped()
