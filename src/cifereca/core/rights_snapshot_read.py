@@ -83,6 +83,16 @@ def read_account_rights_snapshot(service, account: Account, *,
             return False
         if service.storage is not storage:
             return False
+        # A source can be disabled while a private inventory request is in
+        # flight without replacing the account/session or bumping the Core
+        # context epoch. Recheck before the first GET, after each provider
+        # reply and before following a pagination cursor. A stale positive A
+        # batch must not survive a source disable.
+        try:
+            if service.sync_source_enabled(account) is not True:
+                return False
+        except Exception:
+            return False
         if (
             account.identity_id, account.provider_id,
             account.credential_id, account.unique_id,
