@@ -955,7 +955,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                     entitlement, entitlement_identity,
                 )
             )
-        if provider_id == 'bnf-pret' and entitlement_type == 'loan':
+        if (provider_id == 'bnf-pret' and entitlement_type == 'loan'
+                and exact_source_alias.get(exact_scope) is None):
+            # A legacy manual-import display hint must never override an
+            # exact canonical provider OriginLink for this borrower/edition.
+            # Different physical Artifacts remain separate; only the loan
+            # possession follows its strongest actual provenance proof.
             canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
         existing = merged.get(canonical_key, {})
