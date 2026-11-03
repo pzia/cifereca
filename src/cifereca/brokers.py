@@ -234,7 +234,7 @@ class SynchronizationBrokerImpl:
         # Never relay a signed provider URL or private path under another
         # public field merely because the error field was redacted.
         if state.get("status", "") not in (
-            _SYNC_PUBLIC_STATUSES | {"", "idle", "running", "cancelled", "interrupted"}
+            _SYNC_PUBLIC_STATUSES | {"", "idle", "running", "busy", "cancelled", "interrupted"}
         ):
             state["status"] = "unknown"
         for name in ("last_attempt", "last_success",
@@ -247,7 +247,7 @@ class SynchronizationBrokerImpl:
                     state["inventory_status"] = "unknown"
                 state[name] = sanitized
         if state.get("inventory_status", "") not in {
-            "", "running", "success", "partial", "failed", "unknown",
+            "", "running", "busy", "success", "partial", "failed", "unknown",
         }:
             state["inventory_status"] = "unknown"
         if state.get("scope", "") not in {"", "manual", "opening", "scheduled"}:
@@ -321,7 +321,7 @@ class SynchronizationBrokerImpl:
         raw_status = state.get("status")
         inventory_status = {
             "ok": "success", "success": "success",
-            "running": "running", "partial": "partial",
+            "running": "running", "busy": "busy", "partial": "partial",
             "error": "failed", "failed": "failed",
         }.get(raw_status, "idle")
         if (
@@ -1279,13 +1279,32 @@ class SynchronizationBrokerImpl:
                 )
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=True, changed=changed, facts=facts)
-        except Exception:
-            state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
+        except Exception as exc:
+            # The Core source-sync lock reports an observed operation_busy
+            # through ProviderConfigurationError chained from LockBusyError.
+            # Do not parse arbitrary provider messages or mark an unattempted
+            # delivery as a network failure.
+            from .locking import LockBusyError
+            from .providers import ProviderConfigurationError
+            busy = (isinstance(exc, ProviderConfigurationError)
+                    and isinstance(exc.__cause__, LockBusyError))
+            state.update(
+                status="busy" if busy else "error",
+                error="" if busy else _SYNC_PUBLIC_FAILURE,
+            )
             if refreshes_private_inventory:
-                state["inventory_status"] = "failed"
+                state["inventory_status"] = "busy" if busy else "failed"
             self._set_state(source_id, state); self._notify()
-            return SyncResult(ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
-                              facts={"reason": "source_unavailable"})
+            return (
+                SyncResult(
+                    ok=False, warnings=("Synchronisation déjà en cours",),
+                    facts={"status": "busy", "reason": "operation_busy"},
+                )
+                if busy else SyncResult(
+                    ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
+                    facts={"reason": "source_unavailable"},
+                )
+            )
 
     def synchronize(self, request: SyncRequest, control: Any = None) -> SyncResult:
         # An omitted identity must never turn a nominal "Sync" into an
