@@ -168,7 +168,9 @@ class SaveSettings(unittest.TestCase):
         task = self.runner.submit.call_args.args
         task[2](task[1]())
         self.window._populate_accounts.assert_called_once()
-        self.window.toast.assert_not_called()  # activity reporter is optional
+        self.window.toast.assert_called_once_with(
+            "Répertoire déplacé · 0 collision(s) préservée(s) · bibliothèque actualisée", 5
+        )
 
     def test_new_installation_has_no_experimental_permission_default(self):
         from cifereca.config_defaults import DEFAULT_CONFIG
