@@ -1,4 +1,4 @@
-"""Explicit BnF new-loan consent (#2055): GTK orchestration, no provider calls.
+"""Explicit BnF new-loan action (#2055/#3121): GTK orchestration only.
 
 Only the Core dispatcher may mutate a BnF loan. The legacy borrow() handler
 must never be used for this source. This controller has no provider import
@@ -11,10 +11,10 @@ from ..models import Account, SearchResult
 
 
 def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
-    """Offer consent only for a published, Core-admissible BnF action.
+    """Submit only a user-clicked, published and Core-admissible BnF action.
 
-    A confirmed borrow request represents the reader's site-checked
-    intention to attempt a transaction; the lender decides quota and rights.
+    No second dialog or separate website attestation is required (#3121).
+    The provider still decides quota and rights; Core guards one exact POST.
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
@@ -78,50 +78,39 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
         except Exception:
             return False
 
-    # Show the selected account alias in the local dialog, never in logs.
-    # Collapse control/newline whitespace to avoid breaking native GTK labels.
-    account_name = (
-        " ".join(account.display_name.split())[:80]
-        if type(account.display_name) is str else ""
-    ) or "Compte BnF connecté"
-    dialog = Adw.MessageDialog.new(
-        window, "Emprunter ce livre à la BnF ?",
-        f"Compte : {account_name}. "
-        f"Livre : {' '.join(item.title.split())[:140] if type(item.title) is str else 'notice sélectionnée'}. "
-        "Vérifiez sur pret.bnf.fr que ce livre est indiqué comme empruntable "
-        "pour votre compte avant de confirmer. La BnF peut refuser "
-        "la transaction selon le quota ou les droits. "
-        "Un seul envoi sera effectué. "
-        "En cas de résultat incertain, consultez Mes emprunts avant toute "
-        "nouvelle démarche. Le téléchargement ACSM reste une action distincte.",
-    )
-    dialog.add_response("cancel", "Annuler")
-    dialog.add_response("borrow", "J’ai vérifié sur BnF et je confirme")
-    submitted = False
+    # The explicit click on "Emprunter" is the sole user gesture. Avoid a
+    # second confirmation dialog and prevent repeated queued requests even if
+    # a click arrives before TaskRunner can disable the control.
+    if getattr(window, "_bnf_borrow_pending", None) is not None:
+        return
+    token = object()
+    window._bnf_borrow_pending = token
 
-    def on_response(_dialog, response):
-        nonlocal submitted
-        if response != "borrow" or submitted:
-            return
+    def release_pending():
+        if getattr(window, "_bnf_borrow_pending", None) is token:
+            window._bnf_borrow_pending = None
+
+    def submit_once():
         if not current() or not window.service.can_borrow_bnf(selected):
+            release_pending()
             window.show_error(
                 "Le compte ou le livre a changé. Sélectionnez de nouveau "
                 "la notice avant toute demande.", "Emprunt BnF",
             )
             return
-        submitted = True
 
         def work():
             if not current() or not window.service.can_borrow_bnf(selected):
                 return {"status": "blocked", "reason_code": "borrow_scope_changed"}
             return window.service.borrow_bnf_manual(
                 selected, expected_identity_id=identity_id,
-                confirmed=True, site_checked=True,
+                confirmed=True,
                 expected_context_epoch=core_epoch,
                 expected_account=account,
             )
 
         def done(result):
+            release_pending()
             if not current():
                 return
             if (type(result) is dict and result.get("status") == "confirmed"
@@ -137,7 +126,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                     and result.get("reason_code") == "borrow_not_submitted"):
                 window.show_error(
                     "Aucune demande de prêt n’a été envoyée à la BnF : "
-                    "la fiche ou la confirmation n’est plus exploitable. "
+                    "la fiche ou l'action n'est plus exploitable. "
                     "Vérifiez le livre sur pret.bnf.fr avant une nouvelle "
                     "demande volontaire.",
                     "Emprunt BnF",
@@ -157,6 +146,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                 )
 
         def failed(_error):
+            release_pending()
             if current():
                 # Never print arbitrary provider exceptions containing URLs
                 # or account-specific server data in the GTK modal.
@@ -166,14 +156,17 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                     "Emprunt BnF",
                 )
 
-        window.runner.submit(
-            "Demande de prêt BnF…", work, done, failed,
-            control=control, priority=TaskPriority.USER_ACTION,
-            kind="borrow",
-        )
+        try:
+            window.runner.submit(
+                "Demande de prêt BnF…", work, done, failed,
+                control=control, priority=TaskPriority.USER_ACTION,
+                kind="borrow",
+            )
+        except Exception:
+            release_pending()
+            raise
 
-    dialog.connect("response", on_response)
-    dialog.present()
+    submit_once()
 
 
 __all__ = ["present_bnf_borrow"]
