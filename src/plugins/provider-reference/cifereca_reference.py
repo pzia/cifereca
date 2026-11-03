@@ -270,17 +270,55 @@ class ReferenceSession(ProviderSession):
         self, account: Account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
     ):
-        """Return typed v2 staged bytes, never a Core publication receipt."""
+        """Legacy v2 candidate ABI: Core independently fences publication."""
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account: Account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """Core-owned live admission; never turn an OFF source into staged bytes."""
+        if not callable(admission_current):
+            raise ProviderCapabilityError("reference_core_admission_revoked")
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
+        )
+
+    def _downloadable_selected_delivery_candidate(
+        self, account: Account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
+    ):
         from cifereca.plugin_api import SourceReference, DeliveryCandidate
 
+        # The scoped source must be frozen BEFORE the provider performs I/O.
+        # A live Core callback is mandatory on the guarded entrypoint.
+        if admission_current is not None:
+            try:
+                if not callable(admission_current) or admission_current() is not True:
+                    raise ProviderCapabilityError("reference_core_admission_revoked")
+            except ProviderCapabilityError:
+                raise
+            except Exception:
+                raise ProviderCapabilityError("reference_core_admission_revoked") from None
+        scope = self._scope(account)
         path, hint = self.rights_selected_delivery_candidate(
             account, edition_id=edition_id, right_id=resource_id,
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
         )
         return DeliveryCandidate(
             source=SourceReference(
-                self._scope(account), branch, edition_id, resource_id, kind,
+                scope, branch, edition_id, resource_id, kind,
             ),
             selected_offer_id=selected_offer_id, path=path, provider_hint=hint,
         )
@@ -317,13 +355,24 @@ class ReferenceSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account: Account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
     ):
         """Stage one synthetic EPUB; Core checks bytes/SHA/consent and publishes.
 
         Never allocate a directory, follow a symlink, replace a candidate,
         read a file outside the staging directory, or call a network client.
         """
+        def core_admitted() -> bool:
+            if admission_current is None:
+                return True  # Legacy ABI still checked by Core after delivery.
+            try:
+                return callable(admission_current) and admission_current() is True
+            except Exception:
+                return False
+
         with self._lock:
+            if not core_admitted():
+                raise ProviderCapabilityError("reference_core_admission_revoked")
             _, pin = self._bound(account)
             if (type(delivery_offer_id) is not str
                     or _OFFER.fullmatch(delivery_offer_id) is None):
@@ -337,6 +386,8 @@ class ReferenceSession(ProviderSession):
                     or actual.delivery_offer_id != delivery_offer_id
                     or not self._still_bound(account, pin)):
                 raise ProviderCapabilityError("reference_offer_unavailable")
+            if not core_admitted():
+                raise ProviderCapabilityError("reference_core_admission_revoked")
             try:
                 target = Path(target_dir)
                 valid = (
@@ -376,6 +427,8 @@ class ReferenceSession(ProviderSession):
                     raise ProviderCapabilityError("reference_account_rebound")
                 if not stage_still_bound():
                     raise ProviderCapabilityError("reference_staging_rebound")
+                if not core_admitted():
+                    raise ProviderCapabilityError("reference_core_admission_revoked")
                 destination = target / (edition_id + ".epub")
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
                 try:
@@ -389,6 +442,8 @@ class ReferenceSession(ProviderSession):
                         raise ProviderCapabilityError("reference_account_rebound")
                     if not stage_still_bound():
                         raise ProviderCapabilityError("reference_staging_rebound")
+                    if not core_admitted():
+                        raise ProviderCapabilityError("reference_core_admission_revoked")
                 except BaseException:
                     os.unlink(destination.name, dir_fd=dirfd)
                     raise
