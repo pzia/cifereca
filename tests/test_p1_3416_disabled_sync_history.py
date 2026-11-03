@@ -88,7 +88,10 @@ def test_disabled_partial_and_empty_history_remain_neutral():
         view = sync_source_presentation(source)
         assert view.sync_label == "Désactivée · aucune synchronisation attendue"
         assert "Synchronisation : Partielle" not in view.summary
-        assert "Historique du dernier cycle avant désactivation :" in view.summary if phases else True
+        if phases:
+            assert "Historique du dernier cycle avant désactivation :" in view.summary
+        else:
+            assert "Historique du dernier cycle avant désactivation :" not in view.summary
 
 
 def test_disabled_source_never_reports_disconnected_account_as_active_incident():
