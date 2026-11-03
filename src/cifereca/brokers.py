@@ -324,10 +324,7 @@ class SynchronizationBrokerImpl:
             "running": "running", "busy": "busy", "partial": "partial",
             "error": "failed", "failed": "failed",
         }.get(raw_status, "idle")
-        if (
-            getattr(account, "provider_id", None) in {"kobo", "numilog"}
-            and "remote_inventory" in sync_caps
-        ):
+        if "remote_inventory" in sync_caps:
             # Opening sync may refresh loans, without reading the private
             # store inventory. It cannot attest discover/rights freshness.
             inventory_status = state.get("inventory_status", "idle") or "idle"
@@ -465,10 +462,10 @@ class SynchronizationBrokerImpl:
             and callable(getattr_static(session, "download_digital", None))
         ):
             declared_sync_caps.append("loan_auto_materialization")
-        # Core owns real startup/periodic inventory dispatch for these stores.
-        # Availability is not consent: policies still default to manual and
-        # the scheduler revalidates exact source/account/session before I/O.
-        if provider_id in {"kobo", "numilog"} and "personal_library" in source_caps:
+        # Scheduled inventory is a provider-neutral declared capability.
+        # It remains explicit opt-in and never grants content acquisition.
+        # Exact source/account/session binding is checked before provider I/O.
+        if "personal_library" in source_caps:
             declared_sync_caps.append("scheduled_refresh")
         return SyncSourceRef(
             source_id=source_id,
@@ -561,7 +558,7 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             raise ValueError("unknown sync source") from None
-        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+        if "personal_library" not in _account_ref(self.service, account).capabilities:
             raise ValueError("inventory refresh schedule not supported")
         policy = load_source_refresh_schedule(self.service.storage, source_id)
         return {"mode": policy.mode, "interval_minutes": policy.interval_minutes}
@@ -572,7 +569,7 @@ class SynchronizationBrokerImpl:
         """Explicit per-source metadata/rights consent; no provider call.
 
         Neither this method nor its stored policy authorizes acquisition.
-        Only an exact, enabled, connected Kobo/Numilog source can be opted in.
+        Only an exact, enabled, connected personal-library source can opt in.
         An ineligible source may still have its schedule disabled manually.
         """
         from .core.source_refresh_policy import (
@@ -584,7 +581,7 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             raise ValueError("unknown sync source") from None
-        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+        if "personal_library" not in _account_ref(self.service, account).capabilities:
             raise ValueError("inventory refresh schedule not supported")
         if policy.mode != "manual" and not inventory_source_eligible(
             self.service, account,
@@ -600,7 +597,7 @@ class SynchronizationBrokerImpl:
     def synchronize_scheduled_inventory(
         self, identity_id: str, trigger: str, *, control: Any = None,
     ) -> SyncResult:
-        """Dispatch due Kobo/Numilog *inventory* refreshes for one explicit identity.
+        """Dispatch due personal-library *inventory* refreshes for one identity.
 
         A scheduler may call this at startup or on its periodic tick; this
         method does not install timers or silently enroll any accounts.
@@ -640,7 +637,7 @@ class SynchronizationBrokerImpl:
             # A cancelled batch must not start work for another account.
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
-            if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+            if "personal_library" not in _account_ref(self.service, account).capabilities:
                 continue
             source_id = self._source_id(account)
             # Unknown/duplicate source references and invalid source state
@@ -659,11 +656,7 @@ class SynchronizationBrokerImpl:
                     and not self._safe_phase_timestamp(state["last_attempt"])
                 ):
                     continue
-                is_private_inventory = getattr(account, "provider_id", None) in {"kobo", "numilog"}
-                inventory_status = (
-                    state.get("inventory_status", "idle") if is_private_inventory
-                    else state.get("status", "idle")
-                )
+                inventory_status = state.get("inventory_status", "idle")
                 if inventory_status not in {
                     "idle", "running", "success", "partial", "failed",
                     "error", "ok", "",
@@ -673,10 +666,7 @@ class SynchronizationBrokerImpl:
                 # global writer lock. Even a due inventory must not race it.
                 if state.get("status") == "running":
                     inventory_status = "running"
-                inventory_last_attempt = (
-                    state.get("inventory_last_attempt", "") if is_private_inventory
-                    else state.get("last_attempt", "")
-                )
+                inventory_last_attempt = state.get("inventory_last_attempt", "")
                 policy = load_source_refresh_schedule(
                     self.service.storage, source_id,
                 )
@@ -1195,12 +1185,9 @@ class SynchronizationBrokerImpl:
         }
         state.update(last_attempt=now, status="running", error="", scope="manual",
                      identity_id=str(getattr(account, "identity_id", "") or ""))
-        # Only a real private-store library operation starts this clock. A
-        # generic opening/loan operation must not refresh or throttle it.
-        refreshes_private_inventory = (
-            getattr(account, "provider_id", None) in {"kobo", "numilog"}
-            and "personal_library" in current.capabilities
-        )
+        # Only a declared private-library inventory operation starts this
+        # clock. A loan-only operation must not refresh or throttle it.
+        refreshes_private_inventory = "personal_library" in current.capabilities
         if refreshes_private_inventory:
             state.update(inventory_last_attempt=now, inventory_status="running")
         self._set_state(source_id, state); self._notify()
