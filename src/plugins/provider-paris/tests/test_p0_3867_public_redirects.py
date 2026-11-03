@@ -369,3 +369,68 @@ def test_same_origin_relative_location_still_valid(monkeypatch):
         ]
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("signed_url", (FOREIGN, START))
+def test_guarded_paris_pnb_stream_stops_when_core_lease_revoked_mid_body(
+    monkeypatch, signed_url,
+):
+    from cifereca_paris_client import ParisError
+    client = ParisClient("https://bibliotheques.paris.fr")
+    live = [True]
+    seen = []
+
+    class RevokingBody(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("first-chunk")
+            live[0] = False
+            yield b"synthetic-first-chunk"
+            seen.append("forbidden-second-chunk")
+            yield b"not-allowed"
+        def close(self):
+            pass
+
+    def supplier(request):
+        seen.append("request")
+        return httpx.Response(
+            200, headers={"Content-Type": "application/vnd.adobe.adept+xml"},
+            stream=RevokingBody(),
+        )
+
+    def factory(*, producer, timeout):
+        return httpx.Client(
+            transport=httpx.MockTransport(supplier),
+            trust_env=False, follow_redirects=False,
+        )
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    if signed_url == START:
+        # The authenticated same-origin hop must also be streamed under
+        # a live Core lease rather than using eager, uncancellable get().
+        client.client.close()
+        client.client = httpx.Client(
+            transport=httpx.MockTransport(supplier),
+            trust_env=False, follow_redirects=False,
+        )
+    try:
+        with pytest.raises(ParisError, match="Core admission revoked"):
+            client._get_pnb_response(
+                signed_url, admission_current=lambda: live[0],
+            )
+        assert seen == ["request", "first-chunk"]
+    finally:
+        client.close()
+
+
+def test_guarded_paris_pnb_refuses_revoked_lease_before_any_https_request(monkeypatch):
+    from cifereca_paris_client import ParisError
+    client = ParisClient("https://bibliotheques.paris.fr")
+    monkeypatch.setattr(
+        HTTPX_TRANSPORT, "public_client",
+        lambda **_kwargs: pytest.fail("revoked Core must not construct HTTP client"),
+    )
+    try:
+        with pytest.raises(ParisError, match="Core admission revoked"):
+            client._get_pnb_response(FOREIGN, admission_current=lambda: False)
+    finally:
+        client.close()
