@@ -11,6 +11,7 @@ from time import monotonic_ns
 
 TIMING_FIELDS = frozenset({
     "lock_acquire_ms", "locked_work_ms", "loan_refresh_ms", "library_read_ms",
+    "canonical_resources_ms",
     "rights_mirror_ms", "catalog_mirror_ms", "catalog_scan_ms",
 })
 _CURRENT: ContextVar[dict | None] = ContextVar("source_sync_timings", default=None)
