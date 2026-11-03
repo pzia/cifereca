@@ -174,14 +174,16 @@ def plan_verified_canonical_reference_migration(
                     unverified += 1
                     continue
                 connection = db.execute(
-                    "SELECT identity_id,enabled FROM provider_connections "
+                    "SELECT connection_id,identity_id,enabled "
+                    "FROM provider_connections "
                     "WHERE provider_id=? AND credential_id=?",
                     (provider, cred),
                 ).fetchone()
-                accounts = db.execute(
-                    "SELECT account_id FROM provider_accounts "
-                    "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-                    (owner, provider, cred),
+                account_connections = db.execute(
+                    "SELECT connection_id FROM provider_accounts "
+                    "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+                    "AND account_id=? LIMIT 2",
+                    (owner, provider, cred, account),
                 ).fetchall()
                 evidence = db.execute(
                     "SELECT COUNT(*) FROM source_references s "
@@ -195,8 +197,9 @@ def plan_verified_canonical_reference_migration(
                     "AND o.evidence_ref IS NOT NULL AND o.evidence_ref!=''",
                     (owner, provider, cred, account, item, owner, artifact),
                 ).fetchone()[0]
-                if (connection == (owner, 1)
-                        and sum(row[0] == account for row in accounts) == 1
+                if (connection is not None
+                        and connection[1:] == (owner, 1)
+                        and account_connections == [(connection[0],)]
                         and evidence > 0):
                     backup += 1
                 else:
