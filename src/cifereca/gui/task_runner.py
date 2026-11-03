@@ -306,7 +306,7 @@ class TaskRunner:
                         # Reuse the existing worker-scoped task_ref correlation
                         # for a returned Core refusal, without raising a
                         # synthetic exception or emitting a new event.
-                        from ..diagnostic_task_context import diagnostic_task_business_result
+                        from cifereca.diagnostic_task_context import diagnostic_task_business_result
                         diagnostic_task_business_result(value, operation_kind="borrow")
                 return value
             except BaseException:
@@ -368,7 +368,7 @@ class TaskRunner:
                 outcome = ("error", exc)
             if outcome[0] == "error":
                 trace_failure("worker", outcome[1])
-            from ..plugin_api import Cancelled
+            from cifereca.plugin_api import Cancelled
             business_status = (
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
                 if outcome[0] == "error"
