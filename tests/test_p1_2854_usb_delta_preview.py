@@ -32,6 +32,7 @@ def intent(*, device="reader-a", artifact="artifact-a", desired="keep",
         "device_id": device, "artifact_id": artifact,
         "desired_state": desired, "observed_state": observed,
         "last_observed_at": observed_at,
+        "target_relative_path": FILE_PATH,
         "metadata": {"intent_identity_id": owner},
     }
 
@@ -190,6 +191,7 @@ def test_two_identities_and_three_devices_remain_independently_scoped(tmp_path):
             "device_id": device_id, "artifact_id": "same-artifact",
             "desired_state": desired, "observed_state": "present",
             "last_observed_at": NOW - 3600,
+            "target_relative_path": FILE_PATH,
             "metadata": {"intent_identity_id": owner},
         })
     before_bindings = deepcopy(db.device_bindings())
@@ -295,3 +297,67 @@ def test_ambiguous_scanned_paths_invalidate_full_scan_including_absence():
     result, = preview(scan_value=observed)
     assert (result.action, result.observed) == ("verify", "unknown")
     assert result.executable is False
+
+
+def test_unplanned_destination_never_proves_missing_or_present():
+    for observed in (
+        scan(), scan(files={
+            "artifact-a": UsbObservedFile(FILE_PATH, SHA_A, regular_file=True),
+        }),
+    ):
+        for desired in ("keep", "remove"):
+            row = intent(desired=desired)
+            row["target_relative_path"] = None
+            shown, = preview(placements=[row], scan_value=observed)
+            assert (shown.action, shown.observed) == ("verify", "unknown")
+            assert shown.reason == "target_path_unqualified"
+            assert shown.executable is False
+
+
+@pytest.mark.parametrize("relative", [
+    "", "../outside.epub", "Books/Paris/../escape.epub",
+    "/media/user/Books/Paris/a.epub",
+])
+def test_unqualified_target_path_is_not_absence_evidence(relative):
+    row = intent()
+    row["target_relative_path"] = relative
+    shown, = preview(placements=[row], scan_value=scan())
+    assert (shown.action, shown.observed) == ("verify", "unknown")
+
+
+def test_target_path_must_remain_within_declared_managed_directory():
+    row = intent()
+    row["target_relative_path"] = "Books/Foreign/a.epub"
+    registered = binding()
+    registered["target_directory"] = "Books/Paris"
+    shown, = preview(placements=[row], target=registered, scan_value=scan())
+    assert shown.action == "verify"
+    assert shown.reason == "target_path_unqualified"
+    registered["target_directory"] = {"malformed": True}
+    shown, = preview(placements=[intent()], target=registered,
+                     scan_value=scan())
+    assert shown.action == "verify"
+
+
+def test_observed_different_path_cannot_be_called_present_or_missing():
+    seen = scan(files={
+        "artifact-a": UsbObservedFile(
+            "Books/Paris/another.epub", SHA_A, regular_file=True,
+        ),
+    })
+    shown, = preview(scan_value=seen)
+    assert (shown.action, shown.observed) == ("blocked", "unknown")
+    assert shown.reason == "observed_target_path_mismatch"
+    assert shown.executable is False
+
+
+def test_external_file_occupying_target_blocks_upload_candidate():
+    seen = scan(files={
+        "untracked:external": UsbObservedFile(
+            FILE_PATH, SHA_A, regular_file=True,
+        ),
+    })
+    shown, = preview(scan_value=seen)
+    assert (shown.action, shown.observed) == ("blocked", "unknown")
+    assert shown.reason == "target_path_occupied"
+    assert shown.executable is False

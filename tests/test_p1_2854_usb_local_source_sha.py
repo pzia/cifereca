@@ -56,6 +56,8 @@ def test_locally_verified_sha_is_only_an_advisory_preview_input(tmp_path):
     intention = {
         "device_id": "reader-a", "artifact_id": artifact["artifact_id"],
         "desired_state": "keep", "observed_state": "unknown",
+        # The source SHA is verified, but the USB destination must be explicit.
+        "target_relative_path": "Books/Cifereca/book.epub",
         "metadata": {"intent_identity_id": "alice"},
     }
     # The USB observation here is synthetic, to test composition of pure
