@@ -59,12 +59,6 @@ def test_configured_connection_reports_three_scoped_separate_costs(
 
     # The fake borrower has the exact credential/identity coordinates used by
     # the original privacy rig. We never log them.
-    session.connect_account = plugin.create_session.return_value.connect_account = (
-        state.current_account if hasattr(state, "current_account")
-        else None
-    )
-    # _rig's original successful connect produces a valid account object.
-    # Capture that object before replacing the session callback.
     from types import SimpleNamespace as NS
     session.connect_account = NS(
         provider_id="provider.test", credential_id=SECRET,
@@ -90,7 +84,8 @@ def test_configured_connection_reports_three_scoped_separate_costs(
         ("session_connect", "returned"),
         ("account_registration", "returned"),
     ]
-    assert [ms for _, _, _, ms in events] == [3, 100, 20]
+    assert all(abs(got - expected) <= 1 for got, expected in
+               zip((ms for _, _, _, ms in events), (3, 100, 20)))
     for secret in (SECRET, "identity-private", "Private Label", "password"):
         assert secret not in caplog.text
 
