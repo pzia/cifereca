@@ -147,8 +147,19 @@ def qualify_selected_offers(
 
     def consent_current(key: SourceKey) -> bool:
         try:
+            # A source-level ON grant is bound to its exact generation, not
+            # merely to the current boolean value. OFF -> ON while a private
+            # selected-offer request is in flight must not let the old Sync
+            # continue reading or accept the returned offer (ABA).
+            if expected_source_policy_revision is not None:
+                from .convergence_execution import _source_policy_generation_current
+                if not _source_policy_generation_current(
+                    initial_storage, scope, expected_source_policy_revision
+                ):
+                    return False
             return consent_still_current(key) is True
         except Exception:
+            # Failed policy reads are not authorization for provider I/O.
             return False
 
     if cancelled():
