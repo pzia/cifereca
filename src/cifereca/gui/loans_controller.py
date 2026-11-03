@@ -170,6 +170,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.ACTIVE_LOAN,
         kind="loans",
+        origin="user" if control is not None else "automatic",
     )
 
 
