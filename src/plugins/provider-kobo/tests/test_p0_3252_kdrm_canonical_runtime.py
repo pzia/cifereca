@@ -261,3 +261,36 @@ def test_nested_foreign_kdrm_replay_scope_cannot_qualify_offer(container):
         assert calls == [("book-1", "descriptor"), ("book-1", "delegated")]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("media", "upstream", "valid"), [
+    ("kepub", "KEPUB", True),
+    ("epub", "FLEPUB", True),
+    ("epub", "EPUB", True),
+    ("kepub", "FLEPUB", False),
+    ("pdf", "FLEPUB", False),
+    ("epub", "MOBI", False),
+])
+def test_kdrm_runtime_accepts_only_normative_media_and_upstream_pairs(
+    media, upstream, valid,
+):
+    from cifereca_kobo_kdrm import scoped_kdrm_source
+
+    candidate = kdrm_candidate("book-1")
+    candidate["media_format"] = media
+    candidate["source_format"] = upstream
+    payload = descriptor(product="book-1", candidate=candidate)
+    offer = exact_kobo_offer_id(
+        payload, identity_id="identity-A",
+        credential_id="synthetic-card", account_id="alice",
+        product_id="book-1", kdrm_runtime_ready=True,
+    )
+    source = scoped_kdrm_source(
+        delegated("book-1"), candidate,
+        product_id="book-1", account_id="alice",
+        identity_id="identity-A", credential_id="synthetic-card",
+    )
+    assert bool(offer) is valid and bool(source) is valid
+    if valid:
+        assert source["candidate"]["source_format"] == upstream
+        assert source["candidate"]["media_format"] == media
