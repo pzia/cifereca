@@ -55,6 +55,7 @@ def test_explicit_off_hides_historical_blockage_from_current_attention():
     window, _, _, _, _ = _fixture(sources=[source])
     row = window._sync_sources_box.children[0].children[0]
     assert row.subtitle.startswith("Synchronisation : désactivée · aucune synchronisation attendue")
+    assert "Connexion : Connectée" in row.subtitle
     assert "activer la source" not in row.subtitle.casefold()
     assert "Synchronisation : Désactivée" in row.tooltip
 
@@ -141,3 +142,18 @@ def test_information_only_partial_is_not_relabelled_as_user_problem():
     assert sync_source_attention(source) == (
         "info", "Notices et droits : couverture partielle (information)")
     assert sync_source_card_guidance(source, sync_source_attention(source)) == ""
+
+
+def test_offline_disabled_card_keeps_connection_diagnostic_but_not_stale_failure():
+    source = _source(
+        provider_id="future-provider", enabled=False, connected=False,
+        status="failed", error="PRIVATE_STALE_FAILURE",
+    )
+    window, _, _, _, _ = _fixture(sources=[source])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.subtitle.startswith(
+        "Synchronisation : désactivée · aucune synchronisation attendue"
+    )
+    assert "Connexion : Déconnectée" in row.subtitle
+    assert "PRIVATE_STALE_FAILURE" not in row.subtitle
+    assert "Synchronisation : Désactivée" in row.tooltip
