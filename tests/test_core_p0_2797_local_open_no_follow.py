@@ -62,7 +62,9 @@ def test_symlink_replacing_ancestor_cannot_open_other_profile(tmp_path):
 def test_imported_placement_claiming_foreign_path_is_not_openable(tmp_path):
     service = _service(tmp_path)
     try:
-        _foreign_pid, foreign = _owned(service, tmp_path, owner="bob")
+        foreign = tmp_path / "EBooks" / "bob" / "local" / "Private.epub"
+        foreign.parent.mkdir(parents=True, exist_ok=True)
+        foreign.write_bytes(b"private Bob")
         # A corrupt/imported row can claim an Alice owner of a Bob path, even
         # without a symlink. The app must not treat this as Alice's own file.
         pid = _placement(
