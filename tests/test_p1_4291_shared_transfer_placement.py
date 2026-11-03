@@ -323,8 +323,9 @@ def test_scan_does_not_preserve_untrusted_storage_class_or_infer_rights():
     assert "storage_class" not in missing_origin
 
 
+@pytest.mark.parametrize("catalogue_exists", [True, False])
 def test_existing_shared_copy_with_generic_provider_is_reused_after_donor_enrichment(
-    tmp_path,
+    tmp_path, catalogue_exists,
 ):
     """A historical 'shared' label is not a foreign supplier entitlement."""
     service = _service(tmp_path)
@@ -343,18 +344,20 @@ def test_existing_shared_copy_with_generic_provider_is_reused_after_donor_enrich
                 "file_origin_identity_id": "alice",
             },
         })
-        service.storage.catalog_entry_put({
-            "catalog_entry_id": "historical-shared",
-            "artifact_id": "sha256:legacy", "placement_id": prior,
-            "identity_id": "bob", "provider_id": "shared",
-            "item_id": "fixture", "title": "Original",
-            "local_state": "local", "metadata": {"path": str(old)},
-        })
+        if catalogue_exists:
+            service.storage.catalog_entry_put({
+                "catalog_entry_id": "historical-shared",
+                "artifact_id": "sha256:legacy", "placement_id": prior,
+                "identity_id": "bob", "provider_id": "shared",
+                "item_id": "fixture", "title": "Original",
+                "local_state": "local", "metadata": {"path": str(old)},
+            })
         before = service.storage.entitlements()
         again = service.materialize_to_identity(pid, "bob")
         assert again["status"] == "unchanged"
         assert again["path"] == str(old)
         assert again["placement_id"] == prior
+        assert again["provider_id"] == "shared"
         assert list(old.parent.glob("Book*.epub")) == [old]
         assert service.storage.entitlements() == before
         assert service.storage.placement_get(prior)["provider_id"] == "shared"
