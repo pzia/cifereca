@@ -142,15 +142,16 @@ def dispatch_after_opening(window: Any) -> bool:
         materialize(window)
 
     def inventory_failed(_error):
-        # A failed *inventory* task must not silently suppress the normal
-        # feedback or prevent an independently consented Numilog backup.
-        # Never forward the exception: it can embed a signed private URL.
+        # TaskRunner already records this automatic inventory failure.
+        # Do not turn a failed startup worker into an unsolicited modal;
+        # preserve the independently consented backup and show a local hint.
+        # Never forward the exception: it may embed signed provider URLs.
         after_inventory()
-        present = getattr(getattr(window, "runner", None), "present_error", None)
-        if callable(present):
-            present(RuntimeError(
-                "Actualisation initiale des notices des comptes indisponible"
-            ))
+        if getattr(window, "_closed", False) or _broker(window) is not broker:
+            return
+        notify = getattr(window, "toast", None)
+        if callable(notify):
+            notify("Actualisation des notices des comptes à vérifier dans Synchronisation.")
 
     try:
         window.runner.submit(
