@@ -1633,7 +1633,13 @@ class LibraryService:
                 str(account.unique_id or "primary"), str(loan.id),
             )
             row = self.storage.loan_return_state(key)
-        except (AttentionRequired, ValueError, TypeError, KeyError):
+        except AttentionRequired as exc:
+            return {
+                "status": "failed", "scope": "adobe_first_paris",
+                "code": return_adept_orchestrator.return_preflight_code(exc),
+                "retry": "none",
+            }
+        except (ValueError, TypeError, KeyError):
             return {
                 "status": "failed", "scope": "adobe_first_paris",
                 "code": "loan_return_borrower_unproven",
