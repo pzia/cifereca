@@ -113,6 +113,13 @@ def publish_completed_acquisition(
             or (row.state != "active" and row.delivery != "available")
             or snapshot.status not in ("success", "partial")):
         raise ValueError("canonical_active_provider_right_required")
+    # The v2 source-wide ON grant authorizes considering deliverable resources,
+    # not every descriptive right marked "active". A canonical receipt cannot
+    # turn an unknown/refused/archived delivery into a positive offer. Legacy
+    # callers with no v2 policy revision retain their bounded compatibility
+    # route until their admission contract is migrated.
+    if expected_source_policy_revision is not None and not row.delivery_attested:
+        raise ValueError("canonical_source_delivery_offer_required")
     if (type(delivery_receipt_ref) is not str
             or not delivery_receipt_ref or delivery_receipt_ref == row.evidence_ref
             or len(delivery_receipt_ref) > 1024
