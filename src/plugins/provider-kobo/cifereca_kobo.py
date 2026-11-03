@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from contextlib import contextmanager
@@ -24,11 +25,38 @@ _UNSET_PERSONAL_IDENTITY = object()  # None is a legitimate legacy identity.
 # The public /status endpoint is still an untrusted HTTP response.
 _PUBLIC_VAULT_CAPABILITIES = frozenset({
     "catalog_search", "library_search", "library", "acquisition",
+    "acquisition_delegation",
 })
 _PUBLIC_ACQUISITION_ACCESS = frozenset({
     "configured", "unknown", "available", "disabled", "unavailable",
     "denied", "forbidden", "requires_scope",
 })
+
+
+def _authenticated_delegate_scope(status: Any) -> bool:
+    """Require an exact bearer-scoped grant, never the global service list.
+
+    Even GET /status with Authorization may return only static capabilities.
+    Missing, malformed and contradictory scope fields are not permissions.
+    """
+    if type(status) is not dict:
+        return False
+    claims = [
+        status[name] for name in ("token_scopes", "scopes")
+        if name in status
+    ]
+    return (
+        bool(claims)
+        and all(type(rows) is list and all(type(x) is str for x in rows)
+                and "kobo.acquisition.delegate" in rows for rows in claims)
+    )
+
+
+def _vault_token_fingerprint(client: Any) -> bytes | None:
+    """Bind a positive grant to the bearer without duplicating a secret."""
+    token = getattr(client, "token", None)
+    return (hashlib.sha256(token.encode("utf-8")).digest()
+            if type(token) is str and token else None)
 
 
 def _vault_public_version(value: Any) -> str:
@@ -259,6 +287,36 @@ class KoboSession(ProviderSession):
         self.display_profile = profile if profile in {"Android", "Desktop"} else "Android"
         self.supports_acquisition_display_profile = False
         self.supports_acquisition_acsm = False
+        self.supports_acquisition_delegation = False
+        self._delegation_bound_client = None
+        self._delegation_bound_generation = None
+        self._delegation_token_fingerprint = None
+
+    def _delegation_runtime_ready(self) -> bool:
+        """Check actual executable runtime modes, not declared names alone."""
+        try:
+            caps = self.runtime_capabilities.acquisition("kobo")
+            return (
+                caps.available is True and caps.compatible is True
+                and caps.operational is True
+                and type(caps.modes) in (tuple, list, set, frozenset)
+                and any(mode in caps.modes
+                        for mode in ("kobo_delegated", "kobo_kdrm"))
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return False
+
+    def _delegation_admitted(self) -> bool:
+        """Never reuse an attestation after reconnect/token/runtime changes."""
+        return (
+            self.supports_acquisition_delegation is True
+            and self.connected is True
+            and self._delegation_bound_client is self.client
+            and self._delegation_bound_generation == self._personal_binding_generation
+            and self._delegation_token_fingerprint is not None
+            and self._delegation_token_fingerprint == _vault_token_fingerprint(self.client)
+            and self._delegation_runtime_ready()
+        )
 
     def _diagnostic(self, *args: Any, **kwargs: Any) -> None:
         try:
@@ -278,6 +336,10 @@ class KoboSession(ProviderSession):
         self.capability_details = {}
         self.supports_acquisition_acsm = False
         self.supports_acquisition_display_profile = False
+        self.supports_acquisition_delegation = False
+        self._delegation_bound_client = None
+        self._delegation_bound_generation = None
+        self._delegation_token_fingerprint = None
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
         status = self.client.status(authenticated=False)
         self.api_version = _vault_public_version(status.get("api_version") or status.get("version"))
@@ -360,9 +422,38 @@ class KoboSession(ProviderSession):
                 "reconfiguration explicite requise"
             )
         display = _vault_account_label(account)
+        # /status is public by default. A second authenticated status view
+        # must contain an EXPLICIT token scope before allowing delegation.
+        # A Vault without this optional introspection retains its ordinary
+        # inventory, descriptor, ACSM and direct-HTTP routes, not delegation.
+        authenticated_status: dict[str, Any] = {}
+        scoped_read = getattr(self.client, "authenticated_capabilities", None)
+        if callable(scoped_read):
+            try:
+                observed = scoped_read()
+                if type(observed) is dict:
+                    authenticated_status = observed
+            except ProviderError:
+                # The optional scope probe must not deny ordinary library
+                # access; it fails closed for delegated requests only.
+                pass
+        self.supports_acquisition_delegation = (
+            "acquisition" in self.capability_names
+            and "acquisition_delegation" in self.capability_names
+            and _authenticated_delegate_scope(authenticated_status)
+            and self._delegation_runtime_ready()
+        )
+        if self.supports_acquisition_delegation:
+            token_fingerprint = _vault_token_fingerprint(self.client)
+            if token_fingerprint is None:
+                self.supports_acquisition_delegation = False
+            else:
+                self._delegation_bound_client = self.client
+                self._delegation_bound_generation = self._personal_binding_generation
+                self._delegation_token_fingerprint = token_fingerprint
         # Reauthorization only takes effect after a *validated* authenticated
-        # account identity, not when connect() was merely invoked. A malformed
-        # /account response must not clear a prior delegated-scope denial.
+        # account identity and optional scope probe, not an attempted connect.
+        # A malformed /account response must not clear the former denial.
         self._cifereca_delegation_forbidden = False
         self._cifereca_delegation_attempts_saved = 0
         self.connected = True
@@ -394,6 +485,10 @@ class KoboSession(ProviderSession):
         self._personal_binding_generation += 1
         self.connected = False
         self.client.close()
+        self.supports_acquisition_delegation = False
+        self._delegation_bound_client = None
+        self._delegation_bound_generation = None
+        self._delegation_token_fingerprint = None
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
 
     def cover_url(self, item: dict[str, Any]) -> str | None:
@@ -1713,11 +1808,11 @@ class KoboSession(ProviderSession):
         # authorized descriptor/ACSM path.
         if self.acquisition_access in _SCOPE_DENIED:
             raise ProviderError("Kobo-Vault : acquisition indisponible pour ce compte")
-        if (
-            type(mode) is str and mode.casefold() == "delegated"
-            and getattr(self, "_cifereca_delegation_forbidden", False) is True
-        ):
-            raise ProviderError("Kobo-Vault : délégation indisponible pour ce compte")
+        if type(mode) is str and mode.casefold() == "delegated":
+            if getattr(self, "_cifereca_delegation_forbidden", False) is True:
+                raise ProviderError("Kobo-Vault : délégation indisponible pour ce compte")
+            if not self._delegation_admitted():
+                raise ProviderCapabilityError("missing_delegation_scope")
         profile = display_profile if self.supports_acquisition_display_profile else None
         if self.supports_acquisition_display_profile and profile is None:
             profile = self.display_profile
@@ -1832,6 +1927,7 @@ class KoboSession(ProviderSession):
             "vault_release": self.vault_release or None,
             "display_profile": self.display_profile if self.supports_acquisition_display_profile else None,
             "acsm_export": self.supports_acquisition_acsm,
+            "delegation_available": self._delegation_admitted(),
             "manifest_materialization_policy": {
                 "schema": self.backup_manifest_policy["schema"],
                 "status": self.backup_manifest_policy["status"],
