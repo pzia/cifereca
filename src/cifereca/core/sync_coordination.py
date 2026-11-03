@@ -91,7 +91,7 @@ def _sync_loan_inventory_observation(self, account: Account, session: Any):
     return None, self._loans_for_account(account, force=True)
 
 
-def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
+def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False, control: Any=None, inventory_only: bool=False) -> dict[str, Any]:
     """Synchronize one explicit account/source without changing account selection.
 
     This is the Core-owned primitive used by the public sync broker.  It
@@ -178,7 +178,8 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
-        if account.provider_id == 'bnf-pret' and not source_consent_configured(self, account):
+        if (not inventory_only and account.provider_id == 'bnf-pret'
+                and not source_consent_configured(self, account)):
             from .bnf_auto_materialization import enabled, materialize
             if enabled(self, account):
                 # One private bounded inventory per source batch, not one
@@ -470,9 +471,11 @@ def _run_observed_canonical_convergence(
         return counts
 
 
-def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
+def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None, inventory_only: bool=False) -> dict[str, Any]:
     from .public_provider_diagnostics import registered_public_provider_id
     from ..plugin_api import Cancelled
+    if type(inventory_only) is not bool:
+        raise ValueError("invalid_inventory_only_mode")
     started = time.monotonic()
     timings: dict[str, int] = {}
 
@@ -514,7 +517,10 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         if not callable(source_batch):
                             raise ProviderConfigurationError("source_inventory_batch_invalid")
                         locks.enter_context(source_batch(account))
-                result = self._synchronize_account_source_impl(account, deep=deep, control=control)
+                result = self._synchronize_account_source_impl(
+                    account, deep=deep, control=control,
+                    **({"inventory_only": True} if inventory_only else {}),
+                )
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
                     # within the existing source Sync's acquisition lock.
@@ -540,12 +546,18 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                             # complete refresh or of any negative right.
                             result["status"] = "partial"
 
-                    counts = _run_observed_canonical_convergence(
-                        self, account, admitted_snapshots,
-                        admitted_epoch=admitted_epoch, sync_lease=sync_lease,
-                        cancelled_for_rights=cancelled_for_rights,
+                    # Scheduled discover/rights refresh must not run any
+                    # selected-offer, content GET, ADEPT or canonical B work.
+                    # This restriction is independent of a source's ON policy.
+                    counts = (None if inventory_only else
+                        _run_observed_canonical_convergence(
+                            self, account, admitted_snapshots,
+                            admitted_epoch=admitted_epoch, sync_lease=sync_lease,
+                            cancelled_for_rights=cancelled_for_rights,
+                        )
                     )
-                    if (counts is None and canonical is not None
+                    if (not inventory_only and counts is None
+                            and canonical is not None
                             and canonical.get("pending", 0) > 0):
                         # An optional delivery ABI may be absent. Its absence
                         # cannot turn the known unsatisfied A→B plan into PASS.
