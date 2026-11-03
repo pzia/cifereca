@@ -119,6 +119,33 @@ def test_numilog_damaged_inventory_clock_blocks_automatic_retry(tmp_path):
         service.storage.close()
 
 
+@pytest.mark.parametrize(("raw", "expected"), [
+    (" TrUe ", True), (" YES ", True), (" On ", True),
+    ("0", False), (" 0 ", False), ("on_start", False),
+])
+def test_numilog_inventory_scheduler_matches_core_source_switch(
+    tmp_path, raw, expected,
+):
+    service, account, _, calls = _numilog(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        service.storage.metadata_set("sync.source.enabled." + sid, raw)
+        assert service.sync_source_enabled(account) is expected
+        assert broker._enabled(sid) is expected
+        assert numilog_inventory_source_eligible(service, account) is expected
+        if expected:
+            broker.set_inventory_refresh_schedule(sid, "on_start")
+            assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 1
+            assert len(calls) == 1
+        else:
+            with pytest.raises(ValueError, match="not eligible"):
+                broker.set_inventory_refresh_schedule(sid, "on_start")
+            assert calls == []
+    finally:
+        service.storage.close()
+
+
 def test_numilog_manual_is_default_and_not_a_backup_permission(tmp_path):
     service, account, session, calls = _numilog(tmp_path)
     try:
