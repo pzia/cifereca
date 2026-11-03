@@ -74,6 +74,7 @@ def rig(provider="provider-alpha", *, owner="A", credential="cred-A",
         _source_context_epoch=1,
         accounts=[account],
         _sessions={(provider, credential): session},
+        sync_source_enabled=lambda selected: selected is account,
         storage=FakeStorage(
             {(provider, credential): owner},
             {(owner, provider, credential, buyer)},
