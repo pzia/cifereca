@@ -571,3 +571,106 @@ def test_multiple_pinned_library_sync_kdrm_routes_remain_ambiguous():
         assert calls == [("book-1", "descriptor")]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("raw_type", "accepted"), [
+    ("KDRM", True),
+    ("KoboDRM", True),
+    ("kobo_drm", True),
+    ("Kobo-Drm", True),
+    ("Kobo DRM", True),
+    ("KoboDRMPreview", False),
+    ("AdobeDrm", False),
+    ("unknown", False),
+    ("KoboDRMSAMPLE", False),
+])
+def test_kvault_kobo_drm_raw_aliases_preserve_only_exact_pinned_route(
+    raw_type, accepted, tmp_path, monkeypatch,
+):
+    """Worker normalizes KoboDRM but preserves the upstream raw DRMType.
+
+    A positive scope, eligible family/protection and pinned library_sync
+    candidate are still mandatory; only the spelling of an attested KDRM
+    may vary. No unpinned/foreign DRM is upgraded.
+    """
+    session, vault, _broker, account, _ = setup()
+    calls = ready(session, vault)
+    original = vault.acquisition
+    replay_params = []
+
+    def upstream(product, **options):
+        answer = original(product, **options)
+        if options.get("mode") == "descriptor":
+            candidate = answer["acquisition"]["candidates"][0]
+            candidate["drm"]["raw_type"] = raw_type
+            # KVault includes this legacy duplicate of the same raw_type.
+            candidate["drm_type"] = raw_type
+        elif options.get("mode") == "delegated":
+            replay_params.append(options)
+        return answer
+
+    vault.acquisition = upstream
+    monkeypatch.setattr(
+        HTTPX_TRANSPORT, "attested_https_download",
+        lambda **_kwargs: pytest.fail("never GET protected KDRM as plaintext"),
+    )
+    runtime_calls = []
+
+    def runtime(request):
+        runtime_calls.append(request)
+        assert request["source"]["candidate"]["drm_type"] == "KDRM"
+        assert request["source"]["candidate"]["delivery_source"] == "library_sync"
+        out = Path(request["destination"])
+        out.write_bytes(epub_bytes())
+        return {"ok": True, "artifact": {"path": str(out), "format": "epub"}}
+
+    try:
+        row = selected(session, account, "book-1")
+        assert (row.delivery == "available") is accepted
+        assert bool(row.delivery_offer_id) is accepted
+        if accepted:
+            assert row.delivery_offer_id.startswith("kobo.runtime:")
+            received = deliver(session, account, "book-1",
+                               row.delivery_offer_id, tmp_path, runtime)
+            assert received.path.read_bytes() == epub_bytes()
+            assert len(runtime_calls) == 1
+            assert len(replay_params) == 2
+            assert all(p["include_acsm"] is False for p in replay_params)
+            assert calls == [
+                ("book-1", "descriptor"), ("book-1", "delegated"),
+                ("book-1", "descriptor"), ("book-1", "delegated"),
+            ]
+        else:
+            assert row.delivery == "unknown"
+            assert calls == [("book-1", "descriptor")]
+            assert replay_params == []
+            assert runtime_calls == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("adobe_capability", [False, True])
+def test_kdrm_explicit_acsm_opt_out_reaches_vault_even_if_adobe_runtime_missing(
+    adobe_capability,
+):
+    session, vault, _broker, account, _ = setup()
+    ready(session, vault)
+    session.supports_acquisition_acsm = adobe_capability
+    calls = []
+    original = vault.acquisition
+
+    def capture(product, **options):
+        calls.append(dict(options))
+        return original(product, **options)
+
+    vault.acquisition = capture
+    try:
+        offered = selected(session, account, "book-1")
+        assert offered.delivery == "available"
+        assert [x["mode"] for x in calls] == ["descriptor", "delegated"]
+        assert calls[1]["include_acsm"] is False
+        # A descriptor is still allowed to request ACSM if an Adobe runtime
+        # is installed, but may not force ACSM when no runtime is installed.
+        assert calls[0]["include_acsm"] is adobe_capability
+    finally:
+        session.close()
