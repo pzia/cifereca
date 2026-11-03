@@ -82,30 +82,38 @@ def test_incomplete_origin_evidence_cannot_bypass_revoked_grant(tmp_path, field,
         service.close()
 
 
-def test_explicit_historical_return_freshly_checks_origin_once_and_keeps_file(tmp_path):
+def test_retired_historical_return_cannot_mutate_or_rewrite_provenance(tmp_path):
+    from cifereca.plugin_api import AttentionRequired
+
     service, loan, paris = setup(tmp_path)
     attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         _attest(service, 'adept-01')
         _reconfigure(service, 'revoke')
         _reconfigure(service, 'rotate')
-        artifact = tmp_path / 'historical.epub'; artifact.write_bytes(b'preserved historical artifact')
+        artifact = tmp_path / 'historical.epub'
+        artifact.write_bytes(b'preserved historical artifact')
         before = artifact.read_bytes()
         tracked = service.storage.acquisition_get('adept-01')
-        metadata = deepcopy(tracked['metadata']); metadata['path'] = str(artifact)
+        metadata = deepcopy(tracked['metadata'])
+        metadata['path'] = str(artifact)
         service.storage.acquisition_put({**tracked, 'metadata': metadata})
+        untouched = service.storage.acquisition_get('adept-01')
         calls = stub_adept(service)
-        first = service.return_loan_prefer_adept(loan)
-        assert first['status'] == 'paris_return_confirmed'
-        second = service.return_loan_prefer_adept(loan)
-        assert second['adobe_return_confirmed'] is True
-        assert calls['mutations'] == 1 and calls['inventory'] >= 2
-        assert paris.posts == 0 and artifact.read_bytes() == before
-        binding = service.storage.acquisition_get('adept-01')['metadata']
+        for _attempt in range(2):
+            with pytest.raises(AttentionRequired) as exc:
+                service.return_loan_prefer_adept(loan)
+            assert exc.value.code == "loan_return_removed"
+        assert calls['mutations'] == 0 and paris.posts == 0
+        assert artifact.read_bytes() == before
+        assert service.storage.acquisition_get('adept-01') == untouched
+        binding = untouched['metadata']
         assert binding['path'] == str(artifact)
         assert binding['adept_binding']['adept_profile_id'] == 'bob-profile'
         assert service.storage.adept_profile_binding_get('identity', 'bob') == 'new-profile'
-        assert service.storage.paris_borrower_adept_binding_get(credential_id='alice-paris', account_id='linked-123') is None
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id='alice-paris', account_id='linked-123',
+        ) is None
     finally:
         service.close()
 
