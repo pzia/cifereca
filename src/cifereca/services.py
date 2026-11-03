@@ -505,7 +505,9 @@ class LibraryService:
                     "provider_id": provider_id,
                     "credential_id": credential_id,
                     "label": str(row.get("label") or provider_id),
-                    "enabled": bool(row.get("enabled", True)),
+                    # Preserve missing-flag legacy activation, but never
+                    # promote truthy malformed values into SQLite consent.
+                    "enabled": row.get("enabled", True) is True,
                     "metadata": {"anonymous": bool(row.get("anonymous", False))},
                 })
 
