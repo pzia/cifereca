@@ -31,7 +31,7 @@ def _verified_copy(
 ) -> bool:
     """Check the *current* regular bytes; SQLite state alone is not proof."""
     if not (type(path_text) is str and path_text and type(sha256) is str
-            and len(sha256) == 64 and type(size) is int and size >= 0):
+            and len(sha256) == 64 and type(size) is int and size > 0):
         return False
     try:
         alias = Path(os.path.abspath(root.expanduser()))
