@@ -307,7 +307,20 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                     raise SettingsValidationError(f'Valeur hors limites : {field.label}')
                 value = raw_value
             elif value_type == 'text':
-                value = raw_value.strip() or fallback
+                # An option explicitly stored on an existing account can be
+                # intentionally empty. The GTK editor preserves that blank;
+                # do not resurrect a retired global or descriptor default on
+                # an unrelated save (or when an optional field is cleared).
+                # New accounts still receive the declared default when blank.
+                original_account = editor.get('original_account')
+                existing_option = (
+                    type(original_account) is dict
+                    and original_account.get('id') == editor['id']
+                    and field.key in original_options
+                )
+                value = raw_value.strip()
+                if not value and not existing_option:
+                    value = fallback
             else:
                 raise SettingsValidationError(f'Type d’option non pris en charge : {field.label}')
             if field.required is True and editor['enabled'] is True and not value:
