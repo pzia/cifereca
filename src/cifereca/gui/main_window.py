@@ -344,10 +344,15 @@ class MainWindow(Adw.ApplicationWindow):
     def _task_progress_for_task(self, task_id: int, label: str) -> bool:
         return task_activity_adapter.task_progress(self, label, task_id=task_id)
 
-    def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
+    def _task_finished(
+        self, task_id: int, remaining: int, label: str,
+        success: bool, error: str | None, business_status: str | None = None,
+    ) -> bool:
         if getattr(self, '_closed', False):
             return False
-        return task_activity_adapter.task_finished(self, task_id, remaining, label, success, error)
+        return task_activity_adapter.task_finished(
+            self, task_id, remaining, label, success, error, business_status,
+        )
 
     @staticmethod
     def _functional_error_message(message: str) -> str:
