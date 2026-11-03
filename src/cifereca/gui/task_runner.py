@@ -106,6 +106,27 @@ class TaskRunner:
                     return "partial"
         return "success" if value.ok is True else "failed"
 
+    @staticmethod
+    def _borrow_outcome(value: Any) -> str:
+        """Only the Core manual-loan receipt is a typed business result.
+
+        Legacy provider borrow workers return a (loan, loans) tuple; preserve
+        their existing result contract. A BnF Core dict without verified
+        confirmation is never an attested new loan.
+        """
+        if type(value) is not dict:
+            return "success"
+        status = value.get("status")
+        if status == "confirmed" and value.get("provider_verified") is True:
+            return "success"
+        if status in {"submitted", "verification_unavailable"}:
+            return "pending"
+        if status in {"blocked", "unsupported"}:
+            return "blocked"
+        if status == "cancelled":
+            return "cancelled"
+        return "failed"
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -273,8 +294,18 @@ class TaskRunner:
             outcome_status = "success"
             try:
                 value = fn(report) if with_progress else fn()
-                if self._source_sync_outcome(value, trace_kind) != "success":
+                business = (
+                    self._borrow_outcome(value) if trace_kind == "borrow"
+                    else self._source_sync_outcome(value, trace_kind)
+                )
+                if business != "success":
                     outcome_status = "failed"
+                    if trace_kind == "borrow":
+                        # Reuse the existing worker-scoped task_ref correlation
+                        # for a returned Core refusal, without raising a
+                        # synthetic exception or emitting a new event.
+                        from cifereca.diagnostic_task_context import diagnostic_task_business_result
+                        diagnostic_task_business_result(value, operation_kind="borrow")
                 return value
             except BaseException:
                 outcome_status = "failed"
@@ -335,9 +366,12 @@ class TaskRunner:
                 outcome = ("error", exc)
             if outcome[0] == "error":
                 trace_failure("worker", outcome[1])
+            from cifereca.plugin_api import Cancelled
             business_status = (
-                "failed" if outcome[0] == "error"
-                else self._source_sync_outcome(outcome[1], trace_kind)
+                ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
+                if outcome[0] == "error"
+                else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
+                      else self._source_sync_outcome(outcome[1], trace_kind))
             )
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
@@ -347,8 +381,21 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind == "source-sync" else ""
+                if trace_kind in {"source-sync", "borrow"} else ""
             )
+            # Only Core's explicitly closed BnF reason vocabulary may enter
+            # the generic task receipt. Ignore arbitrary provider detail.
+            if trace_kind == "borrow" and outcome[0] == "ok" and type(outcome[1]) is dict:
+                reason = outcome[1].get("reason_code")
+                if type(reason) is str and reason in {
+                    "borrow_confirmation_required", "borrow_site_check_required",
+                    "borrow_scope_changed", "borrow_scope_unverified",
+                    "borrow_capability_unavailable", "borrow_execution_unavailable",
+                    "borrow_previous_attempt", "borrow_checkpoint_unavailable",
+                    "borrow_active_loan_observed", "borrow_not_submitted",
+                    "borrow_result_unverified",
+                }:
+                    detail += f" reason_code={reason}"
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=%s%s",
                 task_id, trace_kind, origin,
@@ -395,7 +442,15 @@ class TaskRunner:
                     label,
                     business_status == "success",
                     None if business_status == "success" else (
-                        "Synchronisation déjà en cours" if business_status == "busy"
+                        "Emprunt non confirmé — vérification nécessaire"
+                        if trace_kind == "borrow" and business_status == "pending"
+                        else "Emprunt bloqué — aucune confirmation"
+                        if trace_kind == "borrow" and business_status == "blocked"
+                        else "Emprunt annulé"
+                        if trace_kind == "borrow" and business_status == "cancelled"
+                        else "Emprunt non confirmé"
+                        if trace_kind == "borrow" and business_status != "success"
+                        else "Synchronisation déjà en cours" if business_status == "busy"
                         else "Synchronisation en attente de livraison" if business_status == "pending"
                         else "Synchronisation bloquée" if business_status == "blocked"
                         else "Synchronisation annulée" if business_status == "cancelled"
