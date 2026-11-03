@@ -187,18 +187,20 @@ def publish_completed_acquisition(
             raise ValueError("canonical_publisher_context_rebound")
         # The Core policy guard uses THIS connection, never Storage methods
         # that would re-enter its non-recursive lock. Recheck after hashing.
+        from .source_sync_consent import policy_in_transaction
+        # A caller cannot silently downgrade a configured source-wide policy
+        # to the legacy, revision-less publication path. Check the exact
+        # persisted policy in the same write transaction on *every* B commit.
+        # Only an entirely unset policy may use the historical route.
+        policy = policy_in_transaction(db, scope)
+        if policy.configured and expected_source_policy_revision is None:
+            raise ValueError("canonical_source_policy_revision_required")
         if expected_source_policy_revision is not None:
-            from ..plugin_api.provider_rights_observation import ProviderRightsScope
-            from .source_sync_consent import policy_in_transaction
             if (type(expected_source_policy_revision) is not str
                     or len(expected_source_policy_revision) != 32
                     or any(ch not in "0123456789abcdef"
                            for ch in expected_source_policy_revision)):
                 raise ValueError("canonical_source_policy_revision_invalid")
-            policy = policy_in_transaction(db, ProviderRightsScope(
-                scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id,
-            ))
             if (policy.mode != "on"
                     or policy.revision != expected_source_policy_revision):
                 raise ValueError("canonical_source_policy_revoked")

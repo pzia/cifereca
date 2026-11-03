@@ -159,3 +159,52 @@ def test_positive_offer_is_sufficient_without_active_right_state(
     assert result.changed is True
     assert rows(store) == (1, 1, 1, 1)
     assert store.placement_for_path(path)["identity_id"] == "A"
+
+
+@pytest.mark.parametrize("policy_state", ("on", "off", "invalid"))
+def test_configured_source_policy_cannot_be_bypassed_by_missing_revision(
+    store, tmp_path, policy_state,
+):
+    key, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    if policy_state == "invalid":
+        with store._lock, store._connect() as db:
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES (?,?)",
+                (policy_key(key.scope), "{invalid policy"),
+            )
+    else:
+        _policy(store, key.scope, policy_state == "on")
+
+    with pytest.raises(ValueError, match="canonical_source_policy_revision_required"):
+        publish(store, tmp_path / "EBooks", path, key, snapshot)
+    assert rows(store) == (0, 0, 0, 0)
+    assert path.read_bytes() == PAYLOAD
+
+
+def test_unconfigured_legacy_source_retains_previous_publication_path(
+    store, tmp_path,
+):
+    key, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+
+    assert publish(store, tmp_path / "EBooks", path, key, snapshot).changed
+    assert rows(store) == (1, 1, 1, 1)
+
+
+def test_matching_revision_remains_idempotent_after_policy_gate(
+    store, tmp_path,
+):
+    key, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    revision = _policy(store, key.scope, True)
+
+    first = publish(store, tmp_path / "EBooks", path, key, snapshot,
+                    expected_source_policy_revision=revision)
+    second = publish(store, tmp_path / "EBooks", path, key, snapshot,
+                     expected_source_policy_revision=revision)
+    assert first.changed and not second.changed
+    assert rows(store) == (1, 1, 1, 1)
