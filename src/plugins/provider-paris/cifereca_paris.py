@@ -47,6 +47,15 @@ from cifereca.plugin_api import (
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
+def _paris_core_admission_current(admission_current):
+    """A revoked/raising Core lease cannot authorize a selected PNB GET."""
+    try:
+        return (admission_current is None or
+                (callable(admission_current) and admission_current() is True))
+    except Exception:
+        return False
+
+
 def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
     """Only an actionable link at a supplier host; no remote GET or right test.
 
@@ -1093,7 +1102,34 @@ class ParisProviderSession(ProviderSession):
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
     ):
-        """#3723 v2: stage the *existing* exact ACSM/EPUB path; Core owns SHA."""
+        """Compatibility v2 candidate; explicit/legacy callers remain unchanged."""
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id, kind=kind,
+            branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """Core revocation fence for the whole selected Paris PNB transfer."""
+        if not callable(admission_current) or not _paris_core_admission_current(admission_current):
+            raise ProviderCapabilityError("paris_core_admission_revoked")
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id, kind=kind,
+            branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
+        )
+
+    def _downloadable_selected_delivery_candidate(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
+    ):
+        """Stage the exact provider candidate, never a Core receipt or B."""
         from cifereca.plugin_api import SourceReference, DeliveryCandidate
         # Pin the caller scope *before* the underlying provider performs I/O.
         # A rebind must not manufacture a candidate for the new owner.
@@ -1102,14 +1138,17 @@ class ParisProviderSession(ProviderSession):
             account, edition_id=edition_id, right_id=resource_id,
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
+            **({"admission_current": admission_current}
+               if admission_current is not None else {}),
         )
         # Compare the mutable caller against the frozen, previously valid
         # scope. Reconstructing ProviderRightsScope *after* GET could itself
         # raise on an empty/invalid account field, bypassing candidate cleanup.
-        if (account.identity_id, account.provider_id,
+        if ((account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id) != (
                 scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id):
+                scope.credential_id, scope.account_id)
+                or not _paris_core_admission_current(admission_current)):
             try:
                 staged = Path(path)
                 if (staged.parent == Path(target_dir) and staged.is_file()
@@ -1158,6 +1197,7 @@ class ParisProviderSession(ProviderSession):
         self, account: Account, *, edition_id: str, right_id: str,
         kind: str, branch: str, delivery_offer_id: str,
         target_dir, explicit_user_action: bool = False,
+        admission_current=None,
     ) -> tuple[Path, str]:
         """Reobserve the exact PNB link, then stage a file via the guarded GET.
 
@@ -1175,6 +1215,8 @@ class ParisProviderSession(ProviderSession):
                 or any(c not in "0123456789abcdef"
                        for c in delivery_offer_id[len("paris.pnb:"):])):
             raise ProviderCapabilityError("paris_candidate_not_admitted")
+        if not _paris_core_admission_current(admission_current):
+            raise ProviderCapabilityError("paris_core_admission_revoked")
         directory = Path(target_dir)
         try:
             if (not directory.is_dir() or directory.is_symlink()
@@ -1202,6 +1244,8 @@ class ParisProviderSession(ProviderSession):
             # the live loan card and owner *again* around the PNB token GET.
             with self._loan_inventory_lock:
                 inventory = self._snapshot_for_account(account)
+                if not _paris_core_admission_current(admission_current):
+                    raise ProviderCapabilityError("paris_core_admission_revoked")
                 candidates = []
                 for loan in inventory.loans:
                     if (type(loan) is not Loan or loan.provider != "DILICOM"
@@ -1231,6 +1275,8 @@ class ParisProviderSession(ProviderSession):
                     expected_right_id=right_id,
                     expected_identity_id=account.identity_id,
                     selected_stage_fd=stage_fd,
+                    **({"admission_current": admission_current}
+                       if admission_current is not None else {}),
                 )
 
         finally:
@@ -1241,6 +1287,7 @@ class ParisProviderSession(ProviderSession):
         expected_right_id: str | None = None,
         expected_identity_id: str | None = None,
         selected_stage_fd: int | None = None,
+        admission_current=None,
     ) -> tuple[Path, str]:
         """Existing-loan delivery only: exact live Paris borrower and loan.
 
@@ -1308,7 +1355,8 @@ class ParisProviderSession(ProviderSession):
 
             def scope_current():
                 return (
-                    self.connected is True
+                    _paris_core_admission_current(admission_current)
+                    and self.connected is True
                     and (account.unique_id, account.identity_id,
                          account.provider_id, account.credential_id,
                          account.is_primary) == scope
@@ -1398,6 +1446,8 @@ class ParisProviderSession(ProviderSession):
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
                 selected_stage_fd=selected_stage_fd,
+                **({"stream_admission_current": scope_current}
+                   if admission_current is not None else {}),
             )
             # A signed PNB URL is transient secret transport evidence, NOT a
             # SourceReference or Core delivery receipt. Keep the old tuple
@@ -1409,7 +1459,8 @@ class ParisProviderSession(ProviderSession):
     def _download_digital_scoped_impl(self, loan: Loan, account: Account,
                                       target_dir: Path, *, scope_guard=None,
                                       borrower_uid=None,
-                                      selected_stage_fd=None) -> tuple[Path, str]:
+                                      selected_stage_fd=None,
+                                      stream_admission_current=None) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -1486,7 +1537,11 @@ class ParisProviderSession(ProviderSession):
                 raise ProviderConfigurationError("Boucle de redirections PNB détectée")
             visited_urls.add(current)
             hop_started = time.monotonic()
-            response = self.client._get_pnb_response(current)
+            response = self.client._get_pnb_response(
+                current,
+                **({"admission_current": stream_admission_current}
+                   if stream_admission_current is not None else {}),
+            )
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             if response.status_code not in {301,302,303,307,308}: break

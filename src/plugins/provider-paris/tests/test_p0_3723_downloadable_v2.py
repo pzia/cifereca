@@ -123,3 +123,60 @@ def test_v2_rebind_during_candidate_does_not_return_or_keep_staging(
             target_dir=tmp_path, explicit_user_action=True,
         )
     assert not list(tmp_path.iterdir())
+
+
+def test_guarded_v2_candidate_requires_live_core_lease_before_private_read(
+    monkeypatch, tmp_path,
+):
+    from cifereca.plugin_api import ProviderCapabilityError
+    session, account, row = build(monkeypatch)
+    monkeypatch.setattr(
+        ParisProviderSession, "rights_selected_delivery_candidate",
+        lambda *_args, **_kwargs: pytest.fail("revoked Core must not issue GET"),
+    )
+    with pytest.raises(ProviderCapabilityError, match="paris_core_admission_revoked"):
+        session.downloadable_selected_delivery_candidate_guarded(
+            account, edition_id=row.edition_id, resource_id=row.right_id,
+            kind="loan", branch=BRANCH, selected_offer_id=row.delivery_offer_id,
+            target_dir=tmp_path, explicit_user_action=True,
+            admission_current=lambda: False,
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("revoke_after_get", (False, True))
+def test_guarded_v2_candidate_forwards_live_lease_and_discards_revoked_staging(
+    monkeypatch, tmp_path, revoke_after_get,
+):
+    from cifereca.plugin_api import DeliveryCandidate, ProviderCapabilityError
+    session, account, row = build(monkeypatch)
+    live = [True]
+    calls = []
+
+    def staged(self, selected, *, target_dir, admission_current, **kwargs):
+        assert selected is account and admission_current() is True
+        assert kwargs["delivery_offer_id"] == row.delivery_offer_id
+        calls.append("selected")
+        path = target_dir / "selected.acsm"
+        path.write_bytes(b"synthetic private ACSM candidate")
+        if revoke_after_get:
+            live[0] = False
+        return path, ""
+
+    monkeypatch.setattr(ParisProviderSession, "rights_selected_delivery_candidate", staged)
+    invoke = lambda: session.downloadable_selected_delivery_candidate_guarded(
+        account, edition_id=row.edition_id, resource_id=row.right_id,
+        kind="loan", branch=BRANCH, selected_offer_id=row.delivery_offer_id,
+        target_dir=tmp_path, explicit_user_action=True,
+        admission_current=lambda: live[0],
+    )
+    if revoke_after_get:
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+            invoke()
+        assert list(tmp_path.iterdir()) == []
+    else:
+        candidate = invoke()
+        assert type(candidate) is DeliveryCandidate
+        assert candidate.source.scope.account_id == account.unique_id
+        assert candidate.path.read_bytes() == b"synthetic private ACSM candidate"
+    assert calls == ["selected"]
