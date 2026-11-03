@@ -283,3 +283,67 @@ def test_two_storage_connections_cannot_replace_first_binding(bnf_importer):
         assert saved in scopes
     finally:
         other.close()
+
+
+def test_canonical_bnf_origin_outweighs_older_manual_display_binding(
+    bnf_importer, tmp_path,
+):
+    """An older manual import cannot steal a later canonical loan OriginLink.
+
+    Two genuinely distinct files stay distinct; only the exactly attested
+    loan belongs to the canonical artifact. No title/SHA merge is permitted.
+    """
+    import hashlib
+    from tests.test_core_library_placement_identity_scope import _placement
+
+    service, loan, requests = bnf_importer
+    service._persist_active_loans("default", [loan])
+    manual = imported(service, loan)
+    manual_artifact = manual["artifact_id"]
+
+    content = b"same epub contents"
+    digest = hashlib.sha256(content).hexdigest()
+    canonical_artifact = "sha256:" + digest
+    assert canonical_artifact != manual_artifact
+    service.storage.artifact_put({
+        "artifact_id": canonical_artifact, "sha256": digest,
+        "size": len(content), "media_format": "epub",
+    })
+    canonical_placement = _placement(
+        service, tmp_path, owner="default", filename="canonical-bnf.epub",
+        artifact_id=canonical_artifact, item_id=loan.record_id,
+    )
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "INSERT INTO source_references("
+            "source_reference_id,identity_id,provider_id,credential_id,"
+            "account_id,branch_id,edition_id,right_id,reference_kind,state,"
+            "evidence_kind,evidence_ref,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("bnf-exact-source", "default", "bnf-pret",
+             loan.source_credential, loan.source_account_id,
+             "bnf_html", loan.record_id, loan.id, "loan", "active",
+             "provider_response", "bnf_html.active_loans", 1, 1),
+        )
+        db.execute(
+            "INSERT INTO origin_links("
+            "origin_link_id,origin_kind,identity_id,artifact_id,"
+            "source_reference_id,evidence_ref,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            ("bnf-exact-origin", "provider", "default", canonical_artifact,
+             "bnf-exact-source", "canonical-delivery-receipt", 1, 1),
+        )
+
+    rows = service.library_entries(identity_id="default", scan=False)
+    assert len(rows) == 2  # Two actual files, not a metadata-only duplicate.
+    canonical = next(r for r in rows if r["artifact_id"] == canonical_artifact)
+    legacy = next(r for r in rows if r["artifact_id"] == manual_artifact)
+    assert canonical["placement_id"] == canonical_placement
+    assert canonical["local"] and legacy["local"]
+    assert canonical["loan_id"] == loan.id
+    assert canonical["entitlement_type"] == "loan"
+    assert len(canonical["possessions"]) == 1
+    assert legacy["possessions"] == []
+    assert legacy["entitlement_type"] is None
+    assert len(requests) == 1  # Projection did not redeliver either artifact.
+    assert service.storage.entitlements()[0]["loan_id"] == loan.id
