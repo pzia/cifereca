@@ -18,7 +18,7 @@ def _events(caplog):
     return [
         record.getMessage()
         for record in caplog.records
-        if "TRACE kobo selected_offer " in record.getMessage()
+        if "EVENT kobo selected_offer " in record.getMessage()
     ]
 
 
@@ -26,7 +26,7 @@ def test_successful_pinned_kdrm_trace_is_not_a_download_receipt(caplog):
     session, vault, _broker, account, _ = setup()
     ready(session, vault)
     try:
-        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        with caplog.at_level(logging.INFO, logger="cifereca"):
             offer = selected(session, account, "book-1")
         assert offer.delivery == "available"
         lines = _events(caplog)
@@ -47,7 +47,7 @@ def test_missing_token_scope_is_a_local_refusal_not_an_upstream_403(caplog):
     calls = ready(session, vault)
     session.supports_acquisition_delegation = False
     try:
-        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        with caplog.at_level(logging.INFO, logger="cifereca"):
             offer = selected(session, account, "book-1")
         assert offer.delivery == "unknown"
         assert calls == [("book-1", "descriptor")]  # zero delegated POST
@@ -76,7 +76,7 @@ def test_observed_delegated_http_403_is_distinct_from_missing_scope(caplog):
         return original(product, **options)
     vault.acquisition = forbidden
     try:
-        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        with caplog.at_level(logging.INFO, logger="cifereca"):
             offer = selected(session, account, "book-1")
         assert offer.delivery == "unknown"
         assert calls == [("book-1", "descriptor")]
@@ -94,7 +94,7 @@ def test_runtime_unavailable_is_not_mistaken_for_delegation_403(caplog):
     calls = ready(session, vault)
     session.runtime_capabilities = None
     try:
-        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        with caplog.at_level(logging.INFO, logger="cifereca"):
             offer = selected(session, account, "book-1")
         assert offer.delivery == "unknown"
         assert calls == [("book-1", "descriptor")]
@@ -111,7 +111,7 @@ def test_runtime_unavailable_is_not_mistaken_for_delegation_403(caplog):
 def test_plain_offer_stays_non_delegated_and_no_token_in_trace(caplog):
     session, vault, _broker, account, posts = setup()
     try:
-        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        with caplog.at_level(logging.INFO, logger="cifereca"):
             offer = selected(session, account, "book-1")
         assert offer.delivery == "available"
         assert len(posts) == 1 and posts[0][1]["mode"] == "descriptor"
@@ -140,7 +140,7 @@ def test_subsequent_book_keeps_prior_403_quarantined_without_new_http(caplog):
         return original(product, **options)
     vault.acquisition = forbidden
     try:
-        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        with caplog.at_level(logging.INFO, logger="cifereca"):
             first = selected(session, account, "book-1")
             second = selected(session, account, "book-1")
         assert first.delivery == second.delivery == "unknown"
