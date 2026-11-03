@@ -59,6 +59,7 @@ from . import shell_layout_controller
 from . import shell_body_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from . import shell_header_controller
+from . import reader_page_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
 from . import settings_page, standalone_settings_controller
@@ -1310,6 +1311,16 @@ class MainWindow(Adw.ApplicationWindow):
     def _build_library_page(self) -> MasterDetailPage:
         return library_page_controller.build_library_page(
             self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
+
+    def _build_readers_page(self) -> MasterDetailPage:
+        return reader_page_controller.build_readers_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
+
+    def _render_readers(self) -> None:
+        return reader_page_controller.render_readers(
+            self, Gtk=Gtk, BookListItem=BookListItem,
         )
 
     @staticmethod
