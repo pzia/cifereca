@@ -2827,6 +2827,78 @@ class Storage:
             )
         return placement_id
 
+    def device_usb_intent_set(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+        desired_state: str,
+    ) -> str:
+        """Store a user-declared USB intention; never touch device/files.
+
+        The exact binding, any previous intent and the local artifact scope
+        are checked under one SQLite writer transaction. This operation is
+        NOT a USB-transfer permission or an observation of device presence.
+        Existing observation, managed receipts and relative paths are kept
+        byte-for-byte, rather than overwritten by a stale GTK form snapshot.
+        """
+        if any(
+            type(value) is not str or not value or value != value.strip()
+            for value in (identity_id, device_id, artifact_id)
+        ):
+            raise ValueError("device intent requires exact nonempty identifiers")
+        if type(desired_state) is not str or desired_state not in ("keep", "remove"):
+            raise ValueError("device intent must be keep or remove")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT identity_id FROM device_bindings WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+            if binding is None or binding[0] != identity_id:
+                raise ValueError("device intent requires exact bound identity")
+            current = db.execute(
+                "SELECT device_placement_id,metadata_json FROM device_placements "
+                "WHERE device_id=? AND artifact_id=?",
+                (device_id, artifact_id),
+            ).fetchone()
+            if current is not None:
+                # Older placements have no origin identity. A reassigned
+                # device must never silently make its old intentions belong
+                # to a new profile, even when the artifact SHA is shared.
+                metadata = self._json_load(current[1])
+                if type(metadata) is not dict or metadata.get("intent_identity_id") != identity_id:
+                    raise ValueError("device intent owner is unproven")
+                db.execute(
+                    "UPDATE device_placements SET desired_state=?,updated_at=? "
+                    "WHERE device_id=? AND artifact_id=?",
+                    (desired_state, now, device_id, artifact_id),
+                )
+                return str(current[0])
+            if desired_state == "remove":
+                # No Cifereca-managed prior intent: a fresh declaration must
+                # not authorize deletion of arbitrary existing device books.
+                raise ValueError("cannot remove an unmanaged device artifact")
+            # Local ownership must come from an exact active placement, never
+            # a globally shared artifact_id or a catalogue/remote right.
+            owned = db.execute(
+                "SELECT 1 FROM placements WHERE artifact_id=? "
+                "AND identity_id=? AND state='present' LIMIT 1",
+                (artifact_id, identity_id),
+            ).fetchone()
+            if owned is None:
+                raise ValueError("device intent requires local identity placement")
+            placement_id = self._stable_id("device-placement", device_id, artifact_id)
+            db.execute(
+                "INSERT INTO device_placements("
+                "device_placement_id,device_id,artifact_id,desired_state,"
+                "observed_state,target_relative_path,last_observed_at,"
+                "metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (placement_id, device_id, artifact_id, "keep", "unknown",
+                 None, None, self._json_dump({"intent_identity_id": identity_id}),
+                 now, now),
+            )
+            return placement_id
+
     def device_placement_get(self, device_id: str, artifact_id: str) -> dict[str, Any] | None:
         rows = self.device_placements(device_id=device_id, artifact_id=artifact_id)
         return rows[0] if rows else None
