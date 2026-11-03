@@ -2778,6 +2778,80 @@ class Storage:
             )
         return device_id
 
+    def device_usb_binding_declare(
+        self, *, identity_id: str, device_id: str, label: str,
+        usb_fingerprint: str, enabled: bool = False,
+    ) -> str:
+        """Declare one local USB reader; never mount or write to the device.
+
+        Device fingerprints are *claimed* local configuration identifiers.
+        They become evidence of physical presence only after a separate,
+        exact-volume USB scan. A prior device owner/fingerprint cannot be
+        silently replaced by a Settings save, and intents are never moved.
+        """
+        if any(
+            type(value) is not str or not 1 <= len(value) <= 128
+            or value != value.strip() or not value.isprintable()
+            for value in (identity_id, device_id)
+        ):
+            raise ValueError("invalid USB device or identity identifier")
+        if (type(usb_fingerprint) is not str
+                or not 8 <= len(usb_fingerprint) <= 128
+                or any(char not in "abcdefghijklmnopqrstuvwxyz"
+                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+                       for char in usb_fingerprint)):
+            raise ValueError("invalid USB volume fingerprint")
+        if (type(label) is not str or not 1 <= len(label.strip()) <= 120
+                or label != label.strip() or not label.isprintable()):
+            raise ValueError("invalid USB device label")
+        if type(enabled) is not bool:
+            raise ValueError("USB device enabled must be explicit boolean")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM identities WHERE identity_id=?",
+                (identity_id,),
+            ).fetchone() is None:
+                raise ValueError("USB device identity not configured")
+            rows = db.execute(
+                "SELECT device_id,identity_id,metadata_json FROM device_bindings"
+            ).fetchall()
+            existing = None
+            for stored_id, stored_identity, stored_json in rows:
+                metadata = self._json_load(stored_json)
+                if type(metadata) is not dict:
+                    if stored_id == device_id:
+                        raise ValueError("existing USB binding metadata invalid")
+                    continue
+                stored_fingerprint = metadata.get("usb_fingerprint")
+                if stored_id == device_id:
+                    existing = (stored_identity, stored_fingerprint)
+                elif (type(stored_fingerprint) is str
+                      and stored_fingerprint.casefold() == usb_fingerprint.casefold()):
+                    raise ValueError("USB volume already bound to another device")
+            if existing is not None:
+                if existing != (identity_id, usb_fingerprint):
+                    raise ValueError("USB device rebind requires explicit unlink")
+                # Preserve historical target/metadata and every placement;
+                # changing a label/activation cannot refresh device evidence.
+                db.execute(
+                    "UPDATE device_bindings SET label=?,enabled=?,updated_at=? "
+                    "WHERE device_id=? AND identity_id=?",
+                    (label, int(enabled), now, device_id, identity_id),
+                )
+                return device_id
+            db.execute(
+                "INSERT INTO device_bindings("
+                "device_id,identity_id,label,enabled,metadata_json,"
+                "created_at,updated_at,target_directory"
+                ") VALUES(?,?,?,?,?,?,?,?)",
+                (device_id, identity_id, label, int(enabled),
+                 self._json_dump({"usb_fingerprint": usb_fingerprint}),
+                 now, now, "Books/Cifereca"),
+            )
+            return device_id
+
     def device_binding_get(self, device_id: str) -> dict[str, Any] | None:
         rows = [row for row in self.device_bindings() if row.get("device_id") == str(device_id)]
         return rows[0] if rows else None
