@@ -118,14 +118,29 @@ def _materialize_to_identity_locked(
             or not dest_dir.resolve().is_relative_to(root)):
         raise ProviderConfigurationError("Répertoire cible hors bibliothèque")
 
+    artifact_id = str(source.get("artifact_id") or "").strip()
+    default_owner = self.identities[0].identity_id if self.identities else None
+    # The catalogue is descriptive, not proof of the Placement's ownership.
+    # Imported/poisoned SQLite can associate a foreign profile's private
+    # title/author/cover with the SAME placement_id. Never project it into
+    # the recipient's catalogue just because this is an explicit local send.
+    # Preserve v0.7 NULL-owner metadata for the default profile only.
     source_entries = [
         row for row in self.storage.catalog_entries()
         if str(row.get("placement_id") or "") == str(placement_id)
+        and (
+            row.get("identity_id") == owner
+            or (row.get("identity_id") in (None, "")
+                and owner == default_owner)
+        )
+        and (
+            not row.get("artifact_id")
+            or row.get("artifact_id") == artifact_id
+        )
     ]
     if len(source_entries) > 1:
         raise ProviderConfigurationError("Notices source ambiguës")
     source_entry = source_entries[0] if source_entries else {}
-    artifact_id = str(source.get("artifact_id") or "").strip()
     item_id = str(source.get("source_item_id") or source_entry.get("item_id") or "").strip() or None
 
     # A canonical Artifact is immutable final SHA evidence. If its source
