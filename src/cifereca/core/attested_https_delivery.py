@@ -213,7 +213,15 @@ def download_attested_https(
             per_hop_headers = (
                 request_headers if origin == initial else {
                     key: value for key, value in request_headers.items()
-                    if key.lower() in _SAFE_CROSS_ORIGIN
+                    if (
+                        key.lower() in _SAFE_CROSS_ORIGIN
+                        # KV's fixed S3 requester-pays marker is public and
+                        # non-authenticating. Only its exact constant value
+                        # may survive cross-origin redirects, never an
+                        # arbitrary supplier header or credential.
+                        or (key.lower() == "x-amz-request-payer"
+                            and value == "requester")
+                    )
                 }
             )
             # The transport refuses private/non-global DNS answers at the

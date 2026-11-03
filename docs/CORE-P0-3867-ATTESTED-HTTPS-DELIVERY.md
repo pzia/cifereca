@@ -9,7 +9,7 @@
 - `url` : URL de GET HTTPS émise depuis **une offre fraîche, univoque et liée exactement** à un compte, une ressource et un consentement ; jamais une URL déduite d’une fiche publique.
 - `target` : chemin de staging **privé et préexistant**, sans symlink, contrôlé par Core. La cible n’existe pas ; elle est créée uniquement après vérification de la réponse, du budget et de l’admission. La primitive ne publie pas de fichier final.
 - `admission_current()` : callback Core **obligatoire** retournant le booléen strict `True` uniquement tant que l’identité, le compte, l’offre sélectionnée, le consentement et le contexte restent valables. Réévalué avant le premier GET, avant chaque saut, sur chaque bloc et avant la création du chemin de staging.
-- `headers` : en-têtes de l’offre strictement typés ; seuls `Accept`, `Accept-Language`, `User-Agent` traversent une frontière d’origine. Ne jamais transférer l’`Authorization`, le `Cookie`, le `Referer`, l’`Origin`, le CSRF ou les headers spécifiques.
+- `headers` : en-têtes de l’offre strictement typés ; seuls `Accept`, `Accept-Language`, `User-Agent` traversent normalement une frontière d’origine. **Exception contrôlée Kobo/S3** : `x-amz-request-payer` traverse seulement lorsque sa valeur est exactement `requester` (constante non authentifiante, attestée par le candidat Kobo). Une valeur différente, un autre header spécifique ou un secret ne traverse jamais. Ne jamais transférer `Authorization`, `Cookie`, `Referer`, `Origin`, CSRF ou les jetons AWS d’authentification.
 - Sortie `PublicDelivery(path, sha256, size, content_type, redirects)` ; aucun jeton, compte ou URL dans la valeur de retour.
 
 ## Garanties de transport

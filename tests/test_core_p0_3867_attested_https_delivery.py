@@ -557,3 +557,83 @@ def test_original_private_stage_remains_valid_without_rebind(
     )
     assert result.path.read_bytes() == b"synthetic selected bytes"
     assert list(stage.iterdir()) == [result.path]
+
+
+@pytest.mark.parametrize(("marker", "forward"), [
+    ("requester", True),
+    ("REQUESTER", False),
+    ("requester;Authorization=Bearer private", False),
+    ("requester ", False),
+    ("", False),
+])
+def test_only_constant_kobo_requester_pays_marker_crosses_public_redirect(
+    tmp_path, monkeypatch, marker, forward,
+):
+    """A bounded public S3 request header is distinct from authentication.
+
+    Supplier-specific or credential headers never cross origins. A correct
+    public requester-pays switch may be carried across an HTTPS CDN hop.
+    Both endpoints are HTTPX mocks; no Kobo/S3 service is contacted.
+    """
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if str(request.url) == FIRST:
+            return httpx.Response(302, headers={"Location": CDN})
+        assert str(request.url) == CDN
+        return httpx.Response(
+            200, content=b"synthetic selected epub",
+            headers={"Content-Type": "application/epub+zip"},
+        )
+
+    _client(monkeypatch, handler)
+    result = delivery.download_attested_https(
+        producer="core.selected.delivery", url=FIRST,
+        target=tmp_path / "requester-pays.epub", timeout=5,
+        admission_current=lambda: True,
+        headers={
+            "x-amz-request-payer": marker,
+            "Authorization": "Bearer private-original-origin",
+            "Cookie": "user=private-original-origin",
+            "X-Amz-Security-Token": "PRIVATE_SESSION_TOKEN",
+            "Accept": "application/epub+zip",
+        },
+    )
+    assert result.path.read_bytes() == b"synthetic selected epub"
+    assert len(seen) == 2
+    assert seen[0].headers["x-amz-request-payer"] == marker
+    if forward:
+        assert seen[1].headers["x-amz-request-payer"] == "requester"
+    else:
+        assert "x-amz-request-payer" not in seen[1].headers
+    assert seen[1].headers["accept"] == "application/epub+zip"
+    for secret in ("authorization", "cookie", "x-amz-security-token"):
+        assert secret not in seen[1].headers
+
+
+def test_kobo_requester_pays_marker_does_not_bypass_revoked_core_admission(
+    tmp_path, monkeypatch,
+):
+    """A permitted header can never authorize a GET after revocation."""
+    requests = []
+    checks = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(307, headers={"Location": CDN})
+
+    def admitted():
+        checks.append(True)
+        return len(checks) <= 2
+
+    _client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="delivery_admission_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "blocked.epub", timeout=5,
+            admission_current=admitted,
+            headers={"x-amz-request-payer": "requester"},
+        )
+    assert requests == [FIRST]
+    assert not (tmp_path / "blocked.epub").exists()
