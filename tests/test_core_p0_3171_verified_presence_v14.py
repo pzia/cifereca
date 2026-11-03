@@ -337,6 +337,11 @@ def test_corrupt_artifact_evidence_does_not_suppress_real_delivery(
         changed = b"%PDF-1.7\\nReplaced bytes with mismatched database artifact ID\\n"
     path.write_bytes(changed)
     with store._lock, store._connect() as db:
+        # Current v14 production rejects this corruption at its SQL trigger.
+        # Simulate an imported/previously corrupted database explicitly by
+        # disabling that guard IN THIS THROWAWAY TEST DB only. The presence
+        # reader must still fail closed when faced with persisted bad rows.
+        db.execute("DROP TRIGGER origin_artifact_sha_immutable")
         db.execute(
             "UPDATE artifacts SET sha256=?,size=? WHERE artifact_id=?",
             (sha256(changed).hexdigest(), len(changed), published.artifact_id),
