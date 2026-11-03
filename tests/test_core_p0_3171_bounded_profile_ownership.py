@@ -38,9 +38,12 @@ def test_private_selected_delivery_never_gets_when_profile_folder_ambiguous(v2):
     db.identity_put({"identity_id": "foreign", "label": "foreign",
                      "directory_name": "A"})
     result = synchronize_account_source(service, service.account)
-    counts = result["canonical_execution"]
-    assert counts["downloaded"] == 0
-    assert counts["failed"] == 1
-    assert calls == ["offer"]  # selected offer only; no private candidate GET
+    # The positive A phase now rejects the ambiguous directory *before*
+    # handing a snapshot to the convergence executor. No offer lookup and
+    # no candidate GET are necessary; absence of execution is intentional.
+    assert result["status"] == "partial"
+    assert result["canonical_rights"]["status"] == "failed"
+    assert "canonical_execution" not in result
+    assert calls == []
     assert db.placements() == []
     assert not list((root / "A").rglob("*.pdf"))
