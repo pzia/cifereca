@@ -170,6 +170,7 @@ def test_rebound_device_cannot_transfer_existing_target_to_new_profile(tmp_path)
     book, _ = _owned_book(db, tmp_path)
     db.device_binding_put({
         "device_id": "usb-alice", "identity_id": "bob",
+        "target_directory": "Books/Cifereca",
         "metadata": {"usb_fingerprint": "uuid-bob-002"},
     })
     before = deepcopy(db.device_placements())
