@@ -193,13 +193,36 @@ def preview_usb_delta(
         elif desired not in ("keep", "remove") or type(desired) is not str:
             action, reason = "blocked", "invalid_intent"
         elif fresh:
+            # A complete scan can prove absence only at a *defined* target.
+            # New declarative keep intentions intentionally start with no
+            # path: they must first be mapped to a device-compatible variant
+            # and a unique managed location, not silently counted as missing.
+            target = placement.get("target_relative_path")
+            managed_dir = binding.get("target_directory")
+            scoped = (
+                _relative(target)
+                and (managed_dir is None or (
+                    type(managed_dir) is str
+                    and _relative(managed_dir)
+                    and target.startswith(managed_dir.rstrip("/") + "/")
+                ))
+            )
             observed = scan.files.get(artifact_id)
-            if observed is not None and (
-                type(observed) is not UsbObservedFile
-                or not _relative(observed.relative_path)
-                or not _sha(observed.sha256)
-            ):
-                action, reason = "blocked", "invalid_device_evidence"
+            occupied = (
+                _relative(target) and any(
+                    key != artifact_id
+                    and entry.relative_path.casefold() == target.casefold()
+                    for key, entry in scan.files.items()
+                )
+            )
+            if not scoped:
+                action, reason = "verify", "target_path_unqualified"
+            elif occupied:
+                # A foreign/untracked file at this path cannot become an
+                # implicit candidate for overwrite or removal.
+                action, reason = "blocked", "target_path_occupied"
+            elif observed is not None and observed.relative_path != target:
+                action, reason = "blocked", "observed_target_path_mismatch"
             else:
                 current = "present" if observed is not None else "missing"
                 if desired == "remove":
