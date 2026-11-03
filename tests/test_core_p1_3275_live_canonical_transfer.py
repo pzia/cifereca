@@ -119,7 +119,7 @@ def test_actual_send_sql_origin_failure_never_commits_a_forged_b_placement(
         assert a.read_bytes() == BYTES
         # A file created during a failed transaction remains physically
         # untouched; it is NOT a published recipient placement nor a right.
-        assert (root / "bob" / "local" / "book.pdf").read_bytes() == BYTES
+        assert (root / "bob" / "shared" / "book.pdf").read_bytes() == BYTES
     finally:
         with service.storage._lock, service.storage._connect() as db:
             db.execute("DROP TRIGGER test_canonical_send_rollback")
@@ -155,7 +155,7 @@ def test_altered_source_artifact_hash_never_mints_transfer_origin(tmp_path):
         assert canon_rows(service.storage)["origin_links"] == 0
         assert canon_rows(service.storage)["placements"] == 1
         assert service.storage.entitlements() == []
-        assert not (root / "bob" / "local" / "book.pdf").exists()
+        assert not (root / "bob" / "shared" / "book.pdf").exists()
     finally:
         service.close()
 
@@ -356,7 +356,7 @@ raise AssertionError("process did not hit the post-commit boundary")
     monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: tmp_path / "shared.lock")
     try:
         root = tmp_path / "EBooks"
-        a, b = root / "alice/local/book.pdf", root / "bob/local/book.pdf"
+        a, b = root / "alice/local/book.pdf", root / "bob/shared/book.pdf"
         placement = service.storage.placement_for_path(a)
         inode = b.stat().st_ino
         assert canon_rows(service.storage)["origin_links"] == 2
