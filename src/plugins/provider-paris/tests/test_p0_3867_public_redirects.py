@@ -384,7 +384,7 @@ def test_guarded_paris_pnb_stream_stops_when_core_lease_revoked_mid_body(
         def __iter__(self):
             seen.append("first-chunk")
             live[0] = False
-            yield b"synthetic-first-chunk"
+            yield b"A" * (64 * 1024)
             seen.append("forbidden-second-chunk")
             yield b"not-allowed"
         def close(self):
