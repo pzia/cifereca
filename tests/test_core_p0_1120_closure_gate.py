@@ -131,56 +131,60 @@ def test_unbound_paris_borrower_fails_before_provider_and_ledger(tmp_path, monke
         service.close()
 
 
-def test_adept_first_repeated_reads_and_nonboolean_retry_never_repost(tmp_path):
+def test_retired_adept_first_pnb_and_retry_paths_never_mutate(tmp_path):
+    import pytest
+    from cifereca.plugin_api import AttentionRequired
+
     service, loan, paris = adobe_setup(tmp_path, paris_active=True)
     try:
         counts = stub_adept(service)
-        first = service.return_loan_prefer_adept(loan)
-        assert first["status"] == "partial"
-        assert first["adobe_return_confirmed"] is True
-        assert counts["mutations"] == 1 and paris.posts == 0
-        assert service.return_loan_prefer_adept(loan)["status"] == "partial"
-        assert service.verify_loan_return(loan)["status"] == "partial"
-        assert service.return_digital(loan)["reason"] == (
-            "adobe_return_takes_precedence"
-        )
-        assert service.return_digital(loan, explicit_retry="true")["reason"] == (
-            "adobe_return_takes_precedence"
-        )
-        assert counts["mutations"] == 1 and paris.posts == 0
-        assert service.return_digital(loan, explicit_retry=True)["status"] == (
-            "still_active"
-        )
-        assert counts["mutations"] == 1 and paris.posts == 1
-        # A non-explicit second request prioritizes the Adobe checkpoint,
-        # not the local PNB still-active status; no second POST is possible.
-        repeat = service.return_digital(loan)
-        assert repeat["status"] == "partial"
-        assert repeat["reason"] == "adobe_return_takes_precedence"
-        assert paris.posts == 1
-    finally:
-        service.close()
-
-
-def test_failed_adept_mutation_checkpoint_survives_retry_without_pnb(tmp_path):
-    service, loan, paris = adobe_setup(tmp_path, paris_active=True)
-    try:
-        counts = stub_adept(service, failure=True)
-        first = service.return_loan_prefer_adept(loan)
-        assert first["status"] == "failed"
-        assert first["adobe_return_confirmed"] is False
-        assert counts["mutations"] == 1 and paris.posts == 0
-        assert service.return_loan_prefer_adept(loan)["status"] == "failed"
-        assert service.verify_loan_return(loan)["status"] == "failed"
-        assert counts["mutations"] == 1 and paris.posts == 0
+        for route in (
+            lambda: service.return_loan_prefer_adept(loan),
+            lambda: service.return_loan_prefer_adept(loan),
+            lambda: service.return_digital(loan),
+            lambda: service.return_digital(loan, explicit_retry="true"),
+            lambda: service.return_digital(loan, explicit_retry=True),
+        ):
+            with pytest.raises(AttentionRequired) as err:
+                route()
+            assert err.value.code == "loan_return_removed"
+        assert service.verify_loan_return(loan)["status"] == "not_requested"
+        assert counts["mutations"] == 0 and paris.posts == 0
         key = adept_return_key(
             loan.source_provider, loan.source_credential,
             loan.source_account_id, loan.id,
         )
-        assert service.storage.loan_return_state(key)["status"] == "failed"
+        assert service.storage.loan_return_state(key) is None
+    finally:
+        service.close()
+
+
+def test_existing_adept_return_checkpoint_is_readable_without_retry(tmp_path):
+    import pytest
+    from cifereca.plugin_api import AttentionRequired
+
+    service, loan, paris = adobe_setup(tmp_path, paris_active=True)
+    try:
+        counts = stub_adept(service, failure=True)
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            loan.source_account_id, loan.id,
+        )
+        claimed, _row = service.storage.loan_return_claim(key, "historical-operation")
+        assert claimed
+        before = service.storage.loan_return_state(key)
+        assert before["status"] == "request_sent"
+        with pytest.raises(AttentionRequired) as err:
+            service.return_loan_prefer_adept(loan)
+        assert err.value.code == "loan_return_removed"
+        status = service.verify_loan_return(loan)
+        assert status["status"] == "request_sent"
+        assert status["retry"] == "none"
+        assert service.storage.loan_return_state(key) == before
         assert service.storage.loan_return_state(return_key(
             loan.source_provider, loan.source_credential,
             loan.source_account_id, loan.id,
         )) is None
+        assert counts["mutations"] == 0 and paris.posts == 0
     finally:
         service.close()
