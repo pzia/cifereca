@@ -8,6 +8,7 @@ from __future__ import annotations
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from types import SimpleNamespace as NS
 from threading import Barrier, Thread
@@ -126,6 +127,11 @@ def test_legacy_exact_absence_may_be_verified_read_only(tmp_path):
     key = return_key("paris", "paris-a", "linked-b", loan.id)
     try:
         assert svc.storage.loan_return_claim(key, "before-upgrade")[0] is True
+        # A fresh claim is still in-flight; simulate a receipt from an older
+        # installation before exercising read-only inventory recovery.
+        archived = svc.storage.loan_return_state(key)
+        archived["requested_at"] = "2026-01-01T00:00:00+00:00"
+        svc.storage.metadata_set(key, json.dumps(archived))
         result = svc.verify_return_digital(loan)
         assert result["status"] == "provider_return_confirmed"
         assert result["verification"] == "provider_absent"
@@ -149,6 +155,9 @@ def test_partial_inventory_does_not_confirm_historical_return(tmp_path):
     try:
         key = return_key("paris", "paris-a", "linked-b", loan.id)
         assert svc.storage.loan_return_claim(key, "before-upgrade")[0] is True
+        archived = svc.storage.loan_return_state(key)
+        archived["requested_at"] = "2026-01-01T00:00:00+00:00"
+        svc.storage.metadata_set(key, json.dumps(archived))
         result = svc.verify_return_digital(loan)
         assert result["status"] == "verification_unavailable"
         assert result["verification"] == "unavailable"
