@@ -239,3 +239,85 @@ def test_shared_destination_symlink_is_rejected_without_external_writes(tmp_path
                        for row in service.storage.placements())
     finally:
         service.close()
+
+
+def test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider(
+    tmp_path, monkeypatch,
+):
+    """A B/shared path cannot rewrite attested BnF provenance after scan."""
+    from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
+
+    service = _service(tmp_path)
+    root = tmp_path / "EBooks"
+    pdf = root / "alice" / "bnf-pret" / "Book.pdf"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(BYTES)
+    artifact_id = "sha256:" + SHA
+    service.storage.artifact_put({
+        "artifact_id": artifact_id, "sha256": SHA,
+        "size": len(BYTES), "media_format": "pdf",
+    })
+    pid = service.storage.placement_put({
+        "artifact_id": artifact_id, "path": str(pdf),
+        "identity_id": "alice", "provider_id": "bnf-pret",
+        "source_item_id": "book", "state": "present", "metadata": {},
+    })
+    service.storage.catalog_entry_put({
+        "artifact_id": artifact_id, "placement_id": pid,
+        "title": "Synthetic PDF", "identity_id": "alice",
+        "provider_id": "bnf-pret", "item_id": "book",
+        "media_format": "pdf", "local_state": "local",
+        "metadata": {"path": str(pdf)},
+    })
+    lock = tmp_path / "transfer.lock"
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock)
+    monkeypatch.setattr(
+        "cifereca.core.canonical_transfer.acquisition_lock_file", lambda: lock,
+    )
+    try:
+        sent = service.materialize_to_identity(pid, "bob")
+        received = Path(sent["path"])
+        assert received.parent == root / "bob" / "shared"
+        assert received.read_bytes() == pdf.read_bytes()
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute(
+                "SELECT origin_kind FROM origin_links "
+                "WHERE identity_id='bob' ORDER BY origin_kind"
+            ).fetchall() == [("cifereca",), ("transfer",)]
+        service.catalog_scan()
+        after = service.storage.placement_get(sent["placement_id"])
+        assert after["state"] == "present"
+        assert after["path"] == str(received)
+        assert after["provider_id"] == "bnf-pret"
+        assert after["metadata"]["storage_class"] == "transfer"
+        assert after["metadata"]["file_origin_identity_id"] == "alice"
+        assert after["metadata"]["transfer_kind"] == "local_copy"
+        assert service.storage.entitlements() == []
+        assert service.materialize_to_identity(pid, "bob")["status"] == "unchanged"
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute(
+                "SELECT count(*) FROM origin_links "
+                "WHERE identity_id='bob'"
+            ).fetchone() == (2,)
+    finally:
+        service.close()
+
+
+def test_scan_does_not_preserve_untrusted_storage_class_or_infer_rights():
+    from cifereca.catalog import _preserved_received_copy
+
+    source = {
+        "materialized_from": "donor-source",
+        "file_origin_identity_id": "alice",
+        "transfer_kind": "local_copy",
+    }
+    correct = _preserved_received_copy({**source, "storage_class": "transfer"}, "bob")
+    assert correct["storage_class"] == "transfer"
+    for bad in ("kobo", "bnf-pret", "shared", "transfer;rights=true", 1, None):
+        actual = _preserved_received_copy({**source, "storage_class": bad}, "bob")
+        assert actual == source
+    missing_origin = _preserved_received_copy({
+        "materialized_from": "donor-source",
+        "transfer_kind": "local_copy", "storage_class": "transfer",
+    }, "bob")
+    assert "storage_class" not in missing_origin
