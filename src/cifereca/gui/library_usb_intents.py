@@ -83,6 +83,20 @@ def build_library_usb_intents(
             return None
         device_id = binding["device_id"]
         known.add(device_id)
+        metadata = binding.get("metadata")
+        fingerprint = (
+            metadata.get("usb_fingerprint")
+            if type(metadata) is dict else None
+        )
+        # Legacy device bindings may represent a different target kind.
+        # A configured USB identity must be explicit and format-bounded;
+        # the actual mounted volume is independently attested by the scanner.
+        if (type(fingerprint) is not str
+                or not 8 <= len(fingerprint) <= 128
+                or any(char not in
+                       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                       "0123456789._:-" for char in fingerprint)):
+            continue
         try:
             placed = storage.device_placement_get(device_id, artifact_id)
         except Exception:
@@ -108,7 +122,7 @@ def build_library_usb_intents(
             label_state + " · Présence actuelle non confirmée"
             + (" · Appareil désactivé" if binding.get("enabled") is not True else ""),
         ))
-        devices.append((device_id, label, desired))
+        devices.append((device_id, label, desired, fingerprint))
     if not devices:
         return None
     menu = Gtk.MenuButton(label="Liseuses…")
@@ -139,7 +153,8 @@ def build_library_usb_intents(
             return False
         return True
 
-    def clicked(button, *, device_id: str, desired: str) -> None:
+    def clicked(button, *, device_id: str, desired: str,
+                fingerprint: str) -> None:
         if not still_current(button):
             return
         try:
@@ -153,8 +168,11 @@ def build_library_usb_intents(
             # local file must not silently become a positive intent.
             service.local_book_path(placement_id, identity_id=identity_id)
             live = storage.device_binding_get(device_id)
+            live_meta = live.get("metadata") if type(live) is dict else None
             if (type(live) is not dict
-                    or live.get("identity_id") != identity_id):
+                    or live.get("identity_id") != identity_id
+                    or type(live_meta) is not dict
+                    or live_meta.get("usb_fingerprint") != fingerprint):
                 raise ValueError("device binding changed")
             # A stale 'remove' button must not create an intention for a
             # previously unmanaged file. Storage validates original owner
@@ -182,7 +200,7 @@ def build_library_usb_intents(
                 "Souhait de liseuse enregistré. Aucun fichier n’a été transféré ou supprimé."
             )
 
-    for device_id, label, desired in devices:
+    for device_id, label, desired, fingerprint in devices:
         next_state = "remove" if desired == "keep" else "keep"
         action = "Retirer de " if next_state == "remove" else "Mettre sur "
         button = Gtk.Button(label=action + label)
@@ -193,8 +211,10 @@ def build_library_usb_intents(
         )
         button.connect(
             "clicked",
-            lambda clicked_button, device_id=device_id, state=next_state:
-                clicked(clicked_button, device_id=device_id, desired=state),
+            lambda clicked_button, device_id=device_id, state=next_state,
+                   fingerprint=fingerprint:
+                clicked(clicked_button, device_id=device_id, desired=state,
+                        fingerprint=fingerprint),
         )
         box.append(button)
     popover.set_child(box)
