@@ -95,10 +95,11 @@ def _render_loans(self) -> None:
             button.set_label(f"{label} · {counts.get(key, 0)}")
     ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
     wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
-    display_loans = [
-        loan for loan in all_loans
-        if self.loan_filter == "all" or loan.medium == self.loan_filter
-    ]
+    display_loans = []
+    for loan in all_loans:
+        if self.loan_filter != "all" and loan.medium != self.loan_filter:
+            continue
+        display_loans.append(loan)
     if wanted_languages and display_loans:
         # The old per-loan _known_item_languages lookup read the entire
         # SQLite catalogue on GTK even without a language filter. Reuse one
