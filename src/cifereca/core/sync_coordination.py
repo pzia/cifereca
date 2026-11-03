@@ -517,10 +517,14 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         if not callable(source_batch):
                             raise ProviderConfigurationError("source_inventory_batch_invalid")
                         locks.enter_context(source_batch(account))
-                result = self._synchronize_account_source_impl(
-                    account, deep=deep, control=control,
-                    **({"inventory_only": True} if inventory_only else {}),
+                # Only Core's dedicated scheduled entry point can select the
+                # inventory implementation; public LibraryService signatures
+                # remain unchanged. No mutable ambient "inventory mode".
+                implementation = (
+                    self._synchronize_account_source_inventory_impl
+                    if inventory_only else self._synchronize_account_source_impl
                 )
+                result = implementation(account, deep=deep, control=control)
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
                     # within the existing source Sync's acquisition lock.
