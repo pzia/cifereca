@@ -18,8 +18,9 @@ from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
 
 
 @pytest.mark.parametrize("canonical", [False, True])
-def test_substituted_temporary_symlink_never_truncates_foreign_file(
-    tmp_path, monkeypatch, canonical,
+@pytest.mark.parametrize("replacement", ["symlink", "regular"])
+def test_substituted_temporary_path_never_writes_or_unlinks_foreign_file(
+    tmp_path, monkeypatch, canonical, replacement,
 ):
     service = _service(tmp_path)
     root = tmp_path / "EBooks"
@@ -40,6 +41,7 @@ def test_substituted_temporary_symlink_never_truncates_foreign_file(
 
     foreign = tmp_path / "other-profile-unrelated.bin"
     original = b"keep these unrelated original bytes"
+    replacement_bytes = b"another process owns this temporary pathname"
     foreign.write_bytes(original)
     mkstemp_original = tempfile.mkstemp
     replacements = []
@@ -48,7 +50,10 @@ def test_substituted_temporary_symlink_never_truncates_foreign_file(
         fd, name = mkstemp_original(*args, **kwargs)
         assert Path(kwargs["dir"]) == root / "bob" / "shared"
         os.unlink(name)
-        Path(name).symlink_to(foreign)
+        if replacement == "symlink":
+            Path(name).symlink_to(foreign)
+        else:
+            Path(name).write_bytes(replacement_bytes)
         replacements.append(name)
         return fd, name
 
@@ -61,7 +66,15 @@ def test_substituted_temporary_symlink_never_truncates_foreign_file(
         assert len(replacements) == 1
         assert foreign.read_bytes() == original
         assert source.read_bytes() == contents
-        assert not os.path.lexists(replacements[0])
+        # The substituted inode is NOT ours to delete either. For the
+        # symlink case, unlinking the link would not truncate the target,
+        # but it would still destroy another process's directory entry.
+        assert os.path.lexists(replacements[0])
+        if replacement == "symlink":
+            assert Path(replacements[0]).is_symlink()
+        else:
+            assert Path(replacements[0]).read_bytes() == replacement_bytes
+        Path(replacements[0]).unlink()
         assert not list((root / "bob" / "shared").iterdir())
         assert not any(
             p.get("identity_id") == "bob" for p in service.storage.placements()

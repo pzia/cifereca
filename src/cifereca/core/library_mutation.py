@@ -255,12 +255,13 @@ def _materialize_to_identity_locked(
         fd, temporary = tempfile.mkstemp(prefix=".cifereca-send-", dir=dest_dir)
         temp = Path(temporary)
         journaled = False
+        created = None
         try:
             # Keep mkstemp's exclusive inode open: reopening the pathname
             # would follow a symlink substituted after mkstemp and could
             # overwrite unrelated bytes before the later SHA verification.
-            created = os.fstat(fd)
             with os.fdopen(fd, "wb") as out:
+                created = os.fstat(out.fileno())
                 opened = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
                 with os.fdopen(opened, "rb") as input_stream:
                     if not stat.S_ISREG(os.fstat(input_stream.fileno()).st_mode):
@@ -293,8 +294,19 @@ def _materialize_to_identity_locked(
                     from .local_transfer_recovery import sync_directory
                     sync_directory(dest_dir)
         finally:
-            if not journaled:
-                temp.unlink(missing_ok=True)
+            if not journaled and created is not None:
+                # A different process may have replaced this pathname
+                # with another regular file. Do not unlink its inode merely
+                # because it inherited our temporary filename. Keep the
+                # foreign path for explicit inspection instead.
+                try:
+                    remaining = os.stat(temp, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if ((remaining.st_dev, remaining.st_ino)
+                            == (created.st_dev, created.st_ino)):
+                        temp.unlink(missing_ok=True)
 
     recovered = checkpoint.recover() if checkpoint is not None and owned_copy is None else None
     # An *already verified* historical B copy can carry the old generic
