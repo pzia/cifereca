@@ -43,7 +43,8 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     notice.set_margin_start(18)
     notice.set_margin_end(18)
     notice.set_margin_bottom(8)
-    page.append(notice)
+    # Place status between toolbar and pane, visible on narrow widths.
+    page.insert_child_after(notice, page.toolbar)
     window._reader_status_label = notice
     window._reader_device_dropdown = chooser
     window._reader_filter_dropdown = filter_chooser
@@ -271,7 +272,16 @@ def reader_selected(window, row) -> None:
             and original.get("identity_id") == identity_id):
         # The existing Library detail owns the same Open/Mettre/Retirer
         # actions, preserving Core revalidation and no automatic transfer.
-        window._add_local_book_actions(page.detail, original)
+        # Prefer the actual local placement proven by the snapshot over a
+        # catalogue card's optional/stale placement identifier.
+        scoped = dict(original)
+        scoped.update({
+            "placement_id": item.placement_id,
+            "artifact_id": item.artifact_id,
+            "identity_id": identity_id,
+            "local": True,
+        })
+        window._add_local_book_actions(page.detail, scoped)
 
 
 __all__ = ["build_readers_page", "render_readers", "reader_selected"]
