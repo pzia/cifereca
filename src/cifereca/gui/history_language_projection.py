@@ -77,3 +77,51 @@ def history_rows_with_languages(rows, wanted_languages, catalog_rows):
             set(),
         ).intersection(wanted)
     ]
+
+
+def loan_rows_with_languages(rows, wanted_languages, catalog_rows):
+    """Filter scoped Loan rows using a single catalogue snapshot per render.
+
+    Loans contribute direct metadata (including their _cifereca projection);
+    catalogue evidence is indexed strictly by (provider, record ID), as in
+    known_item_languages. Never borrow a language from an unrelated provider
+    or infer it from a title. No remote I/O or persistent cached state.
+    """
+    wanted = set(wanted_languages)
+    if not wanted:
+        return list(rows)
+
+    keys = {
+        (str(loan.source_provider or ""), str(loan.record_id or loan.id))
+        for loan in rows if loan.record_id or loan.id
+    }
+    indexed: dict[tuple[str, str], set[str]] = {}
+    for row in catalog_rows:
+        key = (
+            str(row.get("provider_id") or ""),
+            str(row.get("item_id") or ""),
+        )
+        if key in keys:
+            indexed.setdefault(key, set()).update(
+                metadata_languages(row.get("metadata"))
+            )
+
+    visible = []
+    for loan in rows:
+        # Mirror the previous per-row _known_item_languages arguments. The
+        # embedded projection takes precedence even when it is empty.
+        raw = dict(loan.raw or {})
+        meta = (
+            dict(raw.get("_cifereca") or {})
+            if isinstance(raw.get("_cifereca"), dict)
+            else raw
+        )
+        languages = metadata_languages(meta)
+        item_id = loan.record_id or loan.id
+        if item_id:
+            languages.update(indexed.get(
+                (str(loan.source_provider or ""), str(item_id)), ()
+            ))
+        if languages.intersection(wanted):
+            visible.append(loan)
+    return visible
