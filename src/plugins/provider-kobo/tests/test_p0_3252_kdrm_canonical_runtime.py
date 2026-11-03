@@ -358,7 +358,6 @@ def test_foreign_delegated_provider_never_starts_kdrm_runtime_or_plain_http(
             payload["provider"] = "foreign-provider"
         return payload
 
-    vault.acquisition = foreign
     monkeypatch.setattr(
         HTTPX_TRANSPORT, "attested_https_download",
         lambda **kwargs: pytest.fail("foreign provider must not GET plaintext"),
@@ -370,10 +369,15 @@ def test_foreign_delegated_provider_never_starts_kdrm_runtime_or_plain_http(
         pytest.fail("foreign provider must not execute DRM")
 
     try:
+        # The first exact selection was legitimate. A different delegated
+        # producer must still be rejected by the later delivery boundary.
         observed = selected(session, account, "book-1")
-        assert observed.delivery == "unknown"
-        assert observed.delivery_offer_id == ""
-        assert calls == [("book-1", "descriptor"), ("book-1", "delegated")]
+        assert observed.delivery == "available"
+        vault.acquisition = foreign
+        with pytest.raises(ProviderCapabilityError, match="kdrm_recipe_unavailable"):
+            deliver(session, account, "book-1", observed.delivery_offer_id,
+                    tmp_path, forbidden_runtime)
         assert runtime_calls == [] and list(tmp_path.iterdir()) == []
+        assert any(mode == "delegated" for _, mode in calls)
     finally:
         session.close()
