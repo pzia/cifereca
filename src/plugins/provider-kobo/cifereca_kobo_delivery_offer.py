@@ -78,8 +78,11 @@ def kdrm_runtime_ready(session: object) -> bool:
     """Positive capability for Kobo KDRM; never probe private data."""
     try:
         broker = session.runtime_capabilities
-        modes = broker.acquisition("kobo").modes
-        return (isinstance(modes, (tuple, list, frozenset, set))
+        caps = broker.acquisition("kobo")
+        modes = caps.modes
+        return (caps.available is True and caps.compatible is True
+                and caps.operational is True
+                and isinstance(modes, (tuple, list, frozenset, set))
                 and "kobo_kdrm" in modes)
     except (AttributeError, TypeError, ValueError, KeyError):
         return False
