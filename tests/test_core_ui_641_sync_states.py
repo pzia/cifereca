@@ -110,8 +110,11 @@ def test_untyped_source_state_flags_never_enable_sync_action(field, bad):
     presented = sync_source_presentation(state)
     assert presented.action_enabled is False
     if field == "enabled":
-        assert presented.activation_label == "Désactivée"
-        assert presented.disabled_reason == "Activez cette source pour la synchroniser."
+        assert presented.activation_label == "Non confirmée"
+        assert presented.sync_label == "Activation non confirmée"
+        assert presented.disabled_reason == (
+            "Activation non confirmée ; actualisez la source avant de synchroniser."
+        )
     elif field == "connected":
         assert presented.connection_label == "Déconnectée"
         assert presented.disabled_reason == "Reconnectez ce compte avant de synchroniser."
