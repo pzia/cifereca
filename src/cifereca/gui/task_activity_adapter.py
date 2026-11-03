@@ -45,7 +45,10 @@ def task_progress(window, label: str, *, task_id: int | None = None) -> bool:
     return False
 
 
-def task_finished(window, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
+def task_finished(
+    window, task_id: int, remaining: int, label: str,
+    success: bool, error: str | None, business_status: str | None = None,
+) -> bool:
     if getattr(window, '_closed', False):return False
     task_id = int(task_id)
     # TaskRunner may deliver completion before the queued "started" UI
@@ -58,12 +61,16 @@ def task_finished(window, task_id: int, remaining: int, label: str, success: boo
         return False
     window._last_finished_task_id = int(task_id)
     functional = window._functional_error_message(error or "") if not success else ""
+    # Keep the existing binary caller API. Only TaskRunner's closed
+    # business outcome may opt in to a nonfatal ActivityFeedback state.
+    typed = business_status if type(business_status) is str and business_status in {
+        "pending", "partial", "blocked", "busy", "cancelled",
+    } else None
+    kwargs = {"success": bool(success), "error": functional}
+    if typed is not None and not success:
+        kwargs["business_status"] = typed
     window.activity_feedback.finished(
-        int(task_id),
-        str(label),
-        str(kind),
-        success=bool(success),
-        error=functional,
+        int(task_id), str(label), str(kind), **kwargs,
     )
     window._refresh_activity_history()
     if not hasattr(window, "busy_revealer"):
@@ -79,6 +86,27 @@ def task_finished(window, task_id: int, remaining: int, label: str, success: boo
         window.busy_spinner.start()
         return False
     if window._show_pending_activity_error():
+        return False
+    entry = window.activity_feedback.get(task_id)
+    if entry is not None and entry.state in {
+        "pending", "partial", "blocked", "busy", "cancelled",
+    }:
+        # Pending/partial work is not a failed download and must not
+        # contribute a red error or a green success receipt.
+        window.busy_spinner.stop()
+        window.busy_spinner.set_visible(False)
+        window.activity_status_icon.set_visible(True)
+        window.activity_status_icon.set_from_icon_name(
+            "dialog-warning-symbolic" if entry.state in {"partial", "blocked"}
+            else "dialog-information-symbolic"
+        )
+        window.activity_status_icon.remove_css_class("activity-success")
+        window.activity_status_icon.remove_css_class("activity-error")
+        window.busy_label.set_visible(True)
+        window.busy_label.set_label(entry.display_text)
+        window.activity_dismiss.set_visible(False)
+        window.busy_revealer.set_reveal_child(True)
+        window._schedule_activity_reduce()
         return False
     window.busy_spinner.stop()
     window.busy_spinner.set_visible(False)

@@ -51,12 +51,37 @@ class TaskRunner:
         UI. Only the final activity/TRACE receipt changes: a returned refusal
         is not a completed synchronization. Do not infer success from GET.
         """
+        if kind in {"opening-sync", "deep-sync"}:
+            # One opening task spans multiple identities/sources. Only the
+            # Core's closed per-identity terminal statuses are aggregated;
+            # never attribute a global partial to a Kobo download or infer
+            # a GET from rights/pending counters.
+            if type(value) is not dict or type(value.get("identities")) is not list:
+                return "success"  # Legacy untyped workers unchanged.
+            rows = value["identities"]
+            if not rows:
+                return "success"
+            if len(rows) > 64 or any(
+                type(row) is not dict
+                or row.get("status") not in {"success", "partial", "failed", "cancelled"}
+                for row in rows
+            ):
+                return "failed"
+            statuses = {row["status"] for row in rows}
+            if "failed" in statuses:
+                return "failed"
+            if "cancelled" in statuses:
+                return "cancelled"
+            return "partial" if "partial" in statuses else "success"
         if kind != "source-sync":
             return "success"
         from cifereca.plugin_api import SyncResult
         from collections.abc import Mapping
         if not isinstance(value, SyncResult):
-            return "success"  # Legacy non-typed worker results are unchanged.
+            # A stale GTK source-action scope returns None before the Core is
+            # called. Completing that worker is not proof of a source Sync;
+            # never mint a positive task receipt or provider event for it.
+            return "cancelled" if value is None else "success"
         facts = value.facts
         if isinstance(facts, Mapping):
             reason = facts.get("reason")
@@ -300,12 +325,12 @@ class TaskRunner:
                 )
                 if business != "success":
                     outcome_status = "failed"
-                    if trace_kind == "borrow":
+                    if trace_kind in {"borrow", "opening-sync", "deep-sync"}:
                         # Reuse the existing worker-scoped task_ref correlation
-                        # for a returned Core refusal, without raising a
-                        # synthetic exception or emitting a new event.
+                        # for an attested non-success Core result. No synthetic
+                        # exception, new event or cross-identity attribution.
                         from cifereca.diagnostic_task_context import diagnostic_task_business_result
-                        diagnostic_task_business_result(value, operation_kind="borrow")
+                        diagnostic_task_business_result(value, operation_kind=trace_kind)
                 return value
             except BaseException:
                 outcome_status = "failed"
@@ -381,7 +406,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow"} else ""
+                if trace_kind in {"source-sync", "borrow", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -436,30 +461,33 @@ class TaskRunner:
                 if control is not None and control.get_root() is not None:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
-                self.window._task_finished(
-                    task_id,
-                    remaining,
-                    label,
-                    business_status == "success",
-                    None if business_status == "success" else (
-                        "Emprunt non confirmé — vérification nécessaire"
-                        if trace_kind == "borrow" and business_status == "pending"
-                        else "Emprunt bloqué — aucune confirmation"
-                        if trace_kind == "borrow" and business_status == "blocked"
-                        else "Emprunt annulé"
-                        if trace_kind == "borrow" and business_status == "cancelled"
-                        else "Emprunt non confirmé"
-                        if trace_kind == "borrow" and business_status != "success"
-                        else "Synchronisation déjà en cours" if business_status == "busy"
-                        else "Synchronisation en attente de livraison" if business_status == "pending"
-                        else "Synchronisation bloquée" if business_status == "blocked"
-                        else "Synchronisation annulée" if business_status == "cancelled"
-                        else "Synchronisation partielle" if business_status == "partial"
-                        else "Échec de synchronisation" if kind_outcome == "ok"
-                        else payload.user_message if isinstance(payload, UserFacingError)
-                        else "Traitement indisponible"
-                    ),
+                feedback_error = None if business_status == "success" else (
+                    "Emprunt non confirmé — vérification nécessaire"
+                    if trace_kind == "borrow" and business_status == "pending"
+                    else "Emprunt bloqué — aucune confirmation"
+                    if trace_kind == "borrow" and business_status == "blocked"
+                    else "Emprunt annulé"
+                    if trace_kind == "borrow" and business_status == "cancelled"
+                    else "Emprunt non confirmé"
+                    if trace_kind == "borrow" and business_status != "success"
+                    else "Synchronisation déjà en cours" if business_status == "busy"
+                    else "Synchronisation en attente de livraison" if business_status == "pending"
+                    else "Synchronisation bloquée" if business_status == "blocked"
+                    else "Synchronisation annulée" if business_status == "cancelled"
+                    else "Synchronisation partielle" if business_status == "partial"
+                    else "Échec de synchronisation" if kind_outcome == "ok"
+                    else payload.user_message if isinstance(payload, UserFacingError)
+                    else "Traitement indisponible"
                 )
+                finish_args = (
+                    task_id, remaining, label,
+                    business_status == "success", feedback_error,
+                )
+                if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
+                        and trace_kind in {"source-sync", "borrow", "opening-sync", "deep-sync"}):
+                    self.window._task_finished(*finish_args, business_status)
+                else:
+                    self.window._task_finished(*finish_args)
                 if kind_outcome == "ok":
                     if ok:
                         try:

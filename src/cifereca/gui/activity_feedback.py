@@ -5,10 +5,16 @@ import re
 from time import monotonic
 
 
+_BUSINESS_STATES = frozenset({"partial", "pending", "blocked", "busy", "cancelled"})
 _STATE_LABELS = {
     "running": "En cours",
     "success": "Terminé",
     "error": "Erreur",
+    "partial": "Partielle",
+    "pending": "En attente",
+    "blocked": "Bloquée",
+    "busy": "Déjà en cours",
+    "cancelled": "Annulée",
 }
 
 
@@ -45,6 +51,8 @@ class ActivityEntry:
             'search-online': 'Recherche en ligne',
             'source-sync': 'Synchronisation d’une source',
             'opening-sync': 'Synchronisation au démarrage',
+            'deep-sync': 'Vérification de la bibliothèque',
+            'borrow': 'Emprunt',
             'obtain': 'Obtention d’un livre',
             'loan-acquisition': 'Obtention ACSM',
         }.get(self.kind, 'Opération')
@@ -54,6 +62,8 @@ class ActivityEntry:
         state = _STATE_LABELS.get(self.state, self.state)
         if self.state == 'error':
             return f"{state} · {self.operation_label} · {self.message or 'L’opération a échoué'}"
+        if self.state in _BUSINESS_STATES:
+            return f"{state} · {self.operation_label} · {self.message or self.label}"
         return f"{state} · {self.message or self.label}"
 
 
@@ -89,8 +99,13 @@ class ActivityFeedback:
         *,
         success: bool,
         error: str = "",
+        business_status: str | None = None,
     ) -> ActivityEntry:
-        state = "success" if success else "error"
+        state = (
+            "success" if success
+            else business_status if type(business_status) is str
+            and business_status in _BUSINESS_STATES else "error"
+        )
         message = "" if success else safe_activity_error(error)
         return self._upsert(ActivityEntry(
             int(task_id), str(label), str(kind), state, message, False,
