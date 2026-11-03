@@ -12,6 +12,7 @@ from gi.repository import Gtk, Adw
 
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_action_scope import sync_action_scope_current
+from .sync_source_controls_overview import sync_schedule_status_subtitle
 
 
 def append_source_inventory_schedule_controls(
@@ -47,24 +48,13 @@ def append_source_inventory_schedule_controls(
             or not 15 <= policy["interval_minutes"] <= 10080):
         return
     mode, interval = policy["mode"], policy["interval_minutes"]
+    available = source.enabled is True and source.connected is True
     row = Adw.ActionRow()
     row.set_title("Actualisation automatique des notices et droits")
     row.set_subtitle_lines(0)
-    if mode == "manual":
-        row.set_subtitle(
-            "Manuelle : les notices et droits ne sont pas actualisés "
-            "automatiquement. Les téléchargements sont réglés séparément."
-        )
-    elif mode == "on_start":
-        row.set_subtitle(
-            f"Au démarrage (intervalle minimal {interval} min). "
-            "N'autorise aucun téléchargement."
-        )
-    else:
-        row.set_subtitle(
-            f"Périodique (intervalle {interval} min, si ordonnanceur actif). "
-            "N'autorise aucun téléchargement."
-        )
+    row.set_subtitle(sync_schedule_status_subtitle(
+        mode, interval, available=available,
+    ))
 
     def current() -> bool:
         return (sync_action_scope_current(window, scope)
@@ -136,9 +126,14 @@ def append_source_inventory_schedule_controls(
             button.connect("clicked", ask)
             add_sync_action(row, button)
     else:
-        button = window.action_button("Désactiver les actualisations",
-                                      "media-playback-stop-symbolic")
+        button = window.action_button(
+            "Désactiver les actualisations" if available else "Passer en manuel",
+            "media-playback-stop-symbolic",
+        )
         button.set_tooltip_text(
+            "Supprimer la programmation suspendue sans réactiver la source "
+            "ni modifier les permissions de téléchargement."
+            if not available else
             "Revenir en mode manuel sans changer les permissions de téléchargement."
         )
         button.connect("clicked", lambda _button: apply_mode("manual"))
