@@ -56,7 +56,8 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     config = SimpleNamespace(
         paris_base_url=lambda: url,
         get=lambda key, default=None: (legacy_values or {}).get(key, default),
-        provider_option=lambda pid, key, default=None: (provider_values or {}).get((pid, key), default),
+        provider_option=lambda pid, key, default=None, *, credential_id=None:
+            (provider_values or {}).get((pid, key, credential_id), default),
     )
     editor, delete = build_provider_account_editor(
         data=settings, provider_id=provider_id,
@@ -199,17 +200,31 @@ def test_declared_option_prefers_saved_value_then_legacy_config_then_descriptor_
     assert default['option_fields']['base_url'].text == 'https://default.example'
 
 
-def test_legacy_provider_option_precedes_global_default_without_overwriting_saved_value():
+def test_legacy_provider_option_is_scoped_to_exact_account_before_global_default():
     option = _url_option('base_url', 'URL du portail',
                          'https://default.example', 'base_url')
     kwargs = {
         'descriptor_options': [option],
         'legacy_values': {'base_url': 'https://global.example'},
-        'provider_values': {('arbitrary', 'base_url'): 'https://provider.example'},
+        'provider_values': {
+            ('arbitrary', 'base_url', 'arbitrary-a'): 'https://provider-a.example',
+        },
     }
-    editor, _, _, _ = _render('arbitrary', **kwargs)
-    assert editor['option_fields']['base_url'].text == 'https://provider.example'
-    saved, _, _, _ = _render('arbitrary', data={'options': {'base_url': 'https://saved.example'}}, **kwargs)
+    owner, _, _, _ = _render(
+        'arbitrary', data={'id': 'arbitrary-a', 'options': {}}, **kwargs,
+    )
+    assert owner['option_fields']['base_url'].text == 'https://provider-a.example'
+    other, _, _, _ = _render(
+        'arbitrary', data={'id': 'arbitrary-b', 'options': {}}, **kwargs,
+    )
+    assert other['option_fields']['base_url'].text == 'https://global.example'
+    new, _, _, _ = _render('arbitrary', **kwargs)
+    assert new['option_fields']['base_url'].text == 'https://global.example'
+    saved, _, _, _ = _render(
+        'arbitrary',
+        data={'id': 'arbitrary-b', 'options': {'base_url': 'https://saved.example'}},
+        **kwargs,
+    )
     assert saved['option_fields']['base_url'].text == 'https://saved.example'
 
 
