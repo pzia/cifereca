@@ -146,3 +146,51 @@ def search_medium_label(item: DocumentClassification) -> str:
     if kind == "periodical":
         return "Revue · numérique" if medium == "digital" else "Revue · physique"
     return "Support numérique" if medium == "digital" else "Support physique"
+
+
+def filter_loaded_with_documentary_proofs(
+    rows, query="", *, providers=(), content_types=(), languages=(),
+    scope="all", field="all",
+):
+    """Filter a loaded UI set, preserving order and legacy provider behavior.
+
+    Text, language and provider ranking stay with the existing Core search.
+    A *present* typed classification takes precedence over legacy guessed
+    medium/content_type/format. No extra provider access or rights inference.
+    """
+    from cifereca.core.search import filter_loaded_results
+
+    base = filter_loaded_results(
+        rows, query, providers=providers, languages=languages,
+        content_types=(), scope="all", field=field,
+    )
+    wanted = str(scope or "all").casefold()
+    selected = {
+        value.casefold() for raw in (content_types or ())
+        if type(raw) is str and (value := raw.strip()) and value.casefold() != "all"
+    }
+    out = []
+    for row in base:
+        classification = classification_from_row(row)
+        if classification is None:
+            # Historical providers keep precisely the existing filter rules.
+            if filter_loaded_results(
+                (row,), "", content_types=content_types, scope=scope,
+            ):
+                out.append(row)
+            continue
+        if wanted in {"digital", "physical"}:
+            if not classification.matches_filter(wanted):
+                continue
+        elif wanted == "unknown":
+            if classification.medium.status == "attested":
+                continue
+        elif wanted != "all":
+            # Unknown scope must not select a new set of data.
+            continue
+        if selected and not any(
+            matches_classified_type(classification, item) for item in selected
+        ):
+            continue
+        out.append(row)
+    return out
