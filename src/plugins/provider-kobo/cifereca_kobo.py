@@ -1285,6 +1285,11 @@ class KoboSession(ProviderSession):
         if (right is None or right.provider_attested is not True):
             raise ProviderCapabilityError("kobo_delivery_offer_right_unobserved")
         if right.delivery == "unavailable":
+            # A known archive is not a rejected HTTP offer or a KDRM error.
+            _TRACE_LOG.debug(
+                "TRACE kobo selected_offer product_id=%s outcome=unavailable "
+                "reason=archived_no_acquisition", right_id,
+            )
             # Keep the exact positive purchase, but do not POST a descriptor
             # for a manifest-attested archive (#514).
             return replace(
@@ -1293,9 +1298,20 @@ class KoboSession(ProviderSession):
             )
         # Exactly one POST for the exact attested product, after an explicit
         # selection. Do not fall back to delegated mode on a descriptor 403.
-        payload = self.resolve_acquisition(
-            right_id, mode="descriptor", include_acsm=True,
-        )
+        try:
+            payload = self.resolve_acquisition(
+                right_id, mode="descriptor", include_acsm=True,
+            )
+        except (KoboVaultError, ProviderCapabilityError, ProviderError) as error:
+            # This is the ACTUAL selected descriptor failure. Status is
+            # included only when the upstream exception actually supplied it.
+            _TRACE_LOG.debug(
+                "TRACE kobo selected_offer product_id=%s phase=descriptor "
+                "outcome=error error_type=%s http_status=%s",
+                right_id, type(error).__name__,
+                getattr(error, "status_code", None),
+            )
+            raise
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         kdrm_ready = kdrm_runtime_ready(self)
@@ -1304,6 +1320,11 @@ class KoboSession(ProviderSession):
             account_id=account_id, product_id=right_id,
             kdrm_runtime_ready=kdrm_ready,
         )
+        qualified_reason = (
+            "descriptor_offer_attested" if offer_id else
+            "descriptor_candidate_unqualified"
+        )
+        delegated_attempted = False
         # Only the ONE descriptor candidate that reproduces the exact
         # runtime offer may be used for the delegated ContentKeys replay.
         # Vault can return an earlier, non-pinned content_access_book KDRM
@@ -1327,8 +1348,10 @@ class KoboSession(ProviderSession):
             ]
             if len(pinned) != 1:
                 offer_id = ""
+                qualified_reason = "pinned_candidate_ambiguous"
             else:
                 try:
+                    delegated_attempted = True
                     delegated = self.resolve_acquisition(right_id, mode="delegated")
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
@@ -1339,14 +1362,31 @@ class KoboSession(ProviderSession):
                     )
                     if source is None:
                         offer_id = ""
-                except ProviderCapabilityError:
+                        qualified_reason = "delegated_recipe_unusable"
+                    else:
+                        qualified_reason = "kdrm_recipe_attested"
+                except ProviderCapabilityError as error:
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
                     offer_id = ""
-                except (KoboVaultError, ProviderError):
+                    qualified_reason = (
+                        "delegation_scope_unattested"
+                        if str(error) == "missing_delegation_scope"
+                        else "delegation_capability_refused"
+                    )
+                except KoboVaultError as error:
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
                     offer_id = ""
+                    qualified_reason = (
+                        "delegated_http_403" if error.status_code == 403
+                        else "delegated_upstream_failed"
+                    )
+                except ProviderError:
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
+                    offer_id = ""
+                    qualified_reason = "delegated_provider_failed"
         qualified = replace(
             right,
             delivery="available" if offer_id else "unknown",
@@ -1357,6 +1397,23 @@ class KoboSession(ProviderSession):
         # not publish an old owner's otherwise valid offer snapshot.
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        # Only record observed selection facts. A missing executable offer
+        # is not proof of an HTTP 403 or of a failed Kobo-Adept download.
+        acquisition = payload.get("acquisition") if type(payload) is dict else None
+        candidates = acquisition.get("candidates") if type(acquisition) is dict else None
+        count = len(candidates) if type(candidates) is list else 0
+        kdrm_present = (
+            any(type(row) is dict and row.get("handling") == "kobo_kdrm"
+                for row in candidates) if type(candidates) is list else False
+        )
+        _TRACE_LOG.debug(
+            "TRACE kobo selected_offer product_id=%s outcome=%s reason=%s "
+            "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
+            "delegated_attempted=%s",
+            right_id, "available" if offer_id else "unknown",
+            qualified_reason, count, kdrm_present, kdrm_ready,
+            delegated_attempted,
+        )
         # One exact purchase preflight is never a branch-wide manifest,
         # even when the preceding Vault inventory was fully attested.
         return replace(
