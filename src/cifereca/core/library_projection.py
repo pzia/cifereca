@@ -501,12 +501,26 @@ def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
     if not owner and self.identities:owner=self.identities[0].identity_id
     if not row or owner!=identity_id or row.get('state')!='present':
         raise ProviderConfigurationError('Fichier local absent ou hors de cette identité')
-    path=Path(str(row.get('path') or '')).expanduser().resolve()
+    from .local_placement_open_guard import scoped_existing_placement_path
+    try:
+        path=scoped_existing_placement_path(self, row, identity_id=identity_id)
+    except (OSError, ValueError, RuntimeError) as exc:
+        # Fail closed on foreign/symlinked/inaccessible files. Never return
+        # the private stored path or upstream exception to a launcher.
+        raise ProviderConfigurationError('Fichier local absent ou hors de cette identité') from exc
     if path.is_dir():
         try:manifest=load_bundle_manifest(path,verify=True)
         except BundleError as exc:raise ProviderConfigurationError('Bundle local invalide') from exc
         if not manifest.playlist:raise ProviderConfigurationError('Ce bundle ne possède pas de fichier à ouvrir')
-        target=(path/manifest.playlist).resolve()
+        playlist=Path(manifest.playlist)
+        if playlist.is_absolute() or '..' in playlist.parts:
+            raise ProviderConfigurationError('Playlist locale invalide')
+        current=path
+        for part in playlist.parts:
+            current=current/part
+            if current.is_symlink():
+                raise ProviderConfigurationError('Playlist locale invalide')
+        target=current.resolve()
         if path not in target.parents:raise ProviderConfigurationError('Playlist locale invalide')
         path=target
     if not path.is_file():raise ProviderConfigurationError('Le fichier local a disparu')
