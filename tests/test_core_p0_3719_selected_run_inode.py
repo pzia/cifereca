@@ -6,7 +6,7 @@ random run name is not the namespace authorized by the Core.
 """
 from dataclasses import replace
 
-from tests.test_core_p0_3171_canonical_sync_stage import refs
+from tests.test_core_p0_3171_canonical_sync_stage import refs, rig
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
 from tests.test_core_p0_3719_v2_execution import v2
 from cifereca.core.sync_coordination import synchronize_account_source
