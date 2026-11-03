@@ -44,6 +44,30 @@ Les labels sont **mutuellement exclusifs** et reflètent **l'urgence / l'engagem
 
 Référence : [priorités communes](../../AGENTS.md#priorités--une-seule-file).
 
+## Statut `PU` — attente d'un nouvel input utilisateur
+
+**`PU` (« Pending User ») est un statut suspensif, orthogonal à la priorité P0/P1/P2.** Le label de priorité est conservé pour mesurer l'importance du besoin, mais **un ticket `PU` est exclu de la file exécutable**, même lorsqu'il porte `P0` ou `P1`. Seul le rôle **`backlog`** peut le remettre dans la file en **retirant `PU`**, après qualification effective de l'input attendu. Un `next`, `go max`, l'arrivée d'une date ou une CI verte n'enlèvent jamais implicitement `PU`.
+
+### Responsabilité permanente du backlog
+
+1. **À chaque revue d'avancement, triage ou changement d'état**, interroger les issues ouvertes P0/P1/P2, leurs commentaires et dépendances, ainsi que les issues déjà `PU`. Réévaluer l'entrée **et** la sortie de `PU`, sans attendre qu'un utilisateur demande une revue spécifique de ce label. Recenser les P0/P1/P2 `ready` séparément des mêmes priorités `PU` ; remonter les demandes utilisateur manquantes.
+2. **Étiqueter `PU` seulement si le ticket ne peut raisonnablement avancer sans une information, preuve terrain, accès/autorisation ou décision nouvelle et spécifique de l'utilisateur.** Vérifier d'abord les traces, documents, fixtures, tickets, PR et preuves déjà disponibles ; distinguer absence d'input utilisateur et attente technique (API, autre agent, CI, merge, défaut de code). Ne pas utiliser `PU` pour une simple recette manuelle non bloquante.
+3. **Renseigner dans l'issue canonique** : `État : blocked/PU`, input concret attendu, raison de son caractère indispensable, éventuel ticket `blocked-by #… (PU)`, preuves déjà exploitées, interdictions de reprise/retry, et critère explicite de déblocage. Ne jamais publier de captures authentifiées, credentials ou identifiants privés pour justifier le classement.
+4. **Examiner la propagation aux dépendants P0/P1/P2** : ajouter `PU` à un ticket dépendant **uniquement si la dépendance `PU` bloque tout travail utile et sûr dans son périmètre**. Une mention, un lien de coordination ou une fonctionnalité optionnelle ne suffisent pas. Si une tranche autonome existe, la préserver dans une issue indépendante ou délimiter clairement le ticket, sans bloquer artificiellement l'ensemble du chantier.
+5. **Réexaminer les `PU` à chaque revue** : lorsque l'utilisateur a fourni l'élément demandé, le backlog vérifie sa pertinence, les autres prérequis et les blocages en chaîne ; **retire lui-même `PU`** des tickets effectivement débloqués, individuellement, puis les réinsère dans leur priorité existante P0/P1/P2 (ou la révise selon arbitrage normal). La réception d'un input ne débloque pas automatiquement tous les dépendants.
+
+### Déclencheur anti-sur-ingénierie : arrêt plutôt que spéculation
+
+À chaque triage et handoff, rechercher les cas où les agents prolongent un ticket par **hypothèses, tests exploratoires répétés, variantes théoriques ou extensions non demandées** pour éviter un choix utilisateur. **Ne pas confondre profondeur technique et preuve indispensable.** Exiger d'abord la vérification des éléments disponibles, des tests pertinents et du contrat minimal. Si une information ou décision **nouvelle, spécifique et non déductible** reste indispensable, documenter dans l'issue : **ce qui est déjà établi**, la **question exacte**, **deux ou trois options maximum** avec recommandation, les conséquences, l'arrêt des voies spéculatives et la condition de reprise ; appliquer `PU` si plus aucune tranche sûre et utile ne peut avancer.
+
+Si le ticket est techniquement livrable sans cette validation, **ne pas utiliser `PU`** : exiger les tests/gates indispensables, sortir les raffinements optionnels des critères bloquants et clôturer après livraison conforme. Ne pas demander à l'utilisateur de remplacer des vérifications de code, de sécurité ou d'intégrité. **La revue Backlog peut aussi remettre en P2 un reliquat facultatif ou proposer l'abandon**, sans réouvrir artificiellement le chantier.
+
+### Règle opposable à tous les agents
+
+Tant que `PU` figure sur l'issue, **aucun agent Focus, Core, Plugins, UX, CI/CD ou Merger ne prend ce ticket en travail** : ni implémentation, tests/recette, nouvelle branche/PR, reprise de PR, rebase, fusion ou clôture de réalisation. Le backlog peut seulement analyser, consigner et demander l'input, revoir le graphe de dépendances et lever le label après qualification. Des CI déjà lancées peuvent finir sans autoriser de nouveau travail. Les tickets indépendants, même du même fournisseur, continuent normalement ; un cas P0 urgent avec `PU` est **escaladé au backlog**, jamais contourné.
+
+**Vues utiles :** `is:issue is:open label:PU` ; `is:issue is:open label:P0 -label:PU` ; idem `P1` et `P2`. La priorité seule ne signifie jamais « prêt à exécuter ».
+
 ## Tickets proposés par UX : validation avant insertion
 
 Pour les constats issus d'une **campagne exploratoire du rôle `ux`**, le backlog ne doit recevoir **que les nouveaux tickets expressément approuvés par l'utilisateur**, sur la base d'une courte liste numérotée et priorisée dans le chat. L'utilisateur peut valider certains numéros seulement, refuser, demander une nouvelle preuve ou modifier la priorité. Ne pas créer un ticket pour un item en attente ou refusé ; dédupliquer contre les issues existantes. Une demande explicite de créer **un ticket précis** vaut validation de ce seul ticket.
