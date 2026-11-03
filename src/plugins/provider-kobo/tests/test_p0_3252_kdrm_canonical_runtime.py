@@ -465,3 +465,109 @@ def test_plain_offer_remains_direct_even_on_runtime_capable_kobo_session():
         ) is False
     finally:
         session.close()
+
+
+def test_kvault_content_access_kdrm_does_not_hide_exact_pinned_runtime_offer(
+    tmp_path, monkeypatch,
+):
+    """KVault can return content_access_book KDRM BEFORE library_sync KDRM.
+
+    Only the latter is an attested pinned candidate; the first must not
+    poison the selected delegated content-key replay or staging.
+    """
+    session, vault, _broker, account, _ = setup()
+    calls = ready(session, vault)
+    original = vault.acquisition
+
+    def both_candidates(product, **options):
+        response = original(product, **options)
+        if options.get("mode") == "descriptor":
+            unpinned = kdrm_candidate(product)
+            unpinned["kobo"] = {
+                "source": "content_access_book",
+                "display_profile": "Android",
+            }
+            response["acquisition"]["candidates"].insert(0, unpinned)
+        return response
+
+    vault.acquisition = both_candidates
+    monkeypatch.setattr(
+        HTTPX_TRANSPORT, "attested_https_download",
+        lambda **_kw: pytest.fail("KDRM must not become plaintext HTTP"),
+    )
+    runtime_calls = []
+
+    def runtime(request):
+        runtime_calls.append(request)
+        assert request["source"]["candidate"]["delivery_source"] == "library_sync"
+        assert request["source"]["candidate"]["drm_type"] == "KDRM"
+        path = Path(request["destination"])
+        path.write_bytes(epub_bytes())
+        return {"ok": True, "artifact": {"path": str(path), "format": "epub"}}
+
+    try:
+        offer = selected(session, account, "book-1")
+        assert offer.delivery == "available"
+        assert offer.delivery_offer_id.startswith("kobo.runtime:")
+        assert calls == [("book-1", "descriptor"), ("book-1", "delegated")]
+        delivered = deliver(session, account, "book-1", offer.delivery_offer_id,
+                            tmp_path, runtime)
+        assert delivered.path.read_bytes() == epub_bytes()
+        assert len(runtime_calls) == 1
+        assert calls == [
+            ("book-1", "descriptor"), ("book-1", "delegated"),
+            ("book-1", "descriptor"), ("book-1", "delegated"),
+        ]
+    finally:
+        session.close()
+
+
+def test_plain_offer_not_rejected_by_unrelated_kdrm_advertisement():
+    """No delegated POST if the exact qualified offer is plain, not runtime."""
+    session, vault, _broker, account, _ = setup()
+    calls = ready(session, vault)
+
+    def mixed(product, **options):
+        calls.append((product, options.get("mode")))
+        if options.get("mode") != "descriptor":
+            pytest.fail("Plain offer must never ask Vault for delegated mode")
+        unpinned = kdrm_candidate(product)
+        unpinned["kobo"] = {"source": "content_access_book"}
+        plain = descriptor(product=product)["acquisition"]["candidates"][0]
+        result = descriptor(product=product, candidate=unpinned)
+        result["acquisition"]["candidates"].append(plain)
+        return result
+
+    vault.acquisition = mixed
+    calls.clear()
+    try:
+        offer = selected(session, account, "book-1")
+        assert offer.delivery == "available"
+        assert offer.delivery_offer_id.startswith("kobo.descriptor:")
+        assert calls == [("book-1", "descriptor")]
+    finally:
+        session.close()
+
+
+def test_multiple_pinned_library_sync_kdrm_routes_remain_ambiguous():
+    """Two eligible library_sync candidates must not pick an arbitrary URL."""
+    session, vault, _broker, account, _ = setup()
+    calls = ready(session, vault)
+    original = vault.acquisition
+
+    def ambiguous(product, **options):
+        response = original(product, **options)
+        if options.get("mode") == "descriptor":
+            second = kdrm_candidate(product)
+            second["url"] = second["url"].replace(".kepub", "-copy.kepub")
+            response["acquisition"]["candidates"].append(second)
+        return response
+
+    vault.acquisition = ambiguous
+    try:
+        offer = selected(session, account, "book-1")
+        assert offer.delivery == "unknown"
+        assert offer.delivery_offer_id == ""
+        assert calls == [("book-1", "descriptor")]
+    finally:
+        session.close()
