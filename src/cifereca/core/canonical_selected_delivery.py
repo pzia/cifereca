@@ -188,6 +188,7 @@ def complete_selected_delivery(
     # can execute it. Neither the recipe nor the runtime result is persisted
     # as B. Legacy providers never see this callback.
     runtime_used = [False]
+    runtime_artifact_path: list[Path | None] = [None]
 
     def execute_selected_runtime(request):
         if runtime_used[0] or not admission_current():
@@ -217,6 +218,10 @@ def complete_selected_delivery(
         produced = _physical_target(Path(result["artifact"]["path"]), root, directory)
         if produced != destination.resolve(strict=True):
             raise ValueError("canonical_delivery_runtime_artifact_foreign")
+        # A successful runtime call witnesses exactly this produced target,
+        # never any other bytes the plugin might return from the same staging
+        # directory. The proof stays ephemeral and cannot be forged by a DTO.
+        runtime_artifact_path[0] = produced
         return result
     # The staging namespace belongs to this failed attempt until the Core
     # issues a completed delivery receipt. Failed GET, invalid candidates and
@@ -263,6 +268,12 @@ def complete_selected_delivery(
         received = _physical_target(raw_path, root, directory)
         if not received.is_relative_to(attempt.resolve(strict=True)):
             raise ValueError("canonical_delivery_candidate_outside_staging")
+        # The runtime-guarded producer must execute the Core's one-shot
+        # runtime successfully, then return the SAME physical output. A valid
+        # EPUB/PDF written separately by the plugin is not DRM fulfillment.
+        if runtime_guarded and (runtime_artifact_path[0] is None
+                                or received != runtime_artifact_path[0]):
+            raise ValueError("canonical_delivery_runtime_artifact_mismatch")
         if received.stat().st_size <= 0:
             raise ValueError("canonical_delivery_candidate_empty")
         kind = detect_artifact_format(received)
