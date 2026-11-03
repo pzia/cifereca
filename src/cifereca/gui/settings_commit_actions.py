@@ -131,7 +131,9 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
                 reporter(message)
             else:
                 self.toast(message, 5)
-            self._configure_kobo_backup_timer(run_now=False)
+            # Source refresh timers follow per-source broker policies. Saving
+            # unrelated Settings must never touch the retired global Kobo timer
+            # or use a historical global bit as a scheduling authority.
             refresh_text()
             settings_state.commit(staged_settings_revisions)
             track_all_settings_widgets()
