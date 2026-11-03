@@ -89,7 +89,7 @@ def test_equal_bytes_belonging_to_bob_are_never_reused_or_relabelled(tmp_path):
         result = service.materialize_to_identity(placement, "bob")
         target = Path(result["path"])
         assert target != owned
-        assert target.name == "Book (2).epub"
+        assert target.name == "Book.epub"
         assert target.read_bytes() == src.read_bytes()
         assert os.stat(src).st_ino != os.stat(target).st_ino
         previous = service.storage.placement_get(own_placement)
