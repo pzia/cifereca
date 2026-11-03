@@ -166,7 +166,10 @@ def test_cancellation_is_not_swallowed_or_followed_by_sibling_refresh(
             )
 
         visited = []
-        def interrupt(self, source_id, request=None, control=None):
+        def interrupt(self, source_id, request=None, control=None, *, _inventory_only=False):
+            # Scheduled work must retain cancellation semantics when routed
+            # through the restrictive internal source Sync.
+            assert _inventory_only is True
             visited.append(source_id)
             if failure == "raised_cancelled":
                 raise Cancelled("cancelled by user")

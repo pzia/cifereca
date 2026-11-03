@@ -3564,16 +3564,27 @@ class LibraryService:
             )
 
     def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        """Synchronize one explicit account/source without changing account selection.
-
-        This is the Core-owned primitive used by the public sync broker.  It
-        deliberately isolates one source so disabling or failing a provider does
-        not prevent the other sources from being synchronized.
-        """
-        return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
+        """Synchronize one exact account/source without changing account selection."""
+        return sync_coordination._synchronize_account_source_impl(
+            self, account, deep=deep, control=control,
+        )
 
     def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control,
+        )
+
+    def _synchronize_account_source_inventory_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Core-only, strictly metadata/rights observation; never materialize."""
+        return sync_coordination._synchronize_account_source_impl(
+            self, account, deep=deep, control=control, inventory_only=True,
+        )
+
+    def _synchronize_scheduled_account_inventory(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Dedicated scheduled path; never expose inventory-only as public Sync ABI."""
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control, inventory_only=True,
+        )
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""

@@ -41,6 +41,14 @@ def _rig(tmp_path):
             or {"library": 1}
         ),
     )
+    # Synthetic service explicitly implements the restrictive private
+    # inventory entry point. A missing entry point must not fall back to
+    # public synchronization (which can acquire books).
+    source._synchronize_scheduled_account_inventory = (
+        lambda a, **options: source.synchronize_account_source(
+            a, inventory_only=True, **options,
+        )
+    )
     connection_id = storage.provider_connection_put({
         "identity_id": "alice", "provider_id": "kobo",
         "credential_id": "vault-alice", "enabled": True,
@@ -111,7 +119,7 @@ def test_periodic_policy_only_dispatches_on_due_periodic_tick(tmp_path):
         assert len(calls) == 1
         state = broker._state(sid)
         assert state["last_attempt"] and state["last_success"]
-        assert state["scope"] == "manual"  # existing stable sync reporting, not acquisition
+        assert state["scope"] == "scheduled"  # explicit inventory-only dispatch, not a manual acquisition
     finally:
         service.storage.close()
 
