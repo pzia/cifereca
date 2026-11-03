@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from sqlite3 import Error as SqliteError
 
 from .duplicate_maintenance_guard import candidate_has_active_dependencies_in_db
 
@@ -131,5 +132,8 @@ def preview_missing_placement_retirement(
                 "status": "ready", "reason": "orphan_missing",
                 "catalogue_rows": 0, "requires_confirmation": True,
             }
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError, SqliteError):
+        # A damaged/unavailable SQLite snapshot is never a proof of absence.
+        # Do not expose exception strings: they may include private paths,
+        # raw account coordinates or sensitive diagnostic payloads.
         return blocked("evidence_unavailable")
