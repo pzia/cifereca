@@ -123,13 +123,8 @@ def test_attested_loan_origin_prefers_loan_cover_not_purchase_for_same_borrower(
         _source_origin(
             service, identity="alice", provider="numilog",
             credential="card-b", account="buyer-b", edition="edition-a",
-            artifact_id=artifact_id, token="b",
+            artifact_id=artifact_id, token="b", kind="loan",
         )
-        with service.storage._lock, service.storage._connect() as db:
-            db.execute(
-                "UPDATE source_references SET reference_kind='loan',"
-                "branch_id='loans' WHERE source_reference_id='reference-b'"
-            )
         _source_entitlement(
             service, credential="card-b", borrower="buyer-b", cover=GOOD,
         )
