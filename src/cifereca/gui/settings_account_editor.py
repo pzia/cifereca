@@ -88,8 +88,10 @@ def build_provider_account_editor(
             # unrelated save cannot replace it with a plausible default.
         else:
             fallback = None
-            if field.legacy_config_key:
-                # Consult legacy defaults only for genuinely absent options.
+            if field.legacy_config_key and existing:
+                # Unscoped legacy values belong to historical account editors
+                # only. A new connection must use its descriptor default,
+                # never inherit another account's former global setting.
                 provider_option = getattr(config, "provider_option", None)
                 if callable(provider_option):
                     # A legacy value belongs to one exact connection. With
