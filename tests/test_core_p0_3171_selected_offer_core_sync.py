@@ -6,6 +6,7 @@ authorize itself, or publish an origin without independent completed delivery.
 from __future__ import annotations
 
 from dataclasses import replace
+import logging
 
 import pytest
 
@@ -329,3 +330,56 @@ def test_selected_offer_refuses_credential_with_unregistered_sql_borrower(
             )
     assert provider_reads == []
     assert storage.placements() == []
+
+
+@pytest.mark.parametrize(("exception", "expected_reason"), [
+    ("scope", "kobo_selected_offer_owner_changed"),
+    ("untrusted", "provider_capability_refused"),
+    ("upstream", "provider_preflight_exception"),
+])
+def test_selected_offer_rejection_emits_actual_reason_without_forged_http_403(
+    rig, caplog, exception, expected_reason,
+):
+    """One exact selected source; classification cannot infer a Vault POST.
+
+    The provider can refuse before its own EVENT, as the 8 pending Kobo
+    examples did. The Core event distinguishes a local refusal from an
+    actual HTTP error, without leaking arbitrary provider exception text.
+    """
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    errors = {
+        "scope": ProviderCapabilityError("kobo_selected_offer_owner_changed"),
+        "untrusted": ProviderCapabilityError(
+            "Bearer PRIVATE_SECRET https://private.example/token",
+        ),
+        "upstream": RuntimeError("HTTP 403 Bearer PRIVATE_SECRET"),
+    }
+    attempts = []
+    def selected(_account, **options):
+        attempts.append(options)
+        raise errors[exception]
+    service.session.rights_selected_delivery_offer_snapshot = selected
+
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        result = synchronize_account_source(service, service.account)
+
+    assert result["canonical_execution"]["pending"] == 1
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert len(attempts) == 1 and downloads == []
+    assert db.placements() == [] and refs(db)[1] == 0
+    entries = [
+        record.getMessage() for record in caplog.records
+        if "EVENT canonical selected_offer " in record.getMessage()
+    ]
+    assert len(entries) == 1
+    assert "phase=provider_preflight" in entries[0]
+    assert "outcome=unknown" in entries[0]
+    assert f"reason={expected_reason}" in entries[0]
+    assert f"product_id={service.source.right_id}" in entries[0]
+    assert "Bearer" not in entries[0]
+    assert "PRIVATE_SECRET" not in entries[0]
+    assert "HTTP 403" not in entries[0]
+    assert "delegated_http_403" not in entries[0]
