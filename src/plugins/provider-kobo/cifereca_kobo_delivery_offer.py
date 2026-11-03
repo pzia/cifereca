@@ -259,6 +259,12 @@ def exact_kobo_offer_id(
     if len(eligible) != 1:
         return ""
     fields = coordinates + eligible[0]
-    return "kobo.descriptor:" + hashlib.sha256(
+    # The opaque offer must also state WHICH Core fulfillment contract it
+    # requires. KDRM always needs Core's one-shot runtime receipt; direct
+    # HTTPS/ACSM must not accidentally enter that runtime-only branch. Both
+    # routes bind the same full account/product/handling/format coordinates.
+    prefix = ("kobo.runtime:" if eligible[0][1] == "kobo_kdrm"
+              else "kobo.descriptor:")
+    return prefix + hashlib.sha256(
         "\x00".join(fields).encode("utf-8")
     ).hexdigest()

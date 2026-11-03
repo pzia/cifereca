@@ -136,7 +136,7 @@ def test_eight_kdrm_purchases_get_private_runtime_recipe_not_public_http(tmp_pat
         for product in products:
             offer = selected(session, account, product)
             assert offer.delivery == "available" and offer.provider_attested
-            assert offer.delivery_offer_id.startswith("kobo.descriptor:")
+            assert offer.delivery_offer_id.startswith("kobo.runtime:")
             own_dir = tmp_path / product
             own_dir.mkdir()
             out = deliver(session, account, product,
@@ -226,7 +226,7 @@ def test_kdrm_foreign_identity_offer_not_reused_across_profiles():
     base = dict(identity_id="identity-A", credential_id="synthetic-card",
                 account_id="alice", product_id="book-1", kdrm_runtime_ready=True)
     offer = exact_kobo_offer_id(payload, **base)
-    assert offer.startswith("kobo.descriptor:")
+    assert offer.startswith("kobo.runtime:")
     assert exact_kobo_offer_id(
         payload, **{**base, "identity_id": "identity-B"},
     ) != offer
@@ -307,12 +307,12 @@ def test_kdrm_opaque_offer_pins_flepub_vs_epub_upstream_route():
             account_id="alice", product_id="book-1", kdrm_runtime_ready=True,
         )
     pinned = qualify(candidate)
-    assert pinned.startswith("kobo.descriptor:")
+    assert pinned.startswith("kobo.runtime:")
     from copy import deepcopy
     modified = deepcopy(candidate)
     modified["source_format"] = "EPUB"
     other = qualify(modified)
-    assert other.startswith("kobo.descriptor:")
+    assert other.startswith("kobo.runtime:")
     assert pinned != other
 
 
@@ -379,5 +379,79 @@ def test_foreign_delegated_provider_never_starts_kdrm_runtime_or_plain_http(
                     tmp_path, forbidden_runtime)
         assert runtime_calls == [] and list(tmp_path.iterdir()) == []
         assert any(mode == "delegated" for _, mode in calls)
+    finally:
+        session.close()
+
+
+def test_kobo_attested_offer_route_is_local_and_per_product():
+    session, vault, broker, account, _ = setup()
+    ready(session, vault)
+    try:
+        runtime_offer = selected(session, account, "book-1").delivery_offer_id
+        assert runtime_offer.startswith("kobo.runtime:")
+        assert session.downloadable_selected_delivery_requires_runtime(
+            account, edition_id="book-1", resource_id="book-1",
+            kind="purchase", branch="personal_manifest",
+            selected_offer_id=runtime_offer,
+        ) is True
+        with pytest.raises(ProviderCapabilityError, match="route_unconfirmed"):
+            session.downloadable_selected_delivery_requires_runtime(
+                account, edition_id="another-book", resource_id="book-1",
+                kind="purchase", branch="personal_manifest",
+                selected_offer_id=runtime_offer,
+            )
+        with pytest.raises(ProviderCapabilityError, match="route_unconfirmed"):
+            session.downloadable_selected_delivery_requires_runtime(
+                account, edition_id="book-1", resource_id="book-1",
+                kind="purchase", branch="personal_manifest",
+                selected_offer_id="kobo.runtime:tampered",
+            )
+    finally:
+        session.close()
+
+
+def test_kdrm_offer_cannot_be_reinterpreted_as_plain_https(
+    tmp_path, monkeypatch,
+):
+    session, vault, broker, account, _ = setup()
+    ready(session, vault)
+    monkeypatch.setattr(HTTPX_TRANSPORT, "attested_https_download",
+                        lambda **_: pytest.fail("KDRM must not GET plaintext"))
+    try:
+        runtime_offer = selected(session, account, "book-1").delivery_offer_id
+        forged_direct = "kobo.descriptor:" + runtime_offer.split(":", 1)[1]
+        assert session.downloadable_selected_delivery_requires_runtime(
+            account, edition_id="book-1", resource_id="book-1",
+            kind="purchase", branch="personal_manifest",
+            selected_offer_id=forged_direct,
+        ) is False
+        with pytest.raises(ProviderCapabilityError):
+            session.downloadable_selected_delivery_candidate_guarded(
+                account, edition_id="book-1", resource_id="book-1",
+                kind="purchase", branch="personal_manifest",
+                selected_offer_id=forged_direct, target_dir=tmp_path,
+                explicit_user_action=True, admission_current=lambda: True,
+            )
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
+
+
+def test_plain_offer_remains_direct_even_on_runtime_capable_kobo_session():
+    session, vault, broker, account, _ = setup()
+    session.runtime_capabilities = NS(
+        acquisition=lambda provider: NS(
+            available=True, compatible=True, operational=True,
+            modes=("kobo_kdrm",),
+        )
+    )
+    try:
+        direct = selected(session, account, "book-1").delivery_offer_id
+        assert direct.startswith("kobo.descriptor:")
+        assert session.downloadable_selected_delivery_requires_runtime(
+            account, edition_id="book-1", resource_id="book-1",
+            kind="purchase", branch="personal_manifest",
+            selected_offer_id=direct,
+        ) is False
     finally:
         session.close()

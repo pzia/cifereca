@@ -104,10 +104,13 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             or type(right_id) is not str or right_id != edition_id
             or kind != "purchase" or branch != "personal_manifest"
             or type(delivery_offer_id) is not str
-            or not delivery_offer_id.startswith("kobo.descriptor:")
-            or len(delivery_offer_id) != len("kobo.descriptor:") + 64
-            or any(c not in "0123456789abcdef" for c in
-                   delivery_offer_id[len("kobo.descriptor:"):])
+            or not any(
+                delivery_offer_id.startswith(prefix)
+                and len(delivery_offer_id) == len(prefix) + 64
+                and all(c in "0123456789abcdef"
+                        for c in delivery_offer_id[len(prefix):])
+                for prefix in ("kobo.descriptor:", "kobo.runtime:")
+            )
             or account.provider_id != "kobo"
             or account.credential_id != session.credential_id
             or type(account.identity_id) is not str or not account.identity_id):

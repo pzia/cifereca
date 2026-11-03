@@ -1326,6 +1326,34 @@ class KoboSession(ProviderSession):
             path=Path(path), provider_hint=hint,
         )
 
+    def downloadable_selected_delivery_requires_runtime(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id,
+    ):
+        """Local Core route selector bound to an exact, revalidated offer.
+
+        No supplier I/O, entitlement inference or permission is issued here.
+        The later selected-candidate reader independently rehashes the live
+        descriptor. A KDRM candidate cannot masquerade as direct HTTPS merely
+        by supplying a direct-route token.
+        """
+        if (type(account) is not Account
+                or account.provider_id != self.provider_id
+                or account.credential_id != self.credential_id
+                or type(resource_id) is not str or not resource_id
+                or edition_id != resource_id or kind != "purchase"
+                or branch != "personal_manifest"
+                or type(selected_offer_id) is not str
+                or not any(
+                    selected_offer_id.startswith(prefix)
+                    and len(selected_offer_id) == len(prefix) + 64
+                    and all(c in "0123456789abcdef"
+                            for c in selected_offer_id[len(prefix):])
+                    for prefix in ("kobo.descriptor:", "kobo.runtime:")
+                )):
+            raise ProviderCapabilityError("kobo_candidate_route_unconfirmed")
+        return selected_offer_id.startswith("kobo.runtime:")
+
     def downloadable_selected_delivery_candidate_runtime_guarded(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
@@ -1666,8 +1694,13 @@ class KoboSession(ProviderSession):
         # Brokerless direct legacy requests without this option are intact.
         if expected_offer_id is not None:
             if (type(expected_offer_id) is not str
-                    or not expected_offer_id.startswith("kobo.descriptor:")
-                    or len(expected_offer_id) != len("kobo.descriptor:") + 64
+                    or not any(
+                        expected_offer_id.startswith(prefix)
+                        and len(expected_offer_id) == len(prefix) + 64
+                        and all(c in "0123456789abcdef"
+                                for c in expected_offer_id[len(prefix):])
+                        for prefix in ("kobo.descriptor:", "kobo.runtime:")
+                    )
                     or type(expected_identity_id) is not str
                     or not expected_identity_id
                     or mode != "descriptor"
