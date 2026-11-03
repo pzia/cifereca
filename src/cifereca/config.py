@@ -279,7 +279,9 @@ class Config:
                 continue
             if provider_id and str(row.get("provider", "")).lower() != provider_id.lower():
                 continue
-            if enabled_only and not bool(row.get("enabled", True)):
+            # Only an actual bool True (or an absent legacy flag) enables
+            # a source. Strings such as "false" and integers must fail closed.
+            if enabled_only and row.get("enabled", True) is not True:
                 continue
             out.append(deepcopy(row))
         return out
