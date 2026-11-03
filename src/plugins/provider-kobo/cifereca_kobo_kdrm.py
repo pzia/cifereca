@@ -74,6 +74,16 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
     if (type(request) is not dict or type(context) is not dict
             or not _no_embedded_keys(request)):
         return None
+    # An authenticated Kobo source cannot be reconstructed from a delegated
+    # envelope that explicitly names another producer. The descriptor already
+    # validates provider fields, but the later delegated response is a
+    # distinct upstream observation and must be checked independently.
+    for container in (delegated, acquisition, delegation, request, context):
+        for field in ("provider", "source_provider"):
+            if field in container and (
+                type(container[field]) is not str or container[field] != "kobo"
+            ):
+                return None
     # A foreign borrower/product nested in a delegated envelope is just as
     # disqualifying as one at top-level. Never select a matching sibling while
     # replaying a different account's content-key request.
