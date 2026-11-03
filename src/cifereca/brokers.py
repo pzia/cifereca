@@ -1198,10 +1198,22 @@ class SynchronizationBrokerImpl:
             state.update(inventory_last_attempt=now, inventory_status="running")
         self._set_state(source_id, state); self._notify()
         try:
-            result = self.service.synchronize_account_source(
-                account, deep=bool(request.deep), control=control,
-                **({"inventory_only": True} if _inventory_only else {}),
-            )
+            # A scheduled refresh is not a public source Sync: only its
+            # dedicated Core implementation can guarantee no delivery B.
+            # Absence of that internal entry point must fail closed.
+            if _inventory_only:
+                scheduled = getattr(
+                    self.service, "_synchronize_scheduled_account_inventory", None,
+                )
+                if not callable(scheduled):
+                    raise ValueError("scheduled_inventory_only_unavailable")
+                result = scheduled(
+                    account, deep=bool(request.deep), control=control,
+                )
+            else:
+                result = self.service.synchronize_account_source(
+                    account, deep=bool(request.deep), control=control,
+                )
             # A provider result may include private account identifiers,
             # diagnostic details and free-text errors. Only publish bounded
             # counters and known status/reason codes to plugins and GTK.
