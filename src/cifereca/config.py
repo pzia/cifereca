@@ -363,7 +363,9 @@ class Config:
             if isinstance(credentials, dict) and any(str(v or "").strip() for v in credentials.values()):
                 return True
             # Anonymous providers may later be enabled with no credentials.
-            if bool(row.get("anonymous", False)):
+            # Public source activation must be explicit. Truthy strings
+            # such as "false" are malformed, not anonymous authorization.
+            if row.get("anonymous", False) is True:
                 return True
         return False
 
