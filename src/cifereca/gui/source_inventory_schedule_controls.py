@@ -12,7 +12,6 @@ from gi.repository import Gtk, Adw
 
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_action_scope import sync_action_scope_current
-from .sync_source_controls_overview import sync_schedule_status_subtitle
 
 
 def append_source_inventory_schedule_controls(
@@ -47,6 +46,9 @@ def append_source_inventory_schedule_controls(
             or type(policy["interval_minutes"]) is not int
             or not 15 <= policy["interval_minutes"] <= 10080):
         return
+    # AST-isolated GTK harnesses compile this widget function on its own.
+    # Resolve the pure, provider-neutral formatter inside that function.
+    from cifereca.gui.sync_source_controls_overview import sync_schedule_status_subtitle
     mode, interval = policy["mode"], policy["interval_minutes"]
     available = source.enabled is True and source.connected is True
     row = Adw.ActionRow()
