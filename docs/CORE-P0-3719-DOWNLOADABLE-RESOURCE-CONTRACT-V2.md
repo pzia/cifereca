@@ -187,4 +187,6 @@ sans GET HTTP simplifié, sans suppression et sans prétendre à une livraison.
 Cette tranche est testée avec huit achats/KEPUB **synthétiques** et une
 publication SQLite v14 isolée. Elle ne constitue pas encore une recette Kobo
 réelle, et n'élargit pas les garanties aux variantes KDRM non attestées par
-la réponse de Vault.
+la réponse de Vault. Les couples format de sortie / format source admis
+pour la variante KDRM épinglée sont KEPUB/KEPUB, EPUB/FLEPUB (Kobo-Adept
+1.3) et EPUB/EPUB ; toute autre divergence reste non qualifiée.
