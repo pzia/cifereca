@@ -22,6 +22,8 @@ class UsbLocalArtifact:
 class UsbObservedFile:
     relative_path: str
     sha256: str
+    # A symlink/unknown object must never be treated as a managed book.
+    regular_file: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +81,27 @@ def _relative(path: object) -> bool:
     )
 
 
+def _safe_scanned_files(files: object) -> bool:
+    """Require a coherent, one-to-one regular-file inventory for absence."""
+    if not isinstance(files, Mapping) or len(files) > 100000:
+        return False
+    paths: set[str] = set()
+    for artifact_id, observed in files.items():
+        if (type(artifact_id) is not str or not artifact_id
+                or type(observed) is not UsbObservedFile
+                or observed.regular_file is not True
+                or not _relative(observed.relative_path)
+                or not _sha(observed.sha256)):
+            return False
+        path_key = observed.relative_path.casefold()
+        if path_key in paths:
+            # Duplicate or case-fold-colliding target paths are ambiguous.
+            # Do not infer that an absent ID is physically missing.
+            return False
+        paths.add(path_key)
+    return True
+
+
 def _fresh_scan(
     scan: UsbDeviceScan | None, *,
     identity_id: str, device_id: str, fingerprint: object,
@@ -94,7 +117,7 @@ def _fresh_scan(
         and type(scan.observed_at) is int and scan.observed_at > 0
         and type(now) is int and scan.observed_at <= now
         and now - scan.observed_at <= max_age_seconds
-        and isinstance(scan.files, Mapping) and len(scan.files) <= 100000
+        and _safe_scanned_files(scan.files)
     )
 
 
