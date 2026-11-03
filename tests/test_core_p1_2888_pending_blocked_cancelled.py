@@ -56,14 +56,16 @@ def test_exact_business_outcome_is_not_a_fake_download_failure(
 
 
 def test_positive_callback_cannot_erase_a_closed_partial_core_status():
-    from cifereca.gui.task_runner import TaskRunner
-
-    assert TaskRunner._source_sync_outcome(
-        SyncResult(ok=True, facts={"status": "partial"}), "source-sync",
-    ) == "partial"
-    assert TaskRunner._source_sync_outcome(
-        SyncResult(ok=True), "source-sync",
-    ) == "success"
-    assert TaskRunner._source_sync_outcome(
-        SyncResult(ok=False, facts={"status": "pending"}), "library",
-    ) == "success"
+    runner, _displayed, _flush, _logger = _runner()
+    try:
+        assert runner._source_sync_outcome(
+            SyncResult(ok=True, facts={"status": "partial"}), "source-sync",
+        ) == "partial"
+        assert runner._source_sync_outcome(
+            SyncResult(ok=True), "source-sync",
+        ) == "success"
+        assert runner._source_sync_outcome(
+            SyncResult(ok=False, facts={"status": "pending"}), "library",
+        ) == "success"
+    finally:
+        runner.close()
