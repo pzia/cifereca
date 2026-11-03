@@ -56,6 +56,11 @@ def _render(provider_id="paris", *, data=None, credentials=None, url=None,
     config = SimpleNamespace(
         paris_base_url=lambda: url,
         get=lambda key, default=None: (legacy_values or {}).get(key, default),
+        # The historical compatibility fallback is safe for exactly one
+        # matching stored account, never an unscoped second account.
+        provider_accounts=lambda: (
+            [dict(settings, provider=provider_id)] if settings.get("id") else []
+        ),
         provider_option=lambda pid, key, default=None, *, credential_id=None:
             (provider_values or {}).get((pid, key, credential_id), default),
     )
