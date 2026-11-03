@@ -197,6 +197,18 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             raise SettingsValidationError(
                 'Données du compte fournisseur invalides : recharger les paramètres.'
             )
+        # An existing untyped ON/OFF value is not a deliberate user toggle.
+        # Refuse a stale GTK draft instead of rewriting a malformed persisted
+        # flag as False during an unrelated Settings save. Legacy *missing*
+        # flags retain their historical compatibility.
+        original_account = editor.get('original_account')
+        if (type(original_account) is dict
+                and original_account.get('id') == account_id
+                and 'enabled' in original_account
+                and type(original_account['enabled']) is not bool):
+            raise SettingsValidationError(
+                'Activation historique invalide : recharger les paramètres.'
+            )
         # A plugin may change its descriptor after Settings was opened.
         # Refuse stale or untyped snapshots rather than dropping a credential,
         # coercing an activation flag, or raising an unhandled KeyError.

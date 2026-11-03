@@ -43,6 +43,7 @@ def build_provider_account_editor(
     raw_options = data.get("options", {})
     invalid_saved_snapshot = (
         type(raw_credentials) is not dict or type(raw_options) is not dict
+        or ("enabled" in data and type(data["enabled"]) is not bool)
     )
     # An existing, declared TEXT value that is not actually text must not be
     # rendered as blank/default and then overwritten by an unrelated Save.
