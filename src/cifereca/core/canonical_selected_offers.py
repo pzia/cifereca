@@ -214,7 +214,14 @@ def qualify_selected_offers(
         if reader_name == "downloadable_selected_offer_snapshot":
             if type(selected) is not ResourceSnapshot:
                 continue
-            selected = as_legacy_rights_snapshot(selected)
+            try:
+                selected = as_legacy_rights_snapshot(selected)
+            except (AttributeError, TypeError, ValueError):
+                # A malformed v2 selected claim is not an admitted offer.
+                # The reader has already returned: reject only this resource,
+                # with no legacy fallback, without aborting unrelated A rows.
+                _LOG.warning("TRACE selected offer code=canonical_selected_v2_invalid")
+                continue
         if (type(selected) is not ProviderRightsSnapshot
                 or selected.scope != scope or selected.branch != snapshot.branch
                 or selected.status not in ("partial", "success")
