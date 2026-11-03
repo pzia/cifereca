@@ -185,6 +185,20 @@ def publish_completed_acquisition(
         db.execute("BEGIN IMMEDIATE")
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_publisher_context_rebound")
+        # Revocation of the source's inventory switch is also a hard fence
+        # for final B publication. Recheck the durable value in THIS SQLite
+        # transaction, after the file hash and before any canonical writes.
+        # A legacy per-right/auto consent may remain ON after the source was
+        # disabled; neither it nor a stale in-memory service flag can bypass
+        # this switch. A missing preference retains the legacy default.
+        from .source_auto_consent_bridge import _source_id
+        from .source_enablement import source_enabled
+        enabled = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            ("sync.source.enabled." + _source_id(scope),),
+        ).fetchone()
+        if not source_enabled(enabled[0] if enabled else None):
+            raise ValueError("canonical_publisher_source_disabled")
         # The Core policy guard uses THIS connection, never Storage methods
         # that would re-enter its non-recursive lock. Recheck after hashing.
         from .source_sync_consent import policy_in_transaction
