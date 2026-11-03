@@ -508,7 +508,7 @@ class LibraryService:
                     # Preserve missing-flag legacy activation, but never
                     # promote truthy malformed values into SQLite consent.
                     "enabled": row.get("enabled", True) is True,
-                    "metadata": {"anonymous": bool(row.get("anonymous", False))},
+                    "metadata": {"anonymous": row.get("anonymous", False) is True},
                 })
 
 
