@@ -351,11 +351,18 @@ def _refresh_sync_page(self) -> None:
         from cifereca.gui.sync_catalogue_overview import sync_catalogue_overview
 
         def set_catalogue_summary(snapshot):
-            if summary is not None and sync_action_scope_current(self, scope):
+            # Some legacy inline provider panels also use 'summary' as a
+            # local variable for a typed status dictionary. Never close over
+            # that mutable loop binding instead of the actual GTK label.
+            header = getattr(self, "_sync_summary", None)
+            if (header is not None
+                    and callable(getattr(header, "set_label", None))
+                    and callable(getattr(header, "get_label", None))
+                    and sync_action_scope_current(self, scope)):
                 # Only a closed, read-only capability count is shown. Never
                 # invent a catalogue-refresh control from search support.
-                summary.set_label(summary.get_label() + "\n"
-                                  + sync_catalogue_overview(snapshot))
+                header.set_label(header.get_label() + "\n"
+                                 + sync_catalogue_overview(snapshot))
 
         reader = getattr(self.service, "catalogue_source_capabilities", None)
         if not callable(reader):
