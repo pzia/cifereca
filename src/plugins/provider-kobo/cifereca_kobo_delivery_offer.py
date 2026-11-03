@@ -208,10 +208,22 @@ def exact_kobo_offer_id(
             if key in candidate and candidate[key] is not None
         ]
         if (not declared or any(type(v) is not str or not v.strip()
-                                for v in declared)
-                or len({v.strip().lower() for v in declared}) != 1):
+                                for v in declared)):
             continue
         fmt = declared[0].strip().lower()
+        if raw_drm == "KDRM":
+            # Contract 1.3: EPUB output can carry an upstream FLEPUB
+            # source. Accept only these attested pairs, not arbitrary
+            # contradictory formats; plain/ACSM retain the strict equality.
+            source_fmt = candidate.get("source_format", declared[0])
+            if (type(source_fmt) is not str or
+                    (fmt, source_fmt.strip().lower()) not in {
+                        ("kepub", "kepub"), ("epub", "flepub"),
+                        ("epub", "epub"),
+                    }):
+                continue
+        elif len({v.strip().lower() for v in declared}) != 1:
+            continue
         # A verified HTTPS acquisition link is not by itself proof of an
         # executable ADEPT/KDRM pipeline. Only conservative known paths.
         if (kind == "acsm" and handling == "adobe_adept"
