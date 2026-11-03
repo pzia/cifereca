@@ -1352,7 +1352,9 @@ class KoboSession(ProviderSession):
             else:
                 try:
                     delegated_resolver_called = True
-                    delegated = self.resolve_acquisition(right_id, mode="delegated")
+                    delegated = self.resolve_acquisition(
+                        right_id, mode="delegated", include_acsm=False,
+                    )
                     if not scope_current():
                         raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
                     source = scoped_kdrm_source(
@@ -1941,7 +1943,10 @@ class KoboSession(ProviderSession):
         profile = display_profile if self.supports_acquisition_display_profile else None
         if self.supports_acquisition_display_profile and profile is None:
             profile = self.display_profile
-        acsm = include_acsm if self.supports_acquisition_acsm else None
+        # KVault defaults include_acsm to TRUE if omitted. Opting out is
+        # always allowed, even when no Adobe runtime is installed: selected
+        # KDRM replay must not trigger speculative get_download_link lookups.
+        acsm = include_acsm if self.supports_acquisition_acsm else False
         try:
             result = client.acquisition(
                 product_id,
