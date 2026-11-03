@@ -48,7 +48,23 @@ def diagnostic_task_business_result(
         return
     from .plugin_api import SyncResult
     if isinstance(result, SyncResult) and result.ok is False:
-        scope.business_failed = True
+        from collections.abc import Mapping
+        facts = result.facts
+        cancelled = False
+        if isinstance(facts, Mapping):
+            cancelled = (
+                facts.get("status") == "cancelled"
+                or facts.get("reason") in {"cancelled", "source_sync_cancelled"}
+            )
+            sources = facts.get("sources")
+            if (not cancelled and isinstance(sources, Mapping) and sources
+                    and all(isinstance(row, Mapping) and row.get("status") == "cancelled"
+                            for row in sources.values())):
+                cancelled = True
+        if cancelled:
+            scope.business_cancelled = True
+        else:
+            scope.business_failed = True
     elif (operation_kind == "borrow" and type(result) is dict
           and type(result.get("status")) is str
           and result.get("status") in {
