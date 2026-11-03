@@ -1,8 +1,8 @@
 """P0 #2055: Core-owned admission for a *manual* BnF new loan.
 
-The reader verifies the selected edition visually on pret.bnf.fr before
-confirming a manual attempt. Remote BnF decides quota and account permission;
-their informational indicators are deferred to P2 #4063, not a P0 veto.
+A single explicit click on the exact BnF book action constitutes the manual
+request (#3121). Remote BnF decides quota and account permission; their
+informational indicators are deferred to P2 #4063, not a P1 veto.
 Core still enforces account/edition scope, at-most-once and remote verification.
 """
 from __future__ import annotations
@@ -33,8 +33,8 @@ def manual_bnf_borrow_available(service, item: SearchResult) -> bool:
     """Inert CoreUI availability, never borrower permission or a provider GET.
 
     Availability is an inert check, NOT proof of Pass/quota/permission.
-    The reader must separately confirm checking the book on pret.bnf.fr.
-    An exact live account and unused claim remain prerequisites.
+    A single explicit user action, exact live account and unused claim
+    remain prerequisites; no separate website attestation is required.
     """
     if (type(item) is not SearchResult or item.source_provider != "bnf-pret"
             or item.docbase != "BNF_PRET" or item.medium != "digital"):
@@ -99,15 +99,16 @@ def manual_bnf_borrow(
 ) -> dict[str, object]:
     """Select the exact live BnF account and admit at most one future POST.
 
-    Two separate requirements: reader states that this exact book looked
-    borrowable on the official BnF site, then confirms this CoreUI action.
-    Provider rereads activity/detail/CSRF, sends one POST and verifies the
-    exact active loan. UI buttons and HTTP 200 alone never prove success.
+    The explicit user action is signaled by confirmed=True; the deprecated
+    site_checked argument is ignored for source compatibility, not used as an
+    invented permission or website attestation. Provider rereads
+    activity/detail/CSRF, sends one POST and verifies the exact active loan.
+    A visible button and HTTP 200 alone never prove success.
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
-    if site_checked is not True:
-        return _result("blocked", "borrow_site_check_required")
+    # #3121: no mandatory visual check or additional confirmation. Retain
+    # the old keyword for external callers only; it must not change admission.
     if (expected_context_epoch is not None
             and (type(expected_context_epoch) is not int
                  or type(getattr(service, "_account_context_epoch", None)) is not int
@@ -176,10 +177,10 @@ def manual_bnf_borrow(
     except Exception:
         return _result("blocked", "borrow_scope_unverified")
 
-    # #2055: explicitly bounded BnF-only human-initiated attempt.
+    # #2055/#3121: explicitly bounded BnF-only human-initiated attempt.
     # Do NOT call assess_lending_action(permission_attested=True):
-    # that shared API requires machine-attested rights, which a reader's
-    # visual check cannot supply. This admission only permits the *attempt*.
+    # that shared API requires machine-attested rights, which a UI click
+    # cannot supply. This admission only permits the *attempt*.
     # BnF still decides eligibility on its fresh POST; no HTTP 200 is success
     # without an independently observed active loan in the same account.
     if not current():

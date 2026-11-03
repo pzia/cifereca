@@ -1,7 +1,7 @@
 """#2055: CoreUI → real BnF provider → HTTPX synthetic lender integration.
 
 No live BnF requests, credentials, SAML, ACSM, or remote mutation.
-The browser/dialogue, Core durable checkpoint, real provider parser and
+The one-click CoreUI action, Core durable checkpoint, real provider parser and
 real network transport boundary are integrated, not separately mocked.
 """
 from pathlib import Path
@@ -102,18 +102,12 @@ def test_full_coreui_core_real_provider_one_confirmed_post(tmp_path):
             service, session, account, item,
         )
         DialogApi.instance = None
-        dialog = request(window, item)
-        assert dialog is not None
-        assert dialog.responses["borrow"] == (
-            "J’ai vérifié sur BnF et je confirme"
-        )
-        assert state["calls"] == []
-        dialog.respond("cancel")
-        assert window.runner.tasks == []
-        dialog.respond("borrow")
-        dialog.respond("borrow")
+        request(window, item)
+        assert DialogApi.instance is None  # no website-check popup
         assert len(window.runner.tasks) == 1
-        assert state["calls"] == []
+        assert state["calls"] == []  # no network until worker admission
+        request(window, item)  # rapid second click cannot queue a second POST
+        assert len(window.runner.tasks) == 1
 
         outcome = window.runner.complete_one()
         assert outcome["status"] == "confirmed"
@@ -176,15 +170,14 @@ def test_real_provider_refusal_is_not_retried_or_claimed_success(tmp_path):
         service.close()
 
 
-def test_real_provider_no_site_check_never_reads_or_claims(tmp_path):
+def test_real_provider_without_explicit_click_never_reads_or_claims(tmp_path):
     service, session, account, item, state = real_session_service(tmp_path)
     try:
-        for site_checked in (False, None, "true", 1):
+        for confirmed in (False, None, "true", 1):
             outcome = service.borrow_bnf_manual(
-                item, expected_identity_id="default",
-                confirmed=True, site_checked=site_checked,
+                item, expected_identity_id="default", confirmed=confirmed,
             )
-            assert outcome["reason_code"] == "borrow_site_check_required"
+            assert outcome["reason_code"] == "borrow_confirmation_required"
         assert state["calls"] == []
         assert state["post"] == 0
         assert service.can_borrow_bnf(item)
