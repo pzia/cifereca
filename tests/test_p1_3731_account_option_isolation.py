@@ -57,10 +57,10 @@ def test_editing_second_account_or_creating_new_never_imports_first_account_url(
     # This unscoped API behavior is intentionally retained for old callers.
     assert config.provider_option("future-provider", "endpoint") == "https://first.example"
     assert _render(config, first, "first") == "https://first.example"
-    fallback = (
-        "https://legacy-global.example" if has_global else "https://descriptor.example"
-    )
-    assert _render(config, second, "second") == fallback
+    # With multiple configured connections, the old *unscoped* endpoint
+    # cannot safely be assigned to either account. The exact per-account
+    # setting above still wins, but a missing value uses only the descriptor.
+    assert _render(config, second, "second") == "https://descriptor.example"
     # New sources are never initialized from a retired global value.
     assert _render(config, {}, "third-new") == "https://descriptor.example"
     assert config.data == before
