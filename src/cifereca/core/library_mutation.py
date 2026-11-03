@@ -17,6 +17,69 @@ from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
 
 
+def _open_owned_transfer_file(path: Path, owner_root: Path) -> int:
+    """Open a regular source through no-follow directory descriptors.
+
+    O_NOFOLLOW on the final file alone does not protect intermediate parents:
+    a profile subdirectory could be replaced by a symlink after the initial
+    owner-path check, and a legacy same-SHA transfer would then copy the
+    *other* profile's bytes. Each component is resolved relative to an
+    already-pinned directory descriptor instead of by its mutable pathname.
+    """
+    import stat
+
+    relative = path.relative_to(owner_root)
+    if not relative.parts or any(part in ("", ".", "..") for part in relative.parts):
+        raise ValueError("invalid_owned_transfer_path")
+    dir_flags = (
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    parent_fd = os.open(owner_root, dir_flags)
+    try:
+        for part in relative.parts[:-1]:
+            child_fd = os.open(part, dir_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = child_fd
+        file_fd = os.open(
+            relative.parts[-1],
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise ValueError("invalid_owned_transfer_file")
+            return file_fd
+        except BaseException:
+            os.close(file_fd)
+            raise
+    finally:
+        os.close(parent_fd)
+
+
+def _transfer_file_identity(info) -> tuple[int, int, int, int, int]:
+    return (
+        info.st_dev, info.st_ino, info.st_size,
+        info.st_mtime_ns, info.st_ctime_ns,
+    )
+
+
+def _owned_transfer_digest(path: Path, owner_root: Path):
+    """SHA of the pinned file, never a lookup through a substituted parent."""
+    import hashlib
+
+    file_fd = _open_owned_transfer_file(path, owner_root)
+    with os.fdopen(file_fd, "rb") as stream:
+        initial = os.fstat(stream.fileno())
+        sha = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            sha.update(chunk)
+        final = os.fstat(stream.fileno())
+        if _transfer_file_identity(initial) != _transfer_file_identity(final):
+            raise ValueError("owned_transfer_file_changed")
+        return sha.hexdigest(), initial
+
+
 def materialize_to_identity(self, placement_id: str, target_identity_id: str) -> dict[str, Any]:
     """Explicit A→B send, serialized with the canonical acquisition lock."""
     from ..locking import InterProcessLock
@@ -86,9 +149,15 @@ def _materialize_to_identity_locked(
         except BundleError as exc:
             raise ProviderConfigurationError("Bundle source invalide") from exc
     else:
-        if not stat.S_ISREG(src.stat().st_mode):
-            raise ProviderConfigurationError("Artifact source non régulier")
-        source_digest = sha256_file(src)
+        # Pin the *whole* owner-relative path while hashing. The initial
+        # path.resolve() check above cannot authorize subsequent opens after
+        # a hostile parent-directory substitution.
+        try:
+            source_digest, source_stat = _owned_transfer_digest(src, owner_root)
+        except (OSError, ValueError) as exc:
+            raise ProviderConfigurationError(
+                "Emplacement source hors du profil propriétaire"
+            ) from exc
 
     from .transfer_storage_policy import (
         TRANSFER_STORAGE_CLASS, directory_for_storage_class,
@@ -151,7 +220,7 @@ def _materialize_to_identity_locked(
         registered = self.storage.artifact_get(artifact_id)
         if registered is not None and (
             registered.get("sha256") != source_digest
-            or registered.get("size") != src.stat().st_size
+            or registered.get("size") != source_stat.st_size
         ):
             raise ProviderConfigurationError(
                 "Artifact source modifié depuis son indexation"
@@ -182,7 +251,7 @@ def _materialize_to_identity_locked(
         if (type(source_artifact) is not dict
                 or source_artifact.get("sha256") != source_digest
                 or artifact_id != "sha256:" + source_digest
-                or source_artifact.get("size") != src.stat().st_size):
+                or source_artifact.get("size") != source_stat.st_size):
             if checkpoint is not None:
                 raise ProviderConfigurationError("Artifact source modifié depuis son indexation")
             return
@@ -277,10 +346,18 @@ def _materialize_to_identity_locked(
             # overwrite unrelated bytes before the later SHA verification.
             with os.fdopen(fd, "wb") as out:
                 created = os.fstat(out.fileno())
-                opened = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    opened = _open_owned_transfer_file(src, owner_root)
+                except (OSError, ValueError) as exc:
+                    raise ProviderConfigurationError(
+                        "Emplacement source hors du profil propriétaire"
+                    ) from exc
                 with os.fdopen(opened, "rb") as input_stream:
-                    if not stat.S_ISREG(os.fstat(input_stream.fileno()).st_mode):
-                        raise ProviderConfigurationError("Artifact source non régulier")
+                    if (_transfer_file_identity(os.fstat(input_stream.fileno()))
+                            != _transfer_file_identity(source_stat)):
+                        raise ProviderConfigurationError(
+                            "Source modifiée pendant la copie"
+                        )
                     shutil.copyfileobj(input_stream, out)
                     out.flush()
                     os.fsync(out.fileno())
@@ -294,7 +371,16 @@ def _materialize_to_identity_locked(
                     or (staged.st_dev, staged.st_ino) !=
                        (created.st_dev, created.st_ino)):
                 raise ProviderConfigurationError("Fichier temporaire modifié")
-            if sha256_file(temp) != source_digest or sha256_file(src) != source_digest:
+            try:
+                current_digest, current_stat = _owned_transfer_digest(src, owner_root)
+            except (OSError, ValueError) as exc:
+                raise ProviderConfigurationError(
+                    "Source modifiée pendant la copie"
+                ) from exc
+            if (sha256_file(temp) != source_digest
+                    or current_digest != source_digest
+                    or _transfer_file_identity(current_stat) !=
+                       _transfer_file_identity(source_stat)):
                 raise ProviderConfigurationError("Source modifiée pendant la copie")
             if replace:
                 if not verified_target(dest, historical=True):
