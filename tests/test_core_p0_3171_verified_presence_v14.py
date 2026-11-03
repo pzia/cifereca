@@ -316,3 +316,47 @@ def test_verified_presence_exact_borrower_amid_sibling_accounts(store, tmp_path)
         )
     assert plan(store, snapshot, tmp_path)[0].provider_satisfied is False
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("poisoned_artifact", ("empty_bytes", "sha_rebound"))
+def test_corrupt_artifact_evidence_does_not_suppress_real_delivery(
+    store, tmp_path, poisoned_artifact,
+):
+    """A historical B row must not attest zero bytes or a mismatched SHA ID."""
+    from hashlib import sha256
+
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    published = publish(store, tmp_path / "EBooks", path, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is True
+
+    if poisoned_artifact == "empty_bytes":
+        changed = b""
+    else:
+        changed = b"%PDF-1.7\\nReplaced bytes with mismatched database artifact ID\\n"
+    path.write_bytes(changed)
+    with store._lock, store._connect() as db:
+        # Current v14 production rejects this corruption at its SQL trigger.
+        # Simulate an imported/previously corrupted database explicitly by
+        # disabling that guard IN THIS THROWAWAY TEST DB only. The presence
+        # reader must still fail closed when faced with persisted bad rows.
+        db.execute("DROP TRIGGER trg_artifact_linked_sha_update")
+        db.execute(
+            "UPDATE artifacts SET sha256=?,size=? WHERE artifact_id=?",
+            (sha256(changed).hexdigest(), len(changed), published.artifact_id),
+        )
+    # Source and provenance history survive; corrupted Artifact metadata
+    # is not an attestation of a usable, correctly identified local delivery.
+    before = store.placements()
+    decisions = plan(store, snapshot, tmp_path)
+    assert len(decisions) == 1
+    assert decisions[0].provider_satisfied is False
+    assert decisions[0].state != "present_attested"
+    assert store.placements() == before
+    assert path.read_bytes() == changed
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM origin_links WHERE artifact_id=?",
+            (published.artifact_id,),
+        ).fetchone() == (1,)

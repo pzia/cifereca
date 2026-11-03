@@ -31,7 +31,7 @@ def _verified_copy(
 ) -> bool:
     """Check the *current* regular bytes; SQLite state alone is not proof."""
     if not (type(path_text) is str and path_text and type(sha256) is str
-            and len(sha256) == 64 and type(size) is int and size >= 0):
+            and len(sha256) == 64 and type(size) is int and size > 0):
         return False
     try:
         alias = Path(os.path.abspath(root.expanduser()))
@@ -147,7 +147,7 @@ def plan_existing_verified_presence(
         origins_raw = db.execute(
             "SELECT o.origin_link_id, o.identity_id, o.evidence_ref,"
             "s.branch_id, s.edition_id, s.right_id, s.reference_kind,"
-            "a.sha256, a.size "
+            "o.artifact_id, a.sha256, a.size "
             "FROM origin_links AS o "
             "JOIN source_references AS s "
             "ON s.source_reference_id=o.source_reference_id "
@@ -172,7 +172,7 @@ def plan_existing_verified_presence(
         # must not consume this source's finite verification budget.
         placements_raw = db.execute(
             "SELECT p.placement_id,p.path,p.identity_id,p.state,"
-            "a.sha256,a.size FROM placements AS p "
+            "p.artifact_id,a.sha256,a.size FROM placements AS p "
             "JOIN artifacts AS a ON a.artifact_id=p.artifact_id "
             "WHERE p.identity_id=? AND p.state='present' AND EXISTS ("
             "SELECT 1 FROM origin_links AS o "
@@ -195,12 +195,15 @@ def plan_existing_verified_presence(
     hashes: set[str] = set()
     # A stale or disabled connection is not an admitted current right.
     # Retain its historical SQL rows, but do not report a present entitlement.
-    for link_id, identity_id, evidence_ref, branch, edition, right, kind, sha, size in (
+    for link_id, identity_id, evidence_ref, branch, edition, right, kind, artifact_id, sha, size in (
         origins_raw if bound else ()
     ):
         try:
             key = SourceKey(scope, edition, right, kind, branch)
-            if key not in source_keys or type(evidence_ref) is not str or not evidence_ref:
+            if (key not in source_keys or type(evidence_ref) is not str
+                    or not evidence_ref or type(sha) is not str
+                    or type(size) is not int or size <= 0
+                    or artifact_id != "sha256:" + sha):
                 continue
             origin = OriginEvidence(
                 kind="provider", artifact_sha256=sha, source=key,
@@ -215,8 +218,8 @@ def plan_existing_verified_presence(
 
     placements = []
     if owner_dir and hashes:
-        for placement_id, path, identity, state, sha, size in placements_raw:
-            if sha not in hashes:
+        for placement_id, path, identity, state, artifact_id, sha, size in placements_raw:
+            if sha not in hashes or artifact_id != "sha256:" + sha:
                 continue
             valid = _verified_copy(
                 path, root=library_root, owner_directory=owner_dir,
