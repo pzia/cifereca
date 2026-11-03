@@ -75,7 +75,7 @@ def test_confirmed_or_legacy_borrow_preserves_success(caplog, receipt):
         with caplog.at_level(logging.INFO, logger=logger.name):
             runner.submit(
                 "Demande", lambda: receipt, kind="borrow",
-                origin="user", success_toast="Reçu",
+                origin="user",
             )
             flush()
         assert [args[3] for name, args in displayed if name == "finished"] == [True]
