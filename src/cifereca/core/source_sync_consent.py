@@ -104,6 +104,12 @@ def supported(service, account):
                 and session.credential_id == account.credential_id
                 and all(callable(getattr_static(session, name, None)) for name in (
                     'downloadable_resource_snapshot', 'downloadable_selected_offer_snapshot',
+                ))
+                # A guarded-only v2 producer needs no unguarded GET entry point:
+                # Core supplies its live, source-revision-pinned admission lease.
+                and any(callable(getattr_static(session, name, None)) for name in (
+                    'downloadable_selected_delivery_candidate_runtime_guarded',
+                    'downloadable_selected_delivery_candidate_guarded',
                     'downloadable_selected_delivery_candidate',
                 )))
     except (AttributeError, KeyError, TypeError, ValueError):
