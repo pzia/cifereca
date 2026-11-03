@@ -227,7 +227,7 @@ def test_deep_scan_reuses_hash_when_size_and_mtime_are_unchanged(monkeypatch):
             service.close()
 
 
-def test_recent_acquisitions_enriches_cover_from_active_loan():
+def test_recent_acquisitions_refuses_unattested_active_loan_cover():
     with tempfile.TemporaryDirectory() as td:
         service = _service(td)
         try:
@@ -241,7 +241,9 @@ def test_recent_acquisitions_enriches_cover_from_active_loan():
                 thumbnail_url="https://example.test/cover.jpg", due_at="2099-01-01T00:00:00Z",
             )]
             recent = service.recent_acquisitions(identity_id="default")
-            assert recent[0]["thumbnail_url"] == "https://example.test/cover.jpg"
+            # Matching title/item and profile do not attest the exact borrower
+            # or the provenance of this physical file.
+            assert recent[0]["thumbnail_url"] is None
         finally:
             service.close()
 
@@ -312,8 +314,9 @@ def test_recent_covers_ignore_foreign_or_unscoped_legacy_backup_even_with_matchi
             assert selected["item_id"] == "shared-edition"
             assert selected["thumbnail_url"] is None
 
-            # A canonical entitlement of this profile remains a valid
-            # descriptive cover source; no historical backup is consulted.
+            # A descriptive entitlement from this identity is still not an
+            # OriginLink to the exact physical placement. The positive case
+            # with attested provenance lives in test_core_p0_2797_recent_exact_origin_covers.
             service.storage.entitlement_put({
                 "provider_id": "kobo", "credential_id": "owned-card",
                 "account_id": "owned-account", "identity_id": "default",
@@ -323,7 +326,7 @@ def test_recent_covers_ignore_foreign_or_unscoped_legacy_backup_even_with_matchi
             })
             again = service.recent_acquisitions(identity_id="default")
             chosen = next(x for x in again if x["path"] == str(book))
-            assert chosen["thumbnail_url"] == "https://example.test/owner-cover.jpg"
+            assert chosen["thumbnail_url"] is None
         finally:
             service.close()
 
