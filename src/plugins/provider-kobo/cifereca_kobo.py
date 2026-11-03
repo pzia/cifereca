@@ -473,6 +473,12 @@ class KoboSession(ProviderSession):
                 # The optional scope probe must not deny ordinary library
                 # access; it fails closed for delegated requests only.
                 pass
+        # /status without a bearer always reports acquisition_access=unknown
+        # on KVault v2.3.3. The bearer-scoped view is authoritative for the
+        # currently configured credential and supports actionable diagnostics.
+        access = authenticated_status.get("acquisition_access")
+        if type(access) is str and access in _PUBLIC_ACQUISITION_ACCESS:
+            self.acquisition_access = access
         delegation_details = self.capability_details.get("acquisition_delegation", {})
         self.supports_acquisition_delegation = (
             self.client is connecting_client
