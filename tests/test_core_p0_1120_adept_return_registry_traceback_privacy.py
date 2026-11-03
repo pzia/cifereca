@@ -30,50 +30,38 @@ class HostileInventoryError(RuntimeError):
     OSError(PRIVATE), RuntimeError(PRIVATE), HostileInventoryError(PRIVATE),
 ])
 @pytest.mark.parametrize("after_return", [False, True])
-def test_adept_inventory_error_has_no_private_chain_in_exportable_traceback(
+def test_retired_adept_return_never_exports_private_inventory_traceback(
     tmp_path, error, after_return,
 ):
     service = _service(tmp_path)
     acquisition_id = _acquisition(service, tmp_path)
-    local = Path(service.storage.acquisition_get(acquisition_id)["metadata"]["path"])
+    before = service.storage.acquisition_get(acquisition_id)
+    local = Path(before["metadata"]["path"])
     before_bytes = local.read_bytes()
     seen = {"inventory": 0, "mutation": 0}
 
     def inventory(_profile):
         seen["inventory"] += 1
-        if after_return and seen["inventory"] == 1:
-            return {"loans": [_loan(returned=False, token_present=True)]}
         raise error
 
     def mutate(_request):
         seen["mutation"] += 1
-        return {"ok": True, "metadata": {"runtime_result": {
-            "ok": True, "operation": "loan_return",
-            "loan_id": "registry-id", "profile": "hb",
-        }}}
+        raise error
 
     service._kobo_adapter = lambda: NS(loans=inventory)
     service.execute_drm_mutation = mutate
     try:
         with pytest.raises(AttentionRequired) as caught:
             service.return_adept_acquisition(acquisition_id)
-        assert caught.value.code == "adept_return_verification_required"
+        assert caught.value.code == "loan_return_removed"
         assert caught.value.__cause__ is None
-        assert caught.value.__suppress_context__ is True
-        assert str(caught.value) == (
-            "État ADEPT non confirmé. Vérifiez le prêt ; le fichier est conservé."
-        )
+        assert str(caught.value) == "Restitution volontaire retirée de Cifereca."
         rendered = "".join(traceback.format_exception(caught.value))
         assert "SECRET_ADOBE_SESSION" not in rendered
         assert "/home/reader/" not in rendered
         assert "HostileInventoryError" not in rendered
-        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
-        assert binding["return_verification"] == "verification_failed"
-        assert binding["return_available"] is False
+        assert service.storage.acquisition_get(acquisition_id) == before
         assert local.read_bytes() == before_bytes
-        assert seen == {
-            "inventory": 2 if after_return else 1,
-            "mutation": 1 if after_return else 0,
-        }
+        assert seen == {"inventory": 0, "mutation": 0}
     finally:
         service.close()
