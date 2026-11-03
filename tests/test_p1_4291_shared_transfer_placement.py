@@ -262,7 +262,11 @@ def test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider(
         "identity_id": "alice", "provider_id": "bnf-pret",
         "source_item_id": "book", "state": "present", "metadata": {},
     })
+    # Match the canonical local catalogue key so a subsequent inventory
+    # scan updates this notice instead of creating an ambiguous duplicate.
+    from cifereca.acquisition_engine import stable_id
     service.storage.catalog_entry_put({
+        "catalog_entry_id": stable_id("catalog", pid),
         "artifact_id": artifact_id, "placement_id": pid,
         "title": "Synthetic PDF", "identity_id": "alice",
         "provider_id": "bnf-pret", "item_id": "book",
