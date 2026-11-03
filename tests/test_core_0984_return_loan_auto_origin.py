@@ -78,9 +78,10 @@ def test_return_action_with_manual_only_never_claims_or_mutates(tmp_path):
         row = service.storage.acquisition_get("adept-01")
         service.storage.acquisition_put({**row, "strategy": "manual"})
         service.execute_drm_mutation = lambda _req: pytest.fail("Adobe mutation forbidden")
-        result = service.return_loan_prefer_adept(loan)
-        assert result["status"] == "provider_action_available"
-        assert result["retry"] == "provider_action_explicit"
+        from cifereca.plugin_api import AttentionRequired
+        with pytest.raises(AttentionRequired) as exc:
+            service.return_loan_prefer_adept(loan)
+        assert exc.value.code == "loan_return_removed"
         assert paris.posts == 0
         assert service.verify_loan_return(loan)["status"] == "not_requested"
     finally:

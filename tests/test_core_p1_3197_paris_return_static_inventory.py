@@ -6,11 +6,26 @@ Legacy positive loans remain observable; absence needs typed DILICOM coverage.
 from __future__ import annotations
 
 import pytest
+import json
+from cifereca.core.loan_return_guard import return_key
+from cifereca.plugin_api import AttentionRequired
 
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 from tests.test_core_0982_loan_return_reconciliation import (
     Session, _library, _loan,
 )
+
+
+def _seed_historical_return(service, loan):
+    key = return_key(
+        loan.source_provider, loan.source_credential,
+        loan.source_account_id, loan.id,
+    )
+    assert service.storage.loan_return_claim(key, "pre-upgrade")[0] is True
+    row = service.storage.loan_return_state(key)
+    row["requested_at"] = "2026-01-01T00:00:00+00:00"
+    service.storage.metadata_set(key, json.dumps(row))
+    return key
 
 
 @pytest.mark.parametrize("legacy_status", [
@@ -22,15 +37,16 @@ def test_empty_v1_never_attests_absence_or_replays_return(tmp_path, legacy_statu
     session.last_loan_errors = legacy_status
     service = _library(tmp_path, session=session)
     try:
-        first = service.return_digital(loan)
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        _seed_historical_return(service, loan)
+        first = service.verify_return_digital(loan)
         assert first["status"] == "verification_unavailable"
         assert first["verification"] == "unavailable"
         assert first["provider_inventory_verified"] is False
-        assert first["request_accepted"] is True
-        assert session.posts == [(loan.id, "linked-b")]
-        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b", "linked-b"]
+        assert session.posts == [] and session.checks == ["linked-b"]
     finally:
         service.close()
 
@@ -40,11 +56,11 @@ def test_legacy_positive_presence_remains_observable(tmp_path):
     session = Session([loan])
     service = _library(tmp_path, session=session)
     try:
-        first = service.return_digital(loan)
+        _seed_historical_return(service, loan)
+        first = service.verify_return_digital(loan)
         assert first["status"] == "still_active"
         assert first["verification"] == "still_present"
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b"]
+        assert session.posts == [] and session.checks == ["linked-b"]
     finally:
         service.close()
 
@@ -54,7 +70,8 @@ def test_pending_legacy_return_requires_subsequent_typed_proof(tmp_path):
     session = Session([])
     service = _library(tmp_path, session=session)
     try:
-        assert service.return_digital(loan)["status"] == "verification_unavailable"
+        _seed_historical_return(service, loan)
+        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
         session.last_loan_errors = []
         assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
         attest_paris_dilicom_complete(session, credential_id="paris-a")
@@ -62,7 +79,7 @@ def test_pending_legacy_return_requires_subsequent_typed_proof(tmp_path):
         assert result["status"] == "provider_return_confirmed"
         assert result["verification"] == "provider_absent"
         assert result["provider_inventory_verified"] is True
-        assert session.posts == [(loan.id, "linked-b")]
+        assert session.posts == []
         assert session.checks == ["linked-b"] * 3
     finally:
         service.close()
@@ -82,15 +99,16 @@ def test_paris_return_static_reader_check_rejects_hostile_property_without_post(
     session = Hostile([loan])
     service = _library(tmp_path, session=session)
     try:
-        result = service.return_digital(loan)
+        _seed_historical_return(service, loan)
+        result = service.verify_return_digital(loan)
         assert result["status"] == "verification_unavailable"
         assert result["provider_inventory_verified"] is False
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == []
+        assert session.posts == session.checks == []
         assert visited == []
-        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
-        assert len(session.posts) == 1
-        assert visited == []
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert session.posts == session.checks == [] and visited == []
     finally:
         service.close()
 

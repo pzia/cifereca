@@ -124,28 +124,41 @@ class Core0917(unittest.TestCase):
         for result in [{'ok':False},{'ok':True,'profile':'other'},{'ok':True,'loan_id':123}]:
             with self.assertRaises(ValueError):capture_binding(result,profile_name='hb',profile_id='stable')
     def returned_fixture(self):
-        self.service._adept_return_capability=Mock(return_value=True)
         path=self.book('old')
         b=capture_binding({'ok':True,'profile':'original','loan_id':'exact-adept'},profile_name='original',profile_id='stable-profile')
         aid=self.storage.acquisition_put({'identity_id':'stable','provider_id':'paris','credential_id':'c','item_id':'provider-id','status':'complete','metadata':{'path':str(path),'adept_binding':b}})
-        self.service.kobo_profiles=Mock(return_value=[{'profile_id':'stable-profile','name':'renamed-profile'}])
-        result={'ok':True,'operation':'return','metadata':{'runtime_result':{'ok':True,'operation':'loan_return','loan_id':'exact-adept','profile':'renamed-profile'}}}
-        self.service.execute_drm_mutation=Mock(return_value=result)
-        self.service._kobo_adapter=Mock(return_value=NS(loans=lambda name:{"loans":[{"id":"exact-adept","expired":False,"token_present":not bool(self.service.execute_drm_mutation.call_count),"returned":bool(self.service.execute_drm_mutation.call_count)}]}))
-        return aid,path,result
-    def test_return_resolves_original_profile_and_keeps_file(self):
-        aid,path,result=self.returned_fixture();self.assertTrue(self.service.return_adept_acquisition(aid)['ok'])
-        req=self.service.execute_drm_mutation.call_args.args[0]
-        self.assertEqual(req.metadata['adept_loan_id'],'exact-adept');self.assertEqual(req.metadata['adept_profile_name'],'renamed-profile')
-        self.assertTrue(path.is_file());self.assertEqual(self.storage.acquisition_get(aid)['metadata']['adept_binding']['loan_state'],'returned')
-        self.service.return_adept_acquisition(aid);self.service.execute_drm_mutation.assert_called_once()
-    def test_unconfirmed_return_leaves_state_and_file(self):
-        aid,path,result=self.returned_fixture();result['metadata']['runtime_result']['loan_id']='other'
-        with self.assertRaises(ProviderConfigurationError):self.service.return_adept_acquisition(aid)
-        self.assertEqual(self.storage.acquisition_get(aid)['metadata']['adept_binding']['loan_state'],'active');self.assertTrue(path.is_file())
-    def test_missing_origin_profile_prevents_return(self):
-        aid,path,result=self.returned_fixture();self.service.kobo_profiles.return_value=[]
-        with self.assertRaises(AttentionRequired):self.service.return_adept_acquisition(aid)
+        self.service.kobo_profiles=Mock(side_effect=AssertionError('retired return read profiles'))
+        self.service.execute_drm_mutation=Mock(side_effect=AssertionError('retired return invoked mutation'))
+        self.service._kobo_adapter=Mock(side_effect=AssertionError('retired return opened ADEPT'))
+        return aid,path
+
+    def test_retired_adept_return_refuses_before_runtime_and_keeps_file(self):
+        aid,path=self.returned_fixture()
+        before=self.storage.acquisition_get(aid)
+        with self.assertRaises(AttentionRequired) as caught:
+            self.service.return_adept_acquisition(aid)
+        self.assertEqual(caught.exception.code,'loan_return_removed')
+        self.assertEqual(self.storage.acquisition_get(aid),before)
+        self.assertTrue(path.is_file())
+        self.service.execute_drm_mutation.assert_not_called()
+        self.service.kobo_profiles.assert_not_called()
+        self.service._kobo_adapter.assert_not_called()
+
+    def test_retired_adept_return_ignores_historical_origin_mismatch(self):
+        aid,path=self.returned_fixture()
+        self.service.current_identity=NS(identity_id='other')
+        with self.assertRaises(AttentionRequired) as caught:
+            self.service.return_adept_acquisition(aid)
+        self.assertEqual(caught.exception.code,'loan_return_removed')
+        self.assertEqual(self.storage.acquisition_get(aid)['metadata']['adept_binding']['loan_state'],'active')
+        self.assertTrue(path.is_file())
+        self.service.kobo_profiles.assert_not_called()
+
+    def test_missing_origin_profile_does_not_reactivate_adept_return(self):
+        aid,path=self.returned_fixture()
+        with self.assertRaises(AttentionRequired) as caught:
+            self.service.return_adept_acquisition(aid)
+        self.assertEqual(caught.exception.code,'loan_return_removed')
         self.service.execute_drm_mutation.assert_not_called()
     def test_builtin_inventory_has_actual_version(self):
         from cifereca.plugins.manager import PluginManager
@@ -153,12 +166,13 @@ class Core0917(unittest.TestCase):
         manager=NS(packages=NS(all_packages=lambda:{}),_builtin_ui=True)
         self.assertEqual(PluginManager.package_inventory(manager)[0]['active'],__version__)
 
-    def test_return_lookup_is_scoped_to_identity_and_artifact(self):
-        aid,path,result=self.returned_fixture();row=self.storage.acquisition_get(aid)
+    def test_retired_return_lookup_does_not_advertise_a_legacy_binding(self):
+        aid,path=self.returned_fixture();row=self.storage.acquisition_get(aid)
         self.storage.acquisition_put({**row,'artifact_id':'sha256:artifact'})
-        self.assertEqual(self.service.adept_return_for_artifact('sha256:artifact','stable')['acquisition_id'],aid)
+        self.assertIsNone(self.service.adept_return_for_artifact('sha256:artifact','stable'))
         self.assertIsNone(self.service.adept_return_for_artifact('sha256:artifact','other'))
         self.assertIsNone(self.service.adept_return_for_artifact('sha256:other','stable'))
+        self.service._kobo_adapter.assert_not_called()
     def test_binding_origin_auto_profile_is_captured_without_changing_identity(self):
         self.service.kobo_profiles=Mock(return_value=[{'profile_id':'origin','name':'hb'}])
         self.assertEqual(self.service._originating_adept_profile_id('stable','hb'),'origin')

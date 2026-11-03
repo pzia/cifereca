@@ -10,6 +10,7 @@ import ast
 from pathlib import Path
 
 import pytest
+from cifereca.plugin_api import AttentionRequired
 
 from cifereca.core.loan_return_guard import return_key
 from cifereca.core.return_adept_orchestrator import (
@@ -51,12 +52,10 @@ def test_explicit_pnb_action_does_not_trust_bare_adobe_boolean(
         assert adobe["adobe_verified"] is True
         assert not adobe_return_attested(adobe)
         assert public_state(adobe)["adobe_return_confirmed"] is False
-        outcome = svc.return_digital(loan, explicit_retry=True)
-        assert outcome == {
-            **public_state(adobe), "reason": "adobe_return_takes_precedence",
-        }
-        assert paris.posts == []
-        assert paris.checks == []
+        with pytest.raises(AttentionRequired) as failure:
+            svc.return_digital(loan, explicit_retry=True)
+        assert failure.value.code == "loan_return_removed"
+        assert paris.posts == paris.checks == []
         assert svc.storage.loan_return_state(
             return_key("paris", "paris-a", "linked-b", loan.id),
         ) is None
@@ -76,33 +75,32 @@ def test_verified_adobe_phase_keeps_separate_explicit_pnb_action(tmp_path):
             svc, loan, status="adobe_return_confirmed", adobe_verified=True,
         )
         assert adobe_return_attested(adobe)
-        blocked = svc.return_digital(loan, explicit_retry=False)
-        assert blocked["reason"] == "adobe_return_takes_precedence"
-        assert paris.posts == [] and paris.checks == []
-        # Only a deliberate True with fresh proof of a still-active Paris
-        # loan may perform the provider return. Never re-run Adobe.
-        result = svc.return_digital(loan, explicit_retry=True)
-        assert result["status"] == "still_active"
-        assert len(paris.posts) == 1
-        assert len(paris.checks) == 2
+        for retry in (False, True):
+            with pytest.raises(AttentionRequired) as failure:
+                svc.return_digital(loan, explicit_retry=retry)
+            assert failure.value.code == "loan_return_removed"
+        assert paris.posts == paris.checks == []
+        assert svc.storage.loan_return_state(
+            adept_return_key("paris", "paris-a", "linked-b", loan.id),
+        ) == adobe
+        assert svc.storage.loan_return_state(
+            return_key("paris", "paris-a", "linked-b", loan.id),
+        ) is None
     finally:
         svc.close()
 
 
-def test_provider_gate_reuses_exact_core_adobe_attestation_predicate():
+def test_provider_return_entry_is_inert_before_any_adobe_or_pnb_check():
     path = (Path(__file__).resolve().parents[1] /
             "src/cifereca/core/provider_loan_return.py")
     tree = ast.parse(path.read_text(encoding="utf-8"))
     operation = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                      and node.name == "return_digital")
-    calls = {ast.unparse(node.func): node.lineno for node in ast.walk(operation)
-             if isinstance(node, ast.Call)
-             and ast.unparse(node.func) in {
-                 "adobe_return_attested", "self.verify_paris_return_inventory",
-                 "self.storage.loan_return_claim", "session.return_digital",
-             }}
-    assert (calls["adobe_return_attested"]
-            < calls["self.verify_paris_return_inventory"]
-            < calls["self.storage.loan_return_claim"]
-            < calls["session.return_digital"])
-    assert "adobe.get('adobe_verified')" not in ast.unparse(operation)
+    assert isinstance(operation.body[1], ast.Raise)
+    source = ast.unparse(operation)
+    assert "loan_return_removed" in source
+    for forbidden in (
+        "adobe_return_attested", "verify_paris_return_inventory",
+        "loan_return_claim", "session.return_digital",
+    ):
+        assert forbidden not in source

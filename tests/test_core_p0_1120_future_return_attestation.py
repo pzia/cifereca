@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from cifereca.plugin_api import AttentionRequired
 
 from cifereca.core.loan_return_guard import (
     _verification_time_attested, provider_absence_attested, public_return_state,
@@ -87,7 +88,9 @@ def test_future_confirmed_pnb_checkpoint_is_read_only_rechecked_without_post(tmp
         assert refreshed["verification"] == "provider_absent"
         assert session.posts == []
         assert session.checks == ["linked-b"]
-        assert service.return_digital(loan)["provider_inventory_verified"] is True
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
         assert session.posts == []
     finally:
         service.close()
@@ -114,12 +117,17 @@ def test_future_confirmed_adobe_first_checkpoint_rechecks_paris_without_replayin
         assert display["retry"] == "verification_only"
         assert service.storage.loan_return_state(key) == row
 
-        fresh = service.return_loan_prefer_adept(loan)
-        assert fresh["status"] == "paris_return_confirmed"
-        assert fresh["provider_return_confirmed"] is True
-        assert fresh["paris_verification"] == "provider_absent"
-        assert calls["mutations"] == 0
+        projected = service.verify_loan_return(loan)
+        assert projected["status"] == "partial"
+        assert projected["provider_return_confirmed"] is False
+        assert projected["paris_verification"] == "not_checked"
+        assert projected["retry"] == "none"
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_loan_prefer_adept(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert calls["mutations"] == calls["inventory"] == 0
         assert paris.posts == 0
-        assert paris.accounts_read == ["linked-123"]
+        assert paris.accounts_read == []
+        assert service.storage.loan_return_state(key) == row
     finally:
         service.close()

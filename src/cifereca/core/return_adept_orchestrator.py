@@ -131,133 +131,14 @@ def return_preflight_code(exc: BaseException) -> str:
     return "loan_return_borrower_unproven"
 
 
-# LibraryService retains the shared loan-operation lock. Dependencies and the
-# historical public guard helpers are imported/injected by its facade at call
-# time; the mutation/checkpoint/verification body below keeps its original order.
+# Retired mutation helper: kept importable only to reject historical callers.
+# Its non-mutating receipt/status projection remains available above.
 def return_loan_prefer_adept(
     self, loan: Any, *, uuid, return_ref, adept_return_key, public_state,
     AttentionRequired, _TRACE_LOG,
 ) -> dict[str, Any]:
-    """Adobe-first, then Paris inventory; never automatically send PNB POST.
-
-    Durable claim is written *before* ADEPT. A retry, double-click or
-    restart only reads ADEPT/Paris inventories: Adobe is never re-mutated.
-    """
-
-    if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-        return self.return_digital(loan)
-    try:
-        account, _session, pnb_key = self._return_loan_identity(loan)
-    except AttentionRequired as exc:
-        code = return_preflight_code(exc)
-        return {
-            "status": "failed", "scope": "adobe_first_paris",
-            "code": code, "retry": "resolve_identity",
-        }
-    borrower = str(account.unique_id or "primary")
-    key = adept_return_key(
-        loan.source_provider, loan.source_credential, borrower, str(loan.id)
+    """Reject the obsolete Adobe-first mutation before any provider access."""
+    raise AttentionRequired(
+        "Restitution volontaire retirée de Cifereca.",
+        code="loan_return_removed",
     )
-    source = self.adept_return_status_for_loan(loan)
-    if type(source) is not dict:
-        source = {}
-    raw_id = source.get("acquisition_id")
-    acquisition_id = (
-        raw_id if type(raw_id) is str and 0 < len(raw_id) <= 256 else None
-    )
-    if acquisition_id is None:
-        return return_adept_origin_preflight.missing_acquisition_outcome(
-            source, public_origin_status=_public_origin_status,
-        )
-    acquisition = self.storage.acquisition_get(acquisition_id)
-    if acquisition is None:
-        return {
-            "status": "adept_return_binding_required",
-            "scope": "adobe_first_paris", "retry": "resolve_identity",
-        }
-
-    # A previous PNB mutation must be settled separately; never send both.
-    if self.storage.loan_return_state(pnb_key) is not None:
-        return {
-            "status": "partial", "scope": "adobe_first_paris",
-            "reason": "provider_return_already_requested",
-            "retry": "verification_only",
-        }
-    previous = self.storage.loan_return_state(key)
-    if previous is None:
-        # Pure preflight decision precedes the *first* durable return claim.
-        refusal = return_adept_origin_preflight.unready_to_return_outcome(
-            source, public_origin_status=_public_origin_status,
-        )
-        if refusal is not None:
-            return refusal
-        claimed, record = self.storage.loan_return_claim(key, uuid.uuid4().hex)
-        if not claimed:
-            previous = record
-    if previous is not None:
-        if paris_return_attested(previous):
-            return public_state(previous)
-        op_id = str(previous.get("operation_id") or "")
-        if not adobe_return_attested(previous):
-            if not self._adobe_return_inventory_confirmed(acquisition):
-                return public_state(previous)
-            record = self.storage.loan_return_transition(
-                key, op_id, status="adobe_return_confirmed",
-                verification="adobe_confirmed", adobe_verified=True,
-            ) or previous
-        else:
-            record = previous
-    else:
-        op_id = str(record.get("operation_id") or "")
-        if not op_id:
-            return {"status": "failed", "scope": "adobe_first_paris",
-                    "retry": "verification_only"}
-        self.storage.loan_return_transition(
-            key, op_id, status="adobe_return_requested",
-            verification="adobe_pending", adobe_verified=False,
-        )
-        _TRACE_LOG.info(
-            "TRACE return core phase=adobe_return_requested ref=%s",
-            return_ref(key),
-        )
-        try:
-            result = self.return_adept_acquisition(acquisition_id)
-            if result.get("ok") is not True or result.get("verification") != "confirmed":
-                raise ValueError("ADEPT return not confirmed")
-        except Exception:
-            # An ADEPT runtime may supply an exception type containing local
-            # profile/account information. Persist only one closed reason.
-            record = self.storage.loan_return_transition(
-                key, op_id, status="failed", verification="adobe_unavailable",
-                adobe_verified=False, error_type="adept_return_unavailable",
-            )
-            return public_state(record or {"status": "failed"})
-        record = self.storage.loan_return_transition(
-            key, op_id, status="adobe_return_confirmed",
-            verification="adobe_confirmed", adobe_verified=True,
-        )
-        _TRACE_LOG.info(
-            "TRACE return core phase=adobe_return_confirmed ref=%s",
-            return_ref(key),
-        )
-
-    if not record or record.get("adobe_verified") is not True:
-        return public_state(record or {"status": "failed"})
-    op_id = str(record.get("operation_id") or "")
-    self.storage.loan_return_transition(
-        key, op_id, status="paris_check_pending",
-        verification="not_checked", adobe_verified=True,
-    )
-    paris = self.verify_paris_return_inventory(loan)
-    status = (
-        "paris_return_confirmed"
-        if paris["verification"] == "provider_absent" else "partial"
-    )
-    finished = self.storage.loan_return_transition(
-        key, op_id, status=status,
-        verification=paris["verification"], adobe_verified=True,
-    )
-    return public_state(finished or {
-        "status": status, "adobe_verified": True,
-        "verification": paris["verification"],
-    })

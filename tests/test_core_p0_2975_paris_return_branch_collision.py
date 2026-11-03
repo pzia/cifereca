@@ -10,6 +10,9 @@ from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 from dataclasses import replace
 import json
 
+import pytest
+from cifereca.plugin_api import AttentionRequired
+
 from cifereca.core.loan_return_verification import _paris_loan_presence
 from tests.test_core_0982_loan_return_reconciliation import (
     _library, _loan, Session,
@@ -17,10 +20,8 @@ from tests.test_core_0982_loan_return_reconciliation import (
 from tests.test_core_0984_adept_first_paris_reconcile import setup as adept_setup
 
 
-def test_pnb_same_id_in_syracuse_does_not_confirm_dilicom_return(tmp_path):
+def test_retired_pnb_does_not_mutate_on_cross_branch_collision(tmp_path):
     loan = _loan()
-    # Exact upstream provider borrower/credential and loan ID, but a
-    # DIFFERENT supplier branch. The inventory does not identify this right.
     other_branch = replace(
         loan, provider="SYRACUSE", medium="physical",
         title="PRIVATE_SYRACUSE_TITLE",
@@ -28,31 +29,11 @@ def test_pnb_same_id_in_syracuse_does_not_confirm_dilicom_return(tmp_path):
     session = Session([other_branch])
     service = _library(tmp_path, session=session)
     try:
-        result = service.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b"]
-        assert "PRIVATE_SYRACUSE_TITLE" not in json.dumps(result)
-        # Retry is verification-only, never a second borrower POST.
-        again = service.verify_return_digital(loan)
-        assert again["status"] == "verification_unavailable"
-        assert again["provider_inventory_verified"] is False
-        assert len(session.posts) == 1
-        # Later exact positive evidence establishes presence without POST.
-        session.inventory = [loan, other_branch]
-        current = service.verify_return_digital(loan)
-        assert current["status"] == "still_active"
-        assert len(session.posts) == 1
-        # A typed DILICOM pagination attestation is required before
-        # an unrelated row can prove the requested loan absent.
-        session.inventory = [replace(loan, id="unrelated")]
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        confirmed = service.verify_return_digital(loan)
-        assert confirmed["status"] == "provider_return_confirmed"
-        assert confirmed["provider_inventory_verified"] is True
-        assert len(session.posts) == 1
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        assert service.loan_return_state(loan) is None
     finally:
         service.close()
 
@@ -98,7 +79,7 @@ def test_presence_rule_is_exact_branch_and_does_not_infer_absence():
 
 
 
-def test_pnb_same_id_and_provider_but_other_medium_is_not_presence(tmp_path):
+def test_retired_pnb_cannot_mutate_when_same_id_has_other_medium(tmp_path):
     loan = _loan()
     other_medium = replace(
         loan, medium="physical", title="SYNTHETIC_PHYSICAL_ONLY",
@@ -106,18 +87,11 @@ def test_pnb_same_id_and_provider_but_other_medium_is_not_presence(tmp_path):
     session = Session([other_medium])
     service = _library(tmp_path, session=session)
     try:
-        result = service.return_digital(loan)
-        assert result["status"] == "verification_unavailable"
-        assert result["verification"] == "unavailable"
-        assert result["provider_inventory_verified"] is False
-        assert "SYNTHETIC_PHYSICAL_ONLY" not in json.dumps(result)
-        assert session.posts == [(loan.id, "linked-b")]
-        assert service.verify_return_digital(loan)["status"] == "verification_unavailable"
-        assert len(session.posts) == 1
-        # An exact digital observation supersedes only the same branch.
-        session.inventory = [other_medium, loan]
-        assert service.verify_return_digital(loan)["status"] == "still_active"
-        assert len(session.posts) == 1
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_digital(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        assert service.loan_return_state(loan) is None
     finally:
         service.close()
 

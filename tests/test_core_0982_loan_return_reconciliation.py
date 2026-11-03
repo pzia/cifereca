@@ -1,14 +1,14 @@
-"""P0 #982: distinguish accepted Paris POST from confirmed borrower inventory.
+"""P1 #4048: archived Paris return receipts remain readable, but cannot post.
 
-All requests are fakes: NO network, Adobe mutation, file deletion, GTK, or
-additional CI workflow. Durable SQLite claims prevent duplicate POSTs across
-threads and restarts, including cases where the first POST timed out.
+All requests use fake sessions and temporary SQLite. These tests preserve
+historical claim/inventory evidence without executing a voluntary return.
 """
 from __future__ import annotations
 
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from types import SimpleNamespace as NS
 from threading import Barrier, Thread
@@ -74,127 +74,137 @@ def _library(tmp_path, *, session=None):
     return svc
 
 
-def test_accepted_post_but_still_present_does_not_claim_return_or_repeat(tmp_path):
+
+def test_retired_return_never_posts_even_when_borrower_is_still_active(tmp_path):
     loan = _loan()
     session = Session([loan])
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(loan)
-        assert result["status"] == "still_active"
-        assert result["request_accepted"] is True
-        assert result["provider_inventory_verified"] is False
-        assert session.posts == [("loan-a", "linked-b")]
-        assert session.checks == ["linked-b"]
-        # Double-click AND a delayed repeat must not send a second POST.
-        assert svc.return_digital(loan)["status"] == "still_active"
-        assert svc.return_digital(loan)["status"] == "still_active"
-        assert len(session.posts) == 1
-        assert svc.loan_return_state(loan) == result
-        # No local rights, library files or catalog rows are ever realized here.
+        for _attempt in range(3):
+            with pytest.raises(AttentionRequired) as err:
+                svc.return_digital(loan)
+            assert err.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        assert svc.loan_return_state(loan) is None
         assert svc.storage.entitlements(provider_id="paris") == []
     finally:
         svc.close()
 
 
-def test_provider_absence_from_exact_borrower_confirms_and_survives_restart(tmp_path):
+def test_historical_claim_survives_restart_without_new_post(tmp_path):
+    from cifereca.core.loan_return_guard import return_key
+
+    loan = _loan()
+    session = Session([])
+    svc = _library(tmp_path, session=session)
+    key = return_key("paris", "paris-a", "linked-b", loan.id)
+    try:
+        assert svc.storage.loan_return_claim(key, "before-upgrade")[0] is True
+        before = svc.storage.loan_return_state(key)
+        with pytest.raises(AttentionRequired) as err:
+            svc.return_digital(loan)
+        assert err.value.code == "loan_return_removed"
+        assert svc.storage.loan_return_state(key) == before
+    finally:
+        svc.close()
+    reopened = _library(tmp_path, session=session)
+    try:
+        with pytest.raises(AttentionRequired):
+            reopened.return_digital(loan, explicit_retry=True)
+        assert reopened.storage.loan_return_state(key) == before
+        assert session.posts == session.checks == []
+    finally:
+        reopened.close()
+
+
+def test_legacy_exact_absence_may_be_verified_read_only(tmp_path):
+    from cifereca.core.loan_return_guard import return_key
+
     loan = _loan()
     session = Session([])
     attest_paris_dilicom_complete(session, credential_id="paris-a")
     svc = _library(tmp_path, session=session)
+    key = return_key("paris", "paris-a", "linked-b", loan.id)
     try:
-        result = svc.return_digital(loan)
+        assert svc.storage.loan_return_claim(key, "before-upgrade")[0] is True
+        # A fresh claim is still in-flight; simulate a receipt from an older
+        # installation before exercising read-only inventory recovery.
+        archived = svc.storage.loan_return_state(key)
+        archived["requested_at"] = "2026-01-01T00:00:00+00:00"
+        svc.storage.metadata_set(key, json.dumps(archived))
+        result = svc.verify_return_digital(loan)
         assert result["status"] == "provider_return_confirmed"
         assert result["verification"] == "provider_absent"
         assert result["provider_inventory_verified"] is True
-        assert session.posts == [("loan-a", "linked-b")]
+        assert session.posts == []
         assert session.checks == ["linked-b"]
+        with pytest.raises(AttentionRequired):
+            svc.return_digital(loan)
+        assert session.posts == []
     finally:
         svc.close()
-    restarted = _library(tmp_path, session=session)
-    try:
-        assert restarted.return_digital(loan)["status"] == "provider_return_confirmed"
-        assert restarted.loan_return_state(loan)["verification"] == "provider_absent"
-        assert len(session.posts) == 1
-    finally:
-        restarted.close()
 
 
-def test_partial_dilicom_failure_never_verifies_absence(tmp_path):
+def test_partial_inventory_does_not_confirm_historical_return(tmp_path):
+    from cifereca.core.loan_return_guard import return_key
+
     loan = _loan()
     session = Session([])
     session.last_loan_errors = [{"upstream": "DILICOM", "type": "TimeoutError"}]
     svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(loan)
+        key = return_key("paris", "paris-a", "linked-b", loan.id)
+        assert svc.storage.loan_return_claim(key, "before-upgrade")[0] is True
+        archived = svc.storage.loan_return_state(key)
+        archived["requested_at"] = "2026-01-01T00:00:00+00:00"
+        svc.storage.metadata_set(key, json.dumps(archived))
+        result = svc.verify_return_digital(loan)
         assert result["status"] == "verification_unavailable"
         assert result["verification"] == "unavailable"
-        assert result["request_accepted"] is True
-        assert len(session.posts) == 1
-        session.last_loan_errors = []
-        # A side-channel reset cannot prove the end of DILICOM pagination.
-        assert svc.verify_return_digital(loan)["status"] == "verification_unavailable"
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        assert svc.verify_return_digital(loan)["status"] == "provider_return_confirmed"
-        assert len(session.posts) == 1
+        assert session.posts == []
+        with pytest.raises(AttentionRequired):
+            svc.return_digital(loan)
+        assert session.posts == []
     finally:
         svc.close()
 
 
-def test_uncertain_post_or_malformed_ack_is_never_resent_automatically(tmp_path):
-    loan = _loan()
-    session = Session([])
-    session.failure = TimeoutError("unknown network delivery")
-    svc = _library(tmp_path, session=session)
-    try:
-        assert svc.return_digital(loan)["status"] == "verification_unavailable"
-        assert svc.return_digital(loan)["status"] == "verification_unavailable"
-        assert len(session.posts) == 1
-        session.failure = None
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        assert svc.verify_return_digital(loan)["status"] == "provider_return_confirmed"
-    finally:
-        svc.close()
-
-
-def test_explicit_retry_checks_first_and_only_reposts_if_still_present(tmp_path):
+@pytest.mark.parametrize("retry", [False, True, "true", 1, None])
+def test_retry_argument_never_reopens_retired_return(tmp_path, retry):
     loan = _loan()
     session = Session([loan])
     svc = _library(tmp_path, session=session)
     try:
-        assert svc.return_digital(loan)["status"] == "still_active"
-        # The caller must explicitly request a retry; it performs a fresh read
-        # FIRST, then posts at most once to the same borrower.
-        assert svc.return_digital(loan, explicit_retry=True)["status"] == "still_active"
-        assert len(session.posts) == 2
-        assert len(session.checks) == 3
-        session.inventory = []
-        attest_paris_dilicom_complete(session, credential_id="paris-a")
-        assert svc.return_digital(loan, explicit_retry=True)["status"] == "provider_return_confirmed"
-        assert len(session.posts) == 2
+        with pytest.raises(AttentionRequired) as err:
+            svc.return_digital(loan, explicit_retry=retry)
+        assert err.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        assert svc.loan_return_state(loan) is None
     finally:
         svc.close()
 
 
-def test_unknown_borrower_or_session_never_posts(tmp_path):
+def test_unknown_borrower_and_unknown_session_still_cannot_return(tmp_path):
     session = Session([])
     svc = _library(tmp_path, session=session)
     try:
-        with pytest.raises(AttentionRequired) as err:
-            svc.return_digital(replace(_loan(), source_account_id=None))
-        assert err.value.code == "loan_return_borrower_unproven"
-        with pytest.raises(Exception):
-            svc.return_digital(replace(_loan(), source_account_id="unknown"))
-        with pytest.raises(Exception):
-            svc.return_digital(_loan(credential="absent-connection"))
-        assert session.posts == []
-        assert not session.posts
+        for loan in (
+            replace(_loan(), source_account_id=None),
+            replace(_loan(), source_account_id="unknown"),
+            _loan(credential="absent-connection"),
+        ):
+            with pytest.raises(AttentionRequired) as err:
+                svc.return_digital(loan)
+            assert err.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
     finally:
         svc.close()
 
 
-def test_atomic_sqlite_claim_only_one_winner(tmp_path):
-    db = Storage(tmp_path / "parallel.sqlite3")
+def test_atomic_sqlite_claim_only_one_winner_for_existing_historical_rows(tmp_path):
     from cifereca.core.loan_return_guard import return_key
+
+    db = Storage(tmp_path / "parallel.sqlite3")
     key = return_key("paris", "paris-a", "linked-b", "loan-a")
     results = []
     barrier = Barrier(2)
@@ -213,20 +223,22 @@ def test_atomic_sqlite_claim_only_one_winner(tmp_path):
         db.close()
 
 
-def test_return_guard_preserves_local_file_and_is_provider_only(tmp_path):
+def test_retired_return_preserves_existing_local_file(tmp_path):
     library = tmp_path / "existing.epub"
-    library.write_text("unmodified")
-    svc = _library(tmp_path, session=Session([]))
+    library.write_bytes(b"unmodified")
+    session = Session([])
+    svc = _library(tmp_path, session=session)
     try:
-        result = svc.return_digital(_loan())
-        assert result["scope"] == "provider_pnb_only"
-        assert library.read_text() == "unmodified"
-        assert not result.get("adept_return_confirmed")
+        with pytest.raises(AttentionRequired) as err:
+            svc.return_digital(_loan())
+        assert err.value.code == "loan_return_removed"
+        assert library.read_bytes() == b"unmodified"
+        assert session.posts == session.checks == []
     finally:
         svc.close()
 
-def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path):
-    """Simulate crash after reservation/dispatch but before HTTP response."""
+
+def test_stale_inflight_receipt_can_only_be_verified_after_restart(tmp_path):
     from cifereca.core.loan_return_guard import return_key
     import json
 
@@ -235,9 +247,7 @@ def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path
     svc = _library(tmp_path, session=session)
     key = return_key("paris", "paris-a", "linked-b", loan.id)
     try:
-        claimed, _ = svc.storage.loan_return_claim(key, "inflight-op")
-        assert claimed
-        # Simulate persisted checkpoint from a process that died >3 min ago.
+        assert svc.storage.loan_return_claim(key, "inflight-op")[0]
         record = svc.storage.loan_return_state(key)
         record["requested_at"] = "2026-01-01T00:00:00+00:00"
         svc.storage.metadata_set(key, json.dumps(record))
@@ -248,8 +258,8 @@ def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path
     attest_paris_dilicom_complete(next_session, credential_id="paris-a")
     reopened = _library(tmp_path, session=next_session)
     try:
-        # A second button click cannot POST; explicit verification can read.
-        assert reopened.return_digital(loan)["status"] == "request_sent"
+        with pytest.raises(AttentionRequired):
+            reopened.return_digital(loan)
         verified = reopened.verify_return_digital(loan)
         assert verified["status"] == "provider_return_confirmed"
         assert verified["verification"] == "provider_absent"
@@ -259,8 +269,9 @@ def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path
         reopened.close()
 
 
-def test_recent_inflight_does_not_race_with_first_post(tmp_path):
+def test_recent_inflight_remains_read_only(tmp_path):
     from cifereca.core.loan_return_guard import return_key
+
     loan = _loan()
     session = Session([loan])
     svc = _library(tmp_path, session=session)
@@ -269,7 +280,6 @@ def test_recent_inflight_does_not_race_with_first_post(tmp_path):
         assert svc.storage.loan_return_claim(key, "inflight")[0]
         result = svc.verify_return_digital(loan)
         assert result["status"] == "request_sent"
-        assert session.checks == []
-        assert session.posts == []
+        assert session.checks == session.posts == []
     finally:
         svc.close()

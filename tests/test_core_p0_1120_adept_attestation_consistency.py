@@ -10,6 +10,7 @@ from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 import json
 
 import pytest
+from cifereca.plugin_api import AttentionRequired
 
 from cifereca.core.return_adept_orchestrator import (
     adept_return_key, adobe_return_attested, paris_return_attested, public_state,
@@ -97,16 +98,18 @@ def test_durable_contradiction_rechecks_paris_without_replaying_adobe(tmp_path):
         )
         assert old["status"] == "paris_return_confirmed"
         assert public_state(old)["provider_return_confirmed"] is False
-        answer = service.return_loan_prefer_adept(loan)
-        assert answer["status"] == "paris_return_confirmed"
-        assert answer["paris_verification"] == "provider_absent"
-        assert answer["provider_return_confirmed"] is True
-        assert calls["mutations"] == 0
-        assert paris.posts == 0
-        assert paris.accounts_read == ["linked-123"]
-        receipt = service.storage.loan_return_state(key)
-        assert receipt["verification"] == "provider_absent"
-        assert public_state(receipt)["provider_return_confirmed"] is True
+        before = service.storage.loan_return_state(key)
+        answer = service.verify_loan_return(loan)
+        assert answer["status"] == "partial"
+        assert answer["paris_verification"] == "not_checked"
+        assert answer["provider_return_confirmed"] is False
+        assert answer["retry"] == "none"
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_loan_prefer_adept(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert calls["mutations"] == calls["inventory"] == 0
+        assert paris.posts == 0 and paris.accounts_read == []
+        assert service.storage.loan_return_state(key) == before
     finally:
         service.close()
 
@@ -122,12 +125,17 @@ def test_pre_mutation_flag_requires_fresh_adobe_inventory_before_any_paris_check
             verification="adobe_pending", adobe_verified=True,
         )
         assert adobe_return_attested(old) is False
-        answer = service.return_loan_prefer_adept(loan)
+        before = service.storage.loan_return_state(key)
+        answer = service.verify_loan_return(loan)
         assert answer["status"] == "adobe_return_requested"
         assert answer["adobe_return_confirmed"] is False
         assert answer["provider_return_confirmed"] is False
-        assert calls["mutations"] == 0
-        assert calls["inventory"] >= 1
+        assert answer["retry"] == "none"
+        with pytest.raises(AttentionRequired) as retired:
+            service.return_loan_prefer_adept(loan)
+        assert retired.value.code == "loan_return_removed"
+        assert calls["mutations"] == calls["inventory"] == 0
         assert paris.posts == 0 and paris.accounts_read == []
+        assert service.storage.loan_return_state(key) == before
     finally:
         service.close()
