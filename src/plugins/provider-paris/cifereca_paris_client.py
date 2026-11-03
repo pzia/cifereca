@@ -954,16 +954,69 @@ class ParisClient:
         )
 
     def _get_pnb_response(self, url, **kwargs):
-        # Only the configured Paris portal may receive authenticated cookies.
-        # A signed 3xx can name any public HTTPS CDN; use the Core public-peer
-        # transport with a fresh empty cookie jar on EVERY foreign hop.
-        # Never route SSO/private POSTs through this content-only branch.
+        # Only Paris receives authenticated cookies. External signed redirects
+        # use Core's public, peer-pinned transport with no private headers.
+        # A selected canonical acquisition may additionally pass its live,
+        # revocable admission lease; legacy callers still use the same API.
+        admission_current = kwargs.pop("admission_current", None)
+
+        def require_admission():
+            if admission_current is None:
+                return
+            try:
+                if callable(admission_current) and admission_current() is True:
+                    return
+            except Exception:
+                pass
+            raise ParisError("Paris PNB Core admission revoked")
+
+        require_admission()
         self._validate_pnb_redirect_url(url)
         host = (urlparse(url).hostname or "").casefold()
         base_host = (urlparse(self.base_url).hostname or "").casefold()
+
+        def bounded_response(response):
+            if response.status_code != 200:
+                payload = b""
+            else:
+                declared = response.headers.get("content-length")
+                if declared is not None:
+                    try:
+                        size = int(declared)
+                    except (TypeError, ValueError):
+                        raise ParisError("Taille de réponse PNB invalide") from None
+                    if not 0 <= size <= _MAX_PNB_PUBLIC_BODY_BYTES:
+                        raise ParisError("Réponse HTTPS PNB trop volumineuse")
+                chunks = bytearray()
+                iterator = iter(response.iter_bytes(chunk_size=64 * 1024))
+                while True:
+                    # Check BEFORE pulling the next network chunk, not after
+                    # accepting its bytes. OFF→ON still invalidates this lease.
+                    require_admission()
+                    try:
+                        chunk = next(iterator)
+                    except StopIteration:
+                        break
+                    require_admission()
+                    if len(chunks) + len(chunk) > _MAX_PNB_PUBLIC_BODY_BYTES:
+                        raise ParisError("Réponse HTTPS PNB trop volumineuse")
+                    chunks.extend(chunk)
+                payload = bytes(chunks)
+            require_admission()
+            return httpx.Response(
+                response.status_code, headers=response.headers,
+                content=payload, request=response.request,
+            )
+
         try:
             if host == base_host:
-                return self.client.get(url, follow_redirects=False, **kwargs)
+                if admission_current is None:
+                    # Preserve historical/manual semantics and custom
+                    # transports for callers without a canonical Core lease.
+                    return self.client.get(url, follow_redirects=False, **kwargs)
+                with self.client.stream("GET", url,
+                                        follow_redirects=False, **kwargs) as response:
+                    return bounded_response(response)
             headers = dict(kwargs.get("headers") or {})
             for name in list(headers):
                 if name.casefold() not in {"accept", "accept-language", "user-agent"}:
@@ -971,34 +1024,10 @@ class ParisClient:
             with HTTPX_TRANSPORT.public_client(
                 producer="provider.paris.pnb.delivery", timeout=self.timeout,
             ) as public:
-                # A supplier's redirect/error body is not part of the loan
-                # proof. Never materialize it; only the final HTTP 200
-                # candidate may carry bytes into private Core staging.
+                # Redirect/error bodies never become candidate content.
                 with public.stream("GET", url, headers=headers,
                                    follow_redirects=False) as response:
-                    if response.status_code != 200:
-                        payload = b""
-                    else:
-                        declared = response.headers.get("content-length")
-                        if declared is not None:
-                            try:
-                                size = int(declared)
-                            except (TypeError, ValueError):
-                                raise ParisError("Taille de réponse PNB invalide") from None
-                            if not 0 <= size <= _MAX_PNB_PUBLIC_BODY_BYTES:
-                                raise ParisError("Réponse HTTPS PNB trop volumineuse")
-                        chunks = bytearray()
-                        for chunk in response.iter_bytes(chunk_size=64 * 1024):
-                            if len(chunks) + len(chunk) > _MAX_PNB_PUBLIC_BODY_BYTES:
-                                raise ParisError("Réponse HTTPS PNB trop volumineuse")
-                            chunks.extend(chunk)
-                        payload = bytes(chunks)
-                    # Clone before the stream closes; the original request
-                    # retains the exact URL without exposing it in diagnostics.
-                    return httpx.Response(
-                        response.status_code, headers=response.headers,
-                        content=payload, request=response.request,
-                    )
+                    return bounded_response(response)
         except (httpx.InvalidURL, httpx.RemoteProtocolError):
             # HTTPX can embed a signed Location or request URL in exception
             # messages, even when follow_redirects=False. Never journal it.
