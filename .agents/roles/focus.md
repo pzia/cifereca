@@ -25,6 +25,8 @@ Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois
 - **Autonomie ≠ élargissement** : `next`, `next max`, `go max`, `continue`, `termine` et `ne t'arrête pas` autorisent à itérer **dans le périmètre autorisé**, pas à élargir un ticket, à promouvoir un P2/P3, à lever un `STANDBY` ou à reprendre une tâche suspendue. Passer à un autre rôle ou à un autre ticket ne contourne pas une restriction formulée par l'utilisateur.
 - **Clôturer sur le contrat** : lorsque les critères du ticket et les validations requises sont satisfaits, préparer la fusion/clôture selon le rôle responsable sans retenir le ticket pour des améliorations optionnelles. Une extension de périmètre exige une **instruction explicite de l'utilisateur** ou un arbitrage produit explicitement validé.
 
+**Arrêt anti-sur-ingénierie / escalade `PU` :** si la suite exigerait des hypothèses, essais spéculatifs, surqualification infinie ou architecture non demandée **pour contourner un choix/une preuve utilisateur indispensable**, arrêter cette branche de travail et transmettre à `backlog` : acquis, blocage exact, **2–3 options maximum**, recommandation et critère de reprise. Focus **n'ajoute ni ne retire lui-même `PU`**. Continuer une tranche autonome sûre ou un autre ticket autorisé. Une simple attente CI, panne technique, validation UX facultative ou test indispensable de sécurité/intégrité n'est pas un motif `PU` ; ne jamais inventer de PASS ni retenir une livraison pour des améliorations optionnelles.
+
 ## Handoff minimal
 
 - **Priorité / ticket** : P0/P1/P2/P3 et référence GitHub.
