@@ -53,6 +53,7 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     window._reader_source_items = {}
     window._reader_scope_identity = None
     window._reader_filter = "all"
+    window._reader_selection_generation = 0
 
     def select_reader(_dropdown, _pspec):
         if (getattr(window, "_closed", False)
@@ -62,6 +63,9 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         ids = getattr(window, "_reader_device_ids", ())
         if not type(index) is int or index >= len(ids):
             return
+        if getattr(window, "_reader_selected_device_id", None) != ids[index]:
+            # A→B→A in one route must revoke an earlier in-flight dry-run.
+            window._reader_selection_generation += 1
         window._reader_selected_device_id = ids[index]
         window._render_readers()
 
@@ -85,6 +89,18 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     )
     refresh.connect("clicked", lambda _button: window._render_readers())
     page.header_actions.append(refresh)
+    # Voluntary action only: never scan during page construction or routing.
+    inspect = Gtk.Button.new_from_icon_name("document-properties-symbolic")
+    inspect._cifereca_action_id = "reader-usb-dry-run"
+    inspect.set_tooltip_text(
+        "Examiner les changements : choisir le volume USB monté. "
+        "Analyse en arrière-plan, sans transfert ni suppression."
+    )
+    def examine_clicked(button):
+        from .reader_usb_preview_actions import request_reader_usb_preview
+        request_reader_usb_preview(window, button, Gtk=Gtk)
+    inspect.connect("clicked", examine_clicked)
+    page.header_actions.append(inspect)
     return page
 
 
@@ -144,6 +160,8 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         selected = getattr(window, "_reader_selected_device_id", None)
         if selected not in ids:
             selected = ids[0] if ids else None
+        if getattr(window, "_reader_selected_device_id", None) != selected:
+            window._reader_selection_generation += 1
         window._reader_selected_device_id = selected
 
         if ids != getattr(window, "_reader_device_ids", ()):
