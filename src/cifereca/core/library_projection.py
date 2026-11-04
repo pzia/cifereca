@@ -327,6 +327,31 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     return url or default_url, status
 
 
+def _openable_scoped_placement(self, placement: dict[str, Any], *,
+                               identity_id: str) -> bool:
+    """A recorded 'present' is not proof that this profile can open the file.
+
+    Reuse the already loaded Placement, not an N+1 SQLite placement_get.
+    Only a real local file or a validated local bundle is shown as usable;
+    missing mounts or foreign/symlink paths remain stored for reconciliation.
+    """
+    placement_id = placement.get("placement_id")
+    if type(placement_id) is not str or not placement_id:
+        return False
+    try:
+        path = scoped_existing_placement_path(
+            self, placement, identity_id=identity_id,
+        )
+        if path.is_dir():
+            # A directory is not a book unless the existing Core bundle
+            # opener validates its playlist and physical scope.
+            self.local_book_path(placement_id, identity_id=identity_id)
+            return True
+        return path.is_file()
+    except (ProviderConfigurationError, OSError, ValueError, RuntimeError):
+        return False
+
+
 def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -> list[dict[str, Any]]:
     """Return recent local materializations, newest first.
 
@@ -399,25 +424,10 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         if placement_identity != identity_id:
             continue
         # #2847: a stale SQLite 'present' is not an accessible local book.
-        # Qualify only the requested recent rows via the existing no-follow,
-        # identity-scoped reader. This view is read-only: never rewrite
-        # Placements or infer missing status from an inaccessible mount.
-        placement_id = placement.get("placement_id")
-        if type(placement_id) is not str or not placement_id:
-            continue
-        try:
-            # The row was already loaded with the complete Placement batch:
-            # avoid an extra per-row SQLite placement_get on the GTK path.
-            path = scoped_existing_placement_path(
-                self, placement, identity_id=identity_id,
-            )
-            if path.is_dir():
-                # A deliberately published local bundle has a validated
-                # playlist rather than a regular file. Reuse its strict guard.
-                self.local_book_path(placement_id, identity_id=identity_id)
-            elif not path.is_file():
-                continue
-        except (ProviderConfigurationError, OSError, ValueError, RuntimeError):
+        # This view is read-only; unavailable mounts stay in reconciliation.
+        if not _openable_scoped_placement(
+            self, placement, identity_id=identity_id,
+        ):
             continue
         # A migrated or corrupt catalogue may point a different profile's
         # private title/cover at a valid local Placement. A matching ID alone
@@ -816,6 +826,13 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         # Legacy unscoped placements belong only to the default identity.
         placement_identity = placement.get("identity_id") or default_identity_id
         if identity_id and placement_identity != identity_id:
+            continue
+        # #2797/#2847: even a second Placement for an otherwise usable
+        # Artifact can be a stale path or a corrupt cross-profile binding.
+        # Do not expose its filename/storage target as a local library facet.
+        if not _openable_scoped_placement(
+            self, placement, identity_id=placement_identity,
+        ):
             continue
         placements_by_artifact.setdefault(str(placement.get("artifact_id") or ""), []).append(placement)
 
