@@ -22,6 +22,7 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api import SyncResult
 from . import kobo_backup
+from .canonical_delivery_abi import has_complete_delivery_abi
 from .kobo_local_audit import _read_hash_within
 from .kobo_local_reconciliation import _roots, _within
 
@@ -84,34 +85,6 @@ class MaterializationPlans:
         return row
 
 
-def _has_canonical_delivery_abi(session):
-    """A complete Core A->B ABI takes priority over the backup_items writer.
-
-    Use static inspection: probing a live provider through getattr could
-    execute descriptors during admission. A partial ABI does not count.
-    """
-    from inspect import getattr_static
-    contracts = (
-        (
-            "downloadable_resource_snapshot",
-            "downloadable_selected_offer_snapshot",
-            "downloadable_selected_delivery_candidate",
-        ),
-        (
-            "rights_observation_snapshot",
-            "rights_selected_delivery_offer_snapshot",
-            "rights_selected_delivery_candidate",
-        ),
-    )
-    try:
-        return any(
-            all(callable(getattr_static(session, name, None)) for name in methods)
-            for methods in contracts
-        )
-    except (TypeError, AttributeError):
-        return False
-
-
 def _source(broker, source_id):
     # No fallback to the selected account, and no implicit connection.
     try:
@@ -137,7 +110,7 @@ def _source(broker, source_id):
     # acquisition through the legacy, backup_items-authoritative worker.
     # Check on BOTH preview and execution, including an ABI added after a
     # confirmation token was issued.
-    _require(not _has_canonical_delivery_abi(session),
+    _require(not has_complete_delivery_abi(session),
              "canonical_source_delivery_active")
     session_accounts = session.accounts
     _require(len(session_accounts) == 1 and session_accounts[0].unique_id == account.unique_id, "ambiguous_account")
