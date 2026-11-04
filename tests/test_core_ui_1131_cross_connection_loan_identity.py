@@ -98,3 +98,41 @@ def test_main_window_uses_source_bound_keys_for_rows_and_details():
     assert "self.loan_objects.get(row.key)" in selected
     assert "unique_library_loan(window.loan_objects.values(), item)" in library
     assert "loan_objects.get(str(item.get('loan_id')))" not in library
+
+
+
+def test_library_exact_empty_primary_account_does_not_accept_unknown_borrower():
+    """None is unknown; it must not match an explicitly empty account ID."""
+    unknown = _loan(account=None)
+    primary = _loan(account="")
+    selection = {
+        "loan_id": primary.id,
+        "provider_id": "paris",
+        "source_credential": "paris-a",
+        "source_account_id": "",
+    }
+    assert unique_library_loan([unknown], selection) is None
+    assert unique_library_loan([unknown, primary], selection) is primary
+    assert unique_library_loan([primary, unknown], selection) is primary
+    assert unique_library_loan([primary], selection) is primary
+
+
+def test_library_account_scope_rejects_malformed_type_without_string_coercion():
+    """A malformed upstream borrower code never selects an exact loan."""
+    primary = _loan(account="123")
+    for supplied in (123, True, ["123"], {"code": "123"}):
+        item = {"loan_id": primary.id, "source_account_id": supplied}
+        assert unique_library_loan([primary], item) is None
+    assert unique_library_loan(
+        [primary], {"loan_id": primary.id, "source_account_id": "123"},
+    ) is primary
+
+
+def test_unknown_borrower_keeps_legacy_only_when_not_explicitly_qualified():
+    unknown = _loan(account=None)
+    # The historical single-loan display remains available without scope.
+    assert unique_library_loan([unknown], {"loan_id": unknown.id}) is unknown
+    # A request bearing the explicit empty account is NOT unqualified.
+    assert unique_library_loan(
+        [unknown], {"loan_id": unknown.id, "source_account_id": ""},
+    ) is None
