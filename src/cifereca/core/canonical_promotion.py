@@ -302,6 +302,11 @@ def cleanup_published_staging(
     or another SQLite reference). Callers must not report successful physical
     reconciliation when the defensive dependency check retains the bytes.
     """
+    # A completed receipt belongs to one exact SourceKey, not merely to the
+    # same physical profile/account or Artifact hash. Do not erase the private
+    # staging of a different right even if the caller is otherwise bound.
+    if type(source) is not SourceKey or getattr(completed, "source", None) != source:
+        return False
     root, profile = _profile(storage, library_root, source)
     # A missing old receipt file is not a reason to revoke a committed B.
     try:
