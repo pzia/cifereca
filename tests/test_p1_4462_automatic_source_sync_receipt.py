@@ -34,7 +34,11 @@ def _scheduled(trigger: str, *, provider: str = "kobo", accounts=None):
             r = rig(modes={
                 SOURCE_ID: {"mode": "periodic", "interval_minutes": 15},
             })
-            r.broker.sources("alice")[0].provider_id = provider
+            source = r.broker.sources("alice")[0]
+            source.provider_id = provider
+            if provider == "numilog":
+                # Numilog requires a phase-scoped inventory clock.
+                source.phase_states = (_phase(),)
         else:
             r = rig(accounts=accounts, modes={
                 row.source_id: {
