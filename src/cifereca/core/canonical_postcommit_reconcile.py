@@ -17,8 +17,8 @@ from ..paths import acquisition_lock_file
 from .canonical_publication import _stable
 from .canonical_promotion import _profile, _stage_parts, cleanup_published_staging
 from .canonical_recovery import (
-    _path_verified, _scope, _stage_id, _unique_checkpoint_fields,
-    mark_completed_delivery_published,
+    _exact_borrower_bound_in_db, _path_verified, _scope, _stage_id,
+    _unique_checkpoint_fields, mark_completed_delivery_published,
 )
 from .source_convergence import SourceKey
 
@@ -50,6 +50,10 @@ def reconcile_committed_staging(
     scope = source.scope
     source_id = _stable("source", *_scope(source))
     with storage._lock, storage._connect() as db:
+        # A durable OriginLink and receipt cannot authorize maintenance for a
+        # borrower now attached to another or disabled provider connection.
+        if not _exact_borrower_bound_in_db(db, scope):
+            return False
         placed = db.execute(
             "SELECT p.path,p.identity_id,p.artifact_id,p.state,a.sha256 "
             "FROM placements AS p JOIN artifacts AS a "
@@ -219,6 +223,10 @@ def reconcile_committed_staging(
         if (same != (status, artifact_id, serialized)
                 or placement != (str(final), placed[2], "present")
                 or linked is None
+                # A profile/account may be rebound during the physical hash:
+                # check the same exact borrower again before any journal or
+                # staged-byte maintenance.
+                or not _exact_borrower_bound_in_db(db, scope)
                 or (transaction_guard is not None
                     and transaction_guard(db) is not True)):
             return False
