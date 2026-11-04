@@ -100,7 +100,9 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
         return None
     docbase = str(resource["RscBase"])
     record_id = str(resource["RscId"])
-    digital, content_type, media_format, metadata = projection(resource, raw, scenario, docbase)
+    medium, content_type, media_format, metadata, classification = projection(
+        resource, raw, scenario, docbase,
+    )
     # Resource-level fields observed in Syracuse JSON: no additional GET or
     # implied server-side filtering, ownership, edition or reader-age claim.
     metadata.update(project_observed_resource_facets(resource, scenario))
@@ -108,7 +110,7 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
         id=f"{docbase}:{record_id}",
         record_id=record_id,
         docbase=docbase,
-        medium="digital" if digital else "physical",
+        medium=medium,
         title=str(resource.get("Ttl") or "Sans titre"),
         author=strip_html(resource.get("Crtr")),
         type=str(resource.get("Type")) if resource.get("Type") is not None else None,
@@ -121,6 +123,7 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
         scenario=scenario,
         content_type=content_type,
         metadata=metadata,
+        document_classification=classification,
     )
 
 

@@ -24,7 +24,14 @@ class Diagnostics:
 
 def _result(record_id: str, title: str, base: str = "SYRACUSE") -> dict:
     return {
-        "Resource": {"RscId": record_id, "RscBase": base, "Ttl": title, "Crtr": "Auteur"},
+        "Resource": {
+            "RscId": record_id, "RscBase": base, "Ttl": title,
+            "Crtr": "Auteur",
+            # These synthetic results must assert documentary facts. A
+            # DILICOM search route alone cannot certify a digital medium.
+            "Type": "Livre numérique" if base == "DILICOM" else "Livre",
+            "Frmt": "MONE" if base == "DILICOM" else "MONO",
+        },
         "CompactResult": "",
     }
 
