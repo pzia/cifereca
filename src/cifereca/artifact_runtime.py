@@ -1317,7 +1317,6 @@ class LibraryMaintenanceBrokerImpl:
         raise UnsupportedOperation(f"Opération de maintenance non supportée: {request.operation}")
 
 
-@dataclass(slots=True)
 class _UsbCanonicalExecutionRequired(UnsupportedOperation):
     """The generic artifact route is never an authority to write on USB."""
 
@@ -1355,6 +1354,7 @@ def _is_usb_storage_target(target: object) -> bool:
     return False
 
 
+@dataclass(slots=True)
 class ArtifactRoutingBrokerImpl:
     service: Any
     execution: ArtifactExecutionBrokerImpl
