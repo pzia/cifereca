@@ -2,8 +2,8 @@
 
 The observed Resource.Type / Frmt / RscBase combinations are synthesized,
 NOT copied from the account capture. No Paris client session, network, account,
-filesystem, loan or upstream mutation is involved. Strict xfails are explicit
-P1 implementation acceptance gates while P0 #3723 owns the Paris provider.
+filesystem, loan or upstream mutation is involved. The formerly pending P1 matrices are now executable positive/negative
+acceptance tests. All account/network evidence is synthetic.
 """
 from __future__ import annotations
 
@@ -70,11 +70,7 @@ def test_observed_bibliographic_codes_are_not_claimed_as_files(
 
 
 @pytest.mark.parametrize(("kind", "frmt", "base", "_medium", "category"), OBSERVED)
-@pytest.mark.xfail(strict=True, reason=(
-    "#4276 pending Paris P0 #3723: a separate typed document kind must "
-    "survive normalization without equating all physical media with books"
-))
-def test_pending_separate_document_kind_per_observed_type(
+def test_separate_document_kind_per_observed_type(
     kind, frmt, base, _medium, category,
 ):
     item = record(kind, frmt, base)
@@ -85,10 +81,7 @@ def test_pending_separate_document_kind_per_observed_type(
         assert item.content_type != "physical"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "#4276 pending Paris P0 #3723: CATALOGUE can include DILICOM ebooks"
-))
-def test_pending_physical_scope_filters_mixed_catalogue_by_item_evidence():
+def test_physical_scope_filters_mixed_catalogue_by_item_evidence():
     rows = [
         record("Livre", "MONO", "SYRACUSE", record_id="paper"),
         record("Film", "AUVI", "SYRACUSE", record_id="dvd"),
@@ -101,11 +94,7 @@ def test_pending_physical_scope_filters_mixed_catalogue_by_item_evidence():
     assert all(item.medium == "physical" for item in result)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "#4276 pending Paris P0 #3723: EBOOKS provenance cannot override "
-    "positively physical Syracuse film evidence"
-))
-def test_pending_ebooks_scenario_cannot_convert_physical_film_to_ebook():
+def test_ebooks_scenario_cannot_convert_physical_film_to_ebook():
     film = record("Film", "AUVI", "SYRACUSE", scenario="EBOOKS")
     assert film is not None
     assert film.medium == "physical"
@@ -113,11 +102,7 @@ def test_pending_ebooks_scenario_cannot_convert_physical_film_to_ebook():
     assert film.format is None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "#4276 pending Paris P0 #3723: unknown support must not silently "
-    "become a physical book"
-))
-def test_pending_unknown_type_and_base_remain_unknown_not_paper():
+def test_unknown_type_and_base_remain_unknown_not_paper():
     item = record("Unrecognized media", "UNSUPPORTED", "OTHER", scenario="EBOOKS")
     assert item is not None
     assert item.medium == "unknown"
@@ -125,11 +110,7 @@ def test_pending_unknown_type_and_base_remain_unknown_not_paper():
     assert item.format is None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "#4276 pending Paris P0 #3723: duplicate result must retain both "
-    "catalogue provenances rather than discarding the EBOOKS sighting"
-))
-def test_pending_duplicate_record_keeps_both_search_provenances():
+def test_duplicate_record_keeps_both_search_provenances():
     c = record("Livre numérique", "MONE", "DILICOM", scenario="CATALOGUE")
     e = record("Livre numérique", "MONE", "DILICOM", scenario="EBOOKS")
     client = client_with_rows({"CATALOGUE": [c], "EBOOKS": [e]})
@@ -173,3 +154,68 @@ def test_real_explicit_epub_evidence_is_not_erased_by_bibliographic_code():
     assert item.metadata["available_formats"] == ["EPUB"]
     assert "Resource.MediaFormat" in item.metadata["format_evidence"]
     assert item.metadata["paris_bibliographic_format"] == "MONE"
+
+@pytest.mark.parametrize(("kind", "frmt", "base", "scenario"), [
+    ("Livre numérique", "MONO", "SYRACUSE", "CATALOGUE"),
+    ("Film", "MONE", "SYRACUSE", "EBOOKS"),
+    ("Film", "AUVI", "DILICOM", "CATALOGUE"),
+    ("BD", "MONO", "SYRACUSE", "CATALOGUE"),
+    ("Livre", "MONO", "STORYPLAYR", "EBOOKS"),
+])
+def test_conflicting_or_unverified_support_never_selects_physical_or_digital(
+    kind, frmt, base, scenario,
+):
+    item = record(kind, frmt, base, scenario=scenario)
+    assert item is not None
+    assert item.medium == "unknown"
+    assert item.document_classification is not None
+    assert item.document_classification.medium.status in {"unknown", "conflict"}
+    assert item.document_classification.meta_type == "UNKNOWN"
+    assert item.format is None
+
+
+def test_duplicate_same_id_with_conflicting_resource_facts_is_not_silently_certified():
+    digital = record(
+        "Livre numérique", "MONE", "DILICOM",
+        scenario="CATALOGUE", record_id="same",
+    )
+    conflicting = record(
+        "Film", "AUVI", "DILICOM",
+        scenario="EBOOKS", record_id="same",
+    )
+    client = client_with_rows({
+        "CATALOGUE": [digital], "EBOOKS": [conflicting],
+    })
+    items = client.search("synthetic", scope="all")
+    assert len(items) == 1
+    row = items[0]
+    assert row.medium == "unknown"
+    assert row.document_classification.meta_type == "UNKNOWN"
+    assert set(row.metadata["search_scenarios"]) == {"CATALOGUE", "EBOOKS"}
+    assert digital.medium == "digital"  # no mutation of source rows
+
+
+def test_both_scopes_use_positive_medium_not_scenario_or_bibliographic_format():
+    mixed = [
+        record("Film", "AUVI", "SYRACUSE", record_id="film"),
+        record("Livre numérique", "MONE", "DILICOM", record_id="ebook"),
+        record("Unknown", "XX", "OTHER", record_id="unknown"),
+    ]
+    client = client_with_rows({"CATALOGUE": mixed, "EBOOKS": mixed})
+    assert [x.record_id for x in client.search("synthetic", scope="physical")] == [
+        "film",
+    ]
+    assert [x.record_id for x in client.search("synthetic", scope="digital")] == [
+        "ebook",
+    ]
+    assert len(client.search("synthetic", scope="all")) == 3
+
+
+def test_catalogue_only_unknown_support_remains_browsable_in_all_scope():
+    client = client_with_rows({
+        "CATALOGUE": [record("Unknown", "UNKNOWN", "OTHER")],
+        "EBOOKS": [],
+    })
+    rows = client.search("synthetic", scope="all")
+    assert len(rows) == 1 and rows[0].medium == "unknown"
+    assert client.search("synthetic", scope="physical") == []
