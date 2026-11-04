@@ -2852,6 +2852,59 @@ class Storage:
             )
             return device_id
 
+    def device_usb_reader_formats_set(
+        self, *, identity_id: str, device_id: str,
+        usb_fingerprint: str, supported_formats: tuple[str, ...],
+    ) -> str:
+        """Persist a reader's *declared* formats for its exact bound volume.
+
+        These are manually asserted capabilities, NOT proof of actual
+        hardware, readable content, DRM-free bytes, transfer permission or
+        USB presence. Empty formats revoke the declaration. Reconfiguration
+        never alters enabled, existing intentions, paths or observations.
+        """
+        from .core.device_usb_variant_review import _SUFFIX
+
+        if (any(type(value) is not str or not value
+                or value != value.strip() for value in
+                (identity_id, device_id, usb_fingerprint))
+                or type(supported_formats) is not tuple
+                or len(supported_formats) > len(_SUFFIX)
+                or any(type(value) is not str or value not in _SUFFIX
+                       for value in supported_formats)
+                or len(set(supported_formats)) != len(supported_formats)):
+            raise ValueError("USB reader format declaration invalid")
+        if (not 8 <= len(usb_fingerprint) <= 128
+                or any(char not in
+                       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                       "0123456789._:-" for char in usb_fingerprint)):
+            raise ValueError("USB reader volume fingerprint invalid")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT identity_id,metadata_json FROM device_bindings "
+                "WHERE device_id=?", (device_id,),
+            ).fetchone()
+            if row is None or row[0] != identity_id:
+                raise ValueError("USB reader format owner changed")
+            metadata = self._json_load(row[1])
+            if (type(metadata) is not dict
+                    or metadata.get("usb_fingerprint") != usb_fingerprint):
+                raise ValueError("USB reader format volume changed")
+            changed = dict(metadata)
+            if supported_formats:
+                changed["reader_formats"] = list(supported_formats)
+            else:
+                changed.pop("reader_formats", None)
+            if changed != metadata:
+                db.execute(
+                    "UPDATE device_bindings SET metadata_json=?,updated_at=? "
+                    "WHERE device_id=? AND identity_id=?",
+                    (self._json_dump(changed), now, device_id, identity_id),
+                )
+        return device_id
+
     def device_binding_get(self, device_id: str) -> dict[str, Any] | None:
         rows = [row for row in self.device_bindings() if row.get("device_id") == str(device_id)]
         return rows[0] if rows else None
