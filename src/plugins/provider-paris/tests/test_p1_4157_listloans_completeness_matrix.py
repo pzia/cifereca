@@ -1,8 +1,7 @@
 """#4157: Paris ListLoans branch-coverage acceptance, synthetic HTTP only.
 
-Before P0 #3723 releases the Paris provider files, these fixtures pin the
-existing account and failure isolation and describe the pending *positive*
-completeness certificate via explicit xfail. They never contact Paris, ADEPT,
+These fixtures pin successful per-branch coverage, account scope and
+failure isolation. They never contact Paris, ADEPT,
 a lending endpoint or a storage backend. A successful ListLoans read is not
 proof that an EPUB was acquired or a Placement was published.
 """
@@ -87,13 +86,9 @@ def test_synthetic_zero_one_many_positive_loans_remain_exactly_scoped(
         assert [(c.upstream, c.medium) for c in snapshot.branches] == [
             ("dilicom", "digital"), ("syracuse", "physical"),
         ]
-        # Until the P0 provider lock is released, the existing reader has no
-        # positive end-of-list attestation. A future complete certificate must
-        # be issued per branch and never derive from row count alone.
         for coverage in snapshot.branches:
-            assert coverage.completeness in {"unknown", "complete"}
-            if coverage.completeness == "complete":
-                assert coverage.pagination_complete is True
+            assert coverage.completeness == "complete"
+            assert coverage.pagination_complete is True
     finally:
         session.close()
 
@@ -101,11 +96,7 @@ def test_synthetic_zero_one_many_positive_loans_remain_exactly_scoped(
 @pytest.mark.parametrize(("digital_count", "physical_count"), [
     (0, 0), (1, 0), (2, 1),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "#4157 pending Paris P0 #3723: qualified official ListLoans success "
-    "must publish positive, per-branch end-of-inventory evidence"
-))
-def test_p1_acceptance_complete_branch_certificate_requires_provider_fix(
+def test_successful_official_read_attests_each_branch(
     digital_count, physical_count,
 ):
     session, account, _, calls = scenario(
@@ -176,11 +167,8 @@ def test_failed_branch_never_attests_absence_or_hides_successful_sibling(
         assert failed.completeness == "partial"
         assert failed.reason_code == "branch_unavailable"
         assert failed.pagination_complete is not True
-        # A successful sibling may later receive its own positive certificate;
-        # a failed sibling can NEVER borrow that proof.
-        assert successful.completeness in {"unknown", "complete"}
-        if successful.completeness == "complete":
-            assert successful.pagination_complete is True
+        assert successful.completeness == "complete"
+        assert successful.pagination_complete is True
         assert not result.branch_claims_complete(
             UPSTREAMS[failed_upstream][0], UPSTREAMS[failed_upstream][1],
         )
@@ -200,9 +188,7 @@ def test_failed_branch_never_attests_absence_or_hides_successful_sibling(
     {"TotalCount": 10, "PageSize": 1},
 ])
 def test_pagination_ambiguity_cannot_be_promoted_to_complete_inventory(extra):
-    # Current parser ignores unexpected paging fields, but currently never
-    # claims completeness. The eventual strict parser must reject/mark partial
-    # instead of accepting these as end-of-pagination evidence.
+    # The client rejects the unfinished branch before positive certification.
     session, account, _, calls = scenario(
         digital_response=reply((loan_row("d1"),), extra=extra),
     )
@@ -212,6 +198,61 @@ def test_pagination_ambiguity_cannot_be_promoted_to_complete_inventory(extra):
         assert calls == [
             ("DILICOM", "linked-fixture"), ("SYRACUSE", "linked-fixture"),
         ]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("bad_rows", [
+    [{"RecordId": "edition", "Title": "Missing loan ID"}],
+    [{"Id": "loan", "Title": "Missing edition ID"}],
+    [{"Id": True, "RecordId": "edition"}],
+    [{"Id": "loan", "RecordId": False}],
+    [{"Id": "loan", "RecordId": ""}],
+    [loan_row("duplicate"), loan_row("duplicate")],
+    [loan_row("duplicate"), {**loan_row("duplicate"), "RecordId": "other"}],
+])
+@pytest.mark.parametrize("bad_upstream", ["DILICOM", "SYRACUSE"])
+def test_invalid_or_ambiguous_row_never_certifies_missing_loans(bad_rows, bad_upstream):
+    options = {"digital": (loan_row("good-d"),),
+               "physical": (loan_row("good-p"),)}
+    options["digital_response" if bad_upstream == "DILICOM" else "physical_response"] = reply(bad_rows)
+    session, account, _, calls = scenario(**options)
+    try:
+        result = session.loan_inventory_snapshot(account)
+        assert result.status == "partial"
+        assert result.reason_code == "invalid_response"
+        coverage = {b.upstream: b for b in result.branches}
+        failed = coverage[bad_upstream.lower()]
+        sibling = coverage["syracuse" if bad_upstream == "DILICOM" else "dilicom"]
+        assert failed.completeness == "partial"
+        assert failed.reason_code == "invalid_response"
+        assert failed.pagination_complete is not True
+        assert sibling.completeness == "complete" and sibling.pagination_complete is True
+        assert len(result.loans) == len(bad_rows) + 1  # positive/descriptive rows retained
+        assert len(calls) == 2
+    finally:
+        session.close()
+
+
+def test_later_empty_read_cannot_reuse_previous_coverage_or_rows():
+    session, account, _, calls = scenario(digital=(loan_row("d"),))
+    try:
+        first = session.loan_inventory_snapshot(account)
+        assert first.status == "success" and len(first.loans) == 1
+        old_send = session.client.client.send
+        def empty_send(request, **kwargs):
+            if request.url.params.get("serviceCode") == "DILICOM":
+                # Still execute the same transport to account for the read.
+                response = old_send(request, **kwargs)
+                return httpx.Response(200, request=response.request,
+                                      json={"success": True, "d": {"Loans": []}})
+            return old_send(request, **kwargs)
+        session.client.client.send = empty_send
+        second = session.loan_inventory_snapshot(account)
+        assert second.status == "success" and second.loans == ()
+        assert all(b.completeness == "complete" and b.pagination_complete is True
+                   for b in second.branches)
+        assert len(first.loans) == 1 and len(calls) == 4
     finally:
         session.close()
 

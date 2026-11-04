@@ -79,7 +79,7 @@ def test_transient_borrower_aba_never_redirects_a_later_branch_get():
         assert snapshot.loans == ()
         assert snapshot.scope.account_id == "reader-A"
         assert calls == [("DILICOM", "reader-A"), ("SYRACUSE", "reader-A")]
-        assert not snapshot.branch_claims_complete("dilicom", "digital")
+        assert snapshot.branch_claims_complete("dilicom", "digital")
     finally:
         session.close()
 

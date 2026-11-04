@@ -542,15 +542,15 @@ def test_paris_rights_wrong_credential_or_mixed_v1_v2_refuses_before_get(refs):
         session.close()
 
 
-def test_paris_completed_rights_do_not_turn_legacy_return_inventory_complete():
-    """Rights completeness is informational, not evidence of loan return."""
+def test_qualified_inventory_and_rights_coverage_do_not_authorize_mutation():
+    """Both readers attest scope/coverage; Core still owns every transition."""
     session, account, client = fixture(digital=(
         upstream("loan-1", "edition-1"),
     ))
     try:
         inventory = session.loan_inventory_snapshot(account)
         assert inventory.status == "success"
-        assert inventory.branch_claims_complete("dilicom", "digital") is False
+        assert inventory.branch_claims_complete("dilicom", "digital") is True
         rights = session.rights_observation_snapshot(account)
         assert rights.status == "success" and rights.coverage == "complete"
         assert rights.pagination_complete is True
