@@ -38,8 +38,20 @@ def epub_bytes(*, encrypted=False) -> bytes:
 PAYLOAD = epub_bytes()
 DIGEST = sha256(PAYLOAD).hexdigest()
 ARTIFACT = "sha256:" + DIGEST
-TARGET = "Books/Cifereca/verified.epub"
+TARGET = "Books/Cifereca/" + DIGEST + ".epub"
 NOW = 1800000120
+
+
+@pytest.fixture(autouse=True)
+def synthetic_target_preflight(monkeypatch):
+    # Synthetic scans do not represent real block-device mounts. Mock only
+    # the separate physical preflight boundary; its own module is covered by
+    # dedicated tests with real temporary filesystem descriptors.
+    monkeypatch.setattr(
+        run, "preflight_usb_target", lambda **_: run.UsbTargetPreflight(
+            "review", "target_absent_space_observed", 1024**4,
+        ),
+    )
 
 
 def setup(tmp_path: Path, *, enabled=True, desired="keep", target=True):
@@ -154,7 +166,7 @@ def test_real_file_structure_and_encryption_block_after_sha(
     )
     db.device_usb_target_set(
         identity_id="alice", device_id="reader-a",
-        artifact_id=new_id, target_relative_path="Books/Cifereca/other.epub",
+        artifact_id=new_id, target_relative_path="Books/Cifereca/" + new_sha + ".epub",
     )
     db.device_usb_reader_formats_set(
         identity_id="alice", device_id="reader-a",
@@ -330,6 +342,160 @@ def test_revoking_formats_returns_to_unconfigured_without_physical_change(
     assert report.rows[0].reason == "reader_formats_unconfigured"
     assert report.rows[0].action == "verify"
     assert report.rows[0].executable is False
+
+
+@pytest.mark.parametrize("preflight_reason,expected_action", [
+    ("target_occupied", "blocked"),
+    ("target_volume_read_only", "blocked"),
+    ("target_space_insufficient", "blocked"),
+    ("target_directory_unbounded", "verify"),
+])
+def test_physical_target_refusals_stop_content_read(
+    tmp_path, monkeypatch, preflight_reason, expected_action,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    calls = []
+    def fake_preflight(**kwargs):
+        calls.append(kwargs)
+        return run.UsbTargetPreflight("blocked", preflight_reason)
+    monkeypatch.setattr(run, "preflight_usb_target", fake_preflight)
+    monkeypatch.setattr(
+        run, "snapshot_local_usb_content",
+        lambda **_: pytest.fail("blocked USB target must stop content inspection"),
+    )
+    before = deepcopy(db.device_placements())
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    assert result.rows[0].action == expected_action
+    assert result.rows[0].reason == preflight_reason
+    assert result.rows[0].executable is False
+    assert calls[0]["identity_id"] == "alice"
+    assert calls[0]["binding"]["device_id"] == "reader-a"
+    assert calls[0]["intention"]["target_relative_path"] == TARGET
+    assert db.device_placements() == before
+    assert book.read_bytes() == PAYLOAD
+
+
+@pytest.mark.parametrize("reason", [
+    "target_mount_changed", "target_mount_unverified",
+    "target_scope_unverified", "target_io_unverified",
+    "target_directory_changed", "target_directory_unverified",
+])
+def test_lost_physical_mount_or_directory_attestation_discards_all_rows(
+    tmp_path, monkeypatch, reason,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    monkeypatch.setattr(
+        run, "preflight_usb_target",
+        lambda **_: run.UsbTargetPreflight("blocked", reason),
+    )
+    result = inspect(db, root, mount)
+    assert result.status == "scope_unverified"
+    assert result.rows == ()
+    assert result.scan_attested is False
+    assert result.observed_at is None
+    assert result.executable is False
+
+
+def test_available_space_must_cover_this_batch_plus_reserve(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    monkeypatch.setattr(
+        run, "preflight_usb_target",
+        lambda **_: run.UsbTargetPreflight(
+            "review", "target_absent_space_observed",
+            len(PAYLOAD) + run._USB_FREE_SPACE_RESERVE - 1,
+        ),
+    )
+    monkeypatch.setattr(
+        run, "snapshot_local_usb_content",
+        lambda **_: pytest.fail("insufficient space must stop content read"),
+    )
+    result = inspect(db, root, mount)
+    assert result.rows[0].action == "blocked"
+    assert result.rows[0].reason == "target_batch_capacity_insufficient"
+    assert result.rows[0].executable is False
+
+
+def test_preflight_budget_fails_closed_without_physical_access(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    monkeypatch.setattr(run, "_MAX_TARGET_PREFLIGHTS", 0)
+    monkeypatch.setattr(
+        run, "preflight_usb_target",
+        lambda **_: pytest.fail("bounded dry run may not inspect target"),
+    )
+    result = inspect(db, root, mount)
+    assert result.rows[0].action == "verify"
+    assert result.rows[0].reason == "target_preflight_budget_exhausted"
+    assert not result.rows[0].executable
+
+
+def test_forged_positive_preflight_executable_discards_whole_report(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    monkeypatch.setattr(
+        run, "preflight_usb_target",
+        lambda **_: replace(run.UsbTargetPreflight(
+            "review", "target_absent_space_observed", 1024**4,
+        ), executable=True),
+    )
+    result = inspect(db, root, mount)
+    assert result.status == "scope_unverified"
+    assert result.rows == ()
+    assert result.executable is False
+
+
+def test_binding_revoked_during_target_preflight_discards_all_results(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    def rebind(**kwargs):
+        current = db.device_binding_get("reader-a")
+        db.device_binding_put({
+            **current, "enabled": False,
+        })
+        return run.UsbTargetPreflight(
+            "review", "target_absent_space_observed", 1024**4,
+        )
+    monkeypatch.setattr(run, "preflight_usb_target", rebind)
+    result = inspect(db, root, mount)
+    assert result.status == "scope_changed"
+    assert result.rows == ()
+    assert result.executable is False
 
 
 def test_scanned_identical_bytes_are_skip_not_a_new_managed_receipt(tmp_path, monkeypatch):

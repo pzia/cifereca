@@ -27,10 +27,17 @@ from .device_usb_managed_scan import scan_managed_usb
 from .device_usb_preview import UsbPreviewRow, _fresh_scan, preview_usb_delta
 from .device_usb_reader_formats import declared_usb_reader_formats
 from .device_usb_variant_review import review_usb_variant
+from .device_usb_target_preflight import (
+    UsbTargetPreflight, preflight_usb_target,
+)
 
 
 _MAX_INTENTS = 1000
 _MAX_LOCAL_PLACEMENTS = 30000
+_MAX_TARGET_PREFLIGHTS = 64
+_USB_FREE_SPACE_RESERVE = 4 * 1024 * 1024
+# Advisory per-item physical checks are deliberately bounded because a volume
+# might contain thousands of books. Full absence was already scanned once.
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +213,8 @@ def inspect_usb_dry_run(
         by_artifact = {intent["artifact_id"]: intent for intent in intentions}
         qualified = []
         content_bytes_used = 0
+        preflight_count = 0
+        planned_bytes = 0
         for row in rows:
             if row.action != "upload_candidate":
                 qualified.append(row)
@@ -253,6 +262,55 @@ def inspect_usb_dry_run(
                         row, action="verify", reason="content_inspection_budget_exhausted",
                     ))
                     continue
+                if preflight_count >= _MAX_TARGET_PREFLIGHTS:
+                    qualified.append(replace(
+                        row, action="verify",
+                        reason="target_preflight_budget_exhausted",
+                    ))
+                    continue
+                preflight_count += 1
+                preflight = preflight_usb_target(
+                    identity_id=identity_id, binding=binding,
+                    mountpoint=mountpoint, artifact=artifact,
+                    intention=intent,
+                )
+                if (type(preflight) is not UsbTargetPreflight
+                        or preflight.executable is not False):
+                    return unknown("scope_unverified")
+                if (preflight.status == "blocked"
+                        and preflight.reason in {
+                            "target_mount_unverified", "target_mount_changed",
+                            "target_scope_unverified", "target_directory_changed",
+                            "target_directory_unverified", "target_io_unverified",
+                        }):
+                    # If the volume/directory lost attestation AFTER the
+                    # complete scan, even a previously observed "missing"
+                    # must not be described as current. Drop the whole view.
+                    return unknown("scope_unverified")
+                if preflight.status == "blocked":
+                    # Physical absence/space are advisory, never grant rights.
+                    # Unavailable mount/IO = verify, not false absence.
+                    serious = {
+                        "target_occupied", "target_space_insufficient",
+                        "target_volume_read_only",
+                    }
+                    qualified.append(replace(
+                        row, action="blocked" if preflight.reason in serious
+                        else "verify", reason=preflight.reason,
+                    ))
+                    continue
+                if (preflight.status != "review"
+                        or preflight.reason != "target_absent_space_observed"
+                        or type(preflight.available_bytes) is not int
+                        or preflight.available_bytes < 0):
+                    return unknown("scope_unverified")
+                if (planned_bytes + size + _USB_FREE_SPACE_RESERVE
+                        > preflight.available_bytes):
+                    qualified.append(replace(
+                        row, action="blocked",
+                        reason="target_batch_capacity_insufficient",
+                    ))
+                    continue
                 content_bytes_used += size
                 content = snapshot_local_usb_content(
                     identity_id=identity_id, identity_root=identity_root,
@@ -280,6 +338,7 @@ def inspect_usb_dry_run(
                         row, action="blocked", reason=structural.reason,
                     ))
                 elif structural.status == "review":
+                    planned_bytes += size
                     qualified.append(replace(
                         row, reason=structural.reason,
                     ))

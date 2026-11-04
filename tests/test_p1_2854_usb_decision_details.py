@@ -122,6 +122,25 @@ def test_content_inspection_labels_are_closed_and_never_authorize(
     assert result.executable is False
 
 
+@pytest.mark.parametrize("action,reason,visible", [
+    ("blocked", "target_occupied", "occupe"),
+    ("blocked", "target_volume_read_only", "lecture seule"),
+    ("blocked", "target_space_insufficient", "Espace libre insuffisant"),
+    ("blocked", "target_batch_capacity_insufficient", "tous les envois"),
+    ("verify", "target_mount_unverified", "Volume USB réel non attesté"),
+    ("verify", "target_mount_changed", "Volume USB changé"),
+    ("verify", "target_preflight_budget_exhausted", "par lots"),
+])
+def test_physical_target_preflight_reasons_never_authorize(
+    action, reason, visible,
+):
+    result = project(r=report(rows=(decision(action=action, reason=reason),)))
+    assert result.status == "scanned"
+    assert visible in result.books[0].reason_label
+    assert result.books[0].executable is False
+    assert result.executable is False
+
+
 def test_exact_matching_local_sha_is_skip_and_historic_observation_stays_historic():
     l = library(books=(book(known="present", at=1500000000),))
     r = report(rows=(decision(
