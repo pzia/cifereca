@@ -79,6 +79,13 @@ def _configured_binding(service: Any, account: Any) -> bool:
     if len(sessions) != 1:
         return False
     session = sessions[0]
+    # #3196: on_start is strictly the historical Kobo backup_items writer.
+    # A complete Core A->B source already has a single canonical executor.
+    # Keep the preference persisted for audit/rollback, but never schedule
+    # the independent legacy acquisition or advance its attempt clock.
+    from .source_materialization import _has_canonical_delivery_abi
+    if _has_canonical_delivery_abi(session):
+        return False
     return bool(
         getattr(session, "connected", False)
         and getattr(getattr(session, "capabilities", None), "backup", False)
