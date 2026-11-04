@@ -85,6 +85,18 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     )
     refresh.connect("clicked", lambda _button: window._render_readers())
     page.header_actions.append(refresh)
+    # Voluntary action only: never scan during page construction or routing.
+    inspect = Gtk.Button.new_from_icon_name("document-properties-symbolic")
+    inspect._cifereca_action_id = "reader-usb-dry-run"
+    inspect.set_tooltip_text(
+        "Examiner les changements : choisir le volume USB monté. "
+        "Analyse en arrière-plan, sans transfert ni suppression."
+    )
+    def examine_clicked(button):
+        from .reader_usb_preview_actions import request_reader_usb_preview
+        request_reader_usb_preview(window, button, Gtk=Gtk)
+    inspect.connect("clicked", examine_clicked)
+    page.header_actions.append(inspect)
     return page
 
 
