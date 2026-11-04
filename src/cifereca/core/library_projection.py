@@ -397,6 +397,17 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         placement_identity = placement.get("identity_id") or default_identity_id
         if placement_identity != identity_id:
             continue
+        # #2847: a stale SQLite 'present' is not an accessible local book.
+        # Qualify only the requested recent rows via the existing no-follow,
+        # identity-scoped reader. This view is read-only: never rewrite
+        # Placements or infer missing status from an inaccessible mount.
+        placement_id = placement.get("placement_id")
+        if type(placement_id) is not str or not placement_id:
+            continue
+        try:
+            self.local_book_path(placement_id, identity_id=identity_id)
+        except (ProviderConfigurationError, OSError, ValueError, RuntimeError):
+            continue
         # A migrated or corrupt catalogue may point a different profile's
         # private title/cover at a valid local Placement. A matching ID alone
         # does not give the catalogue row authority over that Placement.
