@@ -102,9 +102,27 @@ def kdrm_runtime_ready(session: object) -> bool:
         return False
 
 
+def kdrm_delegated_runtime_ready(session: object) -> bool:
+    """Legacy Kobo ContentAccess replay is a distinct negotiated mode.
+
+    A KDRM backend alone does not attest that source.selection works.
+    Neither runtime capability nor this probe is a Vault bearer/scope grant.
+    """
+    try:
+        caps = session.runtime_capabilities.acquisition("kobo")
+        modes = caps.modes
+        return (caps.available is True and caps.compatible is True
+                and caps.operational is True
+                and isinstance(modes, (tuple, list, frozenset, set))
+                and "kobo_kdrm" in modes and "kobo_delegated" in modes)
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return False
+
+
 def exact_kobo_offer_id(
     payload: Any, *, identity_id: str, credential_id: str,
     account_id: str, product_id: str, kdrm_runtime_ready: bool = False,
+    kdrm_delegated_ready: bool = False,
     diagnostic: dict[str, object] | None = None,
 ) -> str:
     """Qualify an observed, single, executable selected GET candidate.
@@ -290,16 +308,22 @@ def exact_kobo_offer_id(
             skip("candidate_format_missing_or_invalid")
             continue
         fmt = declared[0].strip().lower()
+        source = candidate.get("source")
+        if source is None and type(candidate.get("kobo")) is dict:
+            source = candidate["kobo"].get("source")
         if _kdrm_raw_type(raw_drm):
-            # Contract 1.3: EPUB output can carry an upstream FLEPUB
-            # source. Accept only these attested pairs, not arbitrary
-            # contradictory formats; plain/ACSM retain the strict equality.
+            # Pinned library_sync and legacy delegated ContentAccess are
+            # separate ABI routes. Only a runtime explicitly advertising BOTH
+            # delegated replay and KDRM may receive Kobo's EPUB3/EPUB3FL.
+            # Neither SAMPLE nor an unknown source format can be promoted.
             source_fmt = candidate.get("source_format", declared[0])
+            pairs = {
+                ("kepub", "kepub"), ("epub", "flepub"), ("epub", "epub"),
+            }
+            if source == "content_access_book" and kdrm_delegated_ready is True:
+                pairs = pairs | {("epub", "epub3"), ("epub", "epub3fl")}
             if (type(source_fmt) is not str or
-                    (fmt, source_fmt.strip().lower()) not in {
-                        ("kepub", "kepub"), ("epub", "flepub"),
-                        ("epub", "epub"),
-                    }):
+                    (fmt, source_fmt.strip().lower()) not in pairs):
                 skip("kdrm_format_pair_unqualified")
                 continue
         else:
@@ -339,15 +363,14 @@ def exact_kobo_offer_id(
         else:
             skip("candidate_execution_route_unqualified")
             continue
-        source = candidate.get("source")
-        if source is None and type(candidate.get("kobo")) is dict:
-            source = candidate["kobo"].get("source")
         if source is not None and (type(source) is not str or len(source) > 128):
             skip("candidate_source_invalid")
             continue
-        if _kdrm_raw_type(raw_drm) and source != "library_sync":
-            # Only library_sync's pinned delivery plus separate content-key
-            # replay is supported by the negotiated public Kobo-Adept ABI.
+        if _kdrm_raw_type(raw_drm) and not (
+            source == "library_sync" or
+            (source == "content_access_book" and kdrm_delegated_ready is True)
+        ):
+            # Unpinned replay is never authorized by KDRM-only capability.
             skip("kdrm_source_unsupported")
             continue
         # For KDRM the upstream wire-format affects the DRM recipe, so the
@@ -355,8 +378,18 @@ def exact_kobo_offer_id(
         route = (fmt + ":" + source_fmt.strip().lower()
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
-    # Two different candidate routes must not be arbitrarily conflated,
-    # including multiple signed URLs of the same declared format.
+    # Preserve a single proven plain, ACSM or library_sync route before
+    # using the legacy delegated KDRM fallback. Do not choose between
+    # multiple equally admissible routes by their upstream list order.
+    def legacy_kdrm(row: tuple[str, str, str, str]) -> bool:
+        return row[1] == "kobo_kdrm" and row[3].endswith(":content_access_book")
+
+    preferred = [row for row in eligible if not legacy_kdrm(row)]
+    if len(preferred) == 1 and all(
+        row == preferred[0] or legacy_kdrm(row) for row in eligible
+    ):
+        eligible = preferred
+    # Multiple independent routes remain ambiguous.
     if len(eligible) != 1:
         if diagnostic is not None:
             diagnostic["eligible_candidate_count"] = len(eligible)
