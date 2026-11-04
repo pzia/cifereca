@@ -185,20 +185,23 @@ def test_resolver_revocation_or_failure_blocks_without_side_effects():
     )
 
 
-@pytest.mark.parametrize("key,value", [
-    ("identity_id", "bob"), ("selected_format", "pdf"),
-    ("target_relative_path", "Books/Cifereca/other.epub"),
-    ("local", UsbLocalArtifact("bob", SHA, verified=True)),
+@pytest.mark.parametrize("key,value,reason", [
+    ("identity_id", "bob", "copy_variant_unverified"),
+    ("selected_format", "pdf", "copy_variant_unverified"),
+    ("target_relative_path", "Books/Cifereca/other.epub",
+     "copy_confirmation_invalid_or_expired"),
+    ("local", UsbLocalArtifact("bob", SHA, verified=True),
+     "copy_variant_unverified"),
     ("reader", UsbReaderFormatDeclaration(
         "alice", "reader-a", UUID, ("pdf",),
-    )),
+    ), "copy_variant_unverified"),
 ])
-def test_compatible_reader_and_owner_sha_are_preconditions(key, value):
+def test_compatible_reader_and_owner_sha_are_preconditions(key, value, reason):
     values = fixture()
     values[key] = value
     result = review_usb_copy_admission(**values)
     assert result.status == "blocked"
-    assert result.reason == "copy_variant_unverified"
+    assert result.reason == reason
     assert result.executable is False
 
 
