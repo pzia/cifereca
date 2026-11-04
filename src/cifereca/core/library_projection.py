@@ -19,6 +19,7 @@ from ..core.covers import candidate as cover_candidate, resolve_cover
 from ..models import HistoryItem, Loan, SearchResult
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
+from .local_placement_open_guard import scoped_existing_placement_path
 
 
 def refresh_history(self, force: bool=False) -> list[HistoryItem]:
@@ -396,6 +397,27 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             continue
         placement_identity = placement.get("identity_id") or default_identity_id
         if placement_identity != identity_id:
+            continue
+        # #2847: a stale SQLite 'present' is not an accessible local book.
+        # Qualify only the requested recent rows via the existing no-follow,
+        # identity-scoped reader. This view is read-only: never rewrite
+        # Placements or infer missing status from an inaccessible mount.
+        placement_id = placement.get("placement_id")
+        if type(placement_id) is not str or not placement_id:
+            continue
+        try:
+            # The row was already loaded with the complete Placement batch:
+            # avoid an extra per-row SQLite placement_get on the GTK path.
+            path = scoped_existing_placement_path(
+                self, placement, identity_id=identity_id,
+            )
+            if path.is_dir():
+                # A deliberately published local bundle has a validated
+                # playlist rather than a regular file. Reuse its strict guard.
+                self.local_book_path(placement_id, identity_id=identity_id)
+            elif not path.is_file():
+                continue
+        except (ProviderConfigurationError, OSError, ValueError, RuntimeError):
             continue
         # A migrated or corrupt catalogue may point a different profile's
         # private title/cover at a valid local Placement. A matching ID alone
