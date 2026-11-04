@@ -30,11 +30,19 @@ class SaveSettings(unittest.TestCase):
             'refresh_sync_navigation':Mock()}
         for name in ['global_cmd_row','global_post_row','global_dir_row','global_ebook_row','global_audio_row','backup_dir_row']:ns[name]=Value()
         ns.update(diag_switch=Value(active=True),level_drop=Value(),exp_switch=Value(),backup_switch=Value(),backup_interval_row=Value('60'),vault_profile_drop=Value(),library_dir_row=Value(self.config.get('library.directory')))
+        download_settings = NS(**{
+            k: ns[k] for k in (
+                'global_dir_row', 'global_ebook_row', 'global_audio_row',
+                'global_cmd_row', 'global_post_row',
+                'provider_download_editors',
+            )
+        })
+        self.download_settings = download_settings
         ns['save_settings'], ns['save_and_reconnect'] = bind_settings_commit(
             self.window, page_lifetime=ns['page_lifetime'], settings_state=ns['settings_state'],
             identity_editors=ns['identity_editors'], account_editors=ns['account_editors'],
             descriptors=ns['descriptors'], public_ids=ns['public_ids'],
-            download_settings=NS(**{k: ns[k] for k in ('global_dir_row', 'global_ebook_row', 'global_audio_row', 'global_cmd_row', 'global_post_row', 'provider_download_editors')}),
+            download_settings=download_settings,
             application_ui=NS(diagnostics_switch=ns['diag_switch'], experimental_switch=ns['exp_switch'], level_dropdown=ns['level_drop'], levels=ns['levels']),
             sync_settings=NS(**{k: ns[k] for k in ('backup_switch', 'library_dir_row', 'backup_dir_row', 'backup_interval_row', 'vault_profiles', 'vault_profile_drop')}),
             settings_bars=NS(save=ns['save'], reconnect=ns['reconnect']),
@@ -45,6 +53,21 @@ class SaveSettings(unittest.TestCase):
         ns['settings_state'].mark_dirty('accounts')
         self.ns=ns
     def tearDown(self):self.tmp.cleanup()
+    def test_malformed_legacy_downloads_never_submit_unrelated_settings_save(self):
+        # A corrupt provider download config can be rendered safely, but
+        # saving a different Settings section must not replace its originals.
+        before = deepcopy(self.config.data)
+        self.download_settings.invalid_saved_snapshot = True
+        self.assertFalse(self.ns['save_settings']())
+        self.runner.submit.assert_not_called()
+        self.service.save_configuration.assert_not_called()
+        self.window.show_error.assert_called_once()
+        self.assertIn(
+            'téléchargement historiques invalides',
+            self.window.show_error.call_args.args[0],
+        )
+        self.assertEqual(self.config.data, before)
+
     def test_changes_are_staged_and_migration_runs_in_worker(self):
         before=deepcopy(self.config.data);self.assertTrue(self.ns['save_settings']())
         self.assertEqual(self.config.data,before);self.service.save_configuration.assert_not_called()

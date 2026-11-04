@@ -83,6 +83,15 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             return False
         if settings_committer.pending:
             return False
+        if getattr(download_settings, "invalid_saved_snapshot", False) is True:
+            # The editor intentionally rendered malformed historical values
+            # blank rather than str()-coercing them into commands or paths.
+            # Do not commit the blank widgets over the original configuration.
+            self.show_error(
+                "Réglages de téléchargement historiques invalides : "
+                "corrigez le fichier de configuration, puis rechargez les paramètres."
+            )
+            return False
         try:
             draft = build_settings_draft(
                 self.config, capture_settings_values(), descriptors=descriptors,
