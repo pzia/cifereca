@@ -195,6 +195,25 @@ def test_duplicate_same_id_with_conflicting_resource_facts_is_not_silently_certi
     assert digital.medium == "digital"  # no mutation of source rows
 
 
+def test_same_documentary_facts_from_different_supplier_wording_remain_attested():
+    one = record(
+        "Livre numérique", "MONE", "DILICOM",
+        scenario="CATALOGUE", record_id="same",
+    )
+    two = record(
+        "ebook", "MONE", "DILICOM",
+        scenario="EBOOKS", record_id="same",
+    )
+    client = client_with_rows({"CATALOGUE": [one], "EBOOKS": [two]})
+    rows = client.search("synthetic", scope="all")
+    assert len(rows) == 1
+    assert rows[0].medium == "digital"
+    assert rows[0].document_classification.meta_type == "EBOOK"
+    assert set(rows[0].metadata["search_scenarios"]) == {"CATALOGUE", "EBOOKS"}
+    assert set(one.metadata["search_scenarios"]) == {"CATALOGUE"}
+    assert set(two.metadata["search_scenarios"]) == {"EBOOKS"}
+
+
 def test_both_scopes_use_positive_medium_not_scenario_or_bibliographic_format():
     mixed = [
         record("Film", "AUVI", "SYRACUSE", record_id="film"),
