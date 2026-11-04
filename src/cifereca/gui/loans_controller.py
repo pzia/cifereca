@@ -14,7 +14,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
 from ..models import Loan
-from ..core.loan_source_identity import loan_source_key
+from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
 from .book_widgets import BookListItem
 from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
@@ -70,6 +70,10 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     rows = [row for row in rows if type(row) is Loan
             and identity_id is not None and row.identity_id == identity_id]
+    # A duplicated exact SourceKey cannot render two actionable rows backed
+    # by a dict holding only the last card. Identical replays display once;
+    # conflicting cards are not promoted into the click/renew/download model.
+    rows = list(unambiguous_loan_rows(rows))
     self.service.last_loans = rows
     # The same upstream loan can be visible under two Paris credentials.
     # Preserve both source-bound rows instead of overwriting by loan.id.
