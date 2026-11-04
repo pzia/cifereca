@@ -152,7 +152,7 @@ class CoreCompatibility(unittest.TestCase):
         self.assertFalse(cache_tool.enabled)
         self.assertEqual(cache_tool.reason_code, "maintenance_safety_hold")
         self.assertEqual({row.state for row in statuses.values()}, {"ready"})
-        self.assertEqual(len(self.core.plugins.page_contributions()), 11)
+        self.assertEqual(len(self.core.plugins.page_contributions()), 12)
         self.assertNotIn("bookings", {page.route for page in self.core.plugins.page_contributions()})
     def test_titlebar_persistence(self):
         self.core.plugins.set_plugin_config('core.ui.titlebar',{'actions':['search.open']})

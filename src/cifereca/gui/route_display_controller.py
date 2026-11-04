@@ -115,6 +115,10 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
             # A successful empty snapshot is not the same as an uninitialized
             # cache. Reopening Library must not repeatedly query the provider.
             window.refresh_library(False)
+    elif route == "readers":
+        # Declarative, SQLite-only view. No USB scan or supplier I/O during
+        # navigation; the loaded Library snapshot is reused unchanged.
+        window._render_readers()
     elif route == "recent":
         window._render_recent(window._recent_entries_cache)
         if (
