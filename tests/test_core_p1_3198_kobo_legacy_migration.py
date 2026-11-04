@@ -210,6 +210,63 @@ def test_failed_metadata_commit_refuses_startup_dispatch(
     assert storage.metadata_get("sync.source.materialization.last_attempt.source") is None
 
 
+def test_resumed_checkpoint_uses_pinned_scoped_window_not_global(
+    clock, monkeypatch,
+):
+    from cifereca.core.kobo_backup import _kobo_backup_due
+
+    storage = Metadata()
+    legacy = [180]
+    account = _account("source-alice", "alice")
+    checkpoint = {"status": "complete", "updated_at": clock[0]}
+    monkeypatch.setattr(
+        "cifereca.core.kobo_backup._kobo_checkpoint_for",
+        lambda *_args: checkpoint,
+    )
+    service = NS(
+        storage=storage,
+        config=NS(get=lambda key, default=None: legacy[0]),
+        kobo_backup_interval_minutes=lambda: legacy[0],
+        identity_for_connection=lambda provider, credential: NS(identity_id="alice"),
+    )
+    service._kobo_backup_account_due = lambda credential, *, interval_minutes=None: (
+        _kobo_backup_due(
+            service, credential_id=credential, interval_minutes=interval_minutes,
+        )
+    )
+    assert schedule.mark_on_start_attempt(service, account)
+    assert storage.metadata_get(schedule.retry_interval_key("source-alice")) == "180"
+
+    # Both thresholds matter: 200 min since the scoped attempt but only
+    # 80 min since a completed checkpoint. The retired global value of 15
+    # would admit this old checkpoint; the source-pinned 180 must not.
+    clock[0] += 200 * 60
+    checkpoint["updated_at"] = clock[0] - 80 * 60
+    legacy[0] = 15
+    assert service._kobo_backup_account_due("credential-alice") is True
+    assert schedule.on_start_due(service, account) is False
+    checkpoint["updated_at"] = clock[0] - 190 * 60
+    assert schedule.on_start_due(service, account) is True
+
+
+def test_invalid_explicit_checkpoint_interval_is_never_due(clock, monkeypatch):
+    from cifereca.core.kobo_backup import _kobo_backup_due
+
+    checkpoint = {"status": "complete", "updated_at": 1}
+    monkeypatch.setattr(
+        "cifereca.core.kobo_backup._kobo_checkpoint_for",
+        lambda *_args: checkpoint,
+    )
+    service = NS(
+        config=NS(get=lambda *_: 1),
+        identity_for_connection=lambda *_: NS(identity_id="alice"),
+    )
+    for invalid in (0, 15, True, "60", 999999):
+        assert _kobo_backup_due(
+            service, credential_id="credential-alice", interval_minutes=invalid,
+        ) is False
+
+
 def test_oversized_legacy_cadence_fails_closed_without_truncation(clock):
     account = _account("source", "alice")
     service = NS(
