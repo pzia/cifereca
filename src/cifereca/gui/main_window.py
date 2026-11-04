@@ -1642,6 +1642,8 @@ class MainWindow(Adw.ApplicationWindow):
         # and explicit consent at the time of the actual attempt.
         if getattr(item, "source_provider", None) == "bnf-pret":
             return self.service.can_borrow_bnf(item)
+        if getattr(item, "source_provider", None) == "paris":
+            return self.service.can_borrow_paris(item)
         try:
             # The button must reflect the same exact borrower-account scope
             # enforced by the click handler, not just a provider capability.
@@ -1681,6 +1683,12 @@ class MainWindow(Adw.ApplicationWindow):
             from .bnf_borrow_controller import present_bnf_borrow
             present_bnf_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
+            )
+            return
+        if getattr(item, "source_provider", None) == "paris":
+            from .bnf_borrow_controller import present_paris_borrow
+            present_paris_borrow(
+                self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
             )
             return
         try:
