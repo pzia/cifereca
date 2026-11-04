@@ -268,6 +268,10 @@ def inspect_usb_dry_run(
                     identity_id=identity_id, artifact=artifact,
                     local=local[row.artifact_id], content=content,
                     selected_format=artifact.get("media_format"),
+                    # Budget the ZIP's possible decompression against the
+                    # *actual* compressed size, not a fixed 64 MiB maximum.
+                    # The full run already bounds the sum of these sizes.
+                    max_bytes=size,
                 )
                 if structural.executable is not False:
                     return unknown("scope_unverified")
