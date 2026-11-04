@@ -61,8 +61,12 @@ def test_canonical_kobo_never_offers_or_executes_legacy_direct_item(
                             lambda: tmp_path / "acquisition.lock")
         monkeypatch.setattr(service, "_execute_kobo_acquisition",
                             lambda *_a, **_kw: pytest.fail("duplicate Kobo GET"))
+        # Existing contract: public catalogue rows must pass the passive
+        # exact-right admission before any provider-session lookup. Give
+        # this synthetic book a local right; the canonical ABI still hides
+        # the legacy download action before an ADEPT runtime probe.
         monkeypatch.setattr(service, "kobo_personal_right_states",
-                            lambda *_a, **_kw: pytest.fail("should not inspect old rights"))
+                            lambda _identity: {("vault-1", "book-1"): "active"})
         monkeypatch.setattr(service, "kobo_adept_state",
                             lambda **_kw: pytest.fail("should not inspect ADEPT"))
         before = service.storage.placements(), service.storage.backup_list()
