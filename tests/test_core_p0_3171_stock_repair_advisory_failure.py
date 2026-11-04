@@ -87,3 +87,61 @@ def test_stock_repair_failure_with_changed_physical_bytes_remains_failed(
     assert refs(db) == before_refs
     assert db.placement_get(pub.placement_id)["state"] == "present"
     assert physical.read_bytes() == b"synthetic changed content"
+
+
+def test_unrepairable_staging_cannot_downgrade_another_verified_final_copy(
+    rig, monkeypatch,
+):
+    """A stale staging Placement is not a veto over a separately finalised B.
+
+    Same account, SourceReference, Artifact and bytes: one final copy is
+    verified even though another legacy staging copy has no matching receipt.
+    The Sync must not retry the supplier GET or discard either copy.
+    """
+    service, db, root = rig
+    # The real staging guard must check the same synthetic acquisition lock
+    # as the Core Sync; otherwise the fixture would reject prematurely.
+    monkeypatch.setattr(
+        "cifereca.core.canonical_staging_stock.acquisition_lock_file",
+        lambda: root.parent / "state" / "acquisition.lock",
+    )
+    source = service.source
+    service.snapshot = replace(service.snapshot, rights=(
+        replace(
+            service.snapshot.rights[0], delivery="available",
+            delivery_offer_id="stable-offer",
+        ),
+    ))
+    final = target(root.parent, "A")
+    published = publish(db, root, final, source, service.snapshot)
+
+    # A historical staging-looking placement shares the same exact provider
+    # OriginLink/Artifact but has no receipt proving its own promotion.
+    staged = (root / "A" / ".canonical-delivery"
+              / ("run-" + "a" * 32) / "received.pdf")
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(BYTES)
+    staged_id = db.placement_put({
+        "artifact_id": published.artifact_id,
+        "path": str(staged),
+        "identity_id": source.scope.identity_id,
+        "state": "present",
+        "metadata": {},
+    })
+    before_refs = refs(db)
+    service._canonical_persisted_consent = lambda _: frozenset({source})
+    service._canonical_right_delivery = lambda *_: pytest.fail(
+        "one final verified provider copy must prevent a second GET"
+    )
+
+    # The real stock repair rejects the staged copy without its exact
+    # durable receipt; the other final Placement remains independently valid.
+    result = synchronize_account_source(service, service.account)
+    execution = result["canonical_execution"]
+    assert execution["present_attested"] == 1
+    assert execution["failed"] == 0
+    assert execution["downloaded"] == 0
+    assert refs(db) == before_refs
+    assert db.placement_get(published.placement_id)["path"] == str(final)
+    assert db.placement_get(staged_id)["path"] == str(staged)
+    assert final.read_bytes() == staged.read_bytes() == BYTES
