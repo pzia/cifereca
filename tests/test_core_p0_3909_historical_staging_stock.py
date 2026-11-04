@@ -151,6 +151,60 @@ def test_stock_relocated_under_same_placement_and_origin_without_second_get(
     assert db.placements()[0]["path"] == str(final)
 
 
+def test_stock_refuses_unbounded_exact_provider_origin_claims(
+    rig, monkeypatch,
+):
+    """More than 512 same-source OriginLinks cannot select a receipt by order.
+
+    A damaged/imported journal may carry one genuine Core receipt and
+    arbitrarily many nonmatching provider claims to the same SHA. Do not
+    promote or discard historical staging bytes until provenance is bounded.
+    """
+    service, db, root, old, gets = _legacy_placement(rig, monkeypatch)
+    before = db.placements()[0]
+    with db._lock, db._connect() as sql:
+        origin = sql.execute(
+            "SELECT identity_id,artifact_id,source_reference_id,"
+            "created_at,updated_at FROM origin_links "
+            "WHERE origin_kind='provider' LIMIT 1",
+        ).fetchone()
+        assert origin is not None
+        sql.executemany(
+            "INSERT INTO origin_links("
+            "origin_link_id,origin_kind,identity_id,artifact_id,"
+            "source_reference_id,evidence_ref,created_at,updated_at"
+            ") VALUES(?,?,?,?,?,?,?,?)",
+            [
+                (f"untrusted-provider-claim-{i}", "provider",
+                 origin[0], origin[1], origin[2], f"not-core-receipt-{i}",
+                 origin[3], origin[4])
+                for i in range(512)
+            ],
+        )
+    # 512 unrelated links plus the original legitimate one exceed the
+    # bounded receipt window. No arbitrary SELECT ordering may decide B.
+    refused = synchronize_account_source(service, service.account)
+    assert refused["canonical_execution"]["failed"] == 1
+    assert refused["canonical_execution"]["recovered"] == 0
+    assert refused["canonical_execution"]["downloaded"] == 0
+    assert gets == ["signed-right-offer"]
+    assert db.placements()[0] == before
+    assert old.read_bytes() == BYTES
+    assert not list((root / "A" / "Acquisitions").glob("*"))
+
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "DELETE FROM origin_links "
+            "WHERE origin_link_id LIKE 'untrusted-provider-claim-%'",
+        )
+    resumed = synchronize_account_source(service, service.account)
+    assert resumed["canonical_execution"]["recovered"] == 1
+    assert resumed["canonical_execution"]["downloaded"] == 0
+    assert gets == ["signed-right-offer"]
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
+    assert not old.exists()
+
+
 def test_stock_missing_exact_checkpoint_preserves_bytes_and_requires_review(
     rig, monkeypatch,
 ):
