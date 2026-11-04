@@ -7,6 +7,7 @@ keeper's bytes, all dependencies and the stored inode before any unlink.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 import json
 from pathlib import Path
 from typing import Literal
@@ -14,6 +15,7 @@ from typing import Literal
 from .canonical_dedup_retirement import _RETIRE_KEY, _PENDING, _unique_json_keys
 
 _LIMIT = 1000
+_MAX_PROFILES = 10000
 _MAX_JSON_BYTES = 65536
 
 
@@ -72,16 +74,28 @@ def review_pending_canonical_cleanups(
             rows = db.execute(query, args).fetchall()
             if len(rows) > _LIMIT:
                 return PendingCanonicalCleanupReview("over_budget")
+            if not rows:
+                return PendingCanonicalCleanupReview("reviewed")
+            # Ownership depends on whether ANY other registered identity
+            # shares a directory, not merely on the selected profile. The
+            # previous unbounded fetch + quadratic uniqueness scan let an
+            # oversized/corrupt registry stall the maintenance reader.
             profiles = db.execute(
-                "SELECT identity_id,directory_name FROM identities"
+                "SELECT identity_id,directory_name FROM identities "
+                "LIMIT ?", (_MAX_PROFILES + 1,),
             ).fetchall()
+            if len(profiles) > _MAX_PROFILES:
+                return PendingCanonicalCleanupReview("over_budget")
             allowed: dict[str, str] = {}
             for owner, folder in profiles:
-                if type(owner) is str and type(folder) is str and folder:
+                if (type(owner) is str and type(folder) is str and folder
+                        and folder not in {".", ".."}
+                        and "/" not in folder and chr(92) not in folder):
                     allowed[owner] = folder
+            folder_counts = Counter(allowed.values())
             unique_dirs = {
-                folder for folder in allowed.values()
-                if sum(x == folder for x in allowed.values()) == 1
+                folder for folder, count in folder_counts.items()
+                if count == 1
             }
             findings: list[PendingCanonicalCleanup] = []
             invalid = 0
@@ -94,7 +108,6 @@ def review_pending_canonical_cleanups(
                     and type(artifact_id) is str
                     and provider is None and item is None
                     and allowed.get(owner) in unique_dirs
-                    and sum(1 for known_owner, _ in profiles if known_owner == owner) == 1
                     and type(raw) is str and 0 < len(raw) <= _MAX_JSON_BYTES
                 )
                 if not valid:
