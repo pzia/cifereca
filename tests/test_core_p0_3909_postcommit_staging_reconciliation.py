@@ -72,6 +72,61 @@ def _published_with_deferred_cleanup(rig, monkeypatch):
     return service, db, root, gets, staged
 
 
+def test_postcommit_cleanup_refuses_stale_source_without_provider_proof(
+    rig, monkeypatch,
+):
+    """A valid receipt, OriginLink and final SHA do not override missing A."""
+    from cifereca.core.canonical_postcommit_reconcile import (
+        reconcile_committed_staging,
+    )
+    from cifereca.locking import InterProcessLock
+
+    service, db, root, gets, staged = _published_with_deferred_cleanup(
+        rig, monkeypatch,
+    )
+    before, = db.placements()
+    final = Path(before["path"])
+    assert staged.read_bytes() == final.read_bytes() == BYTES
+    with db._lock, db._connect() as sql:
+        source_ref, observed = sql.execute(
+            "SELECT source_reference_id,evidence_ref FROM source_references "
+            "WHERE identity_id=? AND provider_id=?",
+            (service.source.scope.identity_id, service.source.scope.provider_id),
+        ).fetchone()
+        assert observed
+        sql.execute(
+            "UPDATE source_references SET evidence_ref='' "
+            "WHERE source_reference_id=?", (source_ref,),
+        )
+
+    lock_path = root.parent / "state" / "acquisition.lock"
+    with InterProcessLock(lock_path) as lock:
+        result = reconcile_committed_staging(
+            db, source=service.source, placement_id=before["placement_id"],
+            library_root=root, shared_lock=lock, current=lambda: True,
+        )
+    assert result is False
+    assert staged.read_bytes() == final.read_bytes() == BYTES
+    assert db.placements() == [before]
+    assert gets == ["signed-right-offer"]
+
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE source_references SET evidence_ref=? "
+            "WHERE source_reference_id=?", (observed, source_ref),
+        )
+    with InterProcessLock(lock_path) as lock:
+        repaired = reconcile_committed_staging(
+            db, source=service.source, placement_id=before["placement_id"],
+            library_root=root, shared_lock=lock, current=lambda: True,
+        )
+    assert repaired is True
+    assert not staged.exists()
+    assert final.read_bytes() == BYTES
+    assert db.placements() == [before]
+    assert gets == ["signed-right-offer"]
+
+
 def test_next_sync_cleans_post_B_staging_without_get_or_new_placement(
     rig, monkeypatch,
 ):
