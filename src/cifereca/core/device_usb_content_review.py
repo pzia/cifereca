@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+from io import BytesIO
 from typing import Mapping
+from zipfile import BadZipFile, ZipFile
 
 from ..artifact_inspection import inspect_artifact_content
 from .device_usb_preview import UsbLocalArtifact, _sha
@@ -19,6 +21,32 @@ from .device_usb_variant_review import _SUFFIX
 
 
 _MAX_INSPECTION_BYTES = 64 * 1024 * 1024
+_MAX_EXPANDED_BYTES = 256 * 1024 * 1024
+
+
+def _epub_archive_budget(content: bytes, *, max_bytes: int) -> str | None:
+    """Bound ZIP expansion *before* calling the existing CRC/OPF validator.
+
+    A small compressed EPUB may contain a huge inflated member; inspecting
+    its CRC via ZipFile.testzip() must not unpack unbounded attacker bytes.
+    The per-request ceiling also makes low-budget inspections testable.
+    """
+    budget = min(_MAX_EXPANDED_BYTES, max_bytes * 8 + 65536)
+    try:
+        with ZipFile(BytesIO(content)) as archive:
+            infos = archive.infolist()
+            if len(infos) > 20000:
+                return "content_archive_unbounded"
+            total = 0
+            for info in infos:
+                if info.file_size < 0 or info.file_size > budget:
+                    return "content_archive_unbounded"
+                total += info.file_size
+                if total > budget:
+                    return "content_archive_unbounded"
+    except (BadZipFile, OSError, OverflowError, ValueError):
+        return "content_structure_unverified"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +113,10 @@ def review_usb_content(
     # Structural detection is not evidence that a KEPUB is Kobo-enhanced or
     # that a fixed-layout variant has all its reader-specific semantics.
     expected = "pdf" if selected_format == "pdf" else "epub"
+    if expected == "epub":
+        invalid_archive = _epub_archive_budget(content, max_bytes=max_bytes)
+        if invalid_archive is not None:
+            return _blocked(invalid_archive)
     inspected = inspect_artifact_content(
         content, expected_format=expected, strict_structure=True,
     )
