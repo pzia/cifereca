@@ -21,7 +21,7 @@ from .duplicate_maintenance_guard import (
 )
 from .library_declared_links import DeclarationRejected
 from .missing_placement_readiness import _physical_absence
-from .missing_placement_retirement import _blocked, _scope
+from .missing_placement_retirement import _blocked, _scope, _directory_signature
 
 _TOKEN = re.compile(r"[0-9a-f]{64}\Z")
 _SENTINEL = "__2847_linked_retirement_probe__"
@@ -70,7 +70,10 @@ def _evidence(db, *, root: Path, root_stat: os.stat_result,
             or type(item) is not str or not item
             or type(old_path) is not str or not old_path):
         return _blocked("source_coordinates_unavailable"), None
-    if _physical_absence(root / directory, old_path) != "absent":
+    profile_root = root / directory
+    profile_signature = _directory_signature(profile_root)
+    if (profile_signature is None
+            or _physical_absence(profile_root, old_path) != "absent"):
         return _blocked("old_path_not_verified_absent"), None
     # The detached catalogue must retain a real, already known Artifact.
     # Never treat a dangling Artifact ID as adequate historical evidence.
@@ -130,7 +133,7 @@ def _evidence(db, *, root: Path, root_stat: os.stat_result,
 
     envelope = json.dumps(
         [str(root), int(root_stat.st_dev), int(root_stat.st_ino),
-         identity_id, directory, row, linked],
+         identity_id, directory, profile_signature, row, linked],
         ensure_ascii=False, separators=(",", ":"), default=str,
     )
     token = hashlib.sha256(envelope.encode("utf-8")).hexdigest()
@@ -138,7 +141,7 @@ def _evidence(db, *, root: Path, root_stat: os.stat_result,
         "status": "review_required",
         "reason": "catalogue_detachment_requires_confirmation",
         "catalogue_rows": len(changed),
-    }, (token, old_path, directory, row, changed)
+    }, (token, old_path, directory, profile_signature, row, changed)
 
 
 def prepare_missing_catalogue_detachment(
@@ -206,7 +209,7 @@ def retire_missing_linked_catalogue(
                 if evidence is None:
                     db.rollback()
                     return result
-                token, old_path, directory, row, changed = evidence
+                token, old_path, directory, profile_signature, row, changed = evidence
                 if token != plan_token:
                     db.rollback()
                     return _blocked("stale_plan")
@@ -251,6 +254,7 @@ def retire_missing_linked_catalogue(
                 current = root.stat()
                 if ((int(current.st_dev), int(current.st_ino))
                         != (int(stat.st_dev), int(stat.st_ino))
+                        or _directory_signature(root / directory) != profile_signature
                         or _physical_absence(root / directory, old_path) != "absent"):
                     db.rollback()
                     return _blocked("filesystem_changed")
