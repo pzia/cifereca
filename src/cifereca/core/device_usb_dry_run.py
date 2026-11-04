@@ -277,6 +277,16 @@ def inspect_usb_dry_run(
                 if (type(preflight) is not UsbTargetPreflight
                         or preflight.executable is not False):
                     return unknown("scope_unverified")
+                if (preflight.status == "blocked"
+                        and preflight.reason in {
+                            "target_mount_unverified", "target_mount_changed",
+                            "target_scope_unverified", "target_directory_changed",
+                            "target_directory_unverified", "target_io_unverified",
+                        }):
+                    # If the volume/directory lost attestation AFTER the
+                    # complete scan, even a previously observed "missing"
+                    # must not be described as current. Drop the whole view.
+                    return unknown("scope_unverified")
                 if preflight.status == "blocked":
                     # Physical absence/space are advisory, never grant rights.
                     # Unavailable mount/IO = verify, not false absence.
