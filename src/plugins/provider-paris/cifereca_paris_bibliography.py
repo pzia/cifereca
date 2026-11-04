@@ -65,12 +65,12 @@ def _texts(value: object) -> list[str]:
 
 
 
-_SERIES_TOKEN = re.compile(r"(?<![a-z0-9_])SeriesTitle_idx(?![a-z0-9_])", re.I)
+_SERIES_TOKEN = re.compile(r"(?<![a-z0-9_])SeriesTitle_(?:idx|exact)(?![a-z0-9_])", re.I)
 _SERIES_ALLOWED_HOSTS = {"bibliotheques.paris.fr"}
 
 
 def _safe_series_search_href(href: object) -> bool:
-    """Require an internal SearchService series link, not an arbitrary anchor.
+    """Require an internal SearchService series link, not an arbitrary anchor.\n\n    Observed Search snippets use both SeriesTitle_idx and SeriesTitle_exact.
 
     Only a link supplied inside this *result's own* HTML is a candidate.
     Never fetch/follow its target; it is metadata evidence, not a capability.
