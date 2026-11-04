@@ -89,7 +89,9 @@ def test_stock_repair_failure_with_changed_physical_bytes_remains_failed(
     assert physical.read_bytes() == b"synthetic changed content"
 
 
-def test_unrepairable_staging_cannot_downgrade_another_verified_final_copy(rig):
+def test_unrepairable_staging_cannot_downgrade_another_verified_final_copy(
+    rig, monkeypatch,
+):
     """A stale staging Placement is not a veto over a separately finalised B.
 
     Same account, SourceReference, Artifact and bytes: one final copy is
@@ -97,6 +99,12 @@ def test_unrepairable_staging_cannot_downgrade_another_verified_final_copy(rig):
     The Sync must not retry the supplier GET or discard either copy.
     """
     service, db, root = rig
+    # The real staging guard must check the same synthetic acquisition lock
+    # as the Core Sync; otherwise the fixture would reject prematurely.
+    monkeypatch.setattr(
+        "cifereca.core.canonical_staging_stock.acquisition_lock_file",
+        lambda: root.parent / "state" / "acquisition.lock",
+    )
     source = service.source
     service.snapshot = replace(service.snapshot, rights=(
         replace(
