@@ -374,6 +374,20 @@ def execute_admitted_convergence(
                         and fresh.decisions[0].source == key
                         and fresh.decisions[0].provider_satisfied
                     )
+                    if still_present:
+                        # #3909: a historical Placement INSIDE the Core
+                        # .canonical-delivery staging tree is not final B.
+                        # Its exact receipt/promotion is mandatory; a valid
+                        # SHA alone cannot silence a failed stock repair.
+                        for pid in fresh.decisions[0].placement_ids:
+                            found = initial_storage.placement_get(pid)
+                            if (type(found) is not dict
+                                    or type(found.get("path")) is not str
+                                    or ".canonical-delivery" in Path(
+                                        found["path"]
+                                    ).parts):
+                                still_present = False
+                                break
                 except Exception:
                     still_present = False
                 if not still_present:
