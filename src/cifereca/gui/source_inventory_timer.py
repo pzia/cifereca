@@ -7,6 +7,7 @@ No acquisition, ADEPT, file operation, legacy backup flag or implicit consent.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -14,10 +15,22 @@ from ..core.source_refresh_policy import (
     SourceRefreshSchedule, source_refresh_due,
 )
 from ..task_queue import TaskPriority
+from ..plugin_api import SyncResult
 
 _HEARTBEAT_SECONDS = 60
 _MAX_IDENTITIES = 64
 _MAX_SOURCES = 256
+
+
+def _attested_scheduled_inventory(receipt: Any) -> bool:
+    """A successful broker call may have skipped every source after revalidation."""
+    if getattr(receipt, "ok", None) is not True:
+        return False
+    facts = getattr(receipt, "facts", None)
+    if isinstance(facts, Mapping) and "attempted" in facts:
+        attempted = facts["attempted"]
+        return type(attempted) is int and attempted > 0
+    return True  # Legacy broker test doubles without an attempt counter.
 
 
 def _broker(window: Any) -> Any:
@@ -301,29 +314,36 @@ def configure(
 
         def work():
             failures = 0
+            completed = 0
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
                 # Opening may have been submitted after the GTK tick but
                 # before this queued worker began. Do not enter the broker.
                 if _automatic_opening_in_flight(window):
-                    return
+                    break
                 if (
                     getattr(window, "_closed", False)
                     or _broker(window) is not broker
                 ):
                     # A queued task must not reanimate a replaced plugin
                     # manager/broker after the GTK tick checked its scope.
-                    return
+                    break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
                     if getattr(receipt, "ok", None) is not True:
                         failures += 1
+                    elif _attested_scheduled_inventory(receipt):
+                        completed += 1
                 except Exception:
                     # One failed account must not starve its eligible siblings.
                     # Keep private exception text out of TaskRunner feedback.
                     failures += 1
             if failures:
                 raise RuntimeError("Actualisation des notices des comptes indisponible") from None
+            # TaskRunner treats a bare None as an unexecuted/invalidated
+            # source-sync. Carry an explicit positive receipt only after a
+            # broker-attested attempt; a skipped batch remains unproven.
+            return SyncResult(ok=True) if completed else None
 
         try:
             window.runner.submit(
