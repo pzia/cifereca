@@ -136,3 +136,105 @@ def test_unknown_borrower_keeps_legacy_only_when_not_explicitly_qualified():
     assert unique_library_loan(
         [unknown], {"loan_id": unknown.id, "source_account_id": ""},
     ) is None
+
+
+
+def test_same_upstream_id_different_backend_or_medium_never_aliases_gtk_rows():
+    """The same borrower may have a physical and digital copy with one ID."""
+    original = _loan()
+    variants = (
+        original,
+        replace(original, provider="DILICOM"),
+        replace(original, medium="physical"),
+        replace(original, provider="DILICOM", medium="physical"),
+    )
+    keys = [loan_source_key(row) for row in variants]
+    assert len(set(keys)) == len(variants)
+    assert all(key.startswith("loan-source:") and len(key) == 76 for key in keys)
+    # Descriptive refreshes do not change the transient source identity.
+    assert loan_source_key(original) == loan_source_key(
+        replace(original, title="Titre corrigé", due_at="2026-12-05"),
+    )
+
+
+def _run_refresh_without_gtk(host, rows):
+    """Run the real UI refresh handler without importing GI or changing GTK."""
+    from types import SimpleNamespace
+
+    syntax = ast.parse(LOANS.read_text(encoding="utf-8"))
+    handler = next(
+        node for node in syntax.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_loans_refreshed"
+    )
+    compiled = compile(
+        ast.fix_missing_locations(ast.Module(body=[handler], type_ignores=[])),
+        str(LOANS), "exec",
+    )
+    namespace = {"Loan": Loan, "loan_source_key": loan_source_key}
+    exec(compiled, namespace)
+    return namespace["_loans_refreshed"](host, rows)
+
+
+def _refresh_host(selected):
+    from types import SimpleNamespace
+
+    events = []
+    service = SimpleNamespace(last_loans=[])
+
+    def populate(rows):
+        # Same scope filtering as the real _populate_loans path.
+        service.last_loans = [
+            row for row in rows
+            if type(row) is Loan and row.identity_id == "alice"
+        ]
+
+    host = SimpleNamespace(
+        service=service,
+        _displayed_loan=selected,
+        _populate_loans=populate,
+        loan_page=SimpleNamespace(detail=SimpleNamespace(
+            show_loan=lambda row: events.append(("show", row)),
+            empty=lambda *_args: events.append(("empty", None)),
+        )),
+        toast=lambda *_args: None,
+    )
+    return host, events
+
+
+def test_refreshed_loan_detail_uses_exact_backend_medium_record_scope():
+    selected = _loan()
+    host, events = _refresh_host(selected)
+    refreshed = replace(selected, title="Updated exact loan")
+    rows = [
+        replace(selected, provider="DILICOM"),
+        replace(selected, medium="physical"),
+        replace(selected, record_id="other-edition"),
+        replace(selected, identity_id="bob"),
+        refreshed,
+    ]
+    _run_refresh_without_gtk(host, rows)
+    assert host._displayed_loan is refreshed
+    assert events == [("show", refreshed)]
+
+
+def test_refresh_never_selects_first_cross_backend_match():
+    selected = _loan()
+    host, events = _refresh_host(selected)
+    rows = [
+        replace(selected, provider="DILICOM"),
+        replace(selected, medium="physical"),
+        replace(selected, record_id="different-edition"),
+    ]
+    _run_refresh_without_gtk(host, rows)
+    assert host._displayed_loan is None
+    assert events == [("empty", None)]
+
+
+def test_refresh_duplicate_exact_source_is_ambiguous_not_first_wins():
+    selected = _loan()
+    host, events = _refresh_host(selected)
+    _run_refresh_without_gtk(
+        host, [replace(selected, title="One"), replace(selected, title="Two")],
+    )
+    assert host._displayed_loan is None
+    assert events == [("empty", None)]
