@@ -245,3 +245,51 @@ def test_target_occupied_after_preview_never_steals_other_placement(rig):
     assert commit(rig, token)["reason"] == "target_placement_occupied"
     assert db.placement_get(existing)["state"] == "present"
     assert db.placement_get(pid)["state"] == "missing"
+
+
+
+@pytest.mark.parametrize("swap_on_probe", [2, 3])
+def test_relocation_rejects_profile_directory_swap_before_sql_commit(
+    rig, tmp_path, monkeypatch, swap_on_probe,
+):
+    """Even same-SHA replacement bytes cannot move identity ownership."""
+    import shutil
+    from cifereca.core import missing_placement_relocation_transaction as module
+
+    db, root, old, new, pid, artifact, payload, _lockpath = rig
+    catalogue(rig)
+    token = prepare(rig)["plan_token"]
+    before_placement = db.placement_get(pid)
+    before_catalogue = db.catalog_entry_get("catalogue:original")
+    owner = root / "alice"
+    moved = tmp_path / "alice-original-profile"
+    root_ino = root.stat().st_ino
+    actual = module._directory_signature
+    calls = []
+
+    def rotate_profile_during_final_verification(path):
+        calls.append(path)
+        if len(calls) == swap_on_probe:
+            owner.rename(moved)
+            (owner / "kobo").mkdir(parents=True)
+        return actual(path)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_directory_signature",
+                          rotate_profile_during_final_verification)
+            result = commit(rig, token)
+        assert result["status"] == "blocked"
+        assert result["reason"] == (
+            "candidate_changed" if swap_on_probe == 2 else "filesystem_changed"
+        )
+        assert root.stat().st_ino == root_ino
+        assert db.placement_get(pid) == before_placement
+        assert db.catalog_entry_get("catalogue:original") == before_catalogue
+    finally:
+        if moved.exists():
+            shutil.rmtree(owner)
+            moved.rename(owner)
+
+    assert commit(rig, token) == {"status": "relocated", "catalogue_rows": 1}
+    assert new.read_bytes() == payload
