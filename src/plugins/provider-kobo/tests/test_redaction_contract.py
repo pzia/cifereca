@@ -19,6 +19,7 @@ def test_public_redact_text_preserves_original_url_query():
         (403, "forbidden", "forbidden"),
         (403, "insufficient_scope", "insufficient_scope"),
         (409, "archived_book", "archived_book"),
+        (409, "revision_mismatch", "revision_mismatch"),
         (409, "signed-secret", "conflict"),
         (429, "rate_limited", "rate_limited"),
         (502, "signed-secret", "server_error"),
@@ -91,5 +92,41 @@ def test_vault_403_never_echoes_arbitrary_provider_code_or_message():
         assert caught.value.code == "forbidden"
         assert caught.value.status_code == 403
         assert "PRIVATE_DATA" not in str(caught.value)
+    finally:
+        client.close()
+
+
+def test_kvault_revision_mismatch_during_selected_acquisition_preserves_cause_without_retry():
+    """A real KV 2.3.3 revision conflict is not an archive or a generic 409."""
+    requests = []
+    secret = "SECRET_DONT_LEAK_IN_ERRORS"
+
+    def handler(request):
+        requests.append((request.method, request.url.path, request.headers.get("Authorization")))
+        return httpx.Response(
+            409,
+            json={"error": {
+                "code": "revision_mismatch",
+                "message": "private " + secret + " product revision and signed URL",
+            }},
+            request=request,
+        )
+
+    client = KoboVaultClient(
+        "https://vault.example.test", secret,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(KoboVaultError) as caught:
+            client.acquisition("edition-stale", revision_id="old-revision", mode="descriptor")
+        assert caught.value.status_code == 409
+        assert caught.value.code == "revision_mismatch"
+        assert "révision" in str(caught.value)
+        assert "archive" not in str(caught.value).casefold()
+        assert secret not in str(caught.value)
+        assert "old-revision" not in str(caught.value)
+        assert requests == [(
+            "POST", "/api/v2/library/edition-stale/acquisition", "Bearer " + secret,
+        )]
     finally:
         client.close()

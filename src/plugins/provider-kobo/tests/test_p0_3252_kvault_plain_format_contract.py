@@ -83,6 +83,9 @@ def test_kvault_none_epub3_selected_offer_stages_real_epub_bytes(
 ):
     session, vault, _broker, account, posts = setup()
     observed_gets = []
+    # Compare the exact HTTP fixture bytes: a regenerated ZIP embeds a
+    # fresh DOS timestamp and can differ across a two-second boundary.
+    expected_epub = epub_bytes()
     def acquisition(product_id, **options):
         posts.append((product_id, options))
         return descriptor(
@@ -91,7 +94,7 @@ def test_kvault_none_epub3_selected_offer_stages_real_epub_bytes(
     vault.acquisition = acquisition
     fake_public_client(monkeypatch, lambda request: (
         observed_gets.append(str(request.url))
-        or httpx.Response(200,content=epub_bytes(),headers={
+        or httpx.Response(200,content=expected_epub,headers={
             "content-type":"application/epub+zip",
         })
     ), [])
@@ -99,7 +102,7 @@ def test_kvault_none_epub3_selected_offer_stages_real_epub_bytes(
         offer = admitted(session, account)
         assert offer.startswith("kobo.descriptor:")
         received, _ = execute(session, account, offer, tmp_path)
-        assert received.read_bytes() == epub_bytes()
+        assert received.read_bytes() == expected_epub
         assert observed_gets == [SIGNED]
         assert len(posts) == 2
     finally:

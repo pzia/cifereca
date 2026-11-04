@@ -1306,11 +1306,23 @@ class KoboSession(ProviderSession):
         except (KoboVaultError, ProviderCapabilityError, ProviderError) as error:
             # This is the ACTUAL selected descriptor failure. Status is
             # included only when the upstream exception actually supplied it.
+            # The KV 2.3.3 acquisition route distinguishes archive from
+            # stale revision. Keep ONLY the closed typed 409 reason, never the
+            # upstream response text, token, product revision or signed link.
+            # A generic conflict remains generic rather than guessing.
+            status = getattr(error, "status_code", None)
+            code = getattr(error, "code", None)
+            error_code = (
+                code if isinstance(error, KoboVaultError)
+                and type(status) is int and status == 409
+                and type(code) is str
+                and code in {"archived_book", "revision_mismatch", "conflict"}
+                else "not_applicable"
+            )
             _TRACE_LOG.info(
                 "EVENT kobo selected_offer product_id=%s phase=descriptor "
-                "outcome=error error_type=%s http_status=%s",
-                right_id, type(error).__name__,
-                getattr(error, "status_code", None),
+                "outcome=error error_type=%s http_status=%s error_code=%s",
+                right_id, type(error).__name__, status, error_code,
             )
             raise
         if not scope_current():
