@@ -106,6 +106,32 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         request_reader_usb_preview(window, button, Gtk=Gtk)
     inspect.connect("clicked", examine_clicked)
     page.header_actions.append(inspect)
+    pair = Gtk.Button.new_from_icon_name("list-add-symbolic")
+    pair._cifereca_action_id = "reader-usb-pair"
+    pair.set_tooltip_text(
+        "Associer une liseuse au profil par UUID de volume USB. "
+        "La déclaration ne prouve aucune présence et n'active aucun scan."
+    )
+    def pair_clicked(_button):
+        from .reader_pairing_actions import request_reader_pairing
+        request_reader_pairing(window, Gtk=Gtk)
+    pair.connect("clicked", pair_clicked)
+    page.header_actions.append(pair)
+    window._reader_pair_button = pair
+
+    toggle = Gtk.Button(label="Activer examens USB")
+    toggle._cifereca_action_id = "reader-usb-activation"
+    toggle.set_sensitive(False)
+    toggle.set_tooltip_text(
+        "Autoriser ou suspendre les examens USB de la liseuse sélectionnée. "
+        "Aucune analyse ni copie automatique."
+    )
+    def toggle_clicked(_button):
+        from .reader_pairing_actions import toggle_reader_examination
+        toggle_reader_examination(window)
+    toggle.connect("clicked", toggle_clicked)
+    page.header_actions.append(toggle)
+    window._reader_activation_button = toggle
     return page
 
 
@@ -132,12 +158,15 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         identity_id = getattr(current, "identity_id", None)
         storage = getattr(getattr(window, "service", None), "storage", None)
         if type(identity_id) is not str or not identity_id or storage is None:
+            window._reader_activation_button.set_sensitive(False)
+            window._reader_pair_button.set_sensitive(False)
             page.show_rows([])
             window._reader_status_label.set_label(
                 "Choisissez un profil pour consulter ses liseuses."
             )
             window._reader_scope_identity = None
             return
+        window._reader_pair_button.set_sensitive(True)
         try:
             configured = storage.device_bindings(identity_id=identity_id)
             devices = [
@@ -154,6 +183,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             if len(set(ids)) != len(ids):
                 raise ValueError("duplicate reader binding")
         except Exception:
+            window._reader_activation_button.set_sensitive(False)
             page.show_rows([])
             window._reader_status_label.set_label(
                 "Liseuses indisponibles : vérifiez la configuration du profil."
@@ -184,6 +214,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         if selected is not None:
             window._reader_device_dropdown.set_selected(ids.index(selected))
         if not devices:
+            window._reader_activation_button.set_sensitive(False)
             page.show_rows([])
             window._reader_status_label.set_label(
                 "Aucune liseuse USB configurée pour ce profil. "
@@ -197,6 +228,11 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         window._reader_filter = view_filter
         window._reader_filter_dropdown.set_selected(FILTERS.index(view_filter))
         binding = devices[ids.index(selected)]
+        window._reader_activation_button.set_sensitive(True)
+        window._reader_activation_button.set_label(
+            "Désactiver examens USB" if binding.get("enabled") is True
+            else "Activer examens USB"
+        )
         try:
             local_rows = storage.placements(state="present")
             intentions = storage.device_placements(device_id=selected)
