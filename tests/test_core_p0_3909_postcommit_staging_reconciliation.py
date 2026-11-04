@@ -72,13 +72,12 @@ def _published_with_deferred_cleanup(rig, monkeypatch):
     return service, db, root, gets, staged
 
 
+@pytest.mark.parametrize("proof_loss", ["before_cleanup", "after_final_hash"])
 def test_postcommit_cleanup_refuses_stale_source_without_provider_proof(
-    rig, monkeypatch,
+    rig, monkeypatch, proof_loss,
 ):
-    """A valid receipt, OriginLink and final SHA do not override missing A."""
-    from cifereca.core.canonical_postcommit_reconcile import (
-        reconcile_committed_staging,
-    )
+    """A valid receipt and SHA cannot override a missing/mid-flight A proof."""
+    from cifereca.core import canonical_postcommit_reconcile as postcommit
     from cifereca.locking import InterProcessLock
 
     service, db, root, gets, staged = _published_with_deferred_cleanup(
@@ -94,18 +93,41 @@ def test_postcommit_cleanup_refuses_stale_source_without_provider_proof(
             (service.source.scope.identity_id, service.source.scope.provider_id),
         ).fetchone()
         assert observed
-        sql.execute(
-            "UPDATE source_references SET evidence_ref='' "
-            "WHERE source_reference_id=?", (source_ref,),
-        )
+        if proof_loss == "before_cleanup":
+            sql.execute(
+                "UPDATE source_references SET evidence_ref='' "
+                "WHERE source_reference_id=?", (source_ref,),
+            )
+
+    # The provider proof can also be invalidated AFTER initial SQL lookup and
+    # physical hash, before the last guarded SQL check. Neither race may
+    # authorize deleting the only historical staged receipt copy.
+    triggered = []
+    if proof_loss == "after_final_hash":
+        original_hash = postcommit._path_verified
+
+        def invalidate_after_final_hash(*args, **kwargs):
+            verified = original_hash(*args, **kwargs)
+            if kwargs.get("path") == final and not triggered:
+                with db._lock, db._connect() as sql:
+                    sql.execute(
+                        "UPDATE source_references SET evidence_ref='' "
+                        "WHERE source_reference_id=?", (source_ref,),
+                    )
+                triggered.append(True)
+            return verified
+
+        monkeypatch.setattr(postcommit, "_path_verified",
+                            invalidate_after_final_hash)
 
     lock_path = root.parent / "state" / "acquisition.lock"
     with InterProcessLock(lock_path) as lock:
-        result = reconcile_committed_staging(
+        result = postcommit.reconcile_committed_staging(
             db, source=service.source, placement_id=before["placement_id"],
             library_root=root, shared_lock=lock, current=lambda: True,
         )
     assert result is False
+    assert triggered == ([True] if proof_loss == "after_final_hash" else [])
     assert staged.read_bytes() == final.read_bytes() == BYTES
     assert db.placements() == [before]
     assert gets == ["signed-right-offer"]
@@ -116,7 +138,7 @@ def test_postcommit_cleanup_refuses_stale_source_without_provider_proof(
             "WHERE source_reference_id=?", (observed, source_ref),
         )
     with InterProcessLock(lock_path) as lock:
-        repaired = reconcile_committed_staging(
+        repaired = postcommit.reconcile_committed_staging(
             db, source=service.source, placement_id=before["placement_id"],
             library_root=root, shared_lock=lock, current=lambda: True,
         )
