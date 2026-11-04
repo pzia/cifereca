@@ -902,7 +902,8 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
         local_keys[(row.get('placement_id'), artifact_id)] = key
         local_artifact_keys[(row_identity or default_identity_id, artifact_id)] = key
-        metadata = dict(row.get("metadata") or {})
+        # Keep the scoped metadata.path normalized above; re-reading the raw
+        # catalogue here would reintroduce an arbitrary foreign path.
         all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
         current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
         existing = merged.get(key)
