@@ -115,6 +115,7 @@ def rig(tmp_path):
         _reader_scope_identity="alice",
         _identity_context_generation=3,
         _account_context_generation=1,
+        _reader_selection_generation=0,
         _route_display_token=route,
         _reader_status_label=FakeLabel(),
     )
@@ -225,6 +226,7 @@ def test_invalid_chooser_selection_never_enqueues_usb_job(tmp_path, malformed):
 @pytest.mark.parametrize("change", [
     "identity", "generation", "account_generation", "device",
     "route", "closed", "binding", "fingerprint",
+    "selection_generation", "root_changed",
 ])
 def test_stale_chooser_cannot_enqueue_any_work(tmp_path, change):
     db, window, root = rig(tmp_path)
@@ -242,6 +244,13 @@ def test_stale_chooser_cannot_enqueue_any_work(tmp_path, change):
         window._route_display_token = object()
     elif change == "closed":
         window._closed = True
+    elif change == "selection_generation":
+        window._reader_selection_generation += 2
+    elif change == "root_changed":
+        window.config.get = lambda key, default=None: (
+            str(tmp_path / "migrated-library")
+            if key == "library.directory" else default
+        )
     elif change == "binding":
         row = db.device_binding_get("reader-alice")
         db.device_binding_put({**row, "identity_id": "bob"})
@@ -258,6 +267,7 @@ def test_stale_chooser_cannot_enqueue_any_work(tmp_path, change):
 
 @pytest.mark.parametrize("change", [
     "identity", "generation", "device", "route", "binding",
+    "selection_generation", "root_changed",
 ])
 def test_stale_worker_completion_never_updates_next_profile(tmp_path, change):
     db, window, root = rig(tmp_path)
@@ -273,6 +283,13 @@ def test_stale_worker_completion_never_updates_next_profile(tmp_path, change):
         window._reader_selected_device_id = "some-other-device"
     elif change == "route":
         window._route_display_token = object()
+    elif change == "selection_generation":
+        window._reader_selection_generation += 2
+    elif change == "root_changed":
+        window.config.get = lambda key, default=None: (
+            str(tmp_path / "migrated-library")
+            if key == "library.directory" else default
+        )
     else:
         binding_row = db.device_binding_get("reader-alice")
         db.device_binding_put({**binding_row, "identity_id": "bob"})
