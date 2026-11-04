@@ -105,6 +105,7 @@ def kdrm_runtime_ready(session: object) -> bool:
 def exact_kobo_offer_id(
     payload: Any, *, identity_id: str, credential_id: str,
     account_id: str, product_id: str, kdrm_runtime_ready: bool = False,
+    diagnostic: dict[str, object] | None = None,
 ) -> str:
     """Qualify an observed, single, executable selected GET candidate.
 
@@ -112,10 +113,20 @@ def exact_kobo_offer_id(
     alone is not an offer; a generic Vault schema or GET-less KDRM recipe
     cannot be converted into one. The signed URL never enters the ID.
     """
+    # Diagnostic side channel only: never changes the opaque offer or eligibility.
+    # All emitted attributes are closed categories, never URLs or auth material.
+    if diagnostic is not None:
+        diagnostic.clear()
+
+    def reject(reason: str) -> str:
+        if diagnostic is not None:
+            diagnostic["qualification_reason"] = reason
+        return ""
+
     coordinates = (identity_id, credential_id, account_id, product_id)
     if (not all(type(x) is str and 0 < len(x) <= 256 for x in coordinates)
             or type(payload) is not dict or not _current_expiry(payload)):
-        return ""
+        return reject("descriptor_invalid_or_expired")
     # Vault descriptor metadata is provider-controlled, not an extension of
     # Core's attested owner. An explicit conflicting scope anywhere in this
     # response invalidates the WHOLE offer, rather than letting a matching
@@ -132,13 +143,13 @@ def exact_kobo_offer_id(
         if key in payload and (
             type(payload[key]) is not str or payload[key] != expected
         ):
-            return ""
+            return reject("descriptor_scope_conflict")
     acquisition = payload.get("acquisition")
     if type(acquisition) is not dict or not _current_expiry(acquisition):
-        return ""
+        return reject("acquisition_invalid_or_expired")
     if (type(acquisition.get("product_id")) is not str
             or acquisition["product_id"] != product_id):
-        return ""
+        return reject("acquisition_product_mismatch")
     for key, expected in (
         ("provider", "kobo"),
         ("source_provider", "kobo"),
@@ -150,13 +161,43 @@ def exact_kobo_offer_id(
         if key in acquisition and (
             type(acquisition[key]) is not str or acquisition[key] != expected
         ):
-            return ""
+            return reject("acquisition_scope_conflict")
     candidates = acquisition.get("candidates")
     if type(candidates) is not list or not 1 <= len(candidates) <= 50:
-        return ""
+        return reject("candidate_list_invalid")
+
+    def skip(reason: str) -> None:
+        if diagnostic is not None and len(candidates) == 1:
+            diagnostic["candidate_reason"] = reason
+
+    if diagnostic is not None and len(candidates) == 1:
+        observed = candidates[0]
+        if type(observed) is dict:
+            drm = observed.get("drm")
+            raw = (drm.get("raw_type") if type(drm) is dict
+                   else observed.get("drm_type"))
+            if _kdrm_raw_type(raw) or observed.get("handling") == "kobo_kdrm":
+                source = observed.get("source")
+                if source is None and type(observed.get("kobo")) is dict:
+                    source = observed["kobo"].get("source")
+                for name, value, allowed in (
+                    ("candidate_source", source,
+                     {"library_sync", "content_access_book"}),
+                    ("candidate_media_format", observed.get("media_format"),
+                     {"epub", "kepub", "pdf", "acsm"}),
+                    ("candidate_source_format", observed.get("source_format"),
+                     {"epub", "kepub", "flepub", "epub3", "epub3fl"}),
+                ):
+                    diagnostic[name] = (
+                        "missing" if value is None else
+                        value.strip().lower()
+                        if type(value) is str and value.strip().lower() in allowed
+                        else "other"
+                    )
     eligible: list[tuple[str, str, str, str]] = []
     for candidate in candidates:
         if type(candidate) is not dict:
+            skip("candidate_not_mapping")
             continue
         # A foreign candidate taints the complete upstream descriptor even
         # when another sibling advertises a valid HTTPS GET. Never choose
@@ -172,14 +213,16 @@ def exact_kobo_offer_id(
             if key in candidate and (
                 type(candidate[key]) is not str or candidate[key] != expected
             ):
-                return ""
+                return reject("candidate_scope_conflict")
         if not _safe_https_get(candidate) or not _current_expiry(candidate):
+            skip("candidate_transport_or_expiry_invalid")
             continue
         kind, handling = candidate.get("kind"), candidate.get("handling")
         drm = candidate.get("drm")
         raw_drm = (drm.get("raw_type") if type(drm) is dict
                    else candidate.get("drm_type"))
         if type(raw_drm) is not str:
+            skip("candidate_drm_missing")
             continue
         # A signed candidate is not an executable plain/Adobe route if its
         # own DRM fields disagree. The executor may read family/protected
@@ -203,9 +246,11 @@ def exact_kobo_offer_id(
         elif raw_drm in known_drm:
             families, required_protected = known_drm[raw_drm]
         else:
+            skip("candidate_drm_unknown")
             continue
         nested = drm if type(drm) is dict else {}
         if ("drm_type" in candidate and candidate["drm_type"] != raw_drm):
+            skip("candidate_drm_type_conflict")
             continue
         if any(
             key in container
@@ -215,6 +260,7 @@ def exact_kobo_offer_id(
                 (nested, "family"), (candidate, "drm_family"),
             )
         ):
+            skip("candidate_drm_family_mismatch")
             continue
         if any(
             key in container
@@ -224,6 +270,7 @@ def exact_kobo_offer_id(
                 (nested, "protected"), (candidate, "protected"),
             )
         ):
+            skip("candidate_drm_protection_mismatch")
             continue
         # Both claims are independently consumed by provider/DRM paths.
         # Contradictory or malformed explicit formats cannot be promoted
@@ -234,6 +281,7 @@ def exact_kobo_offer_id(
         ]
         if (not declared or any(type(v) is not str or not v.strip()
                                 for v in declared)):
+            skip("candidate_format_missing_or_invalid")
             continue
         fmt = declared[0].strip().lower()
         if _kdrm_raw_type(raw_drm):
@@ -246,6 +294,7 @@ def exact_kobo_offer_id(
                         ("kepub", "kepub"), ("epub", "flepub"),
                         ("epub", "epub"),
                     }):
+                skip("kdrm_format_pair_unqualified")
                 continue
         else:
             # KVault distinguishes media_format (normalized, e.g. epub)
@@ -254,6 +303,7 @@ def exact_kobo_offer_id(
             # NEVER accept *_SAMPLE or unknown labels as a full purchase.
             normalized_source = candidate.get("source_format", declared[0])
             if type(normalized_source) is not str:
+                skip("candidate_source_format_invalid")
                 continue
             accepted_formats = {
                 "epub": frozenset({"epub", "epub3", "epub3fl", "flepub"}),
@@ -264,6 +314,7 @@ def exact_kobo_offer_id(
             if normalized_source.strip().casefold() not in accepted_formats.get(
                 fmt, frozenset()
             ):
+                skip("candidate_format_pair_unqualified")
                 continue
         # A verified HTTPS acquisition link is not by itself proof of an
         # executable ADEPT/KDRM pipeline. Only conservative known paths.
@@ -280,15 +331,18 @@ def exact_kobo_offer_id(
             # Kobo content-access recipe and the DRM runtime are mandatory.
             pass
         else:
+            skip("candidate_execution_route_unqualified")
             continue
         source = candidate.get("source")
         if source is None and type(candidate.get("kobo")) is dict:
             source = candidate["kobo"].get("source")
         if source is not None and (type(source) is not str or len(source) > 128):
+            skip("candidate_source_invalid")
             continue
         if _kdrm_raw_type(raw_drm) and source != "library_sync":
             # Only library_sync's pinned delivery plus separate content-key
             # replay is supported by the negotiated public Kobo-Adept ABI.
+            skip("kdrm_source_unsupported")
             continue
         # For KDRM the upstream wire-format affects the DRM recipe, so the
         # opaque offer must pin it as well. No change to legacy plain/ACSM IDs.
@@ -298,7 +352,13 @@ def exact_kobo_offer_id(
     # Two different candidate routes must not be arbitrarily conflated,
     # including multiple signed URLs of the same declared format.
     if len(eligible) != 1:
-        return ""
+        if diagnostic is not None:
+            diagnostic["eligible_candidate_count"] = len(eligible)
+        return reject(
+            str(diagnostic.get("candidate_reason", "eligible_count_not_one"))
+            if diagnostic is not None and len(candidates) == 1
+            else "eligible_count_not_one"
+        )
     fields = coordinates + eligible[0]
     # The opaque offer must also state WHICH Core fulfillment contract it
     # requires. KDRM always needs Core's one-shot runtime receipt; direct
