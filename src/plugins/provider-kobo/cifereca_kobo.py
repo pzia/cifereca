@@ -1315,10 +1315,12 @@ class KoboSession(ProviderSession):
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         kdrm_ready = kdrm_runtime_ready(self)
+        qualification_diagnostic = {}
         offer_id = exact_kobo_offer_id(
             payload, identity_id=identity_id, credential_id=self.credential_id,
             account_id=account_id, product_id=right_id,
             kdrm_runtime_ready=kdrm_ready,
+            diagnostic=qualification_diagnostic,
         )
         qualified_reason = (
             "descriptor_offer_attested" if offer_id else
@@ -1412,13 +1414,28 @@ class KoboSession(ProviderSession):
             any(type(row) is dict and row.get("handling") == "kobo_kdrm"
                 for row in candidates) if type(candidates) is list else False
         )
+        # Rejection attributes come from the SAME admission pass. The closed
+        # value categories never include signed links or delegated payloads.
+        detail = ""
+        if qualified_reason == "descriptor_candidate_unqualified":
+            detail = (
+                " qualification_reason=%s eligible_candidate_count=%s "
+                "candidate_source=%s candidate_media_format=%s "
+                "candidate_source_format=%s"
+            ) % (
+                qualification_diagnostic.get("qualification_reason", "unknown"),
+                qualification_diagnostic.get("eligible_candidate_count", "unknown"),
+                qualification_diagnostic.get("candidate_source", "not_applicable"),
+                qualification_diagnostic.get("candidate_media_format", "not_applicable"),
+                qualification_diagnostic.get("candidate_source_format", "not_applicable"),
+            )
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
-            "delegated_resolver_called=%s",
+            "delegated_resolver_called=%s%s",
             right_id, "available" if offer_id else "unknown",
             qualified_reason, count, kdrm_present, kdrm_ready,
-            delegated_resolver_called,
+            delegated_resolver_called, detail,
         )
         # One exact purchase preflight is never a branch-wide manifest,
         # even when the preceding Vault inventory was fully attested.
