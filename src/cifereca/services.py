@@ -2339,6 +2339,13 @@ class LibraryService:
                 # This is only a read-only visibility hint; the locked
                 # acquisition still re-attests the exact account and edition.
             if item.source_provider == "kobo":
+                # #3196: this is the old direct-download writer, not Core A->B.
+                # Do not advertise it alongside a complete canonical source.
+                from .core.canonical_delivery_abi import has_complete_delivery_abi
+                if has_complete_delivery_abi(
+                    self._session_for_source(item.source_provider, item.source_credential)
+                ):
+                    return False
                 identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
                 if (type(identity_id) is not str or not identity_id
                         or type(item.source_credential) is not str
@@ -2600,9 +2607,26 @@ class LibraryService:
             # the lock and calls _execute_kobo_acquisition directly).
             try:
                 with InterProcessLock(acquisition_lock_file()):
+                    # #3196: an exact canonical Kobo source must have ONE
+                    # Core A->B executor, not another GET via the old direct
+                    # writer. Re-resolve the live session under the global
+                    # lock, not a pre-lock capability/selection snapshot.
+                    from .core.canonical_delivery_abi import has_complete_delivery_abi
+                    if has_complete_delivery_abi(
+                        self._session_for_source("kobo", item.source_credential)
+                    ):
+                        raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
                     if _admission is not None:
                         item = _admission()
                         identity = self.identity_for_connection(item.source_provider, item.source_credential)
+                        # The selected source/ABI may change during the
+                        # admission callback. Never trust its earlier result
+                        # as an authorization for the legacy executor.
+                        if (item.source_provider != "kobo"
+                                or has_complete_delivery_abi(
+                                    self._session_for_source("kobo", item.source_credential)
+                                )):
+                            raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
                     target = self._kobo_backup_target_dir(identity.identity_id)
                     candidates = self._kobo_record_candidate_paths(
                         {"item_id": item.record_id, "title": item.title,
