@@ -454,6 +454,11 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         # choose whichever metadata row happened to be loaded last.
         entry = eligible[0] if len(eligible) == 1 else {}
         metadata = dict(entry.get("metadata") or {})
+        # #2797: recent["path"] is the scoped Placement, but the attached
+        # catalogue metadata could otherwise disclose a foreign/stale path.
+        # Do not invent a new metadata key for older local catalogues.
+        if "path" in metadata:
+            metadata["path"] = str(placement.get("path") or "")
         provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
         row_identity = placement_identity
         item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
@@ -873,6 +878,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         # compatibility path; we cannot silently invent a Placement for them.
         metadata = dict(row.get("metadata") or {})
         placement_id = str(row.get("placement_id") or "")
+        scoped_local_path = None
         if placement_id or metadata.get("imported_from") == "backup_items":
             if not placement_id or not any(
                 str(p.get("placement_id") or "") == placement_id
@@ -883,9 +889,17 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             if not owner:
                 continue
             try:
-                self.local_book_path(placement_id, identity_id=owner)
+                scoped_local_path = self.local_book_path(
+                    placement_id, identity_id=owner,
+                )
             except ProviderConfigurationError:
                 continue
+            # The catalogue is descriptive, never a path ownership proof.
+            # A stale/foreign metadata.path must not override a physically
+            # checked Placement, nor leak into the returned metadata. Keep
+            # this optional descriptive key absent when originally absent.
+            if "path" in metadata:
+                metadata["path"] = str(scoped_local_path)
         item_id = str(row.get("item_id") or artifact_id or row.get("catalog_entry_id"))
         artifact = artifacts.get(artifact_id, {})
         sha256 = str(artifact.get("sha256") or "")
@@ -895,7 +909,8 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
         local_keys[(row.get('placement_id'), artifact_id)] = key
         local_artifact_keys[(row_identity or default_identity_id, artifact_id)] = key
-        metadata = dict(row.get("metadata") or {})
+        # Keep the scoped metadata.path normalized above; re-reading the raw
+        # catalogue here would reintroduce an arbitrary foreign path.
         all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
         current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
         existing = merged.get(key)
@@ -930,7 +945,10 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 "author": row.get("author"), "provider_id": provider_id, "providers": [provider_id],
                 "identity_id": row_identity or default_identity_id, "identity_ids": [row_identity or default_identity_id] if (row_identity or default_identity_id) else [],
                 "item_id": item_id, "source_refs": [source_ref], "state": "local", "local": True,
-                "local_path": metadata.get("path") or (current_placement or {}).get("path"),
+                "local_path": (
+                    str(scoped_local_path) if scoped_local_path is not None
+                    else metadata.get("path") or (current_placement or {}).get("path")
+                ),
                 "media_format": artifact.get("media_format") or row.get("media_format"),
                 "artifact_kind": metadata.get("artifact_kind") or artifact.get("kind") or "file",
                 "bundle_members": metadata.get("bundle_members") or [], "playlist": metadata.get("playlist"),
