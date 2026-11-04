@@ -52,6 +52,38 @@ def test_individual_series_link_is_projected_with_exact_html_provenance(
     assert "owned" not in item.metadata
 
 
+
+@pytest.mark.parametrize("field_name", [
+    "SeriesTitle_exact", "SeriesTitle_idx",
+    "seriestitle_exact", "SERIESTITLE_IDX",
+])
+@pytest.mark.parametrize("scenario", ["CATALOGUE", "EBOOKS"])
+def test_both_observed_series_query_fields_are_scoped_to_exact_result(
+    field_name, scenario,
+):
+    # These are Search-provided per-result links, not the global facet list.
+    item = _record(scenario, CustomResult=(
+        '<a href="/Search?field=' + field_name + '&amp;query=example">'
+        'Cycle astral</a>'
+    ))
+    assert item.metadata["series"] == ["Cycle astral"]
+    assert (item.metadata["bibliography_evidence"]["series"]["source_field"]
+            == "Search.CustomResult")
+    assert "audience" not in item.metadata
+
+
+@pytest.mark.parametrize("field_name", [
+    "SeriesTitle_exactly", "SeriesTitle_idx2", "NotSeriesTitle_exact",
+    "SeriesTitle_exact_other", "SeriesTitle_idx_sub",
+])
+def test_similar_unobserved_search_fields_never_mint_series(field_name):
+    item = _record("CATALOGUE", CustomResult=(
+        '<a href="/Search?field=' + field_name + '">Not a series</a>'
+    ))
+    assert "series" not in item.metadata
+
+
+
 def test_same_link_in_both_display_fields_is_one_relation_not_two():
     item = _record("CATALOGUE", CustomResult=SERIES_LINK, CompactResult=SERIES_LINK)
     assert item.metadata["series"] == ["La saga & ses suites"]
