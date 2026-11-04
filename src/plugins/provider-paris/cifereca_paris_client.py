@@ -11,7 +11,7 @@ import ipaddress
 import re
 from html.parser import HTMLParser
 from importlib import metadata
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Iterable, Callable
 from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
@@ -633,7 +633,7 @@ class ParisClient:
         """
         scenarios = ["EBOOKS"] if scope == "digital" else ["CATALOGUE"] if scope == "physical" else ["CATALOGUE", "EBOOKS"]
         out: list[SearchResult] = []
-        seen: set[str] = set()
+        positions: dict[str, int] = {}
         self.last_search_warnings = []
         self.last_search_response_facets = []
         failures: list[tuple[str, Exception]] = []
@@ -694,9 +694,55 @@ class ParisClient:
             # successful search, not evidence that every route failed.
             successful_scenarios += 1
             for item in rows or []:
-                if item.id not in seen:
-                    seen.add(item.id)
-                    out.append(item)
+                # Scenario is a search *route*, not positive per-item medium.
+                # A CATALOGUE page can contain DILICOM ebooks; an EBOOKS
+                # page can also contain a physical Syracuse record.
+                if scope in {"physical", "digital"} and item.medium != scope:
+                    continue
+                initial = dict(item.metadata or {})
+                provenances = initial.get("search_scenarios")
+                if type(provenances) not in (tuple, list):
+                    provenances = ()
+                provenances = tuple(
+                    name for name in provenances
+                    if type(name) is str and name in {"CATALOGUE", "EBOOKS"}
+                )
+                if scenario not in provenances:
+                    provenances += (scenario,)
+                initial["search_scenarios"] = list(dict.fromkeys(provenances))
+                if item.id not in positions:
+                    positions[item.id] = len(out)
+                    out.append(replace(item, metadata=initial))
+                    continue
+                # One exact record can be seen through both search routes.
+                # Keep *both* sightings rather than attributing ownership,
+                # file receipt or publication to the first successful route.
+                pos = positions[item.id]
+                previous = out[pos]
+                metadata = dict(previous.metadata or {})
+                paths = metadata.get("search_scenarios")
+                paths = list(paths) if type(paths) in (list, tuple) else []
+                metadata["search_scenarios"] = list(dict.fromkeys(
+                    [name for name in paths + list(provenances)
+                     if type(name) is str and name in {"CATALOGUE", "EBOOKS"}]
+                ))
+                # Contradictory factual classifications of the SAME ID
+                # must not silently choose one as proof of physical/digital.
+                same_classification = (
+                    previous.document_classification == item.document_classification
+                    and previous.medium == item.medium
+                )
+                if same_classification:
+                    out[pos] = replace(previous, metadata=metadata)
+                else:
+                    from cifereca.plugin_api import DocumentClassification
+                    metadata["document_kind"] = "unknown"
+                    metadata["document_medium"] = "unknown"
+                    out[pos] = replace(
+                        previous, medium="unknown", content_type="unknown",
+                        document_classification=DocumentClassification(),
+                        metadata=metadata,
+                    )
 
         if failures and successful_scenarios:
             self.last_search_warnings = [
