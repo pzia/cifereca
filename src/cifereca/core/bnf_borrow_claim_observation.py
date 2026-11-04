@@ -75,12 +75,16 @@ def observe_bnf_borrow_claim(
             and row.get("verification") == "positive_active_loan"
             and type(row.get("verified_loan_id")) is str
             and 0 < len(row["verified_loan_id"]) <= 128
+            and all(c.isascii() and (c.isalnum() or c in "_-")
+                    for c in row["verified_loan_id"])
         )
         return BnfBorrowClaimObservation(
             "confirmed" if confirmed else "opaque_consumed", True,
             confirmed,
         )
-    if status in {"request_sent", "submitted", "verification_unavailable", "blocked"}:
+    if type(status) is str and status in {
+        "request_sent", "submitted", "verification_unavailable", "blocked",
+    }:
         return BnfBorrowClaimObservation(status, True, False)
     return BnfBorrowClaimObservation("opaque_consumed", True, False)
 
