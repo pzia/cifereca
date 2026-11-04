@@ -1013,15 +1013,27 @@ def main(argv: list[str] | None = None) -> int:
                     "plan": kobo_manual_reconciliation_plan(result),
                 }
         elif a.cmd == "kobo-resume-preview":
-            if a.refresh_manifest:
-                # Only explicit --refresh-manifest may contact the Kobo
-                # provider; the default preview uses persisted local state.
-                service.connect_kobo_preview(a.credential)
-            result = service.kobo_backup_preview(
-                a.credential,
-                refresh_manifest=a.refresh_manifest,
-                verify_local_files=a.verify_files,
-            )
+            try:
+                if a.refresh_manifest:
+                    # Only explicit --refresh-manifest may contact the Kobo
+                    # provider; offline preview uses persisted local state.
+                    service.connect_kobo_preview(a.credential)
+                result = service.kobo_backup_preview(
+                    a.credential,
+                    refresh_manifest=a.refresh_manifest,
+                    verify_local_files=a.verify_files,
+                )
+            except Exception:
+                # Diagnostic CLI boundary: provider responses, private paths,
+                # signed URLs and tokens must not escape as a traceback.
+                # No fallback to another identity or credential is allowed.
+                result = {
+                    "status": "unavailable",
+                    "code": "kobo_preview_unavailable",
+                    "preview_only": True,
+                    "acquisition_authorized": False,
+                }
+                exit_code = 2
         elif a.cmd == "kobo-resume":
             # The targeted provider session is connected only after explicit
             # download consent. Never connect Paris or other Kobo credentials.

@@ -370,8 +370,17 @@ def kobo_backup_preview(
                     for row in session.accounts
                 ) == account_scopes
                 and (
-                    len(accounts) != 1 or account_scopes[0][:3]
-                    == (identity_id, "kobo", credential_id)
+                    len(accounts) != 1
+                    or (
+                        # Kobo's plugin Account historically defaults to
+                        # identity_id="default" even when the exact Core
+                        # credential belongs to a named identity. A legacy
+                        # model default is not evidence of a source switch.
+                        # Require provider+credential on the live Account,
+                        # and independently pin the binding in SQLite below.
+                        account_scopes[0][1:3] == ("kobo", credential_id)
+                        and account_scopes[0][0] in (identity_id, "default")
+                    )
                 )
                 and self.storage.identity_for_connection(
                     "kobo", credential_id,
