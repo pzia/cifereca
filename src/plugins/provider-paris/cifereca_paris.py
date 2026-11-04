@@ -278,6 +278,8 @@ class ParisProviderSession(ProviderSession):
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
+        # Core owns the persistent claim; never reuse one in this session.
+        self._borrow_claim_attempts: set[str] = set()
 
     @staticmethod
     def _account_unusable_reason(summary: dict[str, Any]) -> str | None:
@@ -1020,19 +1022,24 @@ class ParisProviderSession(ProviderSession):
         return detail
 
     def borrow(self, item: SearchResult, account: Account) -> Loan:
-        """Create a real Paris PNB loan using the captured official redirect flow.
+        """A legacy call has no persistent claim for the mutating redirect."""
+        raise ProviderCapabilityError("paris_borrow_claim_required")
 
-        The captured contract is valid for the primary account only.  Paris uses
-        the empty upstream UID for that account; linked/delegated accounts remain
-        intentionally rejected until their mutation flow is captured.
+    def borrow_explicit_with_claim(
+        self, item: SearchResult, account: Account, *,
+        admission, claimed_receipt, confirmed=False, core_scope_current=None,
+    ) -> Loan:
+        """Manual PNB attempt under the same public claim ABI as BnF.
+
+        Core must persist the exact claim before calling this method. Sync
+        never calls it; an unavailable ACSM does not disprove an observed loan.
         """
-        uid = "" if account.is_primary or not account.unique_id else account.unique_id
-        loan = self.client.borrow_digital(item, uid)
-        loan.source_provider = self.provider_id
-        loan.source_credential = self.credential_id
-        loan.source_account_id = account.unique_id or "primary"
-        self._enrich_digital_loan_metadata(loan)
-        return loan
+        from cifereca_paris_borrow import borrow_with_claim
+        return borrow_with_claim(
+            self, item, account, admission=admission,
+            claimed_receipt=claimed_receipt, confirmed=confirmed,
+            core_scope_current=core_scope_current,
+        )
 
     def renew(self, loan: Loan, account: Account) -> dict[str, Any]:
         # Provider-side defense: even a direct plugin call must never POST
