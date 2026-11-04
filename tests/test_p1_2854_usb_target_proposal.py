@@ -110,7 +110,9 @@ def test_inert_or_negative_protection_metadata_is_not_copy_permission(metadata):
 def test_malformed_binding_fails_closed(changes):
     values = inputs()
     values["binding"].update(changes)
-    with pytest.raises(ValueError, match="scope_unverified"):
+    # A binding pointing to another reader is refused by the subsequent
+    # intention/reader scope match, not necessarily by the first guard.
+    with pytest.raises(ValueError, match="unverified"):
         propose_usb_target(**values)
 
 
