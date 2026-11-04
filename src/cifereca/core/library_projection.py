@@ -630,16 +630,29 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
 def local_placements_for_sources(self, identity_id):
     """One snapshot for search; only unique acquisition-attested placements."""
     artifacts = {}
+    borrower_scopes = {}
     for row in self.storage.acquisitions(status='complete'):
         if row.get('identity_id') != identity_id or not row.get('artifact_id'): continue
         key = (row.get('provider_id'), row.get('credential_id'), str(row.get('item_id') or ''))
         artifacts.setdefault(key, set()).add(row['artifact_id'])
+        # Search's old three-coordinate key has no borrower/account field.
+        # Two exact completed receipts for different accounts are NOT a
+        # unique binding for an arbitrary public result, even if both
+        # receipts happen to reference the same Artifact and one Placement.
+        account = row.get('account_id')
+        borrower_scopes.setdefault(key, set()).add(
+            (type(account).__name__, account) if type(account) in (str, type(None))
+            else ("invalid", None)
+        )
     placements = {}
     for row in self.storage.placements():
         if row.get('identity_id') == identity_id and row.get('state') == 'present':
             placements.setdefault(row.get('artifact_id'), []).append(row)
     linked = {}
     for key, ids in artifacts.items():
+        # An identical SHA is not proof that one borrower's completed
+        # acquisition can decorate another borrower's catalogue result.
+        if len(borrower_scopes.get(key, ())) != 1: continue
         rows = [row for artifact_id in ids for row in placements.get(artifact_id, [])]
         if len(rows) != 1: continue
         try: self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)
