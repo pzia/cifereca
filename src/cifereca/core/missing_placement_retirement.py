@@ -95,6 +95,19 @@ def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
     if type(path) is not str or not path:
         return _blocked("path_out_of_scope"), None
     identity_root = root / directory
+    # Keep the existing contract when the owner changes its registered
+    # folder: a former Placement path now lies outside the declared scope,
+    # even if the new directory does not yet exist. Do this lexical check
+    # before probing its inode so the refusal stays path_out_of_scope.
+    try:
+        recorded = Path(path)
+        relative = recorded.relative_to(identity_root)
+        if (not recorded.is_absolute() or ".." in recorded.parts
+                or not relative.parts
+                or any(part in {"", ".", ".."} for part in relative.parts)):
+            return _blocked("path_out_of_scope"), None
+    except (TypeError, ValueError):
+        return _blocked("path_out_of_scope"), None
     identity_signature = _directory_signature(identity_root)
     if identity_signature is None:
         return _blocked("parent_or_root_unavailable"), None
