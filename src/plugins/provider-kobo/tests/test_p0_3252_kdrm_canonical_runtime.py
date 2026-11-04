@@ -674,3 +674,47 @@ def test_kdrm_explicit_acsm_opt_out_reaches_vault_even_if_adobe_runtime_missing(
         assert calls[0]["include_acsm"] is adobe_capability
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("drm_first", [True, False])
+def test_independent_drm_entrypoint_cannot_shadow_provider_kdrm_helper(
+    monkeypatch, drm_first,
+):
+    """The separately installed DRM plugin owns the old top-level name.
+
+    Simulate its real import cache entry in both activation orders. The
+    provider's selected reader and candidate staging must use its OWN helper.
+    All account/descriptor responses are synthetic; no external Kobo I/O.
+    """
+    import importlib
+    import sys
+    from types import ModuleType
+
+    root = Path(__file__).resolve().parents[1]
+    if not drm_first:
+        importlib.import_module("cifereca_kobo_provider_kdrm")
+
+    drm_entrypoint = ModuleType("cifereca_kobo_kdrm")
+    drm_entrypoint.__file__ = "/synthetic/drm-kobo-kdrm/cifereca_kobo_kdrm.py"
+    drm_entrypoint.PLUGIN = object()
+    monkeypatch.setitem(sys.modules, "cifereca_kobo_kdrm", drm_entrypoint)
+
+    helper = importlib.import_module("cifereca_kobo_provider_kdrm")
+    assert Path(helper.__file__).resolve() == root / "cifereca_kobo_provider_kdrm.py"
+    assert callable(helper.scoped_kdrm_source)
+    assert not (root / "cifereca_kobo_kdrm.py").exists()
+
+    session, vault, broker, account, posts = setup()
+    try:
+        offer = session.rights_delivery_offer_snapshot(
+            account, "book-1", explicit_user_action=True,
+        )
+        assert offer.rights[0].provider_attested is True
+        assert offer.rights[0].delivery == "available"
+        assert len(posts) == 1
+    finally:
+        session.close()
+
+    from cifereca_kobo_selected_candidate import scoped_kdrm_source
+    assert scoped_kdrm_source is helper.scoped_kdrm_source
+    assert sys.modules["cifereca_kobo_kdrm"] is drm_entrypoint
