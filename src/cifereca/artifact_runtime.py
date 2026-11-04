@@ -1324,6 +1324,12 @@ class _UsbCanonicalExecutionRequired(UnsupportedOperation):
     code = "usb_core_authorization_required"
 
 
+class _NoStorageTarget(NotFound):
+    """No currently eligible generic target, including excluded USB targets."""
+
+    code = "storage_target_unavailable"
+
+
 def _is_usb_storage_target(target: object) -> bool:
     """Closed recognition of the USB storage contract, not mount attestation.
 
@@ -1389,7 +1395,7 @@ class ArtifactRoutingBrokerImpl:
 
     def plan(self, request: ArtifactRouteRequest) -> ArtifactRoutePlan:
         targets=self.targets(request)
-        if not targets: raise NotFound("Aucune cible de stockage compatible", code="storage_target_unavailable")
+        if not targets: raise _NoStorageTarget("Aucune cible de stockage compatible")
         target=targets[0]
         filename=Path(request.filename or request.artifact.filename or (request.artifact.artifact_id.replace(":","-")+"."+request.artifact.format.format)).name
         return ArtifactRoutePlan(request,target,filename,summary=f"Envoyer {filename} vers {target.target.label or target.target.target_id}")
