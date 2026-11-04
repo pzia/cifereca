@@ -378,19 +378,18 @@ def exact_kobo_offer_id(
         route = (fmt + ":" + source_fmt.strip().lower()
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
-    # A sole pinned library_sync KDRM route takes precedence over optional
-    # legacy ContentAccess KDRM recipes. Both remain independently checked
-    # for scope and transport above. Never pick among multiple pinned routes
-    # or unrelated plain/ACSM alternatives by first/last-wins.
-    pinned = [row for row in eligible
-              if row[1] == "kobo_kdrm" and row[3].endswith(":library_sync")]
-    if (len(pinned) == 1 and all(
-        row == pinned[0] or
-        (row[1] == "kobo_kdrm" and row[3].endswith(":content_access_book"))
-        for row in eligible
-    )):
-        eligible = pinned
-    # Two independent non-pinned candidate routes remain ambiguous.
+    # Preserve a single proven plain, ACSM or library_sync route before
+    # using the legacy delegated KDRM fallback. Do not choose between
+    # multiple equally admissible routes by their upstream list order.
+    def legacy_kdrm(row: tuple[str, str, str, str]) -> bool:
+        return row[1] == "kobo_kdrm" and row[3].endswith(":content_access_book")
+
+    preferred = [row for row in eligible if not legacy_kdrm(row)]
+    if len(preferred) == 1 and all(
+        row == preferred[0] or legacy_kdrm(row) for row in eligible
+    ):
+        eligible = preferred
+    # Multiple independent routes remain ambiguous.
     if len(eligible) != 1:
         if diagnostic is not None:
             diagnostic["eligible_candidate_count"] = len(eligible)
