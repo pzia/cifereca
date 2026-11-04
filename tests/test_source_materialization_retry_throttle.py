@@ -20,7 +20,7 @@ def service(clock, checkpoint_due=True):
     return SimpleNamespace(
         storage=Storage(clock),
         kobo_backup_interval_minutes=lambda: 30,
-        _kobo_backup_account_due=lambda credential: checkpoint_due,
+        _kobo_backup_account_due=lambda credential, *, interval_minutes=None: checkpoint_due,
     )
 
 
