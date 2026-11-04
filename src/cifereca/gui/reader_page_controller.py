@@ -53,6 +53,7 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     window._reader_source_items = {}
     window._reader_scope_identity = None
     window._reader_filter = "all"
+    window._reader_selection_generation = 0
 
     def select_reader(_dropdown, _pspec):
         if (getattr(window, "_closed", False)
@@ -62,6 +63,9 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         ids = getattr(window, "_reader_device_ids", ())
         if not type(index) is int or index >= len(ids):
             return
+        if getattr(window, "_reader_selected_device_id", None) != ids[index]:
+            # A→B→A in one route must revoke an earlier in-flight dry-run.
+            window._reader_selection_generation += 1
         window._reader_selected_device_id = ids[index]
         window._render_readers()
 
@@ -156,6 +160,8 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         selected = getattr(window, "_reader_selected_device_id", None)
         if selected not in ids:
             selected = ids[0] if ids else None
+        if getattr(window, "_reader_selected_device_id", None) != selected:
+            window._reader_selection_generation += 1
         window._reader_selected_device_id = selected
 
         if ids != getattr(window, "_reader_device_ids", ()):
