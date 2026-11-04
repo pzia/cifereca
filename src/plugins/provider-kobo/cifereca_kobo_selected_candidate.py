@@ -19,7 +19,7 @@ from cifereca.plugin_api import (
 from cifereca_kobo_delivery_offer import (
     exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
 )
-from cifereca_kobo_kdrm import scoped_kdrm_source
+from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
 _MAX_DELIVERY_BYTES = 128 * 1024 * 1024
 _MAX_ACSM_BYTES = 2 * 1024 * 1024
