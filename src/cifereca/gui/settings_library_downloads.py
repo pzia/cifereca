@@ -27,8 +27,8 @@ class LibraryDownloadSettings:
 
     
 def _download_mapping(raw: object) -> tuple[dict[str, Any], bool]:
-    if raw is None:
-        return {}, False
+    # An absent key already uses the {} default at every caller; an
+    # explicitly persisted null is malformed and cannot be re-saved as {}.
     if type(raw) is not dict:
         return {}, True
     return raw, False
@@ -122,8 +122,9 @@ def build_library_download_section(
         invalid |= bad
         # Detect corrupt persisted provider containers even if Config's
         # provider_settings() accessor normalizes them to an empty dict.
-        historical = config.get(f"providers.settings.{descriptor.id}", None)
-        if historical is not None and type(historical) is not dict:
+        missing = object()
+        historical = config.get(f"providers.settings.{descriptor.id}", missing)
+        if historical is not missing and type(historical) is not dict:
             invalid = True
         dcfg, bad = _download_mapping(settings.get("downloads", {}))
         invalid |= bad
