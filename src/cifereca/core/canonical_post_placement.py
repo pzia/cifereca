@@ -184,6 +184,44 @@ def checkpoint_post_placement_duplicates_change(
         existing = db.execute(
             "SELECT value FROM metadata WHERE key=?", (key,),
         ).fetchone()
+        if existing is not None:
+            raw = existing[0]
+            if type(raw) is not str or len(raw) > 24 * 1024:
+                raise ValueError("canonical_dedup_checkpoint_unreadable")
+            try:
+                previous = json.loads(
+                    raw, object_pairs_hook=_unique_checkpoint_fields,
+                )
+            except (ValueError, TypeError, RecursionError) as exc:
+                raise ValueError("canonical_dedup_checkpoint_unreadable") from exc
+            if (type(previous) is not dict or set(previous) != {
+                    "schema", "identity_id", "artifact_id", "placement_ids",
+                } or previous["schema"] !=
+                    "canonical.post-placement-dedup-pending.v1"
+                    or previous["identity_id"] != identity
+                    or previous["artifact_id"] != artifact_id
+                    or type(previous["placement_ids"]) is not list
+                    or not 2 <= len(previous["placement_ids"]) <= _MAX_MATCHES + 1
+                    or any(type(pid) is not str or not 0 < len(pid) <= 256
+                           for pid in previous["placement_ids"])
+                    or len(set(previous["placement_ids"])) !=
+                       len(previous["placement_ids"])):
+                raise ValueError("canonical_dedup_checkpoint_unreadable")
+            # A partial physical rehash is NOT proof that a previously
+            # checkpointed copy has been retired. Only the supervised
+            # postcheck/recovery or strict expiry may acknowledge that.
+            # Merge opaque IDs as advisory history, not fresh SHA evidence.
+            all_ids = set(previous["placement_ids"]) | {
+                placement_id, *candidates,
+            }
+            if len(all_ids) > _MAX_MATCHES + 1:
+                raise ValueError("canonical_dedup_checkpoint_over_budget")
+            payload = json.dumps({
+                "schema": "canonical.post-placement-dedup-pending.v1",
+                "identity_id": identity,
+                "artifact_id": artifact_id,
+                "placement_ids": sorted(all_ids),
+            }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         changed = existing is None or existing[0] != payload
         if changed:
             db.execute(
