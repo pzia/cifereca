@@ -14,7 +14,7 @@ from tests.test_core_ui_1127_library_downloads import _render
 
 
 @pytest.mark.parametrize("saved", [
-    [], "not-a-mapping", 42, True,
+    None, [], "not-a-mapping", 42, True,
     {"content_type_directories": ["ebook", "untrusted"]},
     {"content_type_directories": {"ebook": 22}},
     {"directory": ["outside"]},
@@ -41,7 +41,7 @@ def test_malformed_global_download_policy_is_safe_and_marked(saved):
 
 
 @pytest.mark.parametrize("saved", [
-    ["unexpected"], "curl --secret=PRIVATE", 1,
+    None, ["unexpected"], "curl --secret=PRIVATE", 1,
     {"command": ["curl", {"token": "PRIVATE"}]},
     {"content_type_directories": "PRIVATE"},
     {"content_type_directories": {"audiobook": ["PRIVATE"]}},
@@ -58,6 +58,13 @@ def test_malformed_provider_only_policy_flags_entire_settings_draft(saved):
     assert all(type(row.text) is str for row in edits.values())
     assert all("PRIVATE" not in row.text for row in edits.values())
     assert ui.global_cmd_row.text == ""
+
+
+def test_explicitly_null_provider_container_is_not_treated_as_missing():
+    ui, section, _, _ = _render(providers={"paris": None})
+    assert ui.invalid_saved_snapshot is True
+    assert all(row.text == "" for row in
+               ui.provider_download_editors["paris"].values())
 
 
 def test_valid_provider_command_and_opaque_extensions_remain_unchanged():
