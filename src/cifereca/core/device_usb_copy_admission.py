@@ -144,8 +144,14 @@ def review_usb_copy_admission(
         or rights.source_kind not in ("purchase", "loan")
         or any(not _text(v) for v in (
             rights.source_reference_id, rights.provider_id,
-            rights.account_id, rights.policy_ref,
+            rights.policy_ref,
         ))
+        # Canonical provider account_id may legitimately be '' for a
+        # provider's primary/default account; it is still compared exactly.
+        or type(rights.account_id) is not str
+        or len(rights.account_id) > _MAX_REF
+        or rights.account_id != rights.account_id.strip()
+        or not rights.account_id.isprintable()
         or type(rights.observed_at) is not int
         or type(rights.valid_until) is not int
         or not 0 <= now - rights.observed_at <= _MAX_AGE
