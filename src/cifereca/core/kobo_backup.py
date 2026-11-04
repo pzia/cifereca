@@ -5,6 +5,7 @@ negotiated kobo-adept contract. State is owned by the service facade."""
 from __future__ import annotations
 
 from .source_context import source_context_epoch
+from .canonical_delivery_abi import has_complete_delivery_abi
 
 import time
 import os
@@ -1091,6 +1092,21 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # The confirmed broker path already refreshed/validated this exact manifest
     # under the acquisition lock. Never broaden it with another provider read,
     # a global catalogue scan, remnant recovery or authoritative pruning.
+    # #3196: the direct/manual and on-start legacy APIs must not become a
+    # second writer for any connected Kobo session with the complete Core
+    # A->B delivery contract. Refuse before scanning the library, calling
+    # ADEPT, persisting backup_items, or fetching a provider manifest.
+    # An unscoped batch containing mixed old/new sessions fails closed as
+    # a whole; no unrelated account is silently admitted.
+    if any(
+        getattr(session, "connected", False) is True
+        and getattr(session, "provider_id", None) == "kobo"
+        and (credential_id is None
+             or getattr(session, "credential_id", None) == credential_id)
+        and has_complete_delivery_abi(session)
+        for session in self._sessions.values()
+    ):
+        raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
     confirmed = confirmed_manifest is not None
     if confirmed:
         if credential_id is None or source_guard is None or item_guard is None:
