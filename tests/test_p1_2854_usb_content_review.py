@@ -188,3 +188,31 @@ def test_content_size_budget_refuses_without_parsing_archive():
     result = review_usb_content(**values)
     assert result.reason == "content_source_unverified"
     assert result.executable is False
+
+
+def test_compressed_epub_bomb_is_blocked_before_expansion():
+    sink = BytesIO()
+    with ZipFile(sink, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="OEBPS/package.opf"/>'
+            '</rootfiles></container>',
+        )
+        archive.writestr("OEBPS/package.opf", "<package/>")
+        archive.writestr("OEBPS/massive.html", b"x" * (2 * 1024 * 1024))
+    values = case("epub", data=sink.getvalue())
+    assert values["artifact"]["size"] <= 16 * 1024
+    values["max_bytes"] = 16 * 1024
+    report = review_usb_content(**values)
+    assert report.reason == "content_archive_unbounded"
+    assert report.status == "blocked"
+    assert report.executable is False
+
+
+def test_safely_compressed_epub_within_budget_is_still_non_authorizing():
+    values = case()
+    values["max_bytes"] = 16 * 1024
+    report = review_usb_content(**values)
+    assert report.status == "review"
+    assert report.executable is False
