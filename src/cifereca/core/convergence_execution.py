@@ -355,10 +355,49 @@ def execute_admitted_convergence(
                     if type(exc) is ValueError else "canonical_stock_repair_deferred"
                 )
                 _LOG.warning("TRACE convergence code=%s", code)
-                results.append(ConvergenceOutcome(key, "failed", code))
-                continue
-            if decision.placement_ids:
-                trace.emit(key, "stock_recovery", "ok" if repaired else "miss")
+                # Stock/staging repair is post-B maintenance. A failure is
+                # NOT evidence that the already-published provider OriginLink
+                # or its file has vanished. Conversely the earlier B probe
+                # may be stale if the repair observed changed physical bytes.
+                # Re-attest this exact source after failure; never report a
+                # positive presence on the strength of the old plan alone.
+                try:
+                    from dataclasses import replace
+                    fresh = plan_existing_verified_presence(
+                        initial_storage, replace(
+                            snapshot, rights=(row,), status="partial",
+                            coverage="partial", pagination_complete=False,
+                        ), library_root=library_root,
+                    )
+                    still_present = (
+                        len(fresh.decisions) == 1
+                        and fresh.decisions[0].source == key
+                        and fresh.decisions[0].provider_satisfied
+                    )
+                    if still_present:
+                        # #3909: a historical Placement INSIDE the Core
+                        # .canonical-delivery staging tree is not final B.
+                        # Its exact receipt/promotion is mandatory; a valid
+                        # SHA alone cannot silence a failed stock repair.
+                        for pid in fresh.decisions[0].placement_ids:
+                            found = initial_storage.placement_get(pid)
+                            if (type(found) is not dict
+                                    or type(found.get("path")) is not str
+                                    or ".canonical-delivery" in Path(
+                                        found["path"]
+                                    ).parts):
+                                still_present = False
+                                break
+                except Exception:
+                    still_present = False
+                if not still_present:
+                    results.append(ConvergenceOutcome(key, "failed", code))
+                    continue
+                # Verified B survives: log deferred repair but continue
+                # checking optional postcommit maintenance without a GET.
+            else:
+                if decision.placement_ids:
+                    trace.emit(key, "stock_recovery", "ok" if repaired else "miss")
             # A crash *after* B but before marking the journal or removing
             # staging bypasses the normal recovery path on every later Sync:
             # the verified OriginLink already makes this source satisfied.
