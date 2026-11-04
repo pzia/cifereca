@@ -26,7 +26,8 @@ def fixture(variant="epub", *, identity="alice"):
     }
     source = UsbLocalArtifact(identity, SHA, verified=True)
     profile = UsbReaderFormatDeclaration(
-        identity, "reader-1", ("epub", "kepub", "fxl.kepub", "pdf"),
+        identity, "reader-1", "uuid-alice-0001",
+        ("epub", "kepub", "fxl.kepub", "pdf"),
     )
     suffix = {"epub": ".epub", "kepub": ".kepub.epub",
               "fxl.kepub": ".fxl.kepub.epub", "pdf": ".pdf"}[variant]
@@ -96,7 +97,7 @@ def test_cross_profile_same_sha_is_blocked():
     values["local"] = UsbLocalArtifact("bob", SHA, True)
     assert review_usb_variant(**values).reason == "owned_source_unverified"
     values = fixture()
-    values["reader"] = UsbReaderFormatDeclaration("bob", "reader-1", ("epub",))
+    values["reader"] = UsbReaderFormatDeclaration("bob", "reader-1", "uuid-alice-0001", ("epub",))
     assert review_usb_variant(**values).reason == "reader_formats_unconfigured"
     values = fixture()
     values["binding"]["identity_id"] = "bob"
@@ -110,7 +111,7 @@ def test_cross_profile_same_sha_is_blocked():
 def test_unverified_device_formats_cannot_authorize_a_copy(value):
     values = fixture()
     values["reader"] = (
-        UsbReaderFormatDeclaration("alice", "reader-1", value)
+        UsbReaderFormatDeclaration("alice", "reader-1", "uuid-alice-0001", value)
         if value is not None else None
     )
     assert review_usb_variant(**values).reason == "reader_formats_unconfigured"
@@ -118,7 +119,7 @@ def test_unverified_device_formats_cannot_authorize_a_copy(value):
 
 def test_declared_unsupported_format_is_refused():
     values = fixture("pdf")
-    values["reader"] = UsbReaderFormatDeclaration("alice", "reader-1", ("epub",))
+    values["reader"] = UsbReaderFormatDeclaration("alice", "reader-1", "uuid-alice-0001", ("epub",))
     assert review_usb_variant(**values).reason == "reader_format_unsupported"
 
 
@@ -150,4 +151,34 @@ def test_invalid_managed_target_rejected(path):
 def test_disabled_reader_is_refused_even_with_matching_profile():
     values = fixture()
     values["binding"]["enabled"] = False
+    assert review_usb_variant(**values).reason == "reader_scope_unverified"
+
+
+@pytest.mark.parametrize("binding_fingerprint,profile_fingerprint,expected", [
+    ("uuid-alice-0001", "uuid-alice-0001", "review"),
+    ("uuid-alice-0001", "uuid-alice-0002", "blocked"),
+    ("uuid-alice-0002", "uuid-alice-0001", "blocked"),
+    ("missing", "uuid-alice-0001", "blocked"),
+    ("", "uuid-alice-0001", "blocked"),
+    ("bad fingerprint !", "uuid-alice-0001", "blocked"),
+    ("uuid-alice-0001", None, "blocked"),
+])
+def test_format_profile_is_bound_to_exact_usb_volume(
+    binding_fingerprint, profile_fingerprint, expected,
+):
+    values = fixture()
+    values["binding"]["metadata"]["usb_fingerprint"] = binding_fingerprint
+    values["reader"] = UsbReaderFormatDeclaration(
+        "alice", "reader-1", profile_fingerprint, ("epub",),
+    )
+    result = review_usb_variant(**values)
+    assert result.status == expected
+    assert result.executable is False
+
+
+def test_missing_usb_fingerprint_is_not_a_reader_profile():
+    values = fixture()
+    values["binding"]["metadata"] = {}
+    assert review_usb_variant(**values).reason == "reader_scope_unverified"
+    values["binding"]["metadata"] = None
     assert review_usb_variant(**values).reason == "reader_scope_unverified"
