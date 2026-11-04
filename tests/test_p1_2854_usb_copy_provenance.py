@@ -113,15 +113,8 @@ def test_source_cannot_be_borrowed_between_accounts_and_artifacts(
     assert check(db, witness) is None
 
 
-@pytest.mark.parametrize("origin", ["manual", "derived"])
-def test_non_provider_origins_do_not_mint_usb_copy_rights(
-    tmp_path, origin,
-):
-    if origin == "derived":
-        # Derived origins require a parent Artifact in the SQLite schema.
-        # Manual origin is the direct non-provider scenario.
-        return
-    db, witness = setup(tmp_path, kind=origin)
+def test_manual_origin_cannot_mint_provider_usb_copy_rights(tmp_path):
+    db, witness = setup(tmp_path, kind="manual")
     assert check(db, witness) is None
 
 
