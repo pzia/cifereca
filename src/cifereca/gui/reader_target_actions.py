@@ -15,7 +15,8 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
     A stale selection, identity/device switch, changed target or forged
     intention fails closed. Storage owns the atomic one-time reservation.
     """
-    if (getattr(window, "_closed", False)
+    if (Gtk is None or not callable(getattr(Gtk, "Button", None))
+            or getattr(window, "_closed", False)
             or type(book) is not ReaderLibraryBook
             or book.desired_state != "keep"
             or not callable(getattr(detail, "add_actions", None))):
