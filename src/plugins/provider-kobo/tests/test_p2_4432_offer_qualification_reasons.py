@@ -43,6 +43,7 @@ def test_valid_kdrm_keeps_exact_offer_with_or_without_diagnostic():
 
 @pytest.mark.parametrize(("change", "reason", "source", "media", "upstream"), [
     ("source", "kdrm_source_unsupported", "content_access_book", "kepub", "kepub"),
+    ("source_case", "kdrm_source_unsupported", "other", "kepub", "kepub"),
     ("format", "kdrm_format_pair_unqualified", "library_sync", "kepub", "epub3"),
     ("transport", "candidate_transport_or_expiry_invalid", "library_sync", "kepub", "kepub"),
     ("family", "candidate_drm_family_mismatch", "library_sync", "kepub", "kepub"),
@@ -55,6 +56,8 @@ def test_single_kdrm_failure_reports_actual_guard(
     candidate = kdrm_candidate("book-1")
     if change == "source":
         candidate["kobo"]["source"] = "content_access_book"
+    elif change == "source_case":
+        candidate["kobo"]["source"] = "LIBRARY_SYNC"
     elif change == "format":
         candidate["source_format"] = "EPUB3"
     elif change == "transport":
