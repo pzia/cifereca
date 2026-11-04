@@ -83,6 +83,25 @@ def test_missing_target_with_owned_sha_is_advisory_not_permission():
     assert "/home/" not in repr(outcome)
 
 
+@pytest.mark.parametrize("action,reason,expected", [
+    ("verify", "reader_formats_unconfigured", "non déclarés"),
+    ("blocked", "reader_format_unsupported", "non déclaré compatible"),
+    ("blocked", "protection_reported", "Protection DRM"),
+    ("upload_candidate", "drm_and_transfer_rights_unverified",
+     "droits DRM et de copie non vérifiés"),
+])
+def test_reader_format_decisions_are_explicit_and_never_copy(
+    action, reason, expected,
+):
+    result = project(r=report(rows=(decision(action=action, reason=reason),)))
+    assert result.status == "scanned"
+    assert expected in result.books[0].reason_label
+    assert result.books[0].executable is False
+    assert "Aucun" in result.books[0].state_label or "aucune" in (
+        result.books[0].state_label
+    )
+
+
 def test_exact_matching_local_sha_is_skip_and_historic_observation_stays_historic():
     l = library(books=(book(known="present", at=1500000000),))
     r = report(rows=(decision(

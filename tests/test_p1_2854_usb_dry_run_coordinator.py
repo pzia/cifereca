@@ -82,6 +82,10 @@ def inspect(db, root, mount):
 
 def test_verified_owned_source_and_complete_scan_only_propose_upload(tmp_path, monkeypatch):
     db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
     calls = []
     monkeypatch.setattr(
         run, "scan_managed_usb",
@@ -98,10 +102,102 @@ def test_verified_owned_source_and_complete_scan_only_propose_upload(tmp_path, m
         "upload_candidate", "missing",
     )
     assert result.rows[0].executable is False
+    assert result.rows[0].reason == "drm_and_transfer_rights_unverified"
     assert calls[0]["binding"]["identity_id"] == "alice"
     assert calls[0]["mountpoint"] == mount
     assert db.device_placements() == before
     assert book.read_bytes() == PAYLOAD
+
+
+def test_no_reader_formats_declaration_keeps_upload_non_executable(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    before = deepcopy(db.device_placements())
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    assert result.rows[0].action == "verify"
+    assert result.rows[0].reason == "reader_formats_unconfigured"
+    assert result.rows[0].observed == "missing"
+    assert result.rows[0].executable is False
+    assert db.device_placements() == before
+    assert book.read_bytes() == PAYLOAD
+
+
+def test_reader_explicitly_rejecting_epub_blocks_upload(tmp_path, monkeypatch):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("pdf",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    assert result.rows[0].action == "blocked"
+    assert result.rows[0].reason == "reader_format_unsupported"
+    assert result.rows[0].observed == "missing"
+    assert not result.rows[0].executable
+
+
+def test_declared_formats_never_override_reported_protection(tmp_path, monkeypatch):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    original = db.artifact_get(ARTIFACT)
+    db.artifact_put({
+        **original,
+        "metadata": {**original["metadata"], "artifact_protected": True},
+    })
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    assert result.rows[0].action == "blocked"
+    assert result.rows[0].reason == "protection_reported"
+    assert result.rows[0].executable is False
+
+
+def test_format_declaration_changed_during_scan_invalidates_all_rows(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    def changing_scan(**_):
+        db.device_usb_reader_formats_set(
+            identity_id="alice", device_id="reader-a",
+            usb_fingerprint="uuid-alice-0001", supported_formats=("pdf",),
+        )
+        return fake_scan()
+    monkeypatch.setattr(run, "scan_managed_usb", changing_scan)
+    result = inspect(db, root, mount)
+    assert result.status == "scope_changed"
+    assert result.rows == ()
+    assert result.executable is False
+
+
+def test_revoking_formats_returns_to_unconfigured_without_physical_change(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    assert inspect(db, root, mount).rows[0].action == "upload_candidate"
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=(),
+    )
+    report = inspect(db, root, mount)
+    assert report.rows[0].reason == "reader_formats_unconfigured"
+    assert report.rows[0].action == "verify"
+    assert report.rows[0].executable is False
 
 
 def test_scanned_identical_bytes_are_skip_not_a_new_managed_receipt(tmp_path, monkeypatch):
