@@ -53,10 +53,16 @@ def unique_library_loan(
                 loan for loan in candidates
                 if str(getattr(loan, loan_attr, "") or "") == str(expected)
             ]
-    if item.get("source_account_id") is not None:
+    # An explicit empty primary-account ID is NOT an unknown borrower.
+    # Converting both to strings made None and "" indistinguishable and
+    # could attach an action to the wrong exact lending account.
+    account = item.get("source_account_id")
+    if account is not None:
+        if type(account) is not str:
+            return None
         candidates = [
             loan for loan in candidates
-            if str(getattr(loan, "source_account_id", "") or "")
-            == str(item["source_account_id"])
+            if type(getattr(loan, "source_account_id", None)) is str
+            and loan.source_account_id == account
         ]
     return candidates[0] if len(candidates) == 1 else None
