@@ -652,7 +652,12 @@ def local_placements_for_sources(self, identity_id):
     for key, ids in artifacts.items():
         # An identical SHA is not proof that one borrower's completed
         # acquisition can decorate another borrower's catalogue result.
-        if len(borrower_scopes.get(key, ())) != 1: continue
+        accounts = borrower_scopes.get(key, ())
+        # An ill-typed legacy account marker (SQLite permits int/bool) is
+        # not an attested borrower, even if it is the only ledger receipt.
+        # Keep None for the unchanged legacy unknown-account compatibility
+        # path and "" for Paris's explicit primary borrower.
+        if len(accounts) != 1 or ("invalid", None) in accounts: continue
         rows = [row for artifact_id in ids for row in placements.get(artifact_id, [])]
         if len(rows) != 1: continue
         try: self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)

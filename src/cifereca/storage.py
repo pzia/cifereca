@@ -3643,6 +3643,14 @@ class Storage:
 
     def acquisition_put(self, item: dict[str, Any], *, insert_only: bool = False) -> str:
         row = dict(item)
+        # SQLite's TEXT affinity silently coerces int/bool account markers
+        # to digit strings. After that conversion the reader cannot tell
+        # an untrusted numeric value from a legitimate borrower barcode.
+        # Reject the invalid type BEFORE any INSERT/UPSERT or owner check;
+        # preserve None for historical unknown and "" for Paris primary.
+        if (row.get("account_id") is not None
+                and type(row["account_id"]) is not str):
+            raise ValueError("acquisition_account_scope_invalid")
         now = int(row.get("updated_at") or time.time())
         acquisition_id = str(row.get("acquisition_id") or self._stable_id(
             "acquisition", row.get("entitlement_id"), row.get("provider_id"), row.get("credential_id"), row.get("item_id")
