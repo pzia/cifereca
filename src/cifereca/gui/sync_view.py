@@ -784,6 +784,12 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     elif status not in {"ok", "success", "idle"}:
         # Never convert an unknown/invalid terminal state into an old success.
         sync_label = "État non confirmé"
+    elif alert is not None and alert[0] == "warning":
+        # A success/idle source snapshot can still contain a positive Core
+        # phase warning (partial offer, duplicate phase, blocked step), or a
+        # current disconnect. A historical success must not be the primary
+        # status while a current non-fatal anomaly requires investigation.
+        sync_label = "État à vérifier"
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
@@ -874,7 +880,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     if (status in {"partial", "error", "failed", "blocked",
                    "attention_required", "cancelled", "interrupted", "skipped"}
             or raw_enabled is not True
-            or (alert is not None and alert[0] == "error")
+            or (alert is not None and alert[0] in {"error", "warning"})
             or status not in {"ok", "success", "idle"}) and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
