@@ -186,3 +186,45 @@ def test_cli_offline_preview_never_connects_provider(monkeypatch, capsys):
     assert result["manifest_refreshed"] is False
     assert result["acquisition_authorized"] is False
     assert closed == [True]
+
+
+def test_cli_named_identity_refresh_reaches_provider_manifest_without_traceback(
+    tmp_path, monkeypatch, capsys,
+):
+    from cifereca.core import provider_sessions
+
+    service, session = _service(tmp_path, MANIFEST)
+    _named(service, "heloise")
+    called = []
+    original = session.backup_manifest
+
+    def manifest():
+        called.append("GET manifest")
+        return original()
+
+    def connect_target(owner, credential_id):
+        assert owner is service and credential_id == "vault-1"
+        called.append("connect exact")
+        return session
+
+    session.backup_manifest = manifest
+    monkeypatch.setattr(provider_sessions, "connect_kobo_preview", connect_target)
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **kwargs: SimpleNamespace(library=service, close=lambda: None),
+    )
+    try:
+        assert cli.main([
+            "kobo-resume-preview", "--credential", "vault-1",
+            "--refresh-manifest",
+        ]) == 0
+        output = capsys.readouterr()
+        result = json.loads(output.out)
+        assert called == ["connect exact", "GET manifest"]
+        assert result["manifest_refreshed"] is True
+        assert result["preview_only"] is True
+        assert result["acquisition_authorized"] is False
+        assert "Traceback" not in output.out + output.err
+        assert service.storage.backup_list("kobo", "vault-1") == []
+    finally:
+        service.close()
