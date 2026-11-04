@@ -102,6 +102,26 @@ def test_reader_format_decisions_are_explicit_and_never_copy(
     )
 
 
+@pytest.mark.parametrize("action,reason,visible", [
+    ("blocked", "content_structure_unverified", "Structure du fichier"),
+    ("blocked", "content_archive_unbounded", "après décompression"),
+    ("blocked", "content_protection_detected", "Protection détectée"),
+    ("verify", "content_inspection_size_limit", "trop volumineux"),
+    ("verify", "content_inspection_budget_exhausted", "Budget de revue"),
+    ("verify", "content_bytes_unverified", "Octets locaux changés"),
+    ("upload_candidate", "epub_drm_and_transfer_rights_unverified", "Structure EPUB valide"),
+    ("upload_candidate", "pdf_drm_and_transfer_rights_unverified", "Structure PDF valide"),
+])
+def test_content_inspection_labels_are_closed_and_never_authorize(
+    action, reason, visible,
+):
+    result = project(r=report(rows=(decision(action=action, reason=reason),)))
+    assert result.status == "scanned"
+    assert visible in result.books[0].reason_label
+    assert result.books[0].executable is False
+    assert result.executable is False
+
+
 def test_exact_matching_local_sha_is_skip_and_historic_observation_stays_historic():
     l = library(books=(book(known="present", at=1500000000),))
     r = report(rows=(decision(
