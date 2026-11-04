@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 import hashlib
 import json
 import os
@@ -1316,6 +1317,43 @@ class LibraryMaintenanceBrokerImpl:
         raise UnsupportedOperation(f"Opération de maintenance non supportée: {request.operation}")
 
 
+class _UsbCanonicalExecutionRequired(UnsupportedOperation):
+    """The generic artifact route is never an authority to write on USB."""
+
+    code = "usb_core_authorization_required"
+
+
+class _NoStorageTarget(NotFound):
+    """No currently eligible generic target, including excluded USB targets."""
+
+    code = "storage_target_unavailable"
+
+
+def _is_usb_storage_target(target: object) -> bool:
+    """Closed recognition of the USB storage contract, not mount attestation.
+
+    Plugins declaring a USB kind/fingerprint must use the dedicated Core
+    executor (#2854); a generic importer cannot provide consent, per-reader
+    lock, no-overwrite transaction or a managed USB receipt. Unknown kinds
+    must not be positively identified as safe USB by this helper.
+    """
+    kind = getattr(target, "kind", None)
+    if type(kind) is str and kind.casefold() in {
+        "usb", "removable", "usb-mass-storage",
+    }:
+        return True
+    metadata = getattr(target, "metadata", None)
+    if isinstance(metadata, Mapping):
+        transport = metadata.get("transport")
+        if type(transport) is str and transport.casefold() in {
+            "usb", "removable", "usb-mass-storage",
+        }:
+            return True
+        if "usb_fingerprint" in metadata:
+            return True
+    return False
+
+
 @dataclass(slots=True)
 class ArtifactRoutingBrokerImpl:
     service: Any
@@ -1331,6 +1369,10 @@ class ArtifactRoutingBrokerImpl:
             try: targets=tuple(configured())
             except Exception: continue
             for target in targets:
+                # Route discovery must not advertise an unsafe USB write
+                # through the generic storage.target importer. The USB
+                # sync coordinator owns its own opt-in & receipts.
+                if _is_usb_storage_target(target): continue
                 if request.target_id and str(getattr(target,"target_id","") or "") != request.target_id: continue
                 if not bool(dict(request.options or {}).get("include_existing", False)):
                     already_present = False
@@ -1353,7 +1395,7 @@ class ArtifactRoutingBrokerImpl:
 
     def plan(self, request: ArtifactRouteRequest) -> ArtifactRoutePlan:
         targets=self.targets(request)
-        if not targets: raise NotFound("Aucune cible de stockage compatible", code="storage_target_unavailable")
+        if not targets: raise _NoStorageTarget("Aucune cible de stockage compatible")
         target=targets[0]
         filename=Path(request.filename or request.artifact.filename or (request.artifact.artifact_id.replace(":","-")+"."+request.artifact.format.format)).name
         return ArtifactRoutePlan(request,target,filename,summary=f"Envoyer {filename} vers {target.target.label or target.target.target_id}")
@@ -1361,6 +1403,14 @@ class ArtifactRoutingBrokerImpl:
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult:
         recorder = getattr(self.service, "_record_action", None)
         try:
+            # A caller can hold a previously constructed (or synthetic) plan
+            # even after discovery is filtered. Refuse before requesting a
+            # source lease or entering a plugin write method.
+            if _is_usb_storage_target(plan.target.target):
+                raise _UsbCanonicalExecutionRequired(
+                    "Transfert USB non autorisé : utiliser la synchronisation "
+                    "USB canonique avec droits et confirmation vérifiés."
+                )
             if control is not None: control.check_cancelled(); control.report(current=0,total=1,message=plan.summary)
             manager=getattr(self.service,"plugin_manager",None)
             if manager is None: raise RuntimeError("plugin manager unavailable")
