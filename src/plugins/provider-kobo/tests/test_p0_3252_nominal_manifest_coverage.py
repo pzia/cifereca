@@ -113,3 +113,76 @@ def test_selected_archived_right_never_inherits_complete_manifest_coverage():
         assert len(calls) == 2  # No Vault descriptor POST for an archive.
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("count", (500, 522))
+def test_large_personal_manifest_uses_all_pages_once_per_source_sync(count):
+    """Synthetic large-account replay: no provider network or ACSM download."""
+    rows = [
+        {
+            "product_id": f"book-{i:04d}", "title": f"Book {i}",
+            "owned": True, "downloadable": True,
+            "account_id": "vault-account-a",
+        }
+        for i in range(count)
+    ]
+    pages = [rows[i:i + 200] for i in range(0, count, 200)]
+    handler, calls = _vault(pages)
+    session, account = _session(handler)
+    try:
+        with session.source_sync_inventory(account):
+            library = session.library()
+            rights = session.rights_observation_snapshot(account)
+            downloadable = session.downloadable_resource_snapshot(account)
+            assert len(library) == count
+            assert len(rights.rights) == count
+            assert len(downloadable.resources) == count
+            assert rights.status == "success"
+            assert rights.coverage == "complete"
+            assert rights.pagination_complete is True
+            assert downloadable.status == "success"
+            assert downloadable.coverage == "complete"
+            # Rights and materializable file references are two projections
+            # of the one already-fetched manifest, never two extra GETs.
+            assert calls == [None, "p1", "p2"]
+            assert session.client.last_manifest_pagination_complete is True
+            assert session.client.last_manifest_page_attempts == len(pages)
+        # Leaving the scope removes the cache: a later explicit read is
+        # fresh, and is not permitted to reuse stale page or borrower proof.
+        rights_again = session.rights_observation_snapshot(account)
+        assert len(rights_again.rights) == count
+        assert calls == [None, "p1", "p2", None, "p1", "p2"]
+    finally:
+        session.close()
+
+
+def test_large_manifest_cross_page_duplicate_is_quarantined_not_first_wins():
+    """Distinct page/revision rows cannot mint one arbitrarily owned book."""
+    rows = [
+        {
+            "product_id": f"book-{i:04d}", "title": f"Book {i}",
+            "owned": True, "downloadable": True,
+            "account_id": "vault-account-a",
+        }
+        for i in range(522)
+    ]
+    rows[-1] = {**rows[-1], "product_id": rows[0]["product_id"]}
+    pages = [rows[i:i + 200] for i in range(0, len(rows), 200)]
+    handler, calls = _vault(pages)
+    session, account = _session(handler)
+    try:
+        with session.source_sync_inventory(account):
+            observed = session.rights_observation_snapshot(account)
+            files = session.downloadable_resource_snapshot(account)
+            assert len(observed.rights) == 520
+            assert len(files.resources) == 520
+            assert all(x.edition_id != "book-0000" for x in observed.rights)
+            assert observed.status == observed.coverage == "partial"
+            assert observed.pagination_complete is False
+            assert not observed.authorizes_negative_reconciliation
+            assert calls == [None, "p1", "p2"]
+        # Physical file authority remains in Core; these are just positive
+        # inventory assertions, never proof of a completed local delivery.
+    finally:
+        session.close()
