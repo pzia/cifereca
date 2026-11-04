@@ -32,10 +32,10 @@ def scoped(tmp_path: Path):
     return root, file, artifact, placement, UsbLocalArtifact("alice", SHA, True)
 
 
-def read(root, artifact, placement, local, **changes):
+def read(root, artifact, placement, source, **changes):
     data = dict(
         identity_id="alice", identity_root=root, artifact=artifact,
-        placement=placement, local=local,
+        placement=placement, local=source,
     )
     data.update(changes)
     return snapshot_local_usb_content(**data)
