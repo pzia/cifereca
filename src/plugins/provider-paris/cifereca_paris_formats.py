@@ -111,7 +111,7 @@ def _resource_document_classification(
     if kind_text in _DIGITAL_TYPES:
         # A proved digital resource on a physical bibliographic manifestation
         # is a conflict, not a digital right or an arbitrary physical result.
-        if fmt in _BIBLIO_PHYSICAL_CODES and base == "SYRACUSE":
+        if fmt in _BIBLIO_PHYSICAL_CODES:
             medium = ClassificationEvidence(status="conflict")
         else:
             medium = _attested("digital", "Resource.Type", raw_type)
