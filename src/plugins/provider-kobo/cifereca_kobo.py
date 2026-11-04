@@ -1314,7 +1314,8 @@ class KoboSession(ProviderSession):
             code = getattr(error, "code", None)
             error_code = (
                 code if isinstance(error, KoboVaultError)
-                and status == 409
+                and type(status) is int and status == 409
+                and type(code) is str
                 and code in {"archived_book", "revision_mismatch", "conflict"}
                 else "not_applicable"
             )
