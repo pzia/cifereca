@@ -6,7 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from cifereca.models import Loan
-from cifereca.core.loan_source_identity import loan_source_key, unique_library_loan
+from cifereca.core.loan_source_identity import (
+    loan_source_key, unique_library_loan, unambiguous_loan_rows,
+)
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -238,3 +240,58 @@ def test_refresh_duplicate_exact_source_is_ambiguous_not_first_wins():
     )
     assert host._displayed_loan is None
     assert events == [("empty", None)]
+
+
+
+def test_identical_provider_replays_coalesce_to_one_source_action_row():
+    """Same exact business card may be replayed from two private snapshots."""
+    loan = _loan()
+    sibling = replace(loan, provider="DILICOM")
+    unique = unambiguous_loan_rows([loan, replace(loan), sibling])
+    assert unique == (loan, sibling)
+
+
+def test_conflicting_exact_source_cards_are_suppressed_even_if_replayed_later():
+    """No arbitrary last-wins action when a source ID carries two payloads."""
+    loan = _loan()
+    alternate = replace(loan, due_at="2026-12-31T12:00:00Z")
+    sibling = replace(loan, source_credential="paris-b")
+    assert unambiguous_loan_rows([
+        loan, alternate, sibling, loan,
+    ]) == (sibling,)
+    assert unambiguous_loan_rows([sibling, loan, alternate]) == (sibling,)
+
+
+def test_gtk_population_keeps_only_safe_source_keys_without_importing_gtk():
+    from types import SimpleNamespace as NS
+
+    syntax = ast.parse(LOANS.read_text(encoding="utf-8"))
+    method = next(
+        fn for fn in syntax.body if isinstance(fn, ast.FunctionDef)
+        and fn.name == "_populate_loans"
+    )
+    namespace = {
+        "Loan": Loan,
+        "loan_source_key": loan_source_key,
+        "unambiguous_loan_rows": unambiguous_loan_rows,
+    }
+    exec(compile(
+        ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])),
+        str(LOANS), "exec",
+    ), namespace)
+    owner = _loan()
+    conflicting = replace(owner, title="Inconsistent same source")
+    sibling = replace(owner, provider="DILICOM")
+    foreign = replace(owner, identity_id="bob")
+    events = []
+    host = NS(
+        service=NS(current_identity=NS(identity_id="alice"), last_loans=[]),
+        _render_loans=lambda: events.append("render"),
+        _render_kobo_loans=lambda: events.append("kobo"),
+    )
+    namespace["_populate_loans"](host, [
+        owner, conflicting, foreign, sibling, owner,
+    ])
+    assert host.service.last_loans == [sibling]
+    assert host.loan_objects == {loan_source_key(sibling): sibling}
+    assert events == ["render", "kobo"]
