@@ -110,7 +110,8 @@ def test_existing_nonstandard_device_id_is_reused_not_replaced(tmp_path):
     proposal = propose(db)
     assert proposal.device_id == "legacy-reader"
     assert proposal.already_bound is True
-    assert proposal.enabled is False
+    assert proposal.enabled is True  # Existing configuration is preserved.
+    assert proposal.physically_attested is False
     assert db.device_binding_get("legacy-reader")["enabled"] is True
 
 
