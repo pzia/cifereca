@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 from pathlib import Path
 
 from .duplicate_maintenance_guard import candidate_has_active_dependencies_in_db
@@ -37,6 +38,27 @@ def _scope(library_root: Path, placement_id: str, identity_id: str):
     except (OSError, RuntimeError):
         return None
     return root, stat
+
+
+def _directory_signature(path: Path) -> tuple[int, int] | None:
+    """Identify the actual no-follow profile directory (not a swapped mount).
+
+    Root pinning alone does not protect an identity subdirectory that has
+    been renamed/replaced while the Library root inode stays unchanged.
+    """
+    flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+             | getattr(os, "O_CLOEXEC", 0))
+    try:
+        fd = os.open(path, flags)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode):
+                return None
+            return int(info.st_dev), int(info.st_ino)
+        finally:
+            os.close(fd)
+    except OSError:
+        return None
 
 
 def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
@@ -73,6 +95,9 @@ def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
     if type(path) is not str or not path:
         return _blocked("path_out_of_scope"), None
     identity_root = root / directory
+    identity_signature = _directory_signature(identity_root)
+    if identity_signature is None:
+        return _blocked("parent_or_root_unavailable"), None
     physical = _physical_absence(identity_root, path)
     if physical != "absent":
         return _blocked(physical), None
@@ -108,12 +133,13 @@ def _evidence(db: sqlite3.Connection, *, root: Path, root_stat: os.stat_result,
         }, None
 
     envelope = json.dumps(
-        [str(root), root_stat.st_dev, root_stat.st_ino, directory, row],
+        [str(root), root_stat.st_dev, root_stat.st_ino, directory,
+         identity_signature, row],
         ensure_ascii=False, separators=(",", ":"), default=str,
     )
     token = hashlib.sha256(envelope.encode("utf-8")).hexdigest()
     return {"status": "ready", "reason": "orphan_missing"}, (
-        token, path, identity_root, row[10]
+        token, path, identity_root, row[10], identity_signature
     )
 
 
@@ -173,7 +199,7 @@ def retire_missing_placement(
                 if evidence is None:
                     db.rollback()
                     return result
-                token, path, identity_root, updated_at = evidence
+                token, path, identity_root, updated_at, identity_signature = evidence
                 if token != plan_token:
                     db.rollback()
                     return _blocked("stale_plan")
@@ -199,6 +225,13 @@ def retire_missing_placement(
                 ):
                     db.rollback()
                     return _blocked("root_changed")
+                # The library root inode may remain stable while the
+                # profile directory is exchanged underneath it. Its verified
+                # no-follow inode is part of the prepare token; check it once
+                # more after the dependency scan and final absence probe.
+                if _directory_signature(identity_root) != identity_signature:
+                    db.rollback()
+                    return _blocked("identity_directory_changed")
                 cur = db.execute(
                     "DELETE FROM placements WHERE placement_id=? AND identity_id=? "
                     "AND state='missing' AND path=? AND updated_at=?",
