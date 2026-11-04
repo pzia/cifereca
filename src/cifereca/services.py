@@ -2339,13 +2339,6 @@ class LibraryService:
                 # This is only a read-only visibility hint; the locked
                 # acquisition still re-attests the exact account and edition.
             if item.source_provider == "kobo":
-                # #3196: this is the old direct-download writer, not Core A->B.
-                # Do not advertise it alongside a complete canonical source.
-                from .core.canonical_delivery_abi import has_complete_delivery_abi
-                if has_complete_delivery_abi(
-                    self._session_for_source(item.source_provider, item.source_credential)
-                ):
-                    return False
                 identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
                 if (type(identity_id) is not str or not identity_id
                         or type(item.source_credential) is not str
@@ -2360,6 +2353,13 @@ class LibraryService:
                     return False
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
+                # #3196: the typed A->B executor supersedes this *legacy*
+                # direct-download action. Retain the existing passive right
+                # admission FIRST: public Kobo catalogue records must not
+                # cause even one session lookup.
+                from .core.canonical_delivery_abi import has_complete_delivery_abi
+                if has_complete_delivery_abi(session):
+                    return False
                 # A verified right still needs an explicit Vault offer and a
                 # working Adept runtime; a local file is never implied.
                 if not hasattr(session, "resolve_acquisition"):
