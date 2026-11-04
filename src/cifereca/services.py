@@ -2116,6 +2116,8 @@ class LibraryService:
         core contract+capabilities probe.  ``full=True`` is reserved for explicit
         diagnostics and may additionally inspect status/config/update state.
         """
+        # Cache only a resolved runtime probe. The cheap discovery failures
+        # below must be rechecked after a plugin activation or binary install.
         cache_seconds = 60
         now = time.monotonic()
         if (
@@ -2152,8 +2154,10 @@ class LibraryService:
                 "preferred_contract": 8,
                 "error": {"code": "runtime_plugin_unavailable", "message": "Runtime Kobo-ADEPT indisponible"},
             }
-            self._kobo_adept_state_cache = dict(state)
-            self._kobo_adept_state_cache_at = now
+            # Do not cache a pre-activation missing runtime for 60 seconds.
+            # Plugin activation may finish moments after a startup/UI probe;
+            # the next broker read must be allowed to see the new service.
+            # This check is in-memory and never executes the vendor CLI.
             return state
         available = getattr(adapter, "available", None)
         if callable(available) and not available():
@@ -2166,8 +2170,10 @@ class LibraryService:
                 "configured_command": getattr(adapter, "configured_command", lambda: None)(),
                 "resolved_executable": None, "minimum_supported_contract": 8, "preferred_contract": 8,
             }
-            self._kobo_adept_state_cache = dict(state)
-            self._kobo_adept_state_cache_at = now
+            # Do not cache a pre-activation missing runtime for 60 seconds.
+            # Plugin activation may finish moments after a startup/UI probe;
+            # the next broker read must be allowed to see the new service.
+            # This check is in-memory and never executes the vendor CLI.
             return state
         core_probe = getattr(adapter, "probe_core", None)
         probe = adapter.probe() if full or core_probe is None else core_probe()

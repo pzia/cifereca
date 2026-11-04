@@ -41,10 +41,12 @@ def test_adapter_failure_has_only_closed_error_code_and_safe_public_message(tmp_
         assert state["configured_command"] is None
         assert "PRIVATE_RUNTIME_SECRET" not in json.dumps(state)
         assert "private.invalid" not in json.dumps(state)
+        # #3252: a failed early discovery is not cached for 60 seconds.
+        # Retry remains in-memory and must never leak a hostile exception.
         assert service.kobo_adept_state() == state
-        assert calls == ["adapter"]
-        assert service.kobo_adept_state(force=True) == state
         assert calls == ["adapter", "adapter"]
+        assert service.kobo_adept_state(force=True) == state
+        assert calls == ["adapter", "adapter", "adapter"]
     finally:
         service.close()
 
