@@ -1,9 +1,12 @@
 """An archive prevents delivery, while retaining the exact purchase (#514)."""
 from dataclasses import replace
+import logging
 
 import pytest
 
 from cifereca.plugin_api import HTTPX_TRANSPORT, ProviderCapabilityError
+from cifereca_kobo_vault import KoboVaultError
+from cifereca.core.source_convergence import plan_convergence
 from tests.test_p1_3252_kobo_selected_delivery_offer import setup
 from tests.test_p1_3252_kobo_selected_candidate import admitted, execute
 
@@ -99,5 +102,96 @@ def test_invalid_archive_flag_cannot_be_a_positive_purchase(flag):
         report = session.rights_observation_snapshot(account)
         assert report.exact("book-1", "book-1", "purchase") is None
         assert posts == []
+    finally:
+        session.close()
+
+
+def test_selected_exact_archive_409_becomes_unavailable_without_revoking_purchase(caplog):
+    session, vault, _broker, account, posts = setup()
+    calls = []
+    private = "PRIVATE_ARCHIVE_UPSTREAM_MESSAGE"
+
+    def archived(product, **options):
+        calls.append((product, options.get("mode")))
+        raise KoboVaultError(
+            "upstream " + private, code="archived_book", status_code=409,
+        )
+
+    vault.acquisition = archived
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            report = session.rights_delivery_offer_snapshot(
+                account, "book-1", explicit_user_action=True,
+            )
+        right = report.exact("book-1", "book-1", "purchase")
+        assert right is not None and right.state == "active"
+        assert right.provider_attested is True
+        assert right.evidence_ref == "kobo.personal_manifest"
+        assert right.delivery == "unavailable"
+        assert right.delivery_unavailable_reason == "archived"
+        assert right.delivery_offer_id == ""
+        assert not report.authorizes_negative_reconciliation
+        assert report.coverage == "partial"
+        # Core's provider-neutral plan consumes exactly this closed reason;
+        # no Placement can be synthesized from a remote 409 alone.
+        plan = plan_convergence((report,))
+        assert len(plan.decisions) == 1
+        assert plan.decisions[0].state == "skipped_archived"
+        assert plan.decisions[0].reason == "delivery_archived"
+        assert calls == [("book-1", "descriptor")] and posts == []
+        assert vault.calls == 1
+        lines = [
+            entry.getMessage() for entry in caplog.records
+            if "EVENT kobo selected_offer" in entry.getMessage()
+        ]
+        assert len(lines) == 1
+        assert "outcome=unavailable reason=archived_http_409_no_acquisition" in lines[0]
+        assert "http_status=409 error_code=archived_book" in lines[0]
+        assert private not in lines[0] and "https://" not in lines[0]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(("status", "code"), [
+    (409, "conflict"), (409, "revision_mismatch"), (403, "archived_book"),
+])
+def test_unqualified_http_refusal_cannot_fake_archived_delivery(status, code):
+    session, vault, _broker, account, posts = setup()
+    calls = []
+    def blocked(product, **options):
+        calls.append((product, options.get("mode")))
+        raise KoboVaultError(
+            "private upstream", code=code, status_code=status,
+        )
+    vault.acquisition = blocked
+    try:
+        with pytest.raises(KoboVaultError) as caught:
+            session.rights_delivery_offer_snapshot(
+                account, "book-1", explicit_user_action=True,
+            )
+        assert caught.value.code == code
+        assert calls == [("book-1", "descriptor")] and posts == []
+    finally:
+        session.close()
+
+
+def test_archive_409_does_not_poison_future_success_after_restoration():
+    session, vault, _broker, account, posts = setup()
+    original = vault.acquisition
+    def archived(_product, **_options):
+        raise KoboVaultError("archived", code="archived_book", status_code=409)
+    try:
+        vault.acquisition = archived
+        archived_result = session.rights_delivery_offer_snapshot(
+            account, "book-1", explicit_user_action=True,
+        )
+        assert archived_result.rights[0].delivery_unavailable_reason == "archived"
+        vault.acquisition = original
+        restored = session.rights_delivery_offer_snapshot(
+            account, "book-1", explicit_user_action=True,
+        )
+        assert restored.rights[0].delivery == "available"
+        assert restored.rights[0].delivery_unavailable_reason == ""
+        assert len(posts) == 1
     finally:
         session.close()

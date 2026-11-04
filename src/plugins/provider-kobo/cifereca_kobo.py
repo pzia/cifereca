@@ -1319,6 +1319,28 @@ class KoboSession(ProviderSession):
                 and code in {"archived_book", "revision_mismatch", "conflict"}
                 else "not_applicable"
             )
+            if error_code == "archived_book":
+                # The authenticated, exact-account descriptor is fresher
+                # evidence of *delivery unavailability* than a manifest
+                # snapshot that still reports the product as unarchived.
+                # Do not revoke the purchase, authorize a fallback or create
+                # a content GET. A new selection can re-check after restore.
+                if not scope_current():
+                    raise ProviderCapabilityError(
+                        "kobo_delivery_offer_owner_changed"
+                    ) from None
+                _TRACE_LOG.info(
+                    "EVENT kobo selected_offer product_id=%s phase=descriptor "
+                    "outcome=unavailable reason=archived_http_409_no_acquisition "
+                    "http_status=409 error_code=archived_book", right_id,
+                )
+                return replace(
+                    baseline, rights=(replace(
+                        right, delivery="unavailable", delivery_offer_id="",
+                        delivery_unavailable_reason="archived",
+                    ),), status="partial", coverage="partial",
+                    pagination_complete=False,
+                )
             _TRACE_LOG.info(
                 "EVENT kobo selected_offer product_id=%s phase=descriptor "
                 "outcome=error error_type=%s http_status=%s error_code=%s",

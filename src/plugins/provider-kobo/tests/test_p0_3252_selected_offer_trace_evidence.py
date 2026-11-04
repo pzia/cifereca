@@ -155,7 +155,7 @@ def test_subsequent_book_keeps_prior_403_quarantined_without_new_http(caplog):
         session.close()
 
 
-@pytest.mark.parametrize("code", ("archived_book", "revision_mismatch", "conflict"))
+@pytest.mark.parametrize("code", ("revision_mismatch", "conflict"))
 def test_descriptor_409_preserves_only_closed_cause_in_selected_offer_trace(caplog, code):
     session, vault, _broker, account, _posts = setup()
     calls = []
