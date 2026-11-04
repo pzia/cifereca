@@ -51,6 +51,76 @@ def test_postcommit_cleanup_removes_unreferenced_attempt(rig, monkeypatch):
     assert gets == ["signed-right-offer"]
 
 
+@pytest.mark.parametrize("invalid_binding", ["foreign_connection", "disabled"])
+def test_direct_staging_cleanup_requires_active_exact_source_borrower(
+    rig, monkeypatch, invalid_binding,
+):
+    """Direct Core cleanup cannot erase a receipt after source rebinding."""
+    from tests.test_core_p0_3171_atomic_publication_v14 import register
+
+    service, db, root, gets, staged = _published_with_deferred_cleanup(
+        rig, monkeypatch,
+    )
+    before = db.placements()[0]
+    original_receipt = _checkpoint(db, service, staged)
+    final = Path(before["path"])
+    scope = service.source.scope
+    register(db, "A", "foreign-provider", "foreign-card", account="other")
+    with db._lock, db._connect() as sql:
+        correct, = sql.execute(
+            "SELECT connection_id FROM provider_connections "
+            "WHERE provider_id=? AND credential_id=? AND identity_id=?",
+            (scope.provider_id, scope.credential_id, scope.identity_id),
+        ).fetchone()
+        foreign, = sql.execute(
+            "SELECT connection_id FROM provider_connections "
+            "WHERE provider_id='foreign-provider' AND credential_id='foreign-card'",
+        ).fetchone()
+        if invalid_binding == "disabled":
+            sql.execute(
+                "UPDATE provider_connections SET enabled=0 "
+                "WHERE connection_id=?", (correct,),
+            )
+        else:
+            sql.execute(
+                "UPDATE provider_accounts SET connection_id=? "
+                "WHERE identity_id=? AND provider_id=? "
+                "AND credential_id=? AND account_id=?",
+                (foreign, scope.identity_id, scope.provider_id,
+                 scope.credential_id, scope.account_id),
+            )
+
+    assert cleanup_published_staging(
+        db, source=service.source, completed=original_receipt,
+        library_root=root,
+    ) is False
+    assert staged.read_bytes() == BYTES
+    assert final.read_bytes() == BYTES
+    assert db.placements() == [before]
+    assert gets == ["signed-right-offer"]
+
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE provider_accounts SET connection_id=? "
+            "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+            "AND account_id=?",
+            (correct, scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id),
+        )
+        sql.execute(
+            "UPDATE provider_connections SET enabled=1 WHERE connection_id=?",
+            (correct,),
+        )
+    assert cleanup_published_staging(
+        db, source=service.source, completed=original_receipt,
+        library_root=root,
+    ) is True
+    assert not staged.exists()
+    assert final.read_bytes() == BYTES
+    assert db.placements() == [before]
+    assert gets == ["signed-right-offer"]
+
+
 @pytest.mark.parametrize("other_reference", [
     "placement", "backup", "catalogue_metadata", "other_receipt",
 ])
