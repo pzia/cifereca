@@ -1,7 +1,9 @@
 """P0 #3120: borrower/account selection and queued borrow never cross identities.
 
 Execute the real MainWindow methods without GTK to exercise both the
-selection and the delayed task boundary. Synthetic sessions do no HTTP.
+selection and the delayed task boundary. Synthetic sessions do no HTTP. The legacy fixture uses a neutral lender;
+Paris now has a separate durable-claim controller covered by
+test_paris_manual_borrow_dispatch.py.
 """
 from __future__ import annotations
 
@@ -41,7 +43,7 @@ def _methods():
     return namespace
 
 
-def _account(identity="alice", credential="A", provider="paris", uid=""):
+def _account(identity="alice", credential="A", provider="legacy-lender", uid=""):
     return Account(identity_id=identity, credential_id=credential,
                    provider_id=provider, unique_id=uid, is_primary=True)
 
@@ -49,15 +51,15 @@ def _account(identity="alice", credential="A", provider="paris", uid=""):
 def _ui(*, accounts=None, identity="alice"):
     rows = [_account()] if accounts is None else accounts
     session = NS(
-        provider_id="paris", credential_id="A", connected=True,
-        capabilities=NS(borrow=True), descriptor=NS(display_name="Paris"),
+        provider_id="legacy-lender", credential_id="A", connected=True,
+        capabilities=NS(borrow=True), descriptor=NS(display_name="Synthetic legacy lender"),
         accounts=rows,
         borrow=Mock(return_value=NS(title="Titre", identity_id=None,
                                     source_account_id=None)),
     )
     state = NS(session=session)
     def session_for_source(provider, credential):
-        if provider != "paris" or credential != "A":
+        if provider != "legacy-lender" or credential != "A":
             raise RuntimeError("Wrong source")
         return state.session
     service = NS(
@@ -80,7 +82,7 @@ def _ui(*, accounts=None, identity="alice"):
     ui._eligible_borrow_accounts = MethodType(methods["_eligible_borrow_accounts"], ui)
     ui.can_borrow_item = MethodType(methods["can_borrow_item"], ui)
     ui.borrow_search_item = MethodType(methods["borrow_search_item"], ui)
-    item = NS(source_provider="paris", source_credential="A")
+    item = NS(source_provider="legacy-lender", source_credential="A")
     return ui, item, state, queued, events
 
 

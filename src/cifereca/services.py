@@ -293,6 +293,24 @@ class LibraryService:
             expected_account=expected_account,
         )
 
+    def can_borrow_paris(self, item: SearchResult) -> bool:
+        """Inert Paris action availability, without provider I/O."""
+        from .core.manual_paris_borrow import manual_paris_borrow_available
+        return manual_paris_borrow_available(self, item)
+
+    def borrow_paris_manual(
+        self, item: SearchResult, *, expected_identity_id: str,
+        confirmed: bool = False, expected_context_epoch: int | None = None,
+        expected_account: Account | None = None,
+    ) -> dict[str, object]:
+        """Explicit Paris attempt through the durable Core claim only."""
+        from .core.manual_paris_borrow import manual_paris_borrow
+        return manual_paris_borrow(
+            self, item, expected_identity_id=expected_identity_id,
+            confirmed=confirmed, expected_context_epoch=expected_context_epoch,
+            expected_account=expected_account,
+        )
+
     def stage_bnf_loan_acsm(
         self, loan: Loan, *, confirmed: bool = False,
         expected_identity_id: str = "",
