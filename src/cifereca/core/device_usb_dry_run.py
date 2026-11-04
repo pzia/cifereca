@@ -172,8 +172,10 @@ def inspect_usb_dry_run(
             )
             if scan is not None else {}
         )
-        # Re-read all owner/target/intent fields after the costly scan/hash;
-        # no stale owner may be published after A→B→A or a rebind.
+        # Re-read owner/target/intent fields after the costly scan/hash.
+        # Changed final snapshots are refused; byte-identical A→B→A
+        # cannot be proven by this advisory check and will require a
+        # durable generation + fresh exclusive-lock proof in the executor.
         last = _scope(storage, identity_id, device_id)
         if last is None or (binding, intentions) != last:
             return unknown("scope_changed")
