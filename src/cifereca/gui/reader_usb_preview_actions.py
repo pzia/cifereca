@@ -98,6 +98,9 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
             "Racine du profil à vérifier. Aucun scan effectué."
         )
         return
+    # The Library snapshot is an opaque, ephemeral scope token. A refresh,
+    # filter change or profile switch revokes the eventual per-book details.
+    source_snapshot = getattr(window, "_reader_library_snapshot", None)
     scope = (
         identity, device, fingerprint,
         getattr(window, "_identity_context_generation", None),
@@ -130,6 +133,9 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
             and getattr(window, "_route_display_token", None) is scope[5]
             and getattr(window, "_reader_selection_generation", None) == scope[6]
             and root_current()
+            and (source_snapshot is None
+                 or getattr(window, "_reader_library_snapshot", None)
+                    is source_snapshot)
             and _exact_binding(storage, scope[0], scope[1], scope[2])
         )
 
@@ -147,8 +153,49 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
     window._reader_usb_preview_chooser = chooser
 
     def finish(report):
-        if current():
-            window._reader_status_label.set_label(_summary(report))
+        if not current():
+            return
+        window._reader_status_label.set_label(_summary(report))
+        if source_snapshot is None:
+            # Legacy headless integrations may not publish a Library
+            # snapshot. The conservative aggregate summary still works.
+            return
+        try:
+            from .reader_usb_decisions import project_reader_usb_decisions
+            decisions = project_reader_usb_decisions(
+                report=report, library=source_snapshot,
+            )
+            if decisions.status != "scanned" or decisions.executable is not False:
+                window._reader_usb_decision_details = None
+                window._reader_usb_detail_source_snapshot = None
+                window._reader_status_label.set_label(decisions.message)
+                return
+            window._reader_usb_decision_details = decisions
+            window._reader_usb_detail_source_snapshot = source_snapshot
+            # Re-render only the selected book detail, never the entire
+            # virtualized list or its cached provider notices.  This is a
+            # pure presentation of the user's explicit read-only scan.
+            page = getattr(window, "readers_page", None)
+            selection = getattr(page, "selection", None)
+            selected = (
+                selection.get_selected_item()
+                if callable(getattr(selection, "get_selected_item", None))
+                else None
+            )
+            if (selected is not None
+                    and type(getattr(selected, "key", None)) is str
+                    and any(row.book_key == selected.key
+                            for row in decisions.books)
+                    and current()):
+                from .reader_page_controller import reader_selected
+                reader_selected(window, selected)
+        except Exception:
+            window._reader_usb_decision_details = None
+            window._reader_usb_detail_source_snapshot = None
+            if current():
+                window._reader_status_label.set_label(
+                    "Aperçu des livres indisponible. Aucun transfert effectué."
+                )
 
     def error(_failure):
         if current():

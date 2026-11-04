@@ -6,6 +6,8 @@ automatic library refresh or new entitlement is started on navigation.
 """
 from __future__ import annotations
 
+import time
+
 from .detail_model import book_detail_presentation
 from .reader_library_projection import project_reader_library
 
@@ -54,6 +56,9 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     window._reader_scope_identity = None
     window._reader_filter = "all"
     window._reader_selection_generation = 0
+    window._reader_library_snapshot = None
+    window._reader_usb_decision_details = None
+    window._reader_usb_detail_source_snapshot = None
 
     def select_reader(_dropdown, _pspec):
         if (getattr(window, "_closed", False)
@@ -120,6 +125,9 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
     try:
         window._reader_items = {}
         window._reader_source_items = {}
+        window._reader_library_snapshot = None
+        window._reader_usb_decision_details = None
+        window._reader_usb_detail_source_snapshot = None
         current = getattr(getattr(window, "service", None), "current_identity", None)
         identity_id = getattr(current, "identity_id", None)
         storage = getattr(getattr(window, "service", None), "storage", None)
@@ -224,6 +232,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             source = entries.get(item.key)
             if source is not None:
                 window._reader_source_items[item.key] = source
+        window._reader_library_snapshot = snapshot
         page.show_rows(rows, total_count=len(rows))
         suffix = (
             " · Appareil désactivé"
@@ -285,6 +294,33 @@ def reader_selected(window, row) -> None:
             ]),
         ],
     ))
+    # A dry-run is a temporary observation of an exact list snapshot. It is
+    # neither an instruction to deliver/remove nor a persistent presence
+    # indicator. Filter/profile/device refresh clears it atomically.
+    from .reader_usb_decisions import ReaderUsbDecisionDetails
+    details = getattr(window, "_reader_usb_decision_details", None)
+    snapshot = getattr(window, "_reader_library_snapshot", None)
+    if (type(details) is ReaderUsbDecisionDetails
+            and details.status == "scanned"
+            and details.executable is False
+            and snapshot is getattr(window, "_reader_usb_detail_source_snapshot", None)
+            and details.identity_id == identity_id
+            and details.device_id == getattr(window, "_reader_selected_device_id", None)
+            and type(details.observed_at) is int
+            and 0 <= int(time.time()) - details.observed_at <= 300):
+        decision = next(
+            (candidate for candidate in details.books
+             if candidate.book_key == item.key
+             and candidate.executable is False),
+            None,
+        )
+        if decision is not None:
+            page.detail.add_group("Dernier examen USB · lecture seule", [
+                ("Décision", decision.state_label),
+                ("Motif", decision.reason_label),
+                ("Observation ponctuelle", decision.current_label),
+                ("Validité", "Aperçu temporaire · aucun transfert ou retrait"),
+            ])
     original = getattr(window, "_reader_source_items", {}).get(row.key)
     if (type(original) is dict
             and original.get("identity_id") == identity_id):
