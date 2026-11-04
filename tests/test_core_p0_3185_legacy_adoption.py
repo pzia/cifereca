@@ -205,3 +205,95 @@ def test_changed_owner_or_borrower_scope_is_not_a_migration(rig):
     assert result.reason == "receipt_unverified"
     assert _placement(rig)["provider_id"] == "seller-b"
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def _maintenance_request(rig, *, action="preview", confirmed=None):
+    from cifereca.plugin_api import LibraryMutationRequest
+    _storage, _root, _paths, pubs, _lock = rig
+    options = {"action": action}
+    if confirmed is not None:
+        options["confirmed"] = confirmed
+    return LibraryMutationRequest(
+        "legacy_adopt", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id, options=options,
+    )
+
+
+def test_public_maintenance_broker_preview_and_confirmed_adoption(rig, monkeypatch):
+    from tests.test_core_p0_3185_maintenance_supervisor_broker import broker_for
+    storage, _root, paths, pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    broker = broker_for(rig, monkeypatch)
+    plan = broker.plan(_maintenance_request(rig))
+    assert plan.operation == "legacy_adopt"
+    assert not plan.destructive
+    preview = broker.run(plan)
+    assert preview.ok and preview.changed == 0
+    assert preview.facts["status"] == "review_required"
+    assert preview.facts["removed_file"] is False
+    commit_plan = broker.plan(
+        _maintenance_request(rig, action="commit", confirmed=True)
+    )
+    assert commit_plan.destructive
+    result = broker.run(commit_plan)
+    assert result.ok and result.changed == 1
+    assert result.facts["status"] == "migrated"
+    assert result.facts["removed_file"] is False
+    assert all(path.read_bytes() == BYTES for path in paths)
+    assert storage.placement_get(pubs[1].placement_id)["provider_id"] is None
+
+
+@pytest.mark.parametrize("value", [None, False, 0, "yes"])
+def test_public_maintenance_requires_explicit_boolean_approval(rig, monkeypatch, value):
+    from cifereca.plugin_api import Conflict
+    from tests.test_core_p0_3185_maintenance_supervisor_broker import broker_for
+    storage, _root, paths, _pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    broker = broker_for(rig, monkeypatch)
+    plan = broker.plan(
+        _maintenance_request(rig, action="commit", confirmed=value)
+    )
+    with pytest.raises(Conflict, match="Confirmation explicite requise"):
+        broker.run(plan)
+    assert _placement(rig)["provider_id"] == "seller-b"
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_public_maintenance_broker_rejects_forged_plan_and_stale_evidence(
+    rig, monkeypatch,
+):
+    from dataclasses import replace
+    from cifereca.plugin_api import Conflict
+    from tests.test_core_p0_3185_maintenance_supervisor_broker import broker_for
+    _storage, _root, paths, _pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    broker = broker_for(rig, monkeypatch)
+    plan = broker.plan(_maintenance_request(rig, action="commit", confirmed=True))
+    with pytest.raises(Conflict, match="Plan de migration historique invalide"):
+        broker.run(replace(plan, destructive=False))
+    paths[1].write_bytes(BYTES[:-1] + b"X")
+    result = broker.run(plan)
+    assert not result.ok
+    assert result.facts["status"] == "blocked"
+    assert result.changed == 0
+    assert _placement(rig)["provider_id"] == "seller-b"
+
+
+@pytest.mark.parametrize("action", ["recover", "unlink", 12, None])
+def test_public_maintenance_broker_refuses_unsupported_adoption_action(
+    rig, monkeypatch, action,
+):
+    from cifereca.plugin_api import Conflict, LibraryMutationRequest
+    from tests.test_core_p0_3185_maintenance_supervisor_broker import broker_for
+    _storage, _root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch)
+    with pytest.raises(Conflict, match="Action de migration historique invalide"):
+        broker.plan(LibraryMutationRequest(
+            "legacy_adopt", placement_id=pubs[1].placement_id,
+            keep_placement_id=pubs[0].placement_id,
+            options={"action": action},
+        ))
+    assert all(path.exists() for path in paths)
