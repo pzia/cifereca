@@ -61,6 +61,11 @@ def build_library_download_section(
     download_group.set_title("Téléchargements — réglages globaux")
     section.append(download_group)
     global_downloads, invalid = _download_mapping(config.get("downloads", {}))
+    # Config.provider_settings() itself normalizes a malformed provider
+    # *root* to {}. A later set_provider_settings() would then discard the
+    # entire historical root, so detect it before rendering any editor.
+    _, bad_root = _download_mapping(config.get("providers.settings", {}))
+    invalid |= bad_root
     global_types, bad = _download_mapping(
         global_downloads.get("content_type_directories", {}),
     )
