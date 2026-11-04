@@ -126,6 +126,121 @@ def test_verified_owned_source_and_complete_scan_only_propose_upload(tmp_path, m
     assert book.read_bytes() == PAYLOAD
 
 
+@pytest.mark.parametrize("payload,expected", [
+    (b"invalid EPUB ZIP file", "content_structure_unverified"),
+    (epub_bytes(encrypted=True), "content_protection_detected"),
+])
+def test_real_file_structure_and_encryption_block_after_sha(
+    tmp_path, monkeypatch, payload, expected,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_placement_delete("reader-a", ARTIFACT)
+    new_sha = sha256(payload).hexdigest()
+    new_id = "sha256:" + new_sha
+    new_file = root / "other.epub"
+    new_file.write_bytes(payload)
+    db.artifact_put({
+        "artifact_id": new_id, "sha256": new_sha, "size": len(payload),
+        "media_format": "epub", "metadata": {"artifact_kind": "file"},
+    })
+    db.placement_put({
+        "artifact_id": new_id, "path": str(new_file), "identity_id": "alice",
+        "provider_id": "local", "source_item_id": "other",
+        "state": "present", "metadata": {},
+    })
+    db.device_usb_intent_set(
+        identity_id="alice", device_id="reader-a",
+        artifact_id=new_id, desired_state="keep",
+    )
+    db.device_usb_target_set(
+        identity_id="alice", device_id="reader-a",
+        artifact_id=new_id, target_relative_path="Books/Cifereca/other.epub",
+    )
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    row, = result.rows
+    assert row.artifact_id == new_id
+    assert row.action == "blocked"
+    assert row.reason == expected
+    assert row.executable is False
+    assert new_file.read_bytes() == payload
+
+
+def test_changed_local_content_between_sha_and_snapshot_is_not_qualified(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    original_snapshot = run.snapshot_local_usb_content
+
+    def mutate_bytes(**kwargs):
+        book.write_bytes(b"X" * len(PAYLOAD))
+        return original_snapshot(**kwargs)
+
+    monkeypatch.setattr(run, "snapshot_local_usb_content", mutate_bytes)
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    assert result.rows[0].action == "verify"
+    assert result.rows[0].reason == "content_bytes_unverified"
+    assert result.rows[0].executable is False
+
+
+def test_revoking_formats_during_content_read_discards_all_rows(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    original_snapshot = run.snapshot_local_usb_content
+
+    def revoke(**kwargs):
+        content = original_snapshot(**kwargs)
+        db.device_usb_reader_formats_set(
+            identity_id="alice", device_id="reader-a",
+            usb_fingerprint="uuid-alice-0001", supported_formats=("pdf",),
+        )
+        return content
+
+    monkeypatch.setattr(run, "snapshot_local_usb_content", revoke)
+    result = inspect(db, root, mount)
+    assert result.status == "scope_changed"
+    assert result.rows == ()
+    assert result.executable is False
+
+
+def test_bounded_content_inspection_does_not_read_oversized_file(
+    tmp_path, monkeypatch,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    monkeypatch.setattr(run, "MAX_SNAPSHOT_BYTES", 1)
+    monkeypatch.setattr(
+        run, "snapshot_local_usb_content",
+        lambda **_: pytest.fail("content must not be read beyond budget"),
+    )
+    result = inspect(db, root, mount)
+    assert result.status == "scanned"
+    assert result.rows[0].action == "verify"
+    assert result.rows[0].reason == "content_inspection_size_limit"
+    assert result.rows[0].executable is False
+
+
 def test_no_reader_formats_declaration_keeps_upload_non_executable(
     tmp_path, monkeypatch,
 ):
