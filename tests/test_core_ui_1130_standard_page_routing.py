@@ -16,7 +16,7 @@ OWNER = ROOT / "shell_page_controller.py"
 
 ROUTES = (
     "dashboard", "loans", "search", "history", "library",
-    "recent", "sync", "tools", "settings",
+    "readers", "recent", "sync", "tools", "settings",
 )
 
 
