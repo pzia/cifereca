@@ -174,10 +174,10 @@ def test_pending_review_many_unrelated_profiles_keeps_one_exact_owner(
     storage, _root, paths, pubs, _snapshot, _lock = pending_rig
     with storage._lock, storage._connect() as db:
         db.executemany(
-            "INSERT INTO identities(identity_id,directory_name,label) "
-            "VALUES(?,?,?)",
+            "INSERT INTO identities(identity_id,directory_name,label,"
+            "created_at,updated_at) VALUES(?,?,?,?,?)",
             [
-                (f"synthetic-{i:05d}", f"folder-{i:05d}", "Synthetic")
+                (f"synthetic-{i:05d}", f"folder-{i:05d}", "Synthetic", 1, 1)
                 for i in range(1500)
             ],
         )
@@ -200,10 +200,10 @@ def test_pending_review_over_budget_registry_returns_no_claims(
     with storage._lock, storage._connect() as db:
         existing = db.execute("SELECT COUNT(*) FROM identities").fetchone()[0]
         db.executemany(
-            "INSERT INTO identities(identity_id,directory_name,label) "
-            "VALUES(?,?,?)",
+            "INSERT INTO identities(identity_id,directory_name,label,"
+            "created_at,updated_at) VALUES(?,?,?,?,?)",
             [
-                (f"over-{i:05d}", f"over-folder-{i:05d}", "Synthetic")
+                (f"over-{i:05d}", f"over-folder-{i:05d}", "Synthetic", 1, 1)
                 for i in range(_MAX_PROFILES + 1 - existing)
             ],
         )
