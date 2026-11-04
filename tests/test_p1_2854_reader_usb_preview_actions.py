@@ -17,9 +17,7 @@ from cifereca.gui.reader_usb_preview_actions import (
 )
 from cifereca.identities import Identity
 from cifereca.storage import Storage
-from tests.test_p1_2854_readers_master_detail_page import (
-    environment, GTK,
-)
+from tests.test_p1_2854_readers_master_detail_page import environment
 
 
 class FakeLabel:
@@ -140,6 +138,19 @@ def row(action="upload_candidate", *, executable=False):
         action=action, reason="read_only_advisory",
         executable=executable,
     )
+
+
+def test_reader_page_wires_separate_inspection_from_ordinary_refresh(tmp_path):
+    db, entries, host, actions = environment(tmp_path)
+    # The built page is inert: no chooser or task has been allocated.
+    buttons = host.readers_page.header_actions.children
+    assert len(buttons) == 2
+    assert buttons[1]._cifereca_action_id == "reader-usb-dry-run"
+    assert "clicked" in buttons[1].callbacks
+    assert getattr(host, "_reader_usb_preview_chooser", None) is None
+    host._render_readers()
+    assert getattr(host, "_reader_usb_preview_chooser", None) is None
+    assert db.device_placements() == []
 
 
 def test_navigation_never_scans_and_explicit_click_only_opens_chooser(tmp_path):
