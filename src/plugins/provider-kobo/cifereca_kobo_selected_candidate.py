@@ -18,6 +18,7 @@ from cifereca.plugin_api import (
 )
 from cifereca_kobo_delivery_offer import (
     exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
+    kdrm_delegated_runtime_ready,
 )
 from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
@@ -27,7 +28,7 @@ _MAX_ACSM_BYTES = 2 * 1024 * 1024
 
 def _single_admitted_candidate(payload, offer_id, *, identity_id,
                                credential_id, account_id, product_id,
-                               kdrm_ready=False):
+                               kdrm_ready=False, kdrm_legacy_ready=False):
     """Re-use EXACTLY the existing descriptor classifier, not a parallel right.
 
     The full envelope is checked first, including all foreign/ambiguous
@@ -36,8 +37,10 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
     """
     scope = dict(identity_id=identity_id, credential_id=credential_id,
                  account_id=account_id, product_id=product_id)
-    if exact_kobo_offer_id(payload, **scope,
-                           kdrm_runtime_ready=kdrm_ready) != offer_id:
+    if exact_kobo_offer_id(
+        payload, **scope, kdrm_runtime_ready=kdrm_ready,
+        kdrm_delegated_ready=kdrm_legacy_ready,
+    ) != offer_id:
         raise ProviderCapabilityError("kobo_candidate_offer_changed")
     acquisition = payload.get("acquisition")
     candidates = acquisition.get("candidates") if type(acquisition) is dict else None
@@ -50,8 +53,10 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
         singleton = dict(payload, acquisition=dict(
             acquisition, candidates=[candidate],
         ))
-        if exact_kobo_offer_id(singleton, **scope,
-                               kdrm_runtime_ready=kdrm_ready) == offer_id:
+        if exact_kobo_offer_id(
+            singleton, **scope, kdrm_runtime_ready=kdrm_ready,
+            kdrm_delegated_ready=kdrm_legacy_ready,
+        ) == offer_id:
             matches.append(candidate)
     if len(matches) != 1:
         raise ProviderCapabilityError("kobo_candidate_descriptor_ambiguous")
@@ -239,6 +244,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             payload, delivery_offer_id, identity_id=caller[0],
             credential_id=caller[2], account_id=caller[3],
             product_id=right_id, kdrm_ready=kdrm_runtime_ready(session),
+            kdrm_legacy_ready=kdrm_delegated_runtime_ready(session),
         )
         if not bound():
             raise ProviderCapabilityError("kobo_candidate_owner_changed")
@@ -269,6 +275,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                     delegated, selected, product_id=right_id,
                     account_id=caller[3], identity_id=caller[0],
                     credential_id=caller[2],
+                    kdrm_delegated_ready=kdrm_delegated_runtime_ready(session),
                 )
                 if source is None:
                     raise ProviderCapabilityError("kobo_candidate_kdrm_recipe_unavailable")
