@@ -218,15 +218,70 @@ def project_observed_resource_facets(
     return metadata
 
 
+
+_FACET_VALUES_MAX = 64
+_FACET_COUNT_MAX = 1_000_000
+_FACET_TEXT_MAX = 160
+
+
+def _safe_facet_choice_text(value: object) -> str | None:
+    """Reject payloads unsafe for UI, diagnostic_state and local traces."""
+    text = _clean_text(value)
+    if (text is None or len(text) > _FACET_TEXT_MAX or
+            "://" in text or "@" in text or "\\" in text or
+            text.startswith(("/", ".")) or
+            any(marker in text.casefold() for marker in (
+                "token=", "password=", "secret=", "cookie:", "bearer ",
+                "authorization:", "api_key=", "signature=", "refresh_token=",
+            ))):
+        return None
+    return text
+
+
+def _attested_response_facet_values(choices: list[object]) -> list[dict[str, object]] | None:
+    """All-or-nothing parse of the captured Syracuse FacetList item shape.
+
+    Only Label:str, Count:int, IsSelected:bool, optional DisplayLabel:str
+    are evidenced. A malformed item invalidates the WHOLE list: no guessed
+    counters, missing items or assertion that a server-side filter works.
+    """
+    if not 1 <= len(choices) <= _FACET_VALUES_MAX:
+        return None
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for choice in choices:
+        if type(choice) is not dict:
+            return None
+        label = _safe_facet_choice_text(choice.get("Label"))
+        count = choice.get("Count")
+        selected = choice.get("IsSelected")
+        if (label is None or label.casefold() in seen
+                or type(count) is not int or not 0 <= count <= _FACET_COUNT_MAX
+                or type(selected) is not bool):
+            return None
+        entry: dict[str, object] = {
+            "label": label, "count": count, "is_selected": selected,
+        }
+        if "DisplayLabel" in choice:
+            display = _safe_facet_choice_text(choice["DisplayLabel"])
+            if display is None:
+                return None
+            entry["display_label"] = display
+        result.append(entry)
+        seen.add(label.casefold())
+    return result
+
+
 def project_search_response_facets(
     response: Mapping[str, object], scenario: str, page: int
 ) -> list[dict[str, object]]:
     """Project *response-level* Syracuse facet descriptors, never book fields.
 
     Observed upstream keys: d.FacetCollectionList entries carry FacetField,
-    FacetLabel, FacetList, IsSearchable and IsMultiselectable. The nested
-    FacetList item schema has NOT been qualified; do not guess its values,
-    their counts across pages, or a working server-side filter endpoint.
+    FacetLabel, FacetList, IsSearchable and IsMultiselectable. Official
+    CATALOGUE/EBOOKS captures now attest a bounded item tuple (Label,
+    Count, IsSelected, optional DisplayLabel) at the *response-page* level.
+    Even a positive IsSearchable does not prove a working filter endpoint.
 
     Each emitted descriptor records only the returned page and scenario.
     """
@@ -246,12 +301,14 @@ def project_search_response_facets(
         field = _clean_text(raw.get("FacetField"))
         label = _clean_text(raw.get("FacetLabel"))
         choices = raw.get("FacetList")
-        # FacetList contents are not parsed until real item keys are attested.
         if (field is None or label is None or type(choices) is not list
                 or len(choices) > 1024 or field.casefold() in seen):
             continue
         seen.add(field.casefold())
-        projected.append({
+        # Provenance/shape of these values is different from Resource fields:
+        # do not project them into SearchResult metadata or assume filtering.
+        observed_values = _attested_response_facet_values(choices)
+        descriptor = {
             "scenario": scenario,
             "page": page,
             "field": field,
@@ -268,8 +325,14 @@ def project_search_response_facets(
             "source": "SearchService.d.FacetCollectionList",
             "scope": "response_page_only",
             "filter_capability": "unverified",
-            "values_schema": "unverified",
-        })
+            "values_schema": (
+                "label_count_selected_v1" if observed_values is not None
+                else "unverified"
+            ),
+        }
+        if observed_values is not None:
+            descriptor["values"] = observed_values
+        projected.append(descriptor)
         if len(projected) >= 32:
             break
     return projected
