@@ -153,3 +153,32 @@ def test_subsequent_book_keeps_prior_403_quarantined_without_new_http(caplog):
         assert "delegated_resolver_called=True" in lines[1]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("code", ("archived_book", "revision_mismatch", "conflict"))
+def test_descriptor_409_preserves_only_closed_cause_in_selected_offer_trace(caplog, code):
+    session, vault, _broker, account, _posts = setup()
+    calls = []
+    secret = "SYNTHETIC_PRIVATE_409_MESSAGE"
+
+    def refused(product, **options):
+        calls.append((product, options.get("mode")))
+        raise KoboVaultError(
+            "upstream private " + secret, code=code, status_code=409,
+        )
+
+    vault.acquisition = refused
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises(KoboVaultError):
+                selected(session, account, "book-1")
+        assert calls == [("book-1", "descriptor")]
+        lines = _events(caplog)
+        assert len(lines) == 1
+        assert "phase=descriptor outcome=error" in lines[0]
+        assert "http_status=409" in lines[0]
+        assert f"error_code={code}" in lines[0]
+        assert secret not in lines[0]
+        assert "https://" not in lines[0]
+    finally:
+        session.close()
