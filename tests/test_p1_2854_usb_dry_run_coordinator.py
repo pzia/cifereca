@@ -8,7 +8,9 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
@@ -18,7 +20,22 @@ from cifereca.identities import Identity
 from cifereca.storage import Storage
 
 
-PAYLOAD = b"synthetic EPUB for local reader dry run"
+def epub_bytes(*, encrypted=False) -> bytes:
+    sink = BytesIO()
+    with ZipFile(sink, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="OEBPS/package.opf"/>'
+            '</rootfiles></container>',
+        )
+        archive.writestr("OEBPS/package.opf", "<package/>")
+        if encrypted:
+            archive.writestr("META-INF/encryption.xml", "<EncryptedData>AES</EncryptedData>")
+    return sink.getvalue()
+
+
+PAYLOAD = epub_bytes()
 DIGEST = sha256(PAYLOAD).hexdigest()
 ARTIFACT = "sha256:" + DIGEST
 TARGET = "Books/Cifereca/verified.epub"
@@ -102,7 +119,7 @@ def test_verified_owned_source_and_complete_scan_only_propose_upload(tmp_path, m
         "upload_candidate", "missing",
     )
     assert result.rows[0].executable is False
-    assert result.rows[0].reason == "drm_and_transfer_rights_unverified"
+    assert result.rows[0].reason == "epub_drm_and_transfer_rights_unverified"
     assert calls[0]["binding"]["identity_id"] == "alice"
     assert calls[0]["mountpoint"] == mount
     assert db.device_placements() == before
