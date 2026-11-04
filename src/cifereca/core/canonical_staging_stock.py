@@ -62,7 +62,8 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
         "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
         "AND s.account_id=? AND s.branch_id=? "
         "AND s.edition_id=? AND s.right_id=? "
-        "AND s.reference_kind=? AND s.evidence_kind='provider_response'",
+        "AND s.reference_kind=? AND s.evidence_kind='provider_response' "
+        "AND s.evidence_ref<>''",
         (row[2], scope.identity_id, scope.identity_id, scope.provider_id,
          scope.credential_id, scope.account_id, source.branch,
          source.edition_id, source.right_id, source.kind),

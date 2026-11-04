@@ -67,6 +67,52 @@ def _legacy_placement(rig, monkeypatch):
     return service, db, root, old, gets
 
 
+def test_stock_repair_requires_positive_persisted_source_observation(
+    rig, monkeypatch,
+):
+    """A durable receipt and SHA alone cannot repair a revoked source proof."""
+    from cifereca.core import canonical_staging_stock as stock
+
+    service, db, root, staged, gets = _legacy_placement(rig, monkeypatch)
+    placement = db.placements()[0]
+    with db._lock, db._connect() as sql:
+        source_ref, original = sql.execute(
+            "SELECT source_reference_id,evidence_ref FROM source_references "
+            "WHERE provider_id=? AND identity_id=?",
+            (service.source.scope.provider_id, service.source.scope.identity_id),
+        ).fetchone()
+        assert original
+        # Validate the same legitimate historical receipt before corrupting A.
+        row, proof = stock._record(sql, service.source, placement["placement_id"])
+        assert row[0] == str(staged)
+        assert proof["schema"] == "canonical.completed-delivery.v1"
+        sql.execute(
+            "UPDATE source_references SET evidence_ref='' "
+            "WHERE source_reference_id=?", (source_ref,),
+        )
+
+    with db._lock, db._connect() as sql:
+        with pytest.raises(ValueError, match="canonical_stock_exact_origin_missing"):
+            stock._record(sql, service.source, placement["placement_id"])
+    assert staged.read_bytes() == BYTES
+    assert db.placements()[0] == placement
+    assert gets == ["signed-right-offer"]
+
+    # Restoring the very same provider proof permits normal non-destructive
+    # recovery: the earlier refusal did not damage SQLite or staged bytes.
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE source_references SET evidence_ref=? "
+            "WHERE source_reference_id=?", (original, source_ref),
+        )
+        restored, _proof = stock._record(
+            sql, service.source, placement["placement_id"],
+        )
+    assert restored[0] == str(staged)
+    assert staged.read_bytes() == BYTES
+    assert gets == ["signed-right-offer"]
+
+
 def test_stock_relocated_under_same_placement_and_origin_without_second_get(
     rig, monkeypatch,
 ):
