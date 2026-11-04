@@ -58,7 +58,10 @@ def test_bound_library_card_uses_verified_placement_not_catalogue_path(
         assert book["local"] is True
         assert book["placement_id"] == placement_id
         assert book["local_path"] == str(alice_file)
-        assert book["metadata"]["path"] == str(alice_file)
+        if supplied is not None:
+            assert book["metadata"]["path"] == str(alice_file)
+        else:
+            assert "path" not in book["metadata"]
         assert book["metadata"]["source"] == "legacy-descriptor"
         if supplied is not None and supplied != str(alice_file):
             assert supplied not in repr(book)
@@ -97,5 +100,41 @@ def test_second_same_artifact_catalogue_cannot_replace_owners_path(tmp_path):
         assert matching[0]["local_path"] == str(alice_file)
         assert matching[0]["metadata"]["path"] == str(alice_file)
         assert str(foreign) not in repr(matching[0])
+    finally:
+        service.close()
+
+
+
+@pytest.mark.parametrize("catalogue_path", ("foreign", "stale"))
+def test_recent_acquisition_does_not_echo_foreign_catalogue_path_in_metadata(
+    tmp_path, catalogue_path,
+):
+    service = _service(tmp_path)
+    try:
+        placement_id, artifact_id, alice_file = _present(
+            service, tmp_path, owner="alice",
+        )
+        foreign = tmp_path / "library" / "bob" / "PRIVATE-DESCRIPTOR.epub"
+        foreign.parent.mkdir(parents=True, exist_ok=True)
+        foreign.write_bytes(b"private synthetic book")
+        raw = (str(foreign) if catalogue_path == "foreign"
+               else str(tmp_path / "library" / "alice" / "OLD-MISSING.epub"))
+        service.storage.catalog_entry_put({
+            "catalog_entry_id": "recent-owner",
+            "artifact_id": artifact_id, "placement_id": placement_id,
+            "identity_id": "alice", "provider_id": "local",
+            "item_id": "alice-edition", "title": "Alice book",
+            "local_state": "local", "media_format": "epub",
+            "metadata": {"path": raw, "source": "old-catalog"},
+        })
+        before = service.storage.catalog_entry_get("recent-owner")
+        rows = service.recent_acquisitions(identity_id="alice")
+        assert len(rows) == 1
+        assert rows[0]["placement_id"] == placement_id
+        assert rows[0]["path"] == str(alice_file)
+        assert rows[0]["metadata"]["path"] == str(alice_file)
+        assert raw not in repr(rows)
+        assert service.storage.catalog_entry_get("recent-owner") == before
+        assert foreign.read_bytes() == b"private synthetic book"
     finally:
         service.close()
