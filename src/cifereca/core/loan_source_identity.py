@@ -12,6 +12,8 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from ..models import Loan
+
 
 def loan_source_key(loan: Any) -> str:
     """Stable, opaque key for a *source-qualified* loan, not a credential string."""
@@ -30,6 +32,36 @@ def loan_source_key(loan: Any) -> str:
     ]
     data = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return "loan-source:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def unambiguous_loan_rows(loans: Iterable[Any]) -> tuple[Loan, ...]:
+    """Return only well-formed, source-unique loans suitable for GTK actions.
+
+    A provider may replay one identical loan card more than once: display it
+    once. Two DIFFERENT cards claiming the same exact SourceKey cannot both
+    be actionable through one opaque row key; suppress that key rather than
+    choosing first/last. No title/hash/account guesses or provider I/O.
+    """
+    rows: dict[str, Loan] = {}
+    conflicting: set[str] = set()
+    for loan in loans:
+        if type(loan) is not Loan:
+            continue
+        key = loan_source_key(loan)
+        if key in conflicting:
+            continue
+        previous = rows.get(key)
+        if previous is None:
+            rows[key] = loan
+            continue
+        try:
+            identical = previous == loan
+        except (ValueError, TypeError, RecursionError):
+            identical = False
+        if not identical:
+            conflicting.add(key)
+            rows.pop(key, None)
+    return tuple(rows.values())
 
 
 def unique_library_loan(
