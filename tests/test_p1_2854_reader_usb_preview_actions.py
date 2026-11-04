@@ -263,8 +263,8 @@ def test_stale_worker_completion_never_updates_next_profile(tmp_path, change):
     elif change == "route":
         window._route_display_token = object()
     else:
-        row = db.device_binding_get("reader-alice")
-        db.device_binding_put({**row, "identity_id": "bob"})
+        binding_row = db.device_binding_get("reader-alice")
+        db.device_binding_put({**binding_row, "identity_id": "bob"})
     ok(report(rows=(row(),)))
     err(RuntimeError("PRIVATE_TOKEN secret"))
     assert window._reader_status_label.text == "Bob utilise la page"
@@ -290,7 +290,7 @@ def test_disabled_or_unbound_reader_cannot_choose_usb_folder(tmp_path):
     )
     request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
     assert window.runner.calls == []
-    assert window._reader_usb_preview_chooser is None
+    assert getattr(window, "_reader_usb_preview_chooser", None) is None
     assert "Aucun scan" in window._reader_status_label.text
 
 
