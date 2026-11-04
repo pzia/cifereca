@@ -86,14 +86,36 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
             "Liseuse désactivée ou non vérifiée. Aucun scan effectué."
         )
         return
+    # Pin the canonical root before choosing the USB mount. Reconfiguration
+    # of the profile/library during a native dialog revokes that request.
+    try:
+        roots = configured_identity_roots(config, identity).get(identity)
+        root = roots[0] if type(roots) is tuple and roots else None
+        if not isinstance(root, Path) or not root.is_absolute():
+            raise ValueError("invalid library root")
+    except Exception:
+        window._reader_status_label.set_label(
+            "Racine du profil à vérifier. Aucun scan effectué."
+        )
+        return
     scope = (
         identity, device, fingerprint,
         getattr(window, "_identity_context_generation", None),
         getattr(window, "_account_context_generation", None),
         getattr(window, "_route_display_token", None),
+        getattr(window, "_reader_selection_generation", None),
+        root,
     )
     nonce = object()
     window._reader_usb_preview_nonce = nonce
+
+    def root_current() -> bool:
+        try:
+            current_roots = configured_identity_roots(config, scope[0]).get(scope[0])
+            return (type(current_roots) is tuple and bool(current_roots)
+                    and current_roots[0] == scope[7])
+        except Exception:
+            return False
 
     def current() -> bool:
         return (
@@ -106,6 +128,8 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
             and getattr(window, "_identity_context_generation", None) == scope[3]
             and getattr(window, "_account_context_generation", None) == scope[4]
             and getattr(window, "_route_display_token", None) is scope[5]
+            and getattr(window, "_reader_selection_generation", None) == scope[6]
+            and root_current()
             and _exact_binding(storage, scope[0], scope[1], scope[2])
         )
 
@@ -155,16 +179,14 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
                 # All physical reads and SHA calculations run in TaskRunner,
                 # never in GTK response or navigation handlers.
                 from ..core.device_usb_dry_run import inspect_usb_dry_run
-                roots = configured_identity_roots(config, identity)
-                selected = roots.get(identity)
-                if type(selected) is not tuple or not selected:
-                    raise ValueError("identity root unavailable")
-                # Use the canonical primary library root. An optional
+                if not root_current():
+                    raise ValueError("identity root changed")
+                # Use the pinned primary library root. An optional
                 # separately configured Kobo root cannot be silently merged
                 # with an unrelated profile's directory.
                 return inspect_usb_dry_run(
                     storage=storage, identity_id=identity,
-                    device_id=device, identity_root=selected[0],
+                    device_id=device, identity_root=scope[7],
                     mountpoint=mountpoint,
                 )
 
