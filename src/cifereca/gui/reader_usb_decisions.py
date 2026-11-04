@@ -44,6 +44,18 @@ _REASON_LABELS = {
     "reader_scope_unverified": "Profil ou volume USB non vérifiable",
     "protection_reported": "Protection DRM signalée : transfert interdit",
     "drm_and_transfer_rights_unverified": "Format déclaré ; droits DRM et de copie non vérifiés",
+    "content_inspection_size_limit": "Fichier trop volumineux pour la revue structurelle bornée",
+    "content_inspection_budget_exhausted": "Budget de revue de contenu atteint ; relancer un examen ciblé",
+    "content_source_unverified": "Source locale non vérifiable pour la revue de contenu",
+    "content_bytes_unverified": "Octets locaux changés ou inaccessibles ; relancer l'examen",
+    "content_structure_unverified": "Structure du fichier non reconnue ou invalide",
+    "content_archive_unbounded": "Archive EPUB trop volumineuse après décompression",
+    "content_protection_detected": "Protection détectée dans les octets ; envoi bloqué",
+    "content_protection_reported": "Protection signalée dans les métadonnées ; envoi bloqué",
+    "content_protection_unverified": "Métadonnées de protection non vérifiables",
+    "epub_drm_and_transfer_rights_unverified": "Structure EPUB valide ; droits DRM et de copie non vérifiés",
+    "kepub_semantics_drm_and_transfer_rights_unverified": "Structure EPUB valide ; spécificités KEPUB et droits de copie non vérifiés",
+    "pdf_drm_and_transfer_rights_unverified": "Structure PDF valide ; DRM et droits de copie non vérifiés",
 }
 _CURRENT = {
     "present": "Présence observée lors de cet examen",

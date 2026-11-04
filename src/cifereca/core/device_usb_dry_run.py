@@ -18,6 +18,11 @@ import time
 from typing import Any, Mapping
 
 from .device_usb_local_source import attest_local_usb_source
+from .device_usb_content_snapshot import (
+    MAX_RUN_SNAPSHOT_BYTES, MAX_SNAPSHOT_BYTES,
+    snapshot_local_usb_content,
+)
+from .device_usb_content_review import review_usb_content
 from .device_usb_managed_scan import scan_managed_usb
 from .device_usb_preview import UsbPreviewRow, _fresh_scan, preview_usb_delta
 from .device_usb_reader_formats import declared_usb_reader_formats
@@ -98,6 +103,7 @@ def _local_sources(
         matched[row["artifact_id"]].append(row)
     sources = {}
     artifacts = {}
+    owned_placements = {}
     for artifact_id, candidates in matched.items():
         if len(candidates) != 1:
             continue
@@ -111,7 +117,8 @@ def _local_sources(
         if proof is not None:
             sources[artifact_id] = proof
             artifacts[artifact_id] = artifact
-    return sources, artifacts
+            owned_placements[artifact_id] = candidates[0]
+    return sources, artifacts, owned_placements
 
 
 def inspect_usb_dry_run(
@@ -169,12 +176,12 @@ def inspect_usb_dry_run(
             fingerprint=fingerprint, now=check_time, max_age_seconds=300,
         ):
             scan = None
-        local, artifacts = (
+        local, artifacts, owned_placements = (
             _local_sources(
                 storage=storage, identity_id=identity_id,
                 identity_root=identity_root, intentions=intentions,
             )
-            if scan is not None else ({}, {})
+            if scan is not None else ({}, {}, {})
         )
         # Re-read owner/target/intent fields after the costly scan/hash.
         # Changed final snapshots are refused; byte-identical A→B→A
@@ -198,6 +205,7 @@ def inspect_usb_dry_run(
         )
         by_artifact = {intent["artifact_id"]: intent for intent in intentions}
         qualified = []
+        content_bytes_used = 0
         for row in rows:
             if row.action != "upload_candidate":
                 qualified.append(row)
@@ -225,11 +233,66 @@ def inspect_usb_dry_run(
                     row, action="blocked", reason=review.reason,
                 ))
             elif review.status == "review":
-                qualified.append(replace(
-                    row, reason="drm_and_transfer_rights_unverified",
-                ))
+                # Static reader declarations and artifact extensions alone
+                # cannot certify the bytes. Take a second bounded physical
+                # snapshot under owner/path/inode/SHA checks; never rely on
+                # historical path names or this advisory result for a write.
+                size = artifact.get("size")
+                if type(size) is not int or size <= 0:
+                    qualified.append(replace(
+                        row, action="blocked", reason="content_source_unverified",
+                    ))
+                    continue
+                if size > MAX_SNAPSHOT_BYTES:
+                    qualified.append(replace(
+                        row, action="verify", reason="content_inspection_size_limit",
+                    ))
+                    continue
+                if content_bytes_used + size > MAX_RUN_SNAPSHOT_BYTES:
+                    qualified.append(replace(
+                        row, action="verify", reason="content_inspection_budget_exhausted",
+                    ))
+                    continue
+                content_bytes_used += size
+                content = snapshot_local_usb_content(
+                    identity_id=identity_id, identity_root=identity_root,
+                    artifact=artifact, placement=owned_placements[row.artifact_id],
+                    local=local[row.artifact_id],
+                )
+                if content is None:
+                    qualified.append(replace(
+                        row, action="verify", reason="content_bytes_unverified",
+                    ))
+                    continue
+                structural = review_usb_content(
+                    identity_id=identity_id, artifact=artifact,
+                    local=local[row.artifact_id], content=content,
+                    selected_format=artifact.get("media_format"),
+                    # Budget the ZIP's possible decompression against the
+                    # *actual* compressed size, not a fixed 64 MiB maximum.
+                    # The full run already bounds the sum of these sizes.
+                    max_bytes=size,
+                )
+                if structural.executable is not False:
+                    return unknown("scope_unverified")
+                if structural.status == "blocked":
+                    qualified.append(replace(
+                        row, action="blocked", reason=structural.reason,
+                    ))
+                elif structural.status == "review":
+                    qualified.append(replace(
+                        row, reason=structural.reason,
+                    ))
+                else:
+                    return unknown("scope_unverified")
             else:
                 return unknown("scope_unverified")
+        # The content pass may be long enough for the user to change
+        # identity/reader or revoke formats while the worker is running.
+        # An advisory preview from the previous snapshot must be discarded.
+        latest = _scope(storage, identity_id, device_id)
+        if latest is None or latest != (binding, intentions):
+            return unknown("scope_changed")
         rows = tuple(qualified)
         if any(row.executable is not False for row in rows):
             return unknown("scope_unverified")
