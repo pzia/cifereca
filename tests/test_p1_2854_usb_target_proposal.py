@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
 
 import pytest
 
@@ -47,10 +46,7 @@ def test_target_is_deterministic_exact_variant_and_non_executable(fmt, suffix):
     values = inputs(fmt)
     before = deepcopy(values)
     result = propose_usb_target(**values)
-    assert result == UsbTargetProposal(
-        "alice", "reader-alice", values["binding"]["metadata"]["usb_fingerprint"],
-        "sha256:" + SHA, fmt, "Books/Cifereca/" + SHA + suffix,
-    ) if False else result.target_relative_path == "Books/Cifereca/" + SHA + suffix
+    assert result.target_relative_path == "Books/Cifereca/" + SHA + suffix
     assert result.identity_id == "alice"
     assert result.device_id == "reader-alice"
     assert result.artifact_id == "sha256:" + SHA
