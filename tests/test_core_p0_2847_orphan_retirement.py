@@ -296,3 +296,78 @@ def test_root_replaced_after_prepare_never_retires_old_sqlite_placement(
     # attempt never deleted a row or acquired rights over replacement bytes.
     assert storage.placement_get(pid) == original
     assert retire(rig, token)["status"] == "retired"
+
+
+
+def test_profile_directory_swapped_after_prepare_invalidates_missing_retirement(
+    rig, tmp_path,
+):
+    """Root inode alone does not attest a profile folder's mount identity."""
+    import shutil
+
+    storage, root, _path, pid = rig
+    token = prepare(rig)["plan_token"]
+    original = storage.placement_get(pid)
+    owner = root / "alice"
+    moved = tmp_path / "old-alice-mount"
+    root_inode = root.stat().st_ino
+
+    owner.rename(moved)
+    (owner / "kobo").mkdir(parents=True)
+    try:
+        result = retire(rig, token)
+        assert result == {"status": "blocked", "reason": "stale_plan"}
+        assert storage.placement_get(pid) == original
+        assert root.stat().st_ino == root_inode
+    finally:
+        shutil.rmtree(owner)
+        moved.rename(owner)
+
+    # An unchanged SQLite orphan can still be retired after restoring
+    # the exact original profile directory and explicit confirmation.
+    assert retire(rig, token)["status"] == "retired"
+
+
+@pytest.mark.parametrize("swap_on_probe", [1, 2])
+def test_profile_directory_swap_during_commit_preserves_missing_placement(
+    rig, tmp_path, monkeypatch, swap_on_probe,
+):
+    """A same-root subdirectory swap must not turn absence into DELETE authority."""
+    import shutil
+    from cifereca.core import missing_placement_retirement as module
+
+    storage, root, _path, pid = rig
+    token = prepare(rig)["plan_token"]
+    original = storage.placement_get(pid)
+    owner = root / "alice"
+    moved = tmp_path / "alice-old-profile"
+    actual = module._directory_signature
+    calls = []
+
+    def swap_before_directory_probe(path):
+        calls.append(path)
+        if len(calls) == swap_on_probe:
+            owner.rename(moved)
+            (owner / "kobo").mkdir(parents=True)
+        return actual(path)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_directory_signature", swap_before_directory_probe)
+            result = retire(rig, token)
+        # When the directory has already changed before _evidence, the
+        # immutable plan fingerprint is stale; when it changes just before
+        # DELETE, the final no-follow directory recheck blocks it.
+        assert result["status"] == "blocked"
+        assert result["reason"] == (
+            "stale_plan" if swap_on_probe == 1
+            else "identity_directory_changed"
+        )
+        assert storage.placement_get(pid) == original
+        assert root.is_dir()
+    finally:
+        if moved.exists():
+            shutil.rmtree(owner)
+            moved.rename(owner)
+
+    assert retire(rig, token)["status"] == "retired"
