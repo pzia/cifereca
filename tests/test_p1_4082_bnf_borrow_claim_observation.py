@@ -50,7 +50,7 @@ def test_no_checkpoint_is_not_borrow_permission(tmp_path):
         assert state.claim_consumed is False
         assert state.retry_authorized is False
         assert state.provider_verified is False
-        assert set(vars(state)) == set() if False else True
+        assert "borrower-a" not in repr(state)
         # No automatic mutation, no claim key minted in SQLite.
         assert db.loan_borrow_state(borrow_claim_key(a, _item(a))) is None
     finally:
