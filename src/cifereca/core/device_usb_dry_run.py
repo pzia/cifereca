@@ -19,7 +19,7 @@ from typing import Any, Mapping
 
 from .device_usb_local_source import attest_local_usb_source
 from .device_usb_managed_scan import scan_managed_usb
-from .device_usb_preview import UsbPreviewRow, preview_usb_delta
+from .device_usb_preview import UsbPreviewRow, _fresh_scan, preview_usb_delta
 
 
 _MAX_INTENTS = 1000
@@ -154,6 +154,17 @@ def inspect_usb_dry_run(
         )
         # No complete USB evidence means no current presence/absence can be
         # inferred; avoid expensive local hashing for an unplugged reader.
+        check_time = now if now is not None else int(time.time())
+        # The scanner is a separate, independently implemented producer.
+        # Do not label an incomplete/stale/foreign inventory as "scanned"
+        # merely because it returned a non-None object.
+        metadata = binding.get("metadata")
+        fingerprint = metadata.get("usb_fingerprint") if type(metadata) is dict else None
+        if not _fresh_scan(
+            scan, identity_id=identity_id, device_id=device_id,
+            fingerprint=fingerprint, now=check_time, max_age_seconds=300,
+        ):
+            scan = None
         local = (
             _local_sources(
                 storage=storage, identity_id=identity_id,
@@ -170,7 +181,7 @@ def inspect_usb_dry_run(
         rows = preview_usb_delta(
             identity_id=identity_id, binding=binding,
             placements=list(intentions), local=local,
-            scan=scan, receipts=None, now=now if now is not None else int(time.time()),
+            scan=scan, receipts=None, now=check_time,
         )
         if any(row.executable is not False for row in rows):
             return unknown("scope_unverified")
