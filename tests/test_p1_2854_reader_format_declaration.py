@@ -152,9 +152,12 @@ def test_formats_activated_still_cannot_grant_copy_permission(tmp_path):
     assert approved.reason == "drm_and_transfer_rights_unverified"
     assert approved.executable is False
 
+    # A declared EPUB does not establish PDF support or any right to copy.
     denied = review_usb_variant(
-        **template, artifact={**artifact, "media_format": "pdf"},
+        identity_id="alice", binding=binding,
+        local=UsbLocalArtifact("alice", SHA, True), reader=reader,
+        artifact={**artifact, "media_format": "pdf"},
         selected_format="pdf", target_relative_path="Books/Cifereca/book.pdf",
-    ) if False else None
-    # A declared EPUB does not establish PDF support.
-    assert "pdf" not in reader.supported_formats
+    )
+    assert denied.reason == "reader_format_unsupported"
+    assert denied.executable is False
