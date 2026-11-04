@@ -91,7 +91,7 @@ def test_missing_any_independent_authority_denied(key, reason):
     ("artifact_id", "sha256:" + "b" * 64),
     ("sha256", "b" * 64), ("selected_format", "pdf"),
     ("source_reference_id", ""), ("provider_id", ""),
-    ("account_id", ""), ("policy_ref", ""),
+    ("account_id", "  "), ("policy_ref", ""),
     ("source_kind", "notice"), ("personal_usb_copy_permitted", False),
     ("personal_usb_copy_permitted", 1),
     ("observed_at", NOW + 1), ("observed_at", NOW - 301),
@@ -127,6 +127,20 @@ def test_consent_is_exact_fresh_upload_only(attribute, value):
     assert report.reason == "copy_confirmation_invalid_or_expired"
     assert report.status == "blocked"
     assert not report.executable
+
+
+def test_exact_empty_primary_account_id_is_allowed_but_still_scoped():
+    values = fixture()
+    values["rights"] = replace(values["rights"], account_id="")
+    report = review_usb_copy_admission(**values)
+    assert report.status == "review"
+    assert report.executable is False
+    values["live_rights_resolver"] = lambda right: replace(
+        right, account_id="other",
+    )
+    assert review_usb_copy_admission(**values).reason == (
+        "copy_live_rights_not_attested"
+    )
 
 
 def test_loan_requires_separate_active_expiry():
