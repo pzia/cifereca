@@ -188,10 +188,16 @@ def exact_kobo_offer_id(
                     ("candidate_source_format", observed.get("source_format"),
                      {"epub", "kepub", "flepub", "epub3", "epub3fl"}),
                 ):
+                    # Source is compared EXACTLY by admission; unlike the
+                    # normalized format labels, case/whitespace matter.
+                    normalized = (
+                        value if name == "candidate_source"
+                        else value.strip().lower() if type(value) is str
+                        else value
+                    )
                     diagnostic[name] = (
                         "missing" if value is None else
-                        value.strip().lower()
-                        if type(value) is str and value.strip().lower() in allowed
+                        normalized if type(normalized) is str and normalized in allowed
                         else "other"
                     )
     eligible: list[tuple[str, str, str, str]] = []
