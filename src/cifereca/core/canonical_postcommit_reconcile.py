@@ -23,6 +23,7 @@ from .canonical_recovery import (
 from .source_convergence import SourceKey
 
 _MAX_RECEIPTS = 512
+_MAX_EXACT_ORIGIN_ROWS = 512
 
 
 def reconcile_committed_staging(
@@ -95,10 +96,14 @@ def reconcile_committed_staging(
             "AND s.branch_id=? AND s.edition_id=? "
             "AND s.right_id=? AND s.reference_kind=? "
             "AND s.evidence_kind='provider_response' "
-            "AND s.evidence_ref<>''",
-            (scope.identity_id, placed[2], source_id, *_scope(source)),
+            "AND s.evidence_ref<>'' "
+            "ORDER BY o.origin_link_id LIMIT ?",
+            (scope.identity_id, placed[2], source_id, *_scope(source),
+             _MAX_EXACT_ORIGIN_ROWS + 1),
         ).fetchall()
-        if not links:
+        # One exact Core receipt among an unbounded set of other claims
+        # does not authorize an arbitrary cleanup of historical staging.
+        if not links or len(links) > _MAX_EXACT_ORIGIN_ROWS:
             return False
 
     candidates = []
