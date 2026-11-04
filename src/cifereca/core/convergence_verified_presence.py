@@ -156,6 +156,7 @@ def plan_existing_verified_presence(
             "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
             "AND s.account_id=? AND s.branch_id=? "
             "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'' "
             "ORDER BY o.origin_link_id LIMIT ?",
             (scope.identity_id, scope.identity_id, scope.provider_id,
              scope.credential_id, scope.account_id, snapshot.branch,
@@ -182,7 +183,8 @@ def plan_existing_verified_presence(
             "AND o.origin_kind='provider' AND s.identity_id=? "
             "AND s.provider_id=? AND s.credential_id=? "
             "AND s.account_id=? AND s.branch_id=? "
-            "AND s.evidence_kind='provider_response') "
+            "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'') "
             "ORDER BY p.placement_id LIMIT ?",
             (scope.identity_id, scope.identity_id, scope.provider_id,
              scope.credential_id, scope.account_id, snapshot.branch,
