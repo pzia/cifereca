@@ -44,8 +44,8 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
     dialog = Adw.MessageDialog.new(
         window, "Associer une liseuse USB",
         "Saisissez le nom de la liseuse et l'UUID exact de son volume "
-        "(consultable avec « lsblk -f »). Cette déclaration ne prouve "
-        "pas que la liseuse est branchée et n'active aucun examen.",
+        "(consultable avec « lsblk -f »). Cette déclaration ne prouve aucune "
+        "présence physique et n'active aucun examen.",
     )
     fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     title = Gtk.Label(label="Nom de la liseuse", xalign=0)
