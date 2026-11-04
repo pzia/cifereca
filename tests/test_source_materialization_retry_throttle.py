@@ -10,6 +10,8 @@ class Storage:
         self.clock = clock
 
     def metadata_get(self, key):
+        if key.startswith("sync.source.materialization.retry_minutes."):
+            return None  # Compatibility path before the first scoped attempt.
         assert key.startswith("sync.source.materialization.last_attempt.")
         return self.clock
 
