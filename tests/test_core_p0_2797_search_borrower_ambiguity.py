@@ -21,6 +21,11 @@ from tests.test_core_library_placement_identity_scope import _service, _placemen
         (("buyer-1", "buyer-2"), False),
         ((None, "buyer-1"), False),
         ((None, None), True),
+        (("",), True),
+        ((123,), False),
+        ((True,), False),
+        ((123, 123), False),
+        (("buyer-1", 123), False),
     ],
 )
 def test_search_local_placement_alias_never_guesses_borrower(
