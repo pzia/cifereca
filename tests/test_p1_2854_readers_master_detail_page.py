@@ -67,12 +67,20 @@ class FakeDropDown:
 
 
 class FakeButton:
-    def __init__(self):
+    def __init__(self, label=""):
+        self.label = label
+        self.sensitive = True
         self.callbacks = {}
 
     @classmethod
     def new_from_icon_name(cls, _name):
         return cls()
+
+    def set_label(self, label):
+        self.label = label
+
+    def set_sensitive(self, value):
+        self.sensitive = value
 
     def set_tooltip_text(self, *_):
         pass
