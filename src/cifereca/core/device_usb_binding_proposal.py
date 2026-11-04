@@ -69,10 +69,10 @@ def propose_usb_reader_binding(
                 or not row["identity_id"]):
             raise ValueError("invalid existing reader scope")
         device_id, owner = row["device_id"], row["identity_id"]
-        if owner == identity_id:
-            owner_count += 1
         meta = row.get("metadata")
         fingerprint = meta.get("usb_fingerprint") if type(meta) is dict else None
+        if owner == identity_id and type(fingerprint) is str:
+            owner_count += 1
         if device_id == generated_id and (owner != identity_id
                 or fingerprint != usb_fingerprint):
             raise ValueError("USB device binding ID collision")
@@ -91,7 +91,7 @@ def propose_usb_reader_binding(
         return UsbBindingProposal(
             identity_id=identity_id, device_id=same["device_id"],
             label=label, usb_fingerprint=usb_fingerprint,
-            already_bound=True,
+            already_bound=True, enabled=same.get("enabled") is True,
         )
     if owner_count >= _MAX_READERS_PER_PROFILE:
         raise ValueError("reader limit reached for identity")
