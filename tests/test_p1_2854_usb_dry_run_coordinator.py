@@ -193,6 +193,19 @@ def test_disabled_reader_cannot_invent_present_or_missing(tmp_path, monkeypatch)
     assert result.rows[0].observed == "unknown"
 
 
+def test_unavailable_volume_never_hashes_local_epubs(tmp_path, monkeypatch):
+    db, root, book, mount = setup(tmp_path)
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: None)
+    monkeypatch.setattr(
+        run, "attest_local_usb_source",
+        lambda **_: pytest.fail("no local SHA work without complete USB scan"),
+    )
+    result = inspect(db, root, mount)
+    assert result.status == "device_unverified"
+    assert result.rows[0].observed == "unknown"
+    assert result.rows[0].executable is False
+
+
 def test_exact_identity_scope_blocks_cross_profile_without_ever_scanning(
     tmp_path, monkeypatch,
 ):
