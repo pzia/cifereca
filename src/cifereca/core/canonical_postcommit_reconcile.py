@@ -90,7 +90,8 @@ def reconcile_committed_staging(
             "AND s.credential_id=? AND s.account_id=? "
             "AND s.branch_id=? AND s.edition_id=? "
             "AND s.right_id=? AND s.reference_kind=? "
-            "AND s.evidence_kind='provider_response'",
+            "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>''",
             (scope.identity_id, placed[2], source_id, *_scope(source)),
         ).fetchall()
         if not links:
