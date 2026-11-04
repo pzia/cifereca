@@ -728,8 +728,27 @@ class ParisClient:
                 ))
                 # Contradictory factual classifications of the SAME ID
                 # must not silently choose one as proof of physical/digital.
+                def documentary_facts(row):
+                    # Provider wording, capitalization and raw source-code
+                    # provenance are not classification *differences*.
+                    # Compare the four closed attested axes, never raw_code.
+                    from cifereca.plugin_api import DocumentClassification
+                    proof = row.document_classification
+                    if type(proof) is not DocumentClassification:
+                        return None
+                    return (
+                        tuple(
+                            (getattr(proof, axis).status, getattr(proof, axis).value)
+                            for axis in (
+                                "medium", "document_kind",
+                                "material_format", "digital_format",
+                            )
+                        ),
+                        proof.offered_file_formats,
+                    )
+
                 same_classification = (
-                    previous.document_classification == item.document_classification
+                    documentary_facts(previous) == documentary_facts(item)
                     and previous.medium == item.medium
                 )
                 if same_classification:
