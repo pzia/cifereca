@@ -1,8 +1,9 @@
 """Opaque source-bound identity for loan presentation (CoreUI P0 #1131).
 
 The same upstream loan ID can be visible from two independent Paris connections.
-A UI row's identity must include its exact provider, credential, borrower account,
-item and library context. Do not change DRM, borrower authorization or locking.
+A UI row's identity must include its exact source provider, credential, borrower
+account, upstream backend, loan medium, item and library context. Do not change
+DRM, borrower authorization or locking.
 """
 from __future__ import annotations
 
@@ -20,6 +21,11 @@ def loan_source_key(loan: Any) -> str:
         getattr(loan, "source_account_id", None),
         str(getattr(loan, "id", "") or ""),
         str(getattr(loan, "record_id", "") or ""),
+        # Upstream loan IDs may collide between backends and loan media
+        # inside the same credential/borrower. A GTK row must not alias a
+        # distinct physical or digital loan before a user action.
+        str(getattr(loan, "provider", "") or ""),
+        str(getattr(loan, "medium", "") or ""),
         str(getattr(loan, "identity_id", "") or ""),
     ]
     data = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
