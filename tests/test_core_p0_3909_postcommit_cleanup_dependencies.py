@@ -51,6 +51,45 @@ def test_postcommit_cleanup_removes_unreferenced_attempt(rig, monkeypatch):
     assert gets == ["signed-right-offer"]
 
 
+def test_direct_cleanup_requires_completed_receipt_from_same_exact_right(
+    rig, monkeypatch,
+):
+    """A completed receipt for right B cannot clean right A's staging."""
+    from dataclasses import replace
+    from cifereca.core.source_convergence import SourceKey
+
+    service, db, root, gets, staged = _published_with_deferred_cleanup(
+        rig, monkeypatch,
+    )
+    legitimate = _checkpoint(db, service, staged)
+    before, = db.placements()
+    final = Path(before["path"])
+    other = SourceKey(
+        service.source.scope, service.source.edition_id, "other-right",
+        service.source.kind, service.source.branch,
+    )
+    assert other != service.source
+    wrong = replace(legitimate, source=other)
+
+    # Same profile, account, SHA, path and offer, but the receipt itself
+    # belongs to another SourceKey. The helper must refuse BEFORE cleanup.
+    assert cleanup_published_staging(
+        db, source=service.source, completed=wrong, library_root=root,
+    ) is False
+    assert staged.read_bytes() == final.read_bytes() == BYTES
+    assert db.placements() == [before]
+    assert gets == ["signed-right-offer"]
+
+    # The original exact receipt can still remove only its own staging.
+    assert cleanup_published_staging(
+        db, source=service.source, completed=legitimate, library_root=root,
+    ) is True
+    assert not staged.exists()
+    assert final.read_bytes() == BYTES
+    assert db.placements() == [before]
+    assert gets == ["signed-right-offer"]
+
+
 @pytest.mark.parametrize("invalid_binding", ["foreign_connection", "disabled"])
 def test_direct_staging_cleanup_requires_active_exact_source_borrower(
     rig, monkeypatch, invalid_binding,
