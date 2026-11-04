@@ -310,6 +310,7 @@ def test_profile_directory_swapped_after_prepare_invalidates_missing_retirement(
     original = storage.placement_get(pid)
     owner = root / "alice"
     moved = tmp_path / "old-alice-mount"
+    root_inode = root.stat().st_ino
 
     owner.rename(moved)
     (owner / "kobo").mkdir(parents=True)
@@ -317,7 +318,7 @@ def test_profile_directory_swapped_after_prepare_invalidates_missing_retirement(
         result = retire(rig, token)
         assert result == {"status": "blocked", "reason": "stale_plan"}
         assert storage.placement_get(pid) == original
-        assert root.stat().st_ino == root.stat().st_ino
+        assert root.stat().st_ino == root_inode
     finally:
         shutil.rmtree(owner)
         moved.rename(owner)
@@ -358,9 +359,10 @@ def test_profile_directory_swap_during_commit_preserves_missing_placement(
         # immutable plan fingerprint is stale; when it changes just before
         # DELETE, the final no-follow directory recheck blocks it.
         assert result["status"] == "blocked"
-        assert result["reason"] in {
-            "stale_plan", "identity_directory_changed",
-        }
+        assert result["reason"] == (
+            "stale_plan" if swap_on_probe == 1
+            else "identity_directory_changed"
+        )
         assert storage.placement_get(pid) == original
         assert root.is_dir()
     finally:
