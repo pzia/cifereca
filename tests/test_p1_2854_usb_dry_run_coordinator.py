@@ -6,6 +6,7 @@ synthetic complete observation. No hardware mounted or network contacted.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -204,6 +205,40 @@ def test_unavailable_volume_never_hashes_local_epubs(tmp_path, monkeypatch):
     assert result.status == "device_unverified"
     assert result.rows[0].observed == "unknown"
     assert result.rows[0].executable is False
+
+
+@pytest.mark.parametrize("invalid_scan", [
+    "foreign_profile", "wrong_device", "wrong_uuid", "stale",
+    "future_timestamp", "incomplete",
+])
+def test_invalid_scanner_output_never_claims_current_presence(
+    tmp_path, monkeypatch, invalid_scan,
+):
+    db, root, book, mount = setup(tmp_path)
+    valid = fake_scan(files={ARTIFACT: UsbObservedFile(
+        relative_path=TARGET, sha256=DIGEST, regular_file=True,
+    )})
+    changed = {
+        "foreign_profile": replace(valid, identity_id="bob"),
+        "wrong_device": replace(valid, device_id="reader-unknown"),
+        "wrong_uuid": replace(valid, fingerprint="uuid-mismatched-0001"),
+        "stale": replace(valid, observed_at=NOW - 301),
+        "future_timestamp": replace(valid, observed_at=NOW + 1),
+        "incomplete": replace(valid, complete=False),
+    }[invalid_scan]
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: changed)
+    monkeypatch.setattr(
+        run, "attest_local_usb_source",
+        lambda **_: pytest.fail("unverified USB scan must not hash local books"),
+    )
+    result = inspect(db, root, mount)
+    assert result.status == "device_unverified"
+    assert result.scan_attested is False
+    assert result.observed_at is None
+    assert result.executable is False
+    assert len(result.rows) == 1
+    assert result.rows[0].observed == "unknown"
+    assert result.rows[0].action == "verify"
 
 
 def test_exact_identity_scope_blocks_cross_profile_without_ever_scanning(
