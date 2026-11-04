@@ -31,6 +31,10 @@ def _response(scenario, *facets):
                 "Resource": {
                     "RscId": "synthetic-" + scenario,
                     "RscBase": "DILICOM" if scenario == "EBOOKS" else "SYRACUSE",
+                    # The response descriptors are page-scoped; positive
+                    # medium evidence belongs to each fixture record.
+                    "Type": "Livre numérique" if scenario == "EBOOKS" else "Livre",
+                    "Frmt": "MONE" if scenario == "EBOOKS" else "MONO",
                     "Ttl": "Synthetic book",
                 },
             }],
