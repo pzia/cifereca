@@ -454,6 +454,11 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         # choose whichever metadata row happened to be loaded last.
         entry = eligible[0] if len(eligible) == 1 else {}
         metadata = dict(entry.get("metadata") or {})
+        # #2797: recent["path"] is the scoped Placement, but the attached
+        # catalogue metadata could otherwise disclose a foreign/stale path.
+        # Do not invent a new metadata key for older local catalogues.
+        if "path" in metadata:
+            metadata["path"] = str(placement.get("path") or "")
         provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
         row_identity = placement_identity
         item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
@@ -891,8 +896,10 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 continue
             # The catalogue is descriptive, never a path ownership proof.
             # A stale/foreign metadata.path must not override a physically
-            # checked Placement, nor leak into the returned metadata.
-            metadata["path"] = str(scoped_local_path)
+            # checked Placement, nor leak into the returned metadata. Keep
+            # this optional descriptive key absent when originally absent.
+            if "path" in metadata:
+                metadata["path"] = str(scoped_local_path)
         item_id = str(row.get("item_id") or artifact_id or row.get("catalog_entry_id"))
         artifact = artifacts.get(artifact_id, {})
         sha256 = str(artifact.get("sha256") or "")
