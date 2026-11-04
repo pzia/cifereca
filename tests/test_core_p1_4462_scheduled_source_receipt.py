@@ -76,7 +76,7 @@ def test_attested_scheduled_core_success_survives_worker_and_stale_gui_scope(
         finished = [args for event, args in displayed if event == "finished"]
         assert len(finished) == 1
         assert finished[0][3] is True
-        assert finished[0][-1] == "success"
+        assert len(finished[0]) == 5  # successful GTK task has no extra error code
         assert "kind=source-sync" in caplog.text
         assert "status=success business_status=success" in caplog.text
         assert "business_status=cancelled" not in caplog.text
@@ -129,7 +129,10 @@ def test_source_sync_core_receipt_is_authoritative_for_gui_activity(
         finished = [args for event, args in displayed if event == "finished"]
         assert len(finished) == 1
         assert finished[0][3] is (expected == "success")
-        assert finished[0][-1] == expected
+        if expected == "success":
+            assert len(finished[0]) == 5
+        else:
+            assert finished[0][-1] == expected
         assert f"business_status={expected}" in caplog.text
         assert ("status=success" in caplog.text) is (expected == "success")
     finally:
