@@ -105,6 +105,31 @@ def test_reported_drm_is_blocked_even_if_bytes_are_plain(name, value):
     assert result.executable is False
 
 
+@pytest.mark.parametrize("name,value", [
+    ("drm_status", []), ("drm_status", {}),
+    ("drm_status", None), ("drm_status", 1),
+    ("drm_scheme", []), ("drm_scheme", {}),
+    ("drm_scheme", None), ("drm_scheme", True),
+])
+def test_malformed_drm_descriptor_fails_closed_without_exception(name, value):
+    values = case()
+    values["artifact"]["metadata"][name] = value
+    report = review_usb_content(**values)
+    assert report.status == "blocked"
+    assert report.reason == "content_protection_unverified"
+    assert report.executable is False
+
+
+@pytest.mark.parametrize("metadata", [None, [], "raw", True])
+def test_malformed_artifact_metadata_fails_closed_without_exception(metadata):
+    values = case()
+    values["artifact"]["metadata"] = metadata
+    report = review_usb_content(**values)
+    assert report.status == "blocked"
+    assert report.reason == "content_protection_unverified"
+    assert report.executable is False
+
+
 def test_pdf_encryption_indication_is_not_mistaken_for_drm_free():
     values = case("pdf", data=pdf_bytes(encrypted=True))
     result = review_usb_content(**values)
