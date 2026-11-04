@@ -59,6 +59,7 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     window._reader_library_snapshot = None
     window._reader_usb_decision_details = None
     window._reader_usb_detail_source_snapshot = None
+    window._reader_gtk = Gtk
 
     def select_reader(_dropdown, _pspec):
         if (getattr(window, "_closed", False)
@@ -372,6 +373,12 @@ def reader_selected(window, row) -> None:
             "local": True,
         })
         window._add_local_book_actions(page.detail, scoped)
+    # An explicit second action reserves a deterministic destination for a
+    # local 'keep' intention. This changes SQLite only, never the USB volume.
+    from .reader_target_actions import append_reader_target_action
+    append_reader_target_action(
+        window, page.detail, item, Gtk=getattr(window, "_reader_gtk", None),
+    )
 
 
 __all__ = ["build_readers_page", "render_readers", "reader_selected"]
