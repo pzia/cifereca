@@ -45,9 +45,17 @@ with InterProcessLock(acquisition_lock_file()) as lock:
     )
 ```
 
-Cette primitive reste **Core interne** : aucun déclenchement automatique
-depuis Sync, plugin ou UI tant que l'admission opérateur et le contrat public
-ne sont pas livrés. Un résultat `migrated` veut seulement dire que
+La primitive est raccordée au broker public `library.maintenance`
+via `LibraryMutationRequest(operation="legacy_adopt")`, avec
+`placement_id`, `keep_placement_id`, et
+`options={"action": "preview" | "commit", "confirmed": True}` pour le commit.
+Le broker refuse toute action non prévue et tout plan forgé, reprend
+l'aperçu à l'exécution sous le verrou d'acquisition, et expose seulement
+des compteurs et codes fermés (jamais de chemin ni reçu). Son plan
+`commit` est marqué `destructive=True` pour requérir une confirmation
+d'opérateur, **mais aucun octet physique n'est détruit**. Le plugin de
+maintenance et l'UI restent à raccorder explicitement : aucune Sync ne
+déclenche cette opération. Un résultat `migrated` veut seulement dire que
 l'ancien libellé fournisseur de ce Placement a été effacé atomiquement ;
 les deux chemins et tous les reçus demeurent intacts. Le second commit
 signale `already_canonical` sans mutation. Aucun résultat ne confère un
@@ -63,7 +71,8 @@ pas ce plan et n'efface jamais un checkpoint consultatif.
 La tranche 1 ne change pas les liens opérationnels ; elle conserve leur
 chemin historique tant que le fichier physique existe. Les cas dont le
 contrat de référence ne peut être classé sont `blocked`, pas devinés depuis
-une égalité SHA. Un broker public et l'UX de confirmation pourront être
-raccordés uniquement après validation de la CI et de la matrice de conflits.
+une égalité SHA. L'UX ou le plugin Maintenance doivent encore présenter cette action à
+l'opérateur ; un appel programmatique au broker exige déjà confirmation
+explicite et verrou, sans supposer qu'une prévisualisation persiste.
 Les scénarios sont entièrement synthétiques SQLite/fichiers. Aucun livre
 utilisateur n'est modifié.
