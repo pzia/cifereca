@@ -185,7 +185,9 @@ def on_start_due(service: Any, account: Any) -> bool:
         if last > 0 and now - last < interval * 60:
             return False
         if _kobo_checkpoint_for(service, identity, credential) is not None:
-            return bool(service._kobo_backup_account_due(credential))
+            return bool(service._kobo_backup_account_due(
+                credential, interval_minutes=interval,
+            ))
         return True
     except Exception:
         # Inability to read the attempt clock is not permission to retry.
