@@ -72,7 +72,11 @@ def test_single_kdrm_failure_reports_actual_guard(
     assert seen["candidate_source"] == source
     assert seen["candidate_media_format"] == media
     assert seen["candidate_source_format"] == upstream
-    assert seen["eligible_candidate_count"] == 0
+    if change == "scope":
+        # The contradictory owner aborts the whole descriptor immediately.
+        assert "eligible_candidate_count" not in seen
+    else:
+        assert seen["eligible_candidate_count"] == 0
     assert "url" not in seen and "token" not in str(seen)
 
 
