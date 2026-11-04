@@ -106,6 +106,14 @@ def test_closed_checkpoint_states_from_real_sqlite(
                 "verification": "positive_active_loan"}),
     json.dumps({"schema": 1, "operation": "loan.borrow",
                 "operation_id": "spoof", "status": "unknown"}),
+    json.dumps({"schema": 1, "operation": "loan.borrow",
+                "operation_id": "spoof", "status": ["confirmed"]}),
+    json.dumps({"schema": 1, "operation": "loan.borrow",
+                "operation_id": "spoof", "status": {"danger": "confirmed"}}),
+    json.dumps({"schema": 1, "operation": "loan.borrow",
+                "operation_id": "spoof", "status": "confirmed",
+                "request_accepted": True, "verification": "positive_active_loan",
+                "verified_loan_id": "invalid\\nloan"}),
 ])
 def test_corrupt_consumer_visible_state_is_consumed_not_retryable(
     tmp_path, payload,
