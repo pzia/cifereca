@@ -5,6 +5,8 @@ The shared lock and destructive confirmation remain exclusively Core-owned.
 """
 from pathlib import Path
 
+import pytest
+
 from cifereca.core.canonical_post_placement import (
     checkpoint_post_placement_duplicates_change,
     verified_post_placement_duplicates,
@@ -124,3 +126,37 @@ def test_three_copy_checkpoint_remains_pending_after_one_retirement(
     assert storage.placement_get(extra.placement_id)["state"] == "present"
     assert storage.placement_get(publications[0].placement_id)["state"] == "present"
     assert not paths[1].exists()
+
+
+
+@pytest.mark.parametrize(
+    "unresolved_state,checkpoint_retained",
+    [("dedup_cleanup_pending", True), ("missing", False)],
+)
+def test_checkpoint_resolution_requires_no_other_unfinished_physical_cleanup(
+    rig, unresolved_state, checkpoint_retained,
+):
+    """One exact pair cannot settle an independent in-progress cleanup."""
+    storage, root, paths, publications, _snapshot, _lock = rig
+    key = _pending_pair(rig)
+    # An additional historic Placement is not part of this pair's advice.
+    # Missing history is not a live file, but an unfinished tombstone may
+    # still hold bytes and cannot be erased as a side effect of this cleanup.
+    extra_id = storage.placement_put({
+        "path": str(root / "A" / "historic-unresolved-copy.pdf"),
+        "identity_id": "A",
+        "artifact_id": publications[0].artifact_id,
+        "state": unresolved_state,
+        "provider_id": None,
+        "source_item_id": None,
+    })
+    before = storage.placement_get(extra_id)
+
+    result = _retire(rig)
+    assert result.retired_placement and result.removed_file
+    assert not result.cleanup_pending
+    assert (storage.metadata_get(key) is not None) is checkpoint_retained
+    assert storage.placement_get(extra_id) == before
+    assert storage.placement_get(publications[0].placement_id)["state"] == "present"
+    assert storage.placement_get(publications[1].placement_id) is None
+    assert paths[0].exists() and not paths[1].exists()
