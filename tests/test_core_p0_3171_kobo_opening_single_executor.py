@@ -133,6 +133,12 @@ def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
 
         # A missing/partial source snapshot does not grant a fallback to
         # a historical backup writer merely because an ON was persisted.
+        # Canonical observation is independent of this scheduler under test.
+        from cifereca.core import canonical_sync_stage
+        monkeypatch.setattr(
+            canonical_sync_stage, "observe_canonical_rights_in_sync",
+            lambda *_args, **_kwargs: None,
+        )
         monkeypatch.setattr(
             sync_coordination, "_run_observed_canonical_convergence",
             lambda *_args, **_kwargs: None,
