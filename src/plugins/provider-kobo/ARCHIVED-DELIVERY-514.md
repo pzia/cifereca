@@ -35,6 +35,28 @@ les gardes de propriétaire et le refus des flags mal typés.
 Le Core fusionné via #3662 consomme la raison `archived` comme statut
 `skipped_archived` non-erreur, compte séparément les archives, et normalise le
 `409 archived_book` sans relance. Le client Vault conserve ce code fournisseur.
+
+## Sélection tardive après manifeste non archivé (#3252)
+
+Si le manifeste exact annonce encore un achat non archivé, mais que le **POST
+sélectionné et authentifié du même compte** retourne explicitement
+`HTTP 409 / error.code=archived_book`, la réponse est une observation
+fournisseur plus récente de **l'indisponibilité de livraison**, sans
+révocation de l'achat. Le préflight retourne la même ligne positive
+`state=active`, `delivery=unavailable`,
+`delivery_unavailable_reason=archived`, **sans** nouveau GET, tentative de
+restauration ou inférence d'un droit. Cette réponse est obligatoirement
+recontrôlée après le POST contre le compte, l'identité et la génération
+de session encore épinglés ; une réaffectation annule le résultat.
+
+Le 409 `conflict`, `revision_mismatch`, un code absent ou un autre statut
+HTTP ne prouve pas une archive : le Core reste en `pending`/refus selon le
+cas. Le motif est fermé et expurgé dans `EVENT kobo selected_offer` ;
+le message amont et les URLs privées ne sont jamais journalisés. Une
+sélection future, après restauration sur Kobo, refait son admission et peut
+redevenir `available` : aucune quarantaine durable ni réécriture SQLite
+n'est créée par ce chemin. Cette extension ne permet pas d'attribuer les
+quatre 409 observés du grand compte sans leur vrai `error.code`.
 Une recette fournisseur réelle et les contrôles CI/install sur cette intégration
 restent requis avant de fermer #514.
 Les tests Plugins sont synthétiques, sans accès à un compte réel.
