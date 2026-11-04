@@ -60,6 +60,21 @@ def test_malformed_provider_only_policy_flags_entire_settings_draft(saved):
     assert ui.global_cmd_row.text == ""
 
 
+@pytest.mark.parametrize("corrupt", [
+    None, True, [], "PRIVATE", 7,
+])
+def test_malformed_provider_settings_root_is_not_replaced_on_unrelated_save(
+    corrupt,
+):
+    # This shape mirrors a corrupt JSON Config providers.settings value.
+    ui, section, _, _ = _render(
+        data={"providers.settings": corrupt}, providers={},
+    )
+    assert ui.invalid_saved_snapshot is True
+    assert all(row.text == "" for row in
+               ui.provider_download_editors["paris"].values())
+
+
 def test_explicitly_null_provider_container_is_not_treated_as_missing():
     ui, section, _, _ = _render(providers={"paris": None})
     assert ui.invalid_saved_snapshot is True
