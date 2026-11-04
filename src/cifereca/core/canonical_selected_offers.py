@@ -215,11 +215,48 @@ def qualify_selected_offers(
                     reason = candidate
                 else:
                     reason = "provider_capability_refused"
+            # An ImportError may name the missing module or an absent
+            # imported symbol. The provider's complete exception text is not
+            # a stable diagnostic field and may include signed URLs. Capture
+            # only syntactically valid Python names from the exception itself
+            # and the fixed CPython "cannot import name" prefix.
+            import_details = ""
+            if isinstance(error, ImportError):
+                raw_name = error.name
+                import_name = (
+                    raw_name if type(raw_name) is str
+                    and len(raw_name) <= 255
+                    and re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+                        raw_name,
+                    )
+                    else "unknown"
+                )
+                import_symbol = "unknown"
+                if type(error.msg) is str:
+                    match = re.match(
+                        r"cannot import name '([A-Za-z_][A-Za-z0-9_]{0,127})' "
+                        r"from (?:partially initialized module )?"
+                        r"'([A-Za-z_][A-Za-z0-9_.]{0,255})'",
+                        error.msg,
+                    )
+                    if match:
+                        imported_from = match.group(2)
+                        if (import_name == "unknown" and re.fullmatch(
+                            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+                            imported_from,
+                        )):
+                            import_name = imported_from
+                        import_symbol = match.group(1)
+                import_details = (
+                    f" import_name={import_name} import_symbol={import_symbol}"
+                )
             _LOG.info(
                 "EVENT canonical selected_offer provider_id=%s product_id=%s "
                 "outcome=unknown phase=provider_preflight reason=%s "
-                "exception_type=%s",
+                "exception_type=%s%s",
                 scope.provider_id, key.right_id, reason, type(error).__name__,
+                import_details,
             )
             continue
         if cancelled():
