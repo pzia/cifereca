@@ -75,7 +75,7 @@ def test_attested_mount_checks_space_and_exact_missing_target_without_creating(
 @pytest.mark.parametrize("field,value,reason", [
     ("identity_id", "bob", "target_scope_unverified"),
     ("binding", {"identity_id": "bob"}, "target_scope_unverified"),
-    ("artifact", {"size": 7}, "target_artifact_unverified"),
+    ("artifact", {"size": 0}, "target_artifact_unverified"),
     ("intention", {"desired_state": "remove"}, "target_intention_unverified"),
 ])
 def test_forged_identity_artifact_or_intention_refused(
