@@ -201,10 +201,20 @@ def reconcile_committed_staging(
             "WHERE placement_id=?", (placement_id,),
         ).fetchone()
         linked = db.execute(
-            "SELECT 1 FROM origin_links WHERE origin_kind='provider' "
-            "AND identity_id=? AND artifact_id=? "
-            "AND source_reference_id=? AND evidence_ref=? LIMIT 1",
-            (scope.identity_id, placed[2], source_id, proof["receipt"]),
+            "SELECT 1 FROM origin_links AS o "
+            "JOIN source_references AS s "
+            "ON s.source_reference_id=o.source_reference_id "
+            "WHERE o.origin_kind='provider' "
+            "AND o.identity_id=? AND o.artifact_id=? "
+            "AND o.source_reference_id=? AND o.evidence_ref=? "
+            "AND s.identity_id=? AND s.provider_id=? "
+            "AND s.credential_id=? AND s.account_id=? "
+            "AND s.branch_id=? AND s.edition_id=? "
+            "AND s.right_id=? AND s.reference_kind=? "
+            "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'' LIMIT 1",
+            (scope.identity_id, placed[2], source_id, proof["receipt"],
+             *_scope(source)),
         ).fetchone()
         if (same != (status, artifact_id, serialized)
                 or placement != (str(final), placed[2], "present")
