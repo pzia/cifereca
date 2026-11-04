@@ -152,9 +152,14 @@ def inspect_usb_dry_run(
             )
             if binding.get("enabled") is True else None
         )
-        local = _local_sources(
-            storage=storage, identity_id=identity_id,
-            identity_root=identity_root, intentions=intentions,
+        # No complete USB evidence means no current presence/absence can be
+        # inferred; avoid expensive local hashing for an unplugged reader.
+        local = (
+            _local_sources(
+                storage=storage, identity_id=identity_id,
+                identity_root=identity_root, intentions=intentions,
+            )
+            if scan is not None else {}
         )
         # Re-read all owner/target/intent fields after the costly scan/hash;
         # no stale owner may be published after A→B→A or a rebind.
