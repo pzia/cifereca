@@ -252,9 +252,56 @@ def test_cannot_claim_effective_consent_when_connection_field_is_missing_or_trut
             broker(schedule=dict(mode="periodic", interval_minutes=60),
                    authorization=consent(enabled=True)),
         )
-        assert "périodique (suspendue)" in info
-        assert "autorisation activée (suspendue)" in info
-        assert "source déconnectée" in info
+        assert "périodique (effet non confirmé)" in info
+        assert "autorisation activée (effet non confirmé)" in info
+        assert "connexion de la source non confirmée" in info
+        assert "source déconnectée" not in info
+
+
+@pytest.mark.parametrize("flag", [None, "false", 0, 1, {}, []])
+@pytest.mark.parametrize("field", ["enabled", "connected"])
+def test_unknown_source_status_is_not_misrepresented_as_off_or_effective(
+    flag, field,
+):
+    from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
+    src = source(**{field: flag})
+    b = broker(
+        schedule=dict(mode="on_start", interval_minutes=60),
+        authorization=consent(enabled=True),
+    )
+    view = sync_source_controls_overview(src, b)
+    assert "Notices et droits : au démarrage (effet non confirmé)" in view
+    assert "Fichiers : autorisation activée (effet non confirmé)" in view
+    assert "source désactivée" not in view
+    assert "source déconnectée" not in view
+    assert (
+        "activation de la source non confirmée" if field == "enabled"
+        else "connexion de la source non confirmée"
+    ) in view
+    dashboard = sync_axes_dashboard_summary([src], b)
+    assert "0 programmation(s) active(s)" in dashboard
+    assert "0 autorisation(s) effective(s)" in dashboard
+    assert "0 programmation(s) suspendue(s)" not in dashboard
+    assert "0 autorisation(s) suspendue(s)" not in dashboard
+    assert "1 programmation(s) inconnue(s)" in dashboard
+    assert "1 autorisation(s) inconnue(s)" in dashboard
+
+
+def test_known_disabled_source_takes_precedence_over_unknown_connection():
+    from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
+    src = source(enabled=False, connected=None)
+    b = broker(
+        schedule=dict(mode="periodic", interval_minutes=60),
+        authorization=consent(enabled=True),
+    )
+    view = sync_source_controls_overview(src, b)
+    assert "périodique (suspendue)" in view
+    assert "autorisation activée (suspendue)" in view
+    assert "source désactivée" in view
+    assert "connexion de la source non confirmée" in view
+    dashboard = sync_axes_dashboard_summary([src], b)
+    assert "1 programmation(s) suspendue(s)" in dashboard
+    assert "1 autorisation(s) suspendue(s)" in dashboard
 
 
 @pytest.mark.parametrize("bad_source_id", [
