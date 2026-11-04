@@ -164,7 +164,10 @@ def projection(resource, raw, scenario, docbase):
     metadata = {
         'available_formats': formats, 'format_evidence': evidence,
         'format_source': 'paris_explicit' if formats else 'unknown',
-        'document_kind': kind, 'document_medium': medium,
+        # Keep a consumer-facing category (ebook) independent of the typed
+        # documentary *nature* (book) from DocumentClassification/1.
+        'document_kind': content_type if content_type == "ebook" else kind,
+        'document_medium': medium,
     }
     if str(scenario).upper() in {"CATALOGUE", "EBOOKS"}:
         metadata['search_scenarios'] = [str(scenario).upper()]
