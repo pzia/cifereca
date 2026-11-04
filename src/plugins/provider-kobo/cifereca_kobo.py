@@ -1224,6 +1224,7 @@ class KoboSession(ProviderSession):
         from dataclasses import replace
         from cifereca_kobo_delivery_offer import (
             exact_kobo_offer_id, kdrm_runtime_ready,
+            kdrm_delegated_runtime_ready,
         )
         from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
