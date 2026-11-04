@@ -284,7 +284,7 @@ def test_nested_foreign_kdrm_replay_scope_cannot_qualify_offer(container):
 def test_kdrm_runtime_accepts_only_normative_media_and_upstream_pairs(
     media, upstream, valid,
 ):
-    from cifereca_kobo_kdrm import scoped_kdrm_source
+    from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
     candidate = kdrm_candidate("book-1")
     candidate["media_format"] = media
@@ -336,7 +336,7 @@ def test_kdrm_delegated_recipe_rejects_foreign_or_malformed_provider_at_any_leve
     container, field, value,
 ):
     """A later delegated response cannot contradict the attested Kobo offer."""
-    from cifereca_kobo_kdrm import scoped_kdrm_source
+    from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
     payload = delegated("book-1")
     delegation = payload["acquisition"]["delegation"]
