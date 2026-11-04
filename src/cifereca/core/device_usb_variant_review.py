@@ -33,6 +33,7 @@ class UsbReaderFormatDeclaration:
 
     identity_id: str
     device_id: str
+    usb_fingerprint: str
     supported_formats: tuple[str, ...]
 
 
@@ -68,6 +69,13 @@ def review_usb_variant(
             or binding.get("enabled") is not True):
         return _refuse("reader_scope_unverified")
     device_id = binding["device_id"]
+    metadata = binding.get("metadata")
+    fingerprint = metadata.get("usb_fingerprint") if type(metadata) is dict else None
+    if (type(fingerprint) is not str or not 8 <= len(fingerprint) <= 128
+            or any(char not in "abcdefghijklmnopqrstuvwxyz"
+                   "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+                   for char in fingerprint)):
+        return _refuse("reader_scope_unverified")
     if (not isinstance(artifact, Mapping)
             or type(artifact.get("artifact_id")) is not str
             or not artifact["artifact_id"]
@@ -91,6 +99,8 @@ def review_usb_variant(
     if (type(reader) is not UsbReaderFormatDeclaration
             or reader.identity_id != identity_id
             or reader.device_id != device_id
+            or type(reader.usb_fingerprint) is not str
+            or reader.usb_fingerprint != fingerprint
             or type(reader.supported_formats) is not tuple
             or not 1 <= len(reader.supported_formats) <= len(_SUFFIX)
             or any(type(value) is not str or value not in _SUFFIX
@@ -112,12 +122,12 @@ def review_usb_variant(
                 and name.endswith((".kepub.epub", ".fxl.kepub.epub")))
             or (selected_format == "kepub" and name.endswith(".fxl.kepub.epub"))):
         return _refuse("target_variant_suffix_mismatch")
-    metadata = artifact.get("metadata")
-    if type(metadata) is dict and (
-            metadata.get("artifact_protected") is True
-            or metadata.get("protected") is True
-            or metadata.get("drm_status") in ("encrypted", "protected")
-            or metadata.get("drm_scheme") in ("adept", "lcp", "kdrm")):
+    artifact_metadata = artifact.get("metadata")
+    if type(artifact_metadata) is dict and (
+            artifact_metadata.get("artifact_protected") is True
+            or artifact_metadata.get("protected") is True
+            or artifact_metadata.get("drm_status") in ("encrypted", "protected")
+            or artifact_metadata.get("drm_scheme") in ("adept", "lcp", "kdrm")):
         return _refuse("protection_reported")
     # Metadata cannot establish DRM-free state or transfer permissions.
     return UsbVariantReview("review", "drm_and_transfer_rights_unverified")
