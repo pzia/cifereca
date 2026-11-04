@@ -227,7 +227,7 @@ def qualify_selected_offers(
                     raw_name if type(raw_name) is str
                     and len(raw_name) <= 255
                     and re.fullmatch(
-                        r"[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*",
+                        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
                         raw_name,
                     )
                     else "unknown"
@@ -243,7 +243,7 @@ def qualify_selected_offers(
                     if match:
                         imported_from = match.group(2)
                         if (import_name == "unknown" and re.fullmatch(
-                            r"[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*",
+                            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
                             imported_from,
                         )):
                             import_name = imported_from
