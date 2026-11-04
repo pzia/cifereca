@@ -41,7 +41,8 @@ def _no_embedded_keys(value):
 
 
 def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
-                       identity_id, credential_id):
+                       identity_id, credential_id,
+                       kdrm_delegated_ready=False):
     """Return a source.type=kobo recipe only for an exact, replayable source.
 
     Descriptor candidate was already verified with exact_kobo_offer_id.
@@ -117,7 +118,12 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
             or not _safe_https_get(selected)):
         return None
     kobo = selected.get("kobo")
-    if type(kobo) is not dict or kobo.get("source") != "library_sync":
+    if type(kobo) is not dict:
+        return None
+    selected_source = kobo.get("source")
+    if selected_source not in {"library_sync", "content_access_book"}:
+        return None
+    if selected_source == "content_access_book" and kdrm_delegated_ready is not True:
         return None
     drm = selected.get("drm")
     media = selected.get("media_format")
@@ -125,14 +131,58 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
             or type(media) is not str or media.casefold() not in ("kepub", "epub")):
         return None
     source_format = selected.get("source_format", media)
+    formats = {("kepub", "kepub"), ("epub", "flepub"), ("epub", "epub")}
+    if selected_source == "content_access_book" and kdrm_delegated_ready is True:
+        formats |= {("epub", "epub3"), ("epub", "epub3fl")}
     if (type(source_format) is not str
-            or (media.casefold(), source_format.casefold()) not in {
-                ("kepub", "kepub"), ("epub", "flepub"), ("epub", "epub"),
-            }):
+            or (media.casefold(), source_format.casefold()) not in formats):
         return None
     platform = kobo.get("platform", kobo.get("display_profile"))
     if platform is not None and not _bounded_text(platform, 128):
         return None
+    if selected_source == "content_access_book":
+        # The historic Kobo-Adept delegated ABI replays ContentAccess and
+        # selects by exact DRM/URL format. Do not invent a library_sync pin.
+        # The delegated envelope must independently reattest the same unique
+        # scoped, non-sample KDRM source before handing it to the runtime.
+        described = acquisition.get("candidates")
+        if type(described) is not list or not 1 <= len(described) <= 50:
+            return None
+        matches = []
+        for row in described:
+            if type(row) is not dict:
+                return None
+            for key, expected in (
+                ("product_id", product_id), ("account_id", account_id),
+                ("identity_id", identity_id), ("credential_id", credential_id),
+            ):
+                if key in row and row[key] != expected:
+                    return None
+            nested = row.get("kobo")
+            if type(nested) is not dict or nested.get("source") != "content_access_book":
+                continue
+            row_drm = row.get("drm")
+            if (row.get("handling") == "kobo_kdrm" and row.get("kind") == "http"
+                    and type(row_drm) is dict
+                    and _kdrm_raw_type(row_drm.get("raw_type"))
+                    and row_drm.get("family") == "kobo_kdrm"
+                    and row_drm.get("protected") is True
+                    and row.get("media_format") == media
+                    and type(row.get("source_format")) is str
+                    and row["source_format"].casefold() == source_format.casefold()
+                    and _safe_https_get(row)):
+                matches.append(row)
+        if len(matches) != 1:
+            return None
+        return {
+            "type": "kobo", "provider": "kobo",
+            "request": {
+                "url": url, "method": "GET", "headers": request_headers,
+                "query": query,
+            },
+            "selection": {"drm_type": "KDRM", "url_format": source_format},
+            "kdrm": {"device_id": device_id, "user_id": user_id},
+        }
     pinned = {
         "url": selected["url"], "headers": candidate_headers,
         "drm_type": "KDRM", "media_format": selected["media_format"].lower(),
