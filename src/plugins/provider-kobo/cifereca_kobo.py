@@ -1225,7 +1225,7 @@ class KoboSession(ProviderSession):
         from cifereca_kobo_delivery_offer import (
             exact_kobo_offer_id, kdrm_runtime_ready,
         )
-        from cifereca_kobo_kdrm import scoped_kdrm_source
+        from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
         if (explicit_user_action is not True
                 or type(right_id) is not str
