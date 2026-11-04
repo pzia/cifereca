@@ -12,12 +12,62 @@ import time
 
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_publication import _same_file, _stable
-from .canonical_recovery import _lock_ok, _stage_id, _unique_checkpoint_fields
+from .canonical_recovery import (
+    _exact_borrower_bound_in_db, _lock_ok, _stage_id,
+    _unique_checkpoint_fields,
+)
 from .convergence_verified_presence import _verified_copy
 from .duplicate_maintenance_guard import _mentions_exact_path
 from .source_convergence import SourceKey
 
 _SCHEMA = "canonical.completed-delivery.v1"
+
+
+def _completed_receipt_source_proven_in_db(
+    db, *, source: SourceKey, artifact_id: str, receipt: str,
+    adept_receipt: str,
+) -> bool:
+    """Require existing attested source, exact borrower and published proofs.
+
+    A stable OriginLink ID survives a corrupted/imported SourceReference row.
+    Neither that ID nor a same-SHA journal may grant a relink on its own.
+    This predicate reads only the caller's existing SQLite transaction.
+    """
+    scope = source.scope
+    if not _exact_borrower_bound_in_db(db, scope):
+        return False
+    source_id = _stable(
+        "source", scope.identity_id, scope.provider_id,
+        scope.credential_id, scope.account_id, source.branch,
+        source.edition_id, source.right_id, source.kind,
+    )
+    reference = db.execute(
+        "SELECT identity_id,provider_id,credential_id,account_id,"
+        "branch_id,edition_id,right_id,reference_kind,evidence_kind,"
+        "evidence_ref FROM source_references WHERE source_reference_id=?",
+        (source_id,),
+    ).fetchone()
+    if (reference is None or reference[:9] != (
+            scope.identity_id, scope.provider_id, scope.credential_id,
+            scope.account_id, source.branch, source.edition_id,
+            source.right_id, source.kind, "provider_response",
+    ) or type(reference[9]) is not str or not reference[9]):
+        return False
+    for kind, proof in (
+        ("provider", receipt),
+        *([("adept", adept_receipt)] if adept_receipt else []),
+    ):
+        origin_id = _stable(
+            "origin", kind, scope.identity_id, artifact_id, source_id, proof,
+        )
+        origin = db.execute(
+            "SELECT origin_kind,identity_id,artifact_id,"
+            "source_reference_id,evidence_ref "
+            "FROM origin_links WHERE origin_link_id=?", (origin_id,),
+        ).fetchone()
+        if origin != (kind, scope.identity_id, artifact_id, source_id, proof):
+            return False
+    return True
 
 
 def relink_completed_delivery_checkpoints(
@@ -150,27 +200,11 @@ def relink_completed_delivery_checkpoints(
                     identity, provider, credential, account, item
             ) or record_id != _stage_id(source, value["offer_id"]):
                 raise ValueError("canonical_receipt_relink_source_mismatch")
-            source_id = _stable(
-                "source", scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id, source.branch,
-                source.edition_id, source.right_id, source.kind,
-            )
-            for kind, proof in (
-                ("provider", value["receipt"]),
-                *((("adept", value["adept_receipt"]),)
-                  if value["adept_receipt"] else ()),
+            if not _completed_receipt_source_proven_in_db(
+                db, source=source, artifact_id=artifact_id,
+                receipt=value["receipt"], adept_receipt=value["adept_receipt"],
             ):
-                origin_id = _stable(
-                    "origin", kind, profile, artifact_id, source_id, proof,
-                )
-                origin = db.execute(
-                    "SELECT origin_kind,identity_id,artifact_id,"
-                    "source_reference_id,evidence_ref "
-                    "FROM origin_links WHERE origin_link_id=?",
-                    (origin_id,),
-                ).fetchone()
-                if origin != (kind, profile, artifact_id, source_id, proof):
-                    raise ValueError("canonical_receipt_relink_origin_not_published")
+                raise ValueError("canonical_receipt_relink_origin_not_published")
             value["path"] = keeper[0]
             staged.append((
                 record_id, json.dumps(value, sort_keys=True,
