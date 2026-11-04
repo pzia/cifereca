@@ -612,16 +612,13 @@ def execute_admitted_convergence(
             trace.emit(key, phase, "failed")
             results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
             break
-        except Exception:
+        except Exception as error:
             trace.emit(key, phase, "failed")
-            # A transport/ACSM exception may contain signed URLs, tokens
-            # or subscriber identifiers. Neither the message nor traceback
-            # crosses the Core log boundary; the outcome stays fail-closed.
-            _LOG.warning("TRACE convergence code=canonical_%s_failed", phase)
-            # A logged generic delivery/commit failure hid post-GET failures
-            # that already have a durable recovery receipt. Use only fixed
-            # phase codes: arbitrary provider exceptions may carry tokens,
-            # private file paths, subscriber IDs and signed URLs.
+            # The local canonical journal retains the actual exception and
+            # exact source coordinates (#3132). A fixed public reason alone
+            # cannot explain a runtime success without a usable Artifact.
+            # Logging never retries delivery or changes the closed UI result.
+            trace.failure(key, phase, error)
             results.append(ConvergenceOutcome(
                 key, "failed", {
                     "recovery": "canonical_recovery_failed",
