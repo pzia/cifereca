@@ -329,8 +329,12 @@ def clear_checkpoint_if_no_duplicates(
         former_paths = []
         for pid, candidate_owner, candidate_artifact, state, candidate_path in former:
             if (pid not in former_ids or candidate_owner != identity
-                    or candidate_artifact != artifact or state == "present"
+                    or candidate_artifact != artifact
+                    or state in {"present", "dedup_cleanup_pending"}
                     or type(candidate_path) is not str):
+                # An unfinalized canonical retirement has its OWN durable
+                # tombstone. Missing bytes alone cannot finalize that
+                # recovery or authorize removal of the wider advisory.
                 return False
             # A missing filename in another profile, under a symlinked
             # ancestor, or behind an unavailable parent cannot prove that
@@ -360,14 +364,17 @@ def clear_checkpoint_if_no_duplicates(
             (owner_dir, identity),
         ).fetchone() is not None:
             return False
-        # Never erase a pending marker when a second physical Placement
-        # remains, even if its bytes no longer match the stored artifact SHA.
-        present = db.execute(
+        # Never erase a pending marker when another physical Placement or
+        # unfinalized retirement tombstone remains. An unfinished tombstone
+        # can retain an unlink/recovery obligation even if its leaf is absent.
+        # Do not acknowledge another cleanup's checkpoint from an opening Sync.
+        remaining = db.execute(
             "SELECT placement_id,path,state FROM placements "
-            "WHERE identity_id=? AND artifact_id=? AND state='present'",
+            "WHERE identity_id=? AND artifact_id=? "
+            "AND state IN ('present','dedup_cleanup_pending') LIMIT 2",
             (identity, artifact),
         ).fetchall()
-        if present != [(placement_id, path, "present")]:
+        if remaining != [(placement_id, path, "present")]:
             return False
         for pid, candidate_path, state in former_paths:
             if (db.execute(
