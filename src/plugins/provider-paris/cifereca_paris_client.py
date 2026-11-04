@@ -1057,7 +1057,8 @@ class ParisClient:
             # only a closed, retryable reason instead of a private traceback.
             raise ParisError("Transport HTTPS PNB indisponible") from None
 
-    def _resolve_pnb_loan_to_acsm(self, href: str, *, max_redirects: int = 12) -> str:
+    def _resolve_pnb_loan_to_acsm(self, href: str, *, max_redirects: int = 12,
+                                  admission_current=None) -> str:
         """Follow the official signed PNB redirect chain and stop before ACSM GET."""
         current = urljoin(self.base_url + "/", href)
         base_host = (urlparse(self.base_url).hostname or "").casefold()
@@ -1072,6 +1073,8 @@ class ParisClient:
         }
         visited_urls: set[str] = set()
         for hop in range(max_redirects):
+            if admission_current is not None and admission_current() is not True:
+                raise ParisError("paris_borrow_scope_changed")
             self._validate_pnb_redirect_url(current)
             if current in visited_urls:
                 # Never replay a signed supplier URL in a redirect cycle.
@@ -1091,7 +1094,13 @@ class ParisClient:
                     key: value for key, value in navigation_headers.items()
                     if key.casefold() in {"accept", "accept-language", "user-agent"}
                 })
-            response = self._get_pnb_response(current, headers=hop_headers)
+            response = self._get_pnb_response(
+                current, headers=hop_headers,
+                **({"admission_current": admission_current}
+                   if admission_current is not None else {}),
+            )
+            if admission_current is not None and admission_current() is not True:
+                raise ParisError("paris_borrow_scope_changed")
             self._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             location = response.headers.get("location") or ""
             _TRACE_LOG.info(
