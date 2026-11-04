@@ -12,7 +12,7 @@ under its own exclusive lock and a separate explicit confirmation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 from typing import Any, Mapping
@@ -20,6 +20,8 @@ from typing import Any, Mapping
 from .device_usb_local_source import attest_local_usb_source
 from .device_usb_managed_scan import scan_managed_usb
 from .device_usb_preview import UsbPreviewRow, _fresh_scan, preview_usb_delta
+from .device_usb_reader_formats import declared_usb_reader_formats
+from .device_usb_variant_review import review_usb_variant
 
 
 _MAX_INTENTS = 1000
@@ -95,6 +97,7 @@ def _local_sources(
             continue
         matched[row["artifact_id"]].append(row)
     sources = {}
+    artifacts = {}
     for artifact_id, candidates in matched.items():
         if len(candidates) != 1:
             continue
@@ -107,7 +110,8 @@ def _local_sources(
         )
         if proof is not None:
             sources[artifact_id] = proof
-    return sources
+            artifacts[artifact_id] = artifact
+    return sources, artifacts
 
 
 def inspect_usb_dry_run(
@@ -165,12 +169,12 @@ def inspect_usb_dry_run(
             fingerprint=fingerprint, now=check_time, max_age_seconds=300,
         ):
             scan = None
-        local = (
+        local, artifacts = (
             _local_sources(
                 storage=storage, identity_id=identity_id,
                 identity_root=identity_root, intentions=intentions,
             )
-            if scan is not None else {}
+            if scan is not None else ({}, {})
         )
         # Re-read owner/target/intent fields after the costly scan/hash.
         # Changed final snapshots are refused; byte-identical A→B→A
@@ -185,6 +189,48 @@ def inspect_usb_dry_run(
             placements=list(intentions), local=local,
             scan=scan, receipts=None, now=check_time,
         )
+        # A verified local SHA and a missing USB target do not establish
+        # reader compatibility. Use only the stored *declaration* and exact
+        # variant. No content parsing, DRM judgement or write authority.
+        reader = declared_usb_reader_formats(
+            identity_id=identity_id, device_id=device_id,
+            usb_fingerprint=fingerprint, binding=binding,
+        )
+        by_artifact = {intent["artifact_id"]: intent for intent in intentions}
+        qualified = []
+        for row in rows:
+            if row.action != "upload_candidate":
+                qualified.append(row)
+                continue
+            if reader is None:
+                qualified.append(replace(
+                    row, action="verify", reason="reader_formats_unconfigured",
+                ))
+                continue
+            artifact = artifacts.get(row.artifact_id)
+            intent = by_artifact[row.artifact_id]
+            if type(artifact) is not dict:
+                return unknown("scope_unverified")
+            review = review_usb_variant(
+                identity_id=identity_id, binding=binding, artifact=artifact,
+                local=local.get(row.artifact_id),
+                selected_format=artifact.get("media_format"),
+                target_relative_path=intent.get("target_relative_path"),
+                reader=reader,
+            )
+            if review.executable is not False:
+                return unknown("scope_unverified")
+            if review.status == "blocked":
+                qualified.append(replace(
+                    row, action="blocked", reason=review.reason,
+                ))
+            elif review.status == "review":
+                qualified.append(replace(
+                    row, reason="drm_and_transfer_rights_unverified",
+                ))
+            else:
+                return unknown("scope_unverified")
+        rows = tuple(qualified)
         if any(row.executable is not False for row in rows):
             return unknown("scope_unverified")
         return UsbDryRun(
