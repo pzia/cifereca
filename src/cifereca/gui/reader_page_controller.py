@@ -120,6 +120,20 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     page.header_actions.append(pair)
     window._reader_pair_button = pair
 
+    formats_button = Gtk.Button.new_from_icon_name("document-edit-symbolic")
+    formats_button._cifereca_action_id = "reader-usb-formats"
+    formats_button.set_sensitive(False)
+    formats_button.set_tooltip_text(
+        "Déclarer ou révoquer les formats EPUB, KEPUB, FXL-KEPUB et PDF "
+        "acceptés par cette liseuse. Aucun droit ni transfert USB n'en découle."
+    )
+    def formats_clicked(_button):
+        from .reader_format_actions import request_reader_formats
+        request_reader_formats(window, Gtk=Gtk)
+    formats_button.connect("clicked", formats_clicked)
+    page.header_actions.append(formats_button)
+    window._reader_formats_button = formats_button
+
     toggle = Gtk.Button(label="Activer examens USB")
     toggle._cifereca_action_id = "reader-usb-activation"
     toggle.set_sensitive(False)
@@ -160,6 +174,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         storage = getattr(getattr(window, "service", None), "storage", None)
         if type(identity_id) is not str or not identity_id or storage is None:
             window._reader_activation_button.set_sensitive(False)
+            window._reader_formats_button.set_sensitive(False)
             window._reader_pair_button.set_sensitive(False)
             page.show_rows([])
             window._reader_status_label.set_label(
@@ -185,6 +200,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
                 raise ValueError("duplicate reader binding")
         except Exception:
             window._reader_activation_button.set_sensitive(False)
+            window._reader_formats_button.set_sensitive(False)
             page.show_rows([])
             window._reader_status_label.set_label(
                 "Liseuses indisponibles : vérifiez la configuration du profil."
@@ -216,6 +232,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             window._reader_device_dropdown.set_selected(ids.index(selected))
         if not devices:
             window._reader_activation_button.set_sensitive(False)
+            window._reader_formats_button.set_sensitive(False)
             page.show_rows([])
             window._reader_status_label.set_label(
                 "Aucune liseuse USB configurée pour ce profil. "
@@ -230,6 +247,7 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         window._reader_filter_dropdown.set_selected(FILTERS.index(view_filter))
         binding = devices[ids.index(selected)]
         window._reader_activation_button.set_sensitive(True)
+        window._reader_formats_button.set_sensitive(True)
         window._reader_activation_button.set_label(
             "Désactiver examens USB" if binding.get("enabled") is True
             else "Activer examens USB"
@@ -275,12 +293,23 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             " · Appareil désactivé"
             if not snapshot.device_enabled else ""
         )
+        from ..core.device_usb_reader_formats import declared_usb_reader_formats
+        declared = declared_usb_reader_formats(
+            identity_id=identity_id, device_id=selected,
+            usb_fingerprint=binding["metadata"]["usb_fingerprint"],
+            binding=binding,
+        )
+        format_summary = (
+            "Formats déclarés (non vérifiés) : "
+            + ", ".join(value.upper() for value in declared.supported_formats)
+            if declared else "Formats liseuse non déclarés"
+        )
         window._reader_status_label.set_label(
             f"{snapshot.total_local} livre(s) visibles · "
             f"{snapshot.wanted_keep} à mettre · "
             f"{snapshot.wanted_remove} à retirer · "
             f"{snapshot.no_intention} sans intention · "
-            "Présence USB actuelle non confirmée" + suffix
+            "Présence USB actuelle non confirmée" + suffix + " · " + format_summary
         )
     finally:
         window._readers_rendering = False
