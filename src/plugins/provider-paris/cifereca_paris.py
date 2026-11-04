@@ -313,6 +313,12 @@ class ParisProviderSession(ProviderSession):
             return self._connect_locked()
 
     def _connect_locked(self) -> list[Account]:
+        # A new authentication attempt replaces the previous session's
+        # authority even if login, summary or credential validation fails.
+        # Never leave stale accounts usable after a refused reconnect.
+        # Successful connection publishes its fresh accounts at the end.
+        self.connected = False
+        self._accounts = []
         username = str(self.credentials.get("username") or "").strip()
         password = str(self.credentials.get("password") or "")
         if not username or not password:
