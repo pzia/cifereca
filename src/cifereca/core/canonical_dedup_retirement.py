@@ -87,12 +87,17 @@ def _resolve_exact_completed_checkpoint(
                 candidate_placement_id, keeper_placement_id,
             ])):
         return False
-    present = db.execute(
+    # An unresolved tombstone may still have physical bytes and requires
+    # an independent, explicitly confirmed recovery. Ignoring it merely
+    # because it is not state='present' would falsely settle the only
+    # advisory for this Artifact while an older cleanup remains pending.
+    remaining = db.execute(
         "SELECT placement_id FROM placements WHERE identity_id=? "
-        "AND artifact_id=? AND state='present' LIMIT 2",
+        "AND artifact_id=? AND state IN ('present','dedup_cleanup_pending') "
+        "LIMIT 2",
         (identity_id, artifact_id),
     ).fetchall()
-    if present != [(keeper_placement_id,)]:
+    if remaining != [(keeper_placement_id,)]:
         return False
     return db.execute(
         "DELETE FROM metadata WHERE key=? AND value=?", (key, row[0]),
