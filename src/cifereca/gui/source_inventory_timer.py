@@ -14,10 +14,24 @@ from ..core.source_refresh_policy import (
     SourceRefreshSchedule, source_refresh_due,
 )
 from ..task_queue import TaskPriority
+from ..plugin_api import SyncResult
 
 _HEARTBEAT_SECONDS = 60
 _MAX_IDENTITIES = 64
 _MAX_SOURCES = 256
+
+
+def _completed_inventory_result(receipts: list[SyncResult]) -> SyncResult | None:
+    """Forward actual successful broker receipts to TaskRunner (#4462).
+
+    None still means no typed Core result was observed: a queued stale or
+    revoked action must not acquire a synthetic successful source-sync.
+    """
+    if not receipts:
+        return None
+    if len(receipts) == 1:
+        return receipts[0]
+    return SyncResult(ok=True, changed=sum(item.changed for item in receipts))
 
 
 def _broker(window: Any) -> Any:
@@ -301,29 +315,33 @@ def configure(
 
         def work():
             failures = 0
+            completed: list[SyncResult] = []
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
                 # Opening may have been submitted after the GTK tick but
                 # before this queued worker began. Do not enter the broker.
                 if _automatic_opening_in_flight(window):
-                    return
+                    break
                 if (
                     getattr(window, "_closed", False)
                     or _broker(window) is not broker
                 ):
-                    # A queued task must not reanimate a replaced plugin
-                    # manager/broker after the GTK tick checked its scope.
-                    return
+                    # Do not dispatch another account after scope loss, but
+                    # preserve a previous Core receipt from this batch.
+                    break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
                     if getattr(receipt, "ok", None) is not True:
                         failures += 1
+                    elif isinstance(receipt, SyncResult):
+                        completed.append(receipt)
                 except Exception:
                     # One failed account must not starve its eligible siblings.
                     # Keep private exception text out of TaskRunner feedback.
                     failures += 1
             if failures:
                 raise RuntimeError("Actualisation des notices des comptes indisponible") from None
+            return _completed_inventory_result(completed)
 
         try:
             window.runner.submit(
