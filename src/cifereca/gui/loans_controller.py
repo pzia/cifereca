@@ -185,8 +185,16 @@ def _loans_refreshed(self, rows):
     displayed=getattr(self, '_displayed_loan', None)
     self._populate_loans(rows)
     if displayed:
-        fresh=next((r for r in rows if (r.id,r.source_provider,r.source_credential,r.source_account_id)==
-                    (displayed.id,displayed.source_provider,displayed.source_credential,displayed.source_account_id)),None)
+        # A weak (id, provider, credential, account) lookup could rebind an
+        # open detail after refresh to another backend, record or medium.
+        # Resolve only from the same current-identity-filtered snapshot that
+        # _populate_loans installed for the visible loan rows.
+        key = loan_source_key(displayed)
+        matches = [
+            loan for loan in getattr(self.service, "last_loans", ())
+            if type(loan) is Loan and loan_source_key(loan) == key
+        ]
+        fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
         if fresh:self.loan_page.detail.show_loan(fresh)
         else:self.loan_page.detail.empty(
