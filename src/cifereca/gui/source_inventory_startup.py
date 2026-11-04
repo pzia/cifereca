@@ -11,9 +11,10 @@ from typing import Any
 
 from ..core.source_refresh_policy import source_refresh_due
 from ..task_queue import TaskPriority
+from ..plugin_api import SyncResult
 from .source_inventory_timer import (
     _MAX_SOURCES, _broker, _configured_identity_ids, _policy,
-    _scheduled_refresh_capable,
+    _completed_inventory_result, _scheduled_refresh_capable,
 )
 
 _MAX_STARTUP_IDENTITIES = 64
@@ -110,9 +111,12 @@ def dispatch_after_opening(window: Any) -> bool:
 
     def work():
         failures = 0
+        completed: list[SyncResult] = []
         for identity_id in identities:
             if getattr(window, "_closed", False) or _broker(window) is not broker:
-                return
+                # Keep an attested earlier result; do not mark completed Core
+                # work as cancelled because a later UI scope expired.
+                break
             # The user may have revoked a source policy while this worker
             # was queued. Re-probe the read-only opt-in before delegating;
             # the broker then revalidates exact rights/bindings at I/O.
@@ -124,6 +128,8 @@ def dispatch_after_opening(window: Any) -> bool:
                 )
                 if getattr(receipt, "ok", None) is not True:
                     failures += 1
+                elif isinstance(receipt, SyncResult):
+                    completed.append(receipt)
             except Exception:
                 # One account's fault does not starve its eligible siblings.
                 # Never reflect signed URLs or private identifiers in tasks.
@@ -132,6 +138,7 @@ def dispatch_after_opening(window: Any) -> bool:
             raise RuntimeError(
                 "Actualisation initiale des notices des comptes indisponible"
             ) from None
+        return _completed_inventory_result(completed)
 
     def after_inventory(_result=None):
         # The lock has been released when TaskRunner calls the GTK terminal
