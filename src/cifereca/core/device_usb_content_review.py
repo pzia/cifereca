@@ -103,8 +103,15 @@ def review_usb_content(
         return _blocked("content_bytes_unverified")
 
     metadata = artifact.get("metadata")
-    if type(metadata) is dict and (
-            metadata.get("artifact_protected") is True
+    if type(metadata) is not dict:
+        return _blocked("content_protection_unverified")
+    # Optional DRM descriptors come from persisted/imported metadata. A
+    # malformed value (including list/dict) must not raise TypeError during
+    # read-only review or be silently interpreted as unprotected.
+    if any(field in metadata and type(metadata[field]) is not str
+           for field in ("drm_status", "drm_scheme")):
+        return _blocked("content_protection_unverified")
+    if (metadata.get("artifact_protected") is True
             or metadata.get("protected") is True
             or metadata.get("drm_status") in {"encrypted", "protected"}
             or metadata.get("drm_scheme") in {"adept", "lcp", "kdrm"}):
