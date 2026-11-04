@@ -182,3 +182,20 @@ def test_descriptor_409_preserves_only_closed_cause_in_selected_offer_trace(capl
         assert "https://" not in lines[0]
     finally:
         session.close()
+
+
+def test_malformed_409_code_does_not_mask_provider_error(caplog):
+    session, vault, _broker, account, _posts = setup()
+    def invalid_code(_product, **_options):
+        raise KoboVaultError("PRIVATE_ERROR_TEXT", code=[], status_code=409)
+    vault.acquisition = invalid_code
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises(KoboVaultError):
+                selected(session, account, "book-1")
+        lines = _events(caplog)
+        assert len(lines) == 1
+        assert "http_status=409 error_code=not_applicable" in lines[0]
+        assert "PRIVATE_ERROR_TEXT" not in lines[0]
+    finally:
+        session.close()
