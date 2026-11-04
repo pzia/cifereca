@@ -251,3 +251,73 @@ def test_missing_former_parent_is_not_verified_leaf_absence(
         store, library_root=root, placement_id=first.placement_id,
     ) is False
     assert store.metadata_get(key) == original
+
+
+
+def test_expiry_refuses_original_candidate_while_retirement_tombstone_pending(
+    store, tmp_path,
+):
+    """Missing leaf is not proof that a pending physical cleanup is finalized."""
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    candidate = _pending_candidate_id(store)
+    previous = store.metadata_get(key)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='dedup_cleanup_pending' "
+            "WHERE placement_id=?", (candidate,),
+        )
+    assert not paths[1].exists()
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == previous
+    assert store.placement_get(candidate)["state"] == "dedup_cleanup_pending"
+    assert paths[0].read_bytes() == BYTES
+
+    # Simulate an independently completed supervised recovery that has
+    # conclusively disposed of its tombstone. No file needs re-downloading.
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='missing' WHERE placement_id=?",
+            (candidate,),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is True
+    assert store.metadata_get(key) is None
+
+
+def test_expiry_refuses_another_unlisted_tombstone_for_same_profile_artifact(
+    store, tmp_path,
+):
+    """A pair-only advisory cannot mark cleanup complete for a third copy."""
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    old_path = root / "A" / "another-canonical-copy.pdf"
+    assert old_path.parent.is_dir() and not old_path.exists()
+    third_id = store.placement_put({
+        "identity_id": "A",
+        "artifact_id": first.artifact_id,
+        "path": str(old_path),
+        "provider_id": None,
+        "source_item_id": None,
+        "state": "dedup_cleanup_pending",
+    })
+    before = store.placement_get(third_id)
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+    assert store.placement_get(third_id) == before
+    assert paths[0].read_bytes() == BYTES
+
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='missing' WHERE placement_id=?",
+            (third_id,),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is True
+    assert store.metadata_get(key) is None
+    assert store.placement_get(third_id)["state"] == "missing"
