@@ -31,6 +31,20 @@ def sync_source_card_guidance(source: object, alert: object) -> str:
         return "À faire : reconnecter ce compte."
     if connected is not True:
         return "À faire : vérifier la connexion de cette source."
+    # Reuse ONLY the closed label emitted by CoreUI's phase-aware alert.
+    # The 'offer' phase is a qualification step, not evidence that a
+    # downloadable file has been selected or delivered. Never suggest an
+    # automatic retry or a new acquisition from this diagnostic.
+    if (
+        type(alert[1]) is str
+        and alert[1] in {
+            "Offre de livraison : échec — action nécessaire",
+            "Offre de livraison : bloqué — action nécessaire",
+            "Offre de livraison : action nécessaire",
+            "Offre de livraison : résultat partiel",
+        }
+    ):
+        return "À faire : examiner la qualification des offres du dernier cycle."
     return "À faire : examiner le dernier cycle au survol."
 
 

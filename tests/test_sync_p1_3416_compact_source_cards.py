@@ -130,6 +130,66 @@ def test_healthy_card_is_compact_and_preserves_manual_sync_action(monkeypatch):
     assert window.runner.tasks == []
 
 
+@pytest.mark.parametrize("state", [
+    "failed", "blocked", "attention_required", "partial",
+])
+def test_offer_incident_has_specific_non_authorizing_action(state):
+    source = _source(
+        provider_id="future-provider", status="partial",
+        error="Synchronisation partielle",
+        phase_states=(
+            NS(phase="discover_rights", status="success"),
+            NS(phase="offer", status=state),
+        ),
+    )
+    alert = sync_source_attention(source)
+    assert alert is not None and alert[0] in {"error", "warning"}
+    assert alert[1].startswith("Offre de livraison :")
+    advice = sync_source_card_guidance(source, alert)
+    assert advice == (
+        "À faire : examiner la qualification des offres du dernier cycle."
+    )
+    assert "Télécharger" not in advice and "relancer" not in advice
+
+
+def test_offer_guidance_respects_disabled_disconnected_and_unknown_account():
+    def issue(**fields):
+        return _source(
+            provider_id="future-provider", status="partial",
+            error="Synchronisation partielle",
+            phase_states=(NS(phase="offer", status="failed"),),
+            **fields,
+        )
+    for enabled, connected, expected in (
+        (False, True, "activer la source si souhaité"),
+        (True, False, "reconnecter ce compte"),
+        (None, True, "vérifier l’activation"),
+        (True, None, "vérifier la connexion"),
+    ):
+        source = issue(enabled=enabled, connected=connected)
+        alert = sync_source_attention(source)
+        hint = sync_source_card_guidance(
+            source, alert or ("error", "Offre de livraison : échec — action nécessaire"),
+        )
+        assert expected in hint
+        assert "qualification des offres" not in hint
+
+
+def test_gtk_compact_card_shows_offer_action_without_background_mutation():
+    source = _source(
+        provider_id="future-provider", source_id="unknown-provider:account",
+        label="Compte fictif", status="partial",
+        error="Synchronisation partielle",
+        phase_states=(NS(phase="offer", status="failed"),),
+    )
+    window, _, calls, _, _ = _fixture(sources=[source])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.subtitle.startswith("Offre de livraison : échec")
+    assert "examiner la qualification des offres" in row.subtitle
+    assert window.runner.tasks == []
+    assert calls == [("sources", "alice")]
+
+
 def test_information_only_partial_is_not_relabelled_as_user_problem():
     source = _source(
         provider_id="future-provider", status="partial",
