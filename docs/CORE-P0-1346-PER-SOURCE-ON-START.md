@@ -63,6 +63,18 @@ propre à la source évite les répétitions rapprochées, sans fabriquer un
 `last_success`. Si l'horloge ne peut pas être lue ou persistée, l'acquisition
 automatique est refusée. Les annulations explicites restent bloquantes.
 
+**Retraite de la cadence globale (P1 #3198)** : l'intervalle de reprise
+`sync.source.materialization.retry_minutes.<source_id>` est borné à 60 min–30 j.
+Lors du premier essai **déjà autorisé par cette source**, l'ancien délai Kobo
+est repris uniquement de façon conservatrice (`max(60, ancien délai)`), puis
+épinglé en SQLite **avant** l'horloge d'essai. Les checkpoints, y compris en
+reprise et en backoff, utilisent ensuite ce même intervalle épinglé. Échec
+d'une lecture ou d'une écriture : aucun essai automatique. Les valeurs
+`enabled` et `allow_unlinked_acquisition` historiques n'ouvrent jamais
+l'accès au réseau ou au téléchargement. L'archive de rollback
+`migration_history.kobo_backup_globals_v1` conserve une copie initiale
+sans retirer les paramètres encore lus par les commandes manuelles legacy.
+
 L'ancien indicateur de configuration et son intervalle restent lisibles pour
 la compatibilité/diagnostic. Le bilan distingue `manual_only` de
 `disabled`, `fresh_cache`, `partial`, `error` et expose seulement un
