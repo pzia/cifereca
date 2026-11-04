@@ -51,7 +51,24 @@ def phase(name, status):
     ),
     (
         (phase("discover_rights", "success"), phase("offer", "success")),
-        "Inventaire distant : réussie",
+        "Inventaire distant : réussie · Offres de livraison : réussie (étape seulement)",
+    ),
+    (
+        (phase("discover_rights", "success"), phase("offer", "failed")),
+        "Inventaire distant : réussie · Offres de livraison : échec",
+    ),
+    (
+        (phase("offer", "partial"), phase("fetch", "success")),
+        "Offres de livraison : partielle · Livraison locale : réussie (étape seulement)",
+    ),
+    (
+        (phase("offer", "success"), phase("offer", "failed"),
+         phase("placement", "success")),
+        "Offres de livraison : non confirmée · Livraison locale : réussie",
+    ),
+    (
+        (phase("offer", "PRIVATE_OFFER_SECRET"), phase("fetch", "failed")),
+        "Offres de livraison : non confirmée · Livraison locale : échec",
     ),
     (
         (phase("discover_rights", "success"), phase("discover_rights", "failed"),
@@ -69,6 +86,48 @@ def test_two_axis_bounded_headline_retains_actual_phase_semantics(phases, expect
     assert expected in sync_source_presentation(source).summary
     assert "SECRET" not in sync_source_presentation(source).summary
     assert "PRIVATE_URL" not in sync_source_presentation(source).summary
+
+
+def test_offer_failure_never_becomes_a_download_or_source_success():
+    source = _source(
+        provider_id="future-provider", status="partial",
+        error="Synchronisation partielle",
+        phase_states=(
+            phase("discover_rights", "success"),
+            phase("offer", "failed"),
+            phase("placement", "success"),
+        ),
+    )
+    expected = (
+        "Inventaire distant : réussie · Offres de livraison : échec "
+        "· Livraison locale : réussie"
+    )
+    assert sync_source_cycle_headline(source) == expected
+    alert = sync_source_attention(source)
+    assert alert == ("error", "Offre de livraison : échec — action nécessaire")
+    view = sync_source_presentation(source)
+    assert view.sync_label == "Échec"
+    assert expected in view.summary
+    assert "fichiers reçus" not in view.summary.casefold()
+
+
+def test_offer_stage_missing_or_idle_is_not_invented_as_absent():
+    no_offer = _source(
+        provider_id="future-provider",
+        phase_states=(phase("discover_rights", "success"),),
+    )
+    assert sync_source_cycle_headline(no_offer) == "Inventaire distant : réussie"
+    idle = _source(
+        provider_id="future-provider",
+        phase_states=(phase("offer", "idle"),),
+    )
+    assert sync_source_cycle_headline(idle) == (
+        "Offres de livraison : non exécutée"
+    )
+    for source in (no_offer, idle):
+        text = sync_source_presentation(source).summary
+        assert "aucune offre" not in text.casefold()
+        assert "offre sélectionnée" not in text.casefold()
 
 
 def test_outcome_remains_actionable_when_remote_inventory_completed_but_file_failed():

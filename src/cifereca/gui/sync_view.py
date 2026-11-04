@@ -363,6 +363,10 @@ def sync_source_cycle_headline(source: object) -> str:
             phases[name] = state or "non confirmée"
 
     remote = "non confirmée" if "discover_rights" in duplicate else phases.get("discover_rights")
+    # A successful offer phase is only a stage outcome. It does not prove
+    # that any individual offer was selected or that bytes were fetched.
+    # Missing phase stays missing: it is not evidence of "no offer".
+    offer = "non confirmée" if "offer" in duplicate else phases.get("offer")
     # Show the most severe local step, not the first success. In particular,
     # fetch=failed + placement=success MUST retain the failed fetch. A
     # materialize=not_supported marker cannot certify successful acquisition.
@@ -381,6 +385,11 @@ def sync_source_cycle_headline(source: object) -> str:
     parts = []
     if remote is not None:
         parts.append("Inventaire distant : " + remote)
+    if offer is not None:
+        parts.append(
+            "Offres de livraison : " + offer
+            + (" (étape seulement)" if offer == "réussie" else "")
+        )
     if local_status is not None:
         # A green stage is not proof that files were placed and hashed.
         parts.append("Livraison locale : " + local_status +
